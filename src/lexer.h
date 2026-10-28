@@ -44,6 +44,6 @@ std::string describe(TokenKind kind);
 
 // Splits the source into tokens. Newlines become Newline tokens, except when the
 // statement continues on the next line (D32).
-std::vector<Token> tokenize(const SourceFile& file, Diagnostics& diag);
+std::vector<Token> tokenize(const SourceFile& file, int fileIndex, Diagnostics& diag);
 
 }  // namespace cromo

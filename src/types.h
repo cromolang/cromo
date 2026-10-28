@@ -20,6 +20,7 @@ enum class TypeKind {
     Param,         // a type parameter inside a generic: `T` (D39)
     Interface,     // only for parameters: a reference with its method table (D49)
     SelfType,      // `Self` in the methods of an interface (D84)
+    Addr,          // an address without a type: only in the standard library (D37, D98)
     UntypedInt,    // integer literal still waiting for its type (D55)
     UntypedFloat,  // floating-point literal still waiting for its type (D55)
 };
@@ -42,6 +43,7 @@ struct Type {
     static Type paramType(const TypeParam* param) { return {TypeKind::Param, 0, false, nullptr, param}; }
     static Type interfaceType(const InterfaceDecl* decl) { return {TypeKind::Interface, 0, false, nullptr, nullptr, decl}; }
     static Type selfType() { return {TypeKind::SelfType, 0, false}; }
+    static Type addrType() { return {TypeKind::Addr, 64, false}; }
     static Type untypedInt() { return {TypeKind::UntypedInt, 0, false}; }
     static Type untypedFloat() { return {TypeKind::UntypedFloat, 0, false}; }
 

@@ -58,6 +58,14 @@ add_custom_command(
   DEPENDS "${CROMO_RT_DIR}/cromo_rt.lib" cmake/embed.cmake
   COMMENT "Embedding the Cromo runtime")
 
+# ---- Standard library in Cromo (P1), embedded as text ----
+add_custom_command(
+  OUTPUT "${CROMO_RT_DIR}/library_blob.inc"
+  COMMAND "${CMAKE_COMMAND}" "-DINPUT=${CMAKE_SOURCE_DIR}/library/core.cro" "-DOUTPUT=${CROMO_RT_DIR}/library_blob.inc"
+          -P "${CMAKE_SOURCE_DIR}/cmake/embed.cmake"
+  DEPENDS library/core.cro cmake/embed.cmake
+  COMMENT "Embedding the Cromo standard library")
+
 add_executable(cromo
   src/main.cpp
   src/ast.cpp
@@ -72,6 +80,7 @@ add_executable(cromo
   src/windows_sdk.cpp
   src/runtime_blob.cpp
   "${CROMO_RT_DIR}/runtime_blob.inc"
+  "${CROMO_RT_DIR}/library_blob.inc"
 )
 
 target_include_directories(cromo PRIVATE "${CROMO_RT_DIR}")

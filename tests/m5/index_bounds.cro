@@ -1,0 +1,11 @@
+// expect-exit: 101
+// expect-stderr: panic: index out of bounds: the index is 5 but the length is 3 at
+// expect-stderr: index_bounds.cro:9:14
+i32 main() {
+    list<i32> v
+    v.add(1)
+    v.add(2)
+    v.add(3)
+    i32 x = v[5]
+    ret x
+}

@@ -1,0 +1,23 @@
+// expect-exit: 101
+// expect-output: 2 1
+// expect-stderr: panic: the same element is passed twice to a call that modifies it (D35) at
+// expect-stderr: same_element.cro:21:5
+void swap(ref i32 a, ref i32 b) {
+    i32 t = a
+    a = b
+    b = t
+}
+
+// With indices that are not constants, exclusivity is checked at runtime (D35).
+i32 main() {
+    list<i32> v
+    v.add(1)
+    v.add(2)
+    i64 i = 0
+    i64 j = 1
+    swap(ref v[i], ref v[j])
+    println("{} {}", v[0], v[1])
+    j = 0
+    swap(ref v[i], ref v[j])
+    ret 0
+}

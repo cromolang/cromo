@@ -113,6 +113,16 @@ How M4 implements them:
 - **Nesting.** An instance whose type arguments are nested more than 16 levels deep, such as a generic that calls itself with `Pair<T>`, is an error.
 - **Parameters of interface type** are a pair `{ ptr, ptr }` passed by value, for read and `ref` parameters alike: the address of the object and its method table, a constant array `@vtable.Circle.Shape` with the methods in the order of the interface. It is emitted the first time a `Circle` is passed as a `Shape`. A dynamic call loads the address of the method from the table and calls it with the same convention as a direct call.
 
+### The standard library and `unsafe` (D37, M5)
+- **The library** is `library/core.cro`, embedded in `cromo.exe` like the runtime (`cmake/embed.cmake`) and compiled before every program as a second source file: its locations have `SourceLocation::file == kLibraryFile`, and its messages name the file `cromo:core.cro`. Only there the type `addr` and the built-in functions of the `unsafe` dialect are available (D98); its fields cannot be used by the program (D97).
+- **`list<T>` and `string`** are structs of the library, `{ addr data, i64 length, i64 capacity }`. The compiler knows the names of `data` and `length`: it uses them for `v[i]`, for `for` over the elements, for string literals and for printing strings.
+- **String literals** are `string` values `{ ptr @.str.N, i64 len, i64 0 }`: capacity 0 means that the bytes belong to the program, so the destructor does not free them and the first change copies them to the heap (D100). The operators of D95 become calls to `equals`, `compare`, `concat` and `append`.
+- **`v[i]`** loads the length, compares the index with it as an unsigned number, which also catches the negative ones, and calls `cromo_panic_index` when it is out of bounds (D30). Then it computes the address of the element in `data`.
+- **`for` over the elements** reads the length and the buffer once, because the list cannot change during the loop (D101), and the variable of the loop is the address of the current element, without a copy.
+- **Exclusivity with elements (D35).** `v[0]` and `v[1]` never overlap, `v[0]` and `v[0]` always do; when an index is not a constant, sema records the pair of arguments and the call compares the address ranges of the two places at runtime before the call.
+- **Panics of the library (D102).** Every function of the library, except the destructors, has a hidden last parameter `ptr %caller`: the location of the call, a constant `{ ptr, i64 }` with the text `file:line:column`. Inside the library, the panics and the bounds checks report that location, so the user sees the line of their own code.
+- **Methods of instances (D103).** For an instance of a generic struct with real types, only the destructor is checked at once; a method is checked, and emitted, the first time it is used, or when the struct is passed as an interface that has it.
+
 ### `print` and `println` (D38)
 The compiler parses the format string at compile time and translates it into a sequence of runtime calls. For example `println("average: {:.2f}", m)` becomes:
 1. write the text `"average: "`;
@@ -147,7 +157,7 @@ Neither the C library nor the C++ runtime is used. The runtime and the standard 
 
 What the runtime must provide:
 - its own **entry point**, which replaces the C runtime startup: it calls `main` and terminates the process with its return value;
-- `cromo_panic(message)`: prints the message and terminates the program;
+- `cromo_panic(message, where)`: prints the message and terminates the program;
 - **allocator** on top of the system primitives: at first the Windows heap (`HeapAlloc`) is enough, and a simple allocator on top of `mmap` on Linux;
 - **minimal I/O:** writing to stdout and stderr;
 - **number formatting** without libc (D38):
@@ -157,9 +167,9 @@ What the runtime must provide:
 
 Exceptions require nothing from the runtime (D36).
 
-### The temporary runtime of M1–M4 (D58)
-Until the `unsafe` dialect exists (M5), the runtime is the freestanding C code in `runtime/`:
-- `cromo_rt.c`: buffered output on stdout and stderr (UTF-8, converted to UTF-16 when writing to a console), the formatting functions called by `print`/`println`, `cromo_exit` and `cromo_panic`;
+### The runtime in C (D58, D93)
+Until `extern` (M7), the bitwise operators and fixed-size arrays exist, the runtime is the freestanding C code in `runtime/`:
+- `cromo_rt.c`: buffered output on stdout and stderr (UTF-8, converted to UTF-16 when writing to a console), the formatting functions called by `print`/`println`, the heap for `list` and `string`, `cromo_exit` and the panics;
 - `mem_x64.S`: `memcpy`, `memset`, `memmove`, `memcmp` and `__chkstk`.
 
 CMake compiles them with the clang of the LLVM archive (`-ffreestanding -fno-builtin -nostdlib`), archives them with `llvm-lib` and embeds the library in `cromo.exe` as a byte array (`cmake/embed.cmake`). At link time `cromo` writes it next to the object file and passes it to LLD.
@@ -174,10 +184,12 @@ The generated code calls these functions (all `nounwind`):
 | `cromo_fmt_int(stream, value, signed, spec)` | integers, extended to 64 bits |
 | `cromo_fmt_f64` / `cromo_fmt_f32(stream, value, spec)` | floating-point numbers |
 | `cromo_fmt_bool(stream, value, spec)` | `true` / `false` |
-| `cromo_fmt_str(stream, ptr, len, spec)` | string literals (D65) |
+| `cromo_fmt_str(stream, ptr, len, spec)` | string literals and strings |
 | `cromo_print_end(stream, newline)` | end of a print: newline and flush |
 | `cromo_exit(code)` | end of the program, called by `cromo_start` |
-| `cromo_panic(message, len)` | panic (D62), exit code 101 |
+| `cromo_panic(message, len, where)` | panic (D62), exit code 101; `where` points to `{ text, length }` |
+| `cromo_panic_index(index, length, where)` | an index out of bounds (D30) |
+| `cromo_alloc(size)`, `cromo_realloc(p, size)`, `cromo_free(p)` | the heap of the process (`HeapAlloc`); out of memory is a panic |
 
 `spec` points to a constant `FmtSpec` built by the compiler from the format specification, or is null for `{}`.
 
@@ -212,6 +224,7 @@ Each milestone lists the decisions still open that are needed **before** writing
 - **M2** completed on 2026-10-28: structs with initial values of the fields, nested structs, methods and `const` methods, one constructor, destructors, destruction at the end of the scope and on `ret`/`break`/`continue`, temporaries destroyed at the end of the statement, structs passed and returned by value or by address depending on the size. Tests in `tests/m2/`; the choices made for M2 are decisions D68–D76 in [decisions.md](decisions.md).
 - **M3** completed on 2026-10-28: `ref` and `move` parameters, `move` in initializations, assignments and `ret`, the error on the use of a moved variable along every path, drop flags, moving fields and `ref` parameters with the default value left in place, `copy()` written by hand or generated, exclusivity with the copy of simple read arguments. Tests in `tests/m3/`; the choices made for M3 are decisions D77–D83 in [decisions.md](decisions.md).
 - **M4** completed on 2026-10-28: generic functions and structs with constraints, deduction of the type arguments, interfaces with `Self`, structs that implement them, static calls through generics and dynamic calls through parameters of interface type. Tests in `tests/m4/`; the choices made for M4 are decisions D84–D92 in [decisions.md](decisions.md).
+- **M5** completed on 2026-10-28: the standard library `library/core.cro` with `list<T>` and `string` written in the `unsafe` dialect, indexing with bounds checking, `for` over the elements, the operators of `string`, `panic`, and the runtime checks of exclusivity between elements. The runtime in C stays (D93). Tests in `tests/m5/`, among them the program of `examples/04_lists.cro`; the choices made for M5 are decisions D93–D103 in [decisions.md](decisions.md).
 
 | Milestone | Content | Open decisions |
 |---|---|---|
@@ -220,7 +233,7 @@ Each milestone lists the decisions still open that are needed **before** writing
 | **M2** | Structs with default values, `const` methods, constructors, destructors and cleanup on all exits from the scope (RAII) | none |
 | **M3** | Ownership: `move`, `copy()`, `ref`/`move` parameters, exclusivity, analysis of moves on the AST (D77) | none |
 | **M4** | Generics and interfaces | none |
-| **M5** | Containers and minimal library written in `unsafe` Cromo: `list<T>`, `string`, `for` over the elements, `panic`, bounds checking | none |
+| **M5** | Containers and minimal library written in `unsafe` Cromo: `list<T>`, `string`, `for` over the elements, `panic`, bounds checking. The runtime in C stays (D93) | none |
 | **M6** | Exceptions (`try`/`catch`/`finally`) and enums | enum syntax |
 | **M7** | Modules and interoperability with C | `extern` syntax |
 | **M8** | No Windows SDK: import libraries generated by `cromo` | none |

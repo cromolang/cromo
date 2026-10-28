@@ -1,0 +1,11 @@
+// expect-exit: 101
+// expect-stderr: panic: index out of bounds: the index is 7 but the length is 2 at
+// expect-stderr: remove_bounds.cro:9:7
+// The panic happens in the library, but it reports this line (D102).
+i32 main() {
+    list<i32> v
+    v.add(1)
+    v.add(2)
+    v.remove(7)
+    ret 0
+}

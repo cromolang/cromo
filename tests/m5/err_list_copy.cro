@@ -1,0 +1,16 @@
+// expect-error: values of type File cannot be copied
+// expect-error: (in list<File>, used at line 14)
+// copy() of a list is checked only for the types it is used with (D103).
+struct File {
+    i32 fd
+
+    ~File() {
+    }
+}
+
+i32 main() {
+    list<File> files
+    files.add(File())
+    list<File> other = files.copy()
+    ret 0
+}

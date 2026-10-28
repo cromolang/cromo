@@ -24,6 +24,25 @@ bool isPrintFunction(const std::string& name) {
     return name == "print" || name == "println" || name == "eprint" || name == "eprintln";
 }
 
+// The functions that every program can call without declaring them (D38, D102).
+bool isBuiltinFunction(const std::string& name) { return isPrintFunction(name) || name == "panic"; }
+
+// The built-in functions of the `unsafe` dialect, only in the standard library (D98).
+std::optional<Intrinsic> findIntrinsic(const std::string& name) {
+    static const std::map<std::string, Intrinsic> intrinsics = {
+        {"alloc", Intrinsic::Alloc},     {"resize", Intrinsic::Resize},   {"free", Intrinsic::Free},
+        {"sizeOf", Intrinsic::SizeOf},   {"offset", Intrinsic::Offset},   {"take", Intrinsic::Take},
+        {"put", Intrinsic::Put},         {"destroy", Intrinsic::Destroy}, {"copyAt", Intrinsic::CopyAt},
+        {"copyMemory", Intrinsic::CopyMemory}, {"compareMemory", Intrinsic::CompareMemory},
+        {"checkIndex", Intrinsic::CheckIndex},
+    };
+    auto found = intrinsics.find(name);
+    if (found == intrinsics.end()) return std::nullopt;
+    return found->second;
+}
+
+bool inLibrary(SourceLocation loc) { return loc.file == kLibraryFile; }
+
 bool isArithmetic(BinaryOp op) {
     return op == BinaryOp::Add || op == BinaryOp::Sub || op == BinaryOp::Mul || op == BinaryOp::Div ||
            op == BinaryOp::Rem;
@@ -83,20 +102,20 @@ bool isConstantLiteral(const Expr& expr) {
 
 // A new object that nobody owns yet: it is moved without writing `move` (D23).
 bool isTemporary(const Expr& expr) {
-    return expr.kind == ExprKind::Construct || expr.kind == ExprKind::Call || expr.kind == ExprKind::MethodCall;
+    return expr.kind == ExprKind::Construct || expr.kind == ExprKind::Call || expr.kind == ExprKind::MethodCall ||
+           expr.kind == ExprKind::StringLiteral;
 }
 
-// A variable, or a field of a variable or of the object of a method.
+// A variable, or a field or an element (D35) of a variable or of the object of a method.
 bool isPlace(const Expr& expr) {
     if (expr.kind == ExprKind::Name) return true;
-    if (expr.kind == ExprKind::Field) {
-        const Expr& object = *static_cast<const FieldExpr&>(expr).object;
-        return object.kind == ExprKind::Self || isPlace(object);
-    }
-    return false;
+    const Expr* object = nullptr;
+    if (expr.kind == ExprKind::Field) object = static_cast<const FieldExpr&>(expr).object.get();
+    if (expr.kind == ExprKind::Index) object = static_cast<const IndexExpr&>(expr).object.get();
+    return object && (object->kind == ExprKind::Self || isPlace(*object));
 }
 
-// The place as written in the source, for the messages: `s.log`.
+// The place as written in the source, for the messages: `s.log`, `v[i]`.
 std::string placeText(const Expr& expr) {
     if (expr.kind == ExprKind::Name) return static_cast<const NameExpr&>(expr).name;
     if (expr.kind == ExprKind::Field) {
@@ -104,14 +123,28 @@ std::string placeText(const Expr& expr) {
         if (field.object->kind == ExprKind::Self) return field.field;
         return placeText(*field.object) + "." + field.field;
     }
+    if (expr.kind == ExprKind::Index) {
+        const auto& element = static_cast<const IndexExpr&>(expr);
+        const Expr& index = *element.index;
+        std::string text = "...";
+        if (index.kind == ExprKind::Name) text = static_cast<const NameExpr&>(index).name;
+        if (index.kind == ExprKind::IntLiteral) text = std::to_string(static_cast<const IntLiteralExpr&>(index).magnitude);
+        return placeText(*element.object) + "[" + text + "]";
+    }
     return "the object";
 }
 
+// One step from a variable towards a place: a field, or an element.
+struct Step {
+    int field = -1;
+    const Expr* index = nullptr;  // for an element
+};
+
 // The object reached by a place: a variable (null for the object of the method)
-// and the chain of field indices.
+// and the steps from it.
 struct Path {
     const Variable* variable = nullptr;
-    std::vector<int> fields;
+    std::vector<Step> steps;
 };
 
 std::optional<Path> pathOf(const Expr& expr) {
@@ -121,18 +154,53 @@ std::optional<Path> pathOf(const Expr& expr) {
     case ExprKind::Field: {
         const auto& field = static_cast<const FieldExpr&>(expr);
         std::optional<Path> path = pathOf(*field.object);
-        if (path) path->fields.push_back(field.index);
+        if (path) path->steps.push_back(Step{field.index, nullptr});
+        return path;
+    }
+    case ExprKind::Index: {
+        const auto& element = static_cast<const IndexExpr&>(expr);
+        std::optional<Path> path = pathOf(*element.object);
+        if (path) path->steps.push_back(Step{-1, element.index.get()});
         return path;
     }
     default: return std::nullopt;
     }
 }
 
-// Two places overlap when one contains the other: `a` and `a.x`, but not `a.x` and `a.y`.
-bool overlaps(const Path& a, const Path& b) {
-    if (a.variable != b.variable) return false;
-    size_t common = std::min(a.fields.size(), b.fields.size());
-    return std::equal(a.fields.begin(), a.fields.begin() + common, b.fields.begin());
+// The value of an index known at compile time.
+std::optional<int64_t> constantIndex(const Expr& index) {
+    if (index.kind != ExprKind::IntLiteral) return std::nullopt;
+    const auto& literal = static_cast<const IntLiteralExpr&>(index);
+    auto value = static_cast<int64_t>(literal.magnitude);
+    return literal.negative ? -value : value;
+}
+
+enum class Overlap { No, Yes, Maybe };
+
+// Two places overlap when one contains the other: `a` and `a.x`, but not `a.x`
+// and `a.y`. Elements whose indices are not constants may overlap: that is
+// known only at runtime (D35).
+Overlap overlaps(const Path& a, const Path& b) {
+    if (a.variable != b.variable) return Overlap::No;
+    bool maybe = false;
+    size_t common = std::min(a.steps.size(), b.steps.size());
+    for (size_t i = 0; i < common; ++i) {
+        const Step& x = a.steps[i];
+        const Step& y = b.steps[i];
+        if (!x.index && !y.index) {
+            if (x.field != y.field) return Overlap::No;
+            continue;
+        }
+        if (!x.index || !y.index) return Overlap::No;
+        std::optional<int64_t> left = constantIndex(*x.index);
+        std::optional<int64_t> right = constantIndex(*y.index);
+        if (left && right) {
+            if (*left != *right) return Overlap::No;
+            continue;
+        }
+        maybe = true;
+    }
+    return maybe ? Overlap::Maybe : Overlap::Yes;
 }
 
 bool fits(uint64_t magnitude, bool negative, Type type) {
@@ -163,6 +231,12 @@ public:
 
     void run() {
         declareNames();
+        auto library = [this](const char* name) {
+            auto found = structs_.find(name);
+            return found != structs_.end() && inLibrary(found->second->loc) ? found->second : nullptr;
+        };
+        stringDecl_ = library("string");
+        listDecl_ = library("list");
         declareInterfaces();
         declareTypeParams();
         // Every generic is checked once, with its type parameters as types (D52).
@@ -227,7 +301,7 @@ private:
         for (InterfaceDecl& decl : module_.interfaces) {
             if (interfaces_.count(decl.name)) {
                 diag_->error(decl.loc, "interface '" + decl.name + "' is already defined");
-            } else if (findBuiltinType(decl.name) || isPrintFunction(decl.name) || decl.name == "void" || decl.name == "Self") {
+            } else if (findBuiltinType(decl.name) || isBuiltinFunction(decl.name) || decl.name == "void" || decl.name == "Self") {
                 diag_->error(decl.loc, "'" + decl.name + "' is a built-in name");
             } else {
                 interfaces_[decl.name] = &decl;
@@ -236,7 +310,7 @@ private:
         for (StructDecl& decl : module_.structs) {
             if (structs_.count(decl.name)) {
                 diag_->error(decl.loc, "struct '" + decl.name + "' is already defined");
-            } else if (findBuiltinType(decl.name) || isPrintFunction(decl.name) || decl.name == "void" || decl.name == "Self") {
+            } else if (findBuiltinType(decl.name) || isBuiltinFunction(decl.name) || decl.name == "void" || decl.name == "Self") {
                 diag_->error(decl.loc, "'" + decl.name + "' is a built-in name");
             } else if (interfaces_.count(decl.name)) {
                 diag_->error(decl.loc, "'" + decl.name + "' is already the name of an interface");
@@ -249,7 +323,7 @@ private:
                 diag_->error(function.loc, "function '" + function.name + "' is already defined");
             } else if (function.name.rfind("cromo_", 0) == 0 || function.name == "ExitProcess") {
                 diag_->error(function.loc, "the name '" + function.name + "' is reserved for the runtime");
-            } else if (isPrintFunction(function.name) || findBuiltinType(function.name)) {
+            } else if (isBuiltinFunction(function.name) || findBuiltinType(function.name)) {
                 diag_->error(function.loc, "'" + function.name + "' is a built-in name");
             } else if (structs_.count(function.name) || interfaces_.count(function.name)) {
                 diag_->error(function.loc, "'" + function.name + "' is already the name of a type");
@@ -411,8 +485,11 @@ private:
         int before = diag_->errorCount();
         completeStruct(*result);
         if (definition && diag_->errorCount() > before) failed_.insert(&generic);
-        if (definition || !result->isAbstract) {
-            for (FunctionDecl& member : result->members) schedule(member, &generic, definition, result->name, useLoc);
+        if (definition) {
+            for (FunctionDecl& member : result->members) schedule(member, &generic, true, result->name, useLoc);
+        } else if (!result->isAbstract && result->destructor) {
+            // D103: the other methods are checked when they are used.
+            schedule(*result->destructor, &generic, false, result->name, useLoc);
         }
         return result;
     }
@@ -448,7 +525,17 @@ private:
         return result;
     }
 
+    // D103: a method of an instance of a generic struct with real types is checked,
+    // and emitted, the first time it is used.
+    void use(FunctionDecl* member, SourceLocation loc) {
+        if (!member || member->scheduled || member->isGenerated || !member->owner) return;
+        const StructDecl& owner = *member->owner;
+        if (!owner.generic || owner.isAbstract) return;
+        schedule(*member, owner.generic, false, owner.name, loc);
+    }
+
     void schedule(FunctionDecl& function, const void* generic, bool definition, const std::string& name, SourceLocation useLoc) {
+        function.scheduled = true;
         if (definition) {
             function.isDefinition = true;
             definitions_.push_back({&function, generic, true, ""});
@@ -467,6 +554,11 @@ private:
                 }
                 return type;
             }
+        }
+        if (name.name == "addr" && !structs_.count(name.name)) {
+            if (inLibrary(name.loc)) return Type::addrType();
+            diag_->error(name.loc, "'addr' belongs to the unsafe dialect of the standard library (D37)");
+            return std::nullopt;
         }
         if (name.name == "Self") {
             if (!selfAllowed_) {
@@ -841,11 +933,17 @@ private:
             if (variable->kind == VariableKind::ReadParam) {
                 return "parameter '" + variable->name + "' cannot be modified: parameters are read-only (D22)";
             }
+            if (variable->kind == VariableKind::Element && variable->isConst) {
+                return "'" + variable->name + "' is an element of a read-only 'for': write 'for (ref " + variable->type.name() +
+                       " " + variable->name + " in ...)' to modify it (D25)";
+            }
             if (variable->isConst) return "'" + variable->name + "' is const and cannot be modified (D26)";
             return "";
         }
         case ExprKind::Field:
             return readOnlyReason(*static_cast<const FieldExpr&>(expr).object);  // const is deep (D24)
+        case ExprKind::Index:
+            return readOnlyReason(*static_cast<const IndexExpr&>(expr).object);
         case ExprKind::Self:
             if (current_->isConst) return "method '" + current_->name + "' is const and cannot modify the fields (D24)";
             return "";
@@ -859,7 +957,7 @@ private:
         Type type = checkExpr(target, std::nullopt);
         if (type.isError()) return type;
         if (!isPlace(*target)) {
-            diag_->error(target->loc, "only a variable or a field can be assigned");
+            diag_->error(target->loc, "only a variable, a field or an element can be assigned");
             return Type::error();
         }
         std::string reason = readOnlyReason(*target);
@@ -867,14 +965,30 @@ private:
             diag_->error(target->loc, reason);
             return Type::error();
         }
+        if (!checkNotBorrowed(*target, target->loc)) return Type::error();
         return type;
+    }
+
+    // D101: while a `for` goes over the elements of a list, the list cannot be
+    // modified, except its elements through the variable of the loop.
+    bool checkNotBorrowed(const Expr& place, SourceLocation loc) {
+        std::optional<Path> path = pathOf(place);
+        if (!path) return true;
+        for (const LoopBorrow& borrow : loopBorrows_) {
+            if (overlaps(*path, borrow.path) == Overlap::No) continue;
+            diag_->error(loc, "'" + placeText(place) + "' cannot be modified while a 'for' goes over the elements of '" +
+                                  borrow.text + "' (D101)");
+            return false;
+        }
+        return true;
     }
 
     // Whether `move` can take the value of this place (D23, D26, D78).
     bool canMove(const Expr& place) const {
         if (place.kind == ExprKind::Name) {
             const Variable* variable = static_cast<const NameExpr&>(place).variable;
-            return variable && variable->kind != VariableKind::ReadParam;
+            return variable && variable->kind != VariableKind::ReadParam &&
+                   !(variable->kind == VariableKind::Element && variable->isConst);
         }
         return readOnlyReason(place).empty();
     }
@@ -892,13 +1006,16 @@ private:
     }
 
     // The copy() of a struct: written by hand, or generated the first time it is used (D35).
-    FunctionDecl* copyFunction(const StructDecl& constDecl) {
-        StructDecl& decl = *structs_.at(constDecl.name);
+    FunctionDecl* copyFunction(const StructDecl& constDecl, SourceLocation loc) {
+        auto& decl = const_cast<StructDecl&>(constDecl);
         auto found = decl.methods.find("copy");
-        if (found != decl.methods.end()) return found->second;
+        if (found != decl.methods.end()) {
+            use(found->second, loc);
+            return found->second;
+        }
         if (!canCopy(Type::structType(&decl))) return nullptr;
         for (const FieldDecl& field : decl.fields) {
-            if (needsDestruction(field.resolved)) copyFunction(*field.resolved.structDecl);
+            if (needsDestruction(field.resolved)) copyFunction(*field.resolved.structDecl, loc);
         }
         auto copy = std::make_unique<FunctionDecl>();
         copy->kind = FunctionKind::Method;
@@ -954,6 +1071,7 @@ private:
             switch (variable->kind) {
             case VariableKind::Local:
             case VariableKind::MoveParam:
+                if (!checkNotBorrowed(operand, node.loc)) return Type::error();
                 node.moveKind = MoveKind::Variable;
                 variable->needsDropFlag = true;
                 return type;
@@ -964,6 +1082,13 @@ private:
                 diag_->error(node.loc, "parameter '" + variable->name +
                                           "' is read-only: it belongs to the caller and cannot be moved (D82)");
                 return Type::error();
+            case VariableKind::Element:
+                if (variable->isConst) {
+                    diag_->error(node.loc, "cannot move '" + variable->name + "': it is an element of a read-only 'for' (D25)");
+                    return Type::error();
+                }
+                node.moveKind = MoveKind::Take;  // D78
+                return type;
             }
         }
         std::string reason = readOnlyReason(operand);
@@ -971,6 +1096,7 @@ private:
             diag_->error(node.loc, "cannot move '" + placeText(operand) + "': " + reason);
             return Type::error();
         }
+        if (!checkNotBorrowed(operand, node.loc)) return Type::error();
         node.moveKind = MoveKind::Take;  // D78
         return type;
     }
@@ -1005,7 +1131,7 @@ private:
         case StmtKind::VarDecl: checkVarDecl(static_cast<VarDeclStmt&>(statement)); return Flow::Continues;
         case StmtKind::Assign: checkAssign(static_cast<AssignStmt&>(statement)); return Flow::Continues;
         case StmtKind::IncDec: checkIncDec(static_cast<IncDecStmt&>(statement)); return Flow::Continues;
-        case StmtKind::Expr: checkExprStmt(static_cast<ExprStmt&>(statement)); return Flow::Continues;
+        case StmtKind::Expr: return checkExprStmt(static_cast<ExprStmt&>(statement));
         case StmtKind::If: return checkIf(static_cast<IfStmt&>(statement));
         case StmtKind::For: return checkFor(static_cast<ForStmt&>(statement));
         case StmtKind::Break:
@@ -1046,6 +1172,7 @@ private:
             (void)ignored;
             return;
         }
+        if (assign.op == AssignOp::Add && isString(type)) return checkAppend(assign);
         if (assign.op != AssignOp::Assign) {
             if (!type.isNumeric()) {
                 diag_->error(assign.loc, "this compound assignment needs a number, found " + type.name());
@@ -1059,6 +1186,19 @@ private:
         if (coerceValue(assign.value, type)) checkNotCopied(*assign.value, type);
     }
 
+    // D95: `s += t` appends `t` to `s`, with the method of the library.
+    void checkAppend(AssignStmt& assign) {
+        if (!coerce(assign.value, assign.target->type)) return;
+        FunctionDecl* append = stringDecl_->methods.at("append");
+        SourceLocation loc = assign.loc;
+        auto call = std::make_unique<MethodCallExpr>(loc, std::move(assign.target), "append");
+        call->args.push_back(std::move(assign.value));
+        call->function = append;
+        call->type = Type::voidType();
+        checkExclusivity(call->args, *append, call->object.get(), &call->overlaps);
+        assign.call = std::move(call);
+    }
+
     void checkIncDec(IncDecStmt& incDec) {
         Type type = checkTarget(incDec.target);
         if (!type.isError() && !type.isInt()) {
@@ -1066,14 +1206,18 @@ private:
         }
     }
 
-    void checkExprStmt(ExprStmt& statement) {
+    Flow checkExprStmt(ExprStmt& statement) {
         ExprKind kind = statement.expr->kind;
         if (kind != ExprKind::Call && kind != ExprKind::MethodCall) {
             diag_->error(statement.expr->loc, "this expression does nothing: only function calls can be statements");
-            return;
+            return Flow::Continues;
         }
         Type ignored = checkExpr(statement.expr, std::nullopt);
         (void)ignored;
+        // D102: a panic ends the path, like `ret` (D67).
+        bool panics = statement.expr->kind == ExprKind::Call &&
+                      static_cast<const CallExpr&>(*statement.expr).intrinsic == Intrinsic::Panic;
+        return panics ? Flow::Returns : Flow::Continues;
     }
 
     void checkCondition(ExprPtr& condition) {
@@ -1093,7 +1237,47 @@ private:
         return thenFlow == Flow::Returns && elseFlow == Flow::Returns ? Flow::Returns : Flow::Jumps;
     }
 
+    // `for ([ref] T x in v)` (D25, D101).
+    Flow checkForEach(ForStmt& statement) {
+        scopes_.emplace_back();
+        Type list = checkExpr(statement.list, std::nullopt);
+        Type element = resolveType(statement.elementType).value_or(Type::error());
+        bool ok = !list.isError() && !element.isError();
+        if (ok && !isList(list)) {
+            diag_->error(statement.list->loc, "'for' goes over the elements of a list, found " + list.name() + " (D25)");
+            ok = false;
+        } else if (ok && element != elementOf(list)) {
+            diag_->error(statement.elementType.loc, "the elements of this list are " + elementOf(list).name() + ": write for (" +
+                                                        std::string(statement.isRef ? "ref " : "") + elementOf(list).name() +
+                                                        " " + statement.elementName + " in ...) (D101)");
+            ok = false;
+        }
+        if (ok && statement.isRef) {
+            std::string reason = isPlace(*statement.list) ? readOnlyReason(*statement.list)
+                                                          : "only the elements of a variable or of a field can be modified";
+            if (!reason.empty()) {
+                diag_->error(statement.list->loc, "cannot modify the elements: " + reason);
+                ok = false;
+            } else if (!checkNotBorrowed(*statement.list, statement.list->loc)) {
+                ok = false;
+            }
+        }
+        Variable* variable = declare(statement.elementName, ok ? element : Type::error(), statement.elementLoc, !statement.isRef);
+        if (variable) variable->kind = VariableKind::Element;
+        statement.element = variable;
+
+        std::optional<Path> path = pathOf(*statement.list);
+        if (path) loopBorrows_.push_back({*path, placeText(*statement.list)});
+        loops_.push_back(false);
+        checkBlock(statement.body);
+        loops_.pop_back();
+        if (path) loopBorrows_.pop_back();
+        scopes_.pop_back();
+        return Flow::Continues;
+    }
+
     Flow checkFor(ForStmt& statement) {
+        if (statement.form == ForForm::Each) return checkForEach(statement);
         scopes_.emplace_back();  // the variable of the classic form lives only in the loop
         if (statement.init) checkStatement(*statement.init);
         if (statement.condition) checkCondition(statement.condition);
@@ -1139,7 +1323,15 @@ private:
         if (type.isError() || target.isError()) return false;
         if (type == target) return true;
         if (target.isInterface()) {
-            if (satisfies(type, target.interfaceDecl)) return true;  // passed with its method table (D49)
+            if (satisfies(type, target.interfaceDecl)) {  // passed with its method table (D49)
+                if (type.isStruct()) {
+                    for (const FunctionDecl& method : target.interfaceDecl->methods) {
+                        auto found = type.structDecl->methods.find(method.name);
+                        if (found != type.structDecl->methods.end()) use(found->second, expr->loc);
+                    }
+                }
+                return true;
+            }
             diag_->error(expr->loc, type.name() + " does not implement " + target.name() + " (D49)");
             return false;
         }
@@ -1180,11 +1372,13 @@ private:
         case ExprKind::FloatLiteral: return checkFloatLiteral(static_cast<FloatLiteralExpr&>(*expr), expected);
         case ExprKind::BoolLiteral: return Type::boolType();
         case ExprKind::StringLiteral:
-            diag_->error(expr->loc, "strings arrive in milestone M5: for now a string literal can only be printed (D65)");
+            if (stringDecl_) return Type::structType(stringDecl_);  // D100
+            diag_->error(expr->loc, "the standard library has no string");
             return Type::error();
+        case ExprKind::Index: return checkIndex(static_cast<IndexExpr&>(*expr));
         case ExprKind::Name: return checkName(expr);
         case ExprKind::Unary: return checkUnary(expr, expected);
-        case ExprKind::Binary: return checkBinary(static_cast<BinaryExpr&>(*expr), expected);
+        case ExprKind::Binary: return checkBinary(expr, expected);
         case ExprKind::Call: return checkCall(expr);
         case ExprKind::Field: return checkField(static_cast<FieldExpr&>(*expr));
         case ExprKind::MethodCall: return checkMethodCall(expr);
@@ -1268,6 +1462,10 @@ private:
             diag_->error(field.loc, "a " + object.name() + " has no fields");
             return Type::error();
         }
+        if (inLibrary(object.structDecl->loc) && !inLibrary(field.loc)) {
+            diag_->error(field.loc, "the fields of " + object.name() + " belong to the standard library: use its methods (D97)");
+            return Type::error();
+        }
         const auto& fields = object.structDecl->fields;
         for (size_t i = 0; i < fields.size(); ++i) {
             if (fields[i].name == field.field) {
@@ -1323,7 +1521,7 @@ private:
             // A variable or a field gives its value only with `move`; new values do not need it (D22, D23).
             const Expr* value = arg.get();
             if (value->kind == ExprKind::Conversion) value = static_cast<const ConversionExpr&>(*value).operand.get();
-            if (isPlace(*value)) {
+            if (isPlace(*value) && needsDestruction(value->type)) {  // D94: not for simple types
                 diag_->error(value->loc, name + " is 'move': write 'move " + placeText(*value) + "' (D22)");
                 return false;
             }
@@ -1336,7 +1534,7 @@ private:
     // Checks the arguments of a call against the parameters of `function`, then
     // exclusivity (D22, D79). `object` is the object of a method call, if any.
     bool checkArgs(std::vector<ExprPtr>& args, const FunctionDecl& function, const std::string& what, SourceLocation loc,
-                   const Expr* object = nullptr, Type self = Type::error()) {
+                   OverlapChecks* overlapChecks, const Expr* object = nullptr, Type self = Type::error()) {
         size_t expected = function.params.size();
         if (args.size() != expected) {
             diag_->error(loc, what + " takes " + std::to_string(expected) + (expected == 1 ? " argument, but " : " arguments, but ") +
@@ -1348,12 +1546,13 @@ private:
             if (function.paramTypes[i].isError()) continue;
             ok = checkArg(args[i], function.params[i], withSelf(function.paramTypes[i], self)) && ok;
         }
-        return ok && checkExclusivity(args, function, object);
+        return ok && checkExclusivity(args, function, object, overlapChecks);
     }
 
     // D22, D79: what a call modifies cannot overlap anything else the call uses.
     // A read argument of a simple type is passed as a copy instead.
-    bool checkExclusivity(std::vector<ExprPtr>& args, const FunctionDecl& function, const Expr* object) {
+    bool checkExclusivity(std::vector<ExprPtr>& args, const FunctionDecl& function, const Expr* object,
+                          OverlapChecks* overlapChecks) {
         struct Access {
             Path path;
             const Expr* expr;
@@ -1363,6 +1562,7 @@ private:
         std::vector<Access> accesses;
         if (object) {
             if (std::optional<Path> path = pathOf(*object)) accesses.push_back({*path, object, !function.isConst, -1});
+            if (!function.isConst && !checkNotBorrowed(*object, object->loc)) return false;
         }
         for (size_t i = 0; i < args.size(); ++i) {
             const Expr* arg = args[i].get();
@@ -1370,6 +1570,7 @@ private:
             if (arg->kind == ExprKind::Ref) {
                 arg = static_cast<const RefExpr&>(*arg).operand.get();
                 modifies = true;
+                if (!checkNotBorrowed(*arg, arg->loc)) return false;
             } else if (arg->kind == ExprKind::Move) {
                 // Only a whole variable is handed over in place; the other moves make a new value.
                 const auto& move = static_cast<const MoveExpr&>(*arg);
@@ -1386,10 +1587,16 @@ private:
             for (size_t b = a + 1; b < accesses.size(); ++b) {
                 const Access& first = accesses[a];
                 const Access& second = accesses[b];
-                if (!(first.modifies || second.modifies) || !overlaps(first.path, second.path)) continue;
+                if (!(first.modifies || second.modifies)) continue;
+                Overlap overlap = overlaps(first.path, second.path);
+                if (overlap == Overlap::No) continue;
                 const Access& read = first.modifies ? second : first;
                 if (!read.modifies && read.arg >= 0 && !needsDestruction(read.expr->type)) {
                     copied[read.arg] = true;
+                    continue;
+                }
+                if (overlap == Overlap::Maybe && overlapChecks) {
+                    overlapChecks->emplace_back(first.arg, second.arg);  // compared at runtime (D35)
                     continue;
                 }
                 std::string message = "'" + placeText(*second.expr) + "' overlaps '" + placeText(*first.expr) +
@@ -1438,7 +1645,7 @@ private:
         if (found != object.structDecl->methods.end()) {
             method = found->second;
         } else if (call.method == "copy") {
-            method = copyFunction(*object.structDecl);
+            method = copyFunction(*object.structDecl, call.loc);
             if (!method) {
                 diag_->error(call.loc, object.name() + " cannot be copied: it has a destructor, or a field that cannot be "
                                                       "copied, and it does not define copy() (D35)");
@@ -1457,7 +1664,10 @@ private:
             }
         }
         call.function = method;
-        if (!checkArgs(call.args, *method, "'" + call.method + "'", call.loc, call.object.get())) return Type::error();
+        use(method, call.loc);
+        if (!checkArgs(call.args, *method, "'" + call.method + "'", call.loc, &call.overlaps, call.object.get())) {
+            return Type::error();
+        }
         return method->resolvedReturn;
     }
 
@@ -1488,7 +1698,9 @@ private:
             }
         }
         call.function = method;
-        if (!checkArgs(call.args, *method, "'" + call.method + "'", call.loc, call.object.get(), object)) return Type::error();
+        if (!checkArgs(call.args, *method, "'" + call.method + "'", call.loc, &call.overlaps, call.object.get(), object)) {
+            return Type::error();
+        }
         return withSelf(method->resolvedReturn, object);
     }
 
@@ -1535,7 +1747,8 @@ private:
         return type;
     }
 
-    Type checkBinary(BinaryExpr& binary, std::optional<Type> expected) {
+    Type checkBinary(ExprPtr& expr, std::optional<Type> expected) {
+        auto& binary = static_cast<BinaryExpr&>(*expr);
         if (binary.op == BinaryOp::And || binary.op == BinaryOp::Or) {
             for (ExprPtr* side : {&binary.lhs, &binary.rhs}) {
                 Type type = checkExpr(*side, Type::boolType());
@@ -1557,6 +1770,7 @@ private:
         Type operand = unify(binary, hint);
         if (operand.isError()) return operand;
         binary.operandType = operand;
+        if (isString(operand)) return stringOperator(expr);
 
         if (operand.isParam() || operand.isInterface()) {
             diag_->error(binary.loc, std::string("'") + spelling(binary.op) + "' does not work on values of type " +
@@ -1579,11 +1793,150 @@ private:
             return operand;
         }
         bool equality = binary.op == BinaryOp::Eq || binary.op == BinaryOp::Ne;
-        if (!operand.isNumeric() && !(equality && operand.isBool())) {
+        if (!operand.isNumeric() && !(equality && (operand.isBool() || operand.kind == TypeKind::Addr))) {
             diag_->error(binary.loc, std::string("'") + spelling(binary.op) + "' cannot compare " + operand.name() + " values");
             return Type::error();
         }
         return Type::boolType();
+    }
+
+    // D95: the operators on strings are calls to the methods of the library.
+    Type stringOperator(ExprPtr& expr) {
+        auto& binary = static_cast<BinaryExpr&>(*expr);
+        SourceLocation loc = binary.loc;
+        BinaryOp op = binary.op;
+        auto call = [&](const char* method, Type result) {
+            auto node = std::make_unique<MethodCallExpr>(loc, std::move(binary.lhs), method);
+            node->args.push_back(std::move(binary.rhs));
+            node->function = stringDecl_->methods.at(method);
+            node->type = result;
+            return node;
+        };
+        Type boolean = Type::boolType();
+        switch (op) {
+        case BinaryOp::Add:
+            expr = call("concat", stringType());
+            return stringType();
+        case BinaryOp::Eq:
+            expr = call("equals", boolean);
+            return boolean;
+        case BinaryOp::Ne: {
+            auto negation = std::make_unique<UnaryExpr>(loc, UnaryOp::Not, call("equals", boolean));
+            expr = std::move(negation);
+            return boolean;
+        }
+        case BinaryOp::Lt:
+        case BinaryOp::Le:
+        case BinaryOp::Gt:
+        case BinaryOp::Ge: {
+            Type i32 = Type::intType(32, true);
+            auto zero = std::make_unique<IntLiteralExpr>(loc, 0, false);
+            zero->type = i32;
+            auto comparison = std::make_unique<BinaryExpr>(loc, op, call("compare", i32), std::move(zero));
+            comparison->operandType = i32;
+            expr = std::move(comparison);
+            return boolean;
+        }
+        default:
+            diag_->error(loc, std::string("'") + spelling(op) + "' does not work on strings (D95)");
+            return Type::error();
+        }
+    }
+
+    Type stringType() const { return Type::structType(stringDecl_); }
+    bool isString(Type type) const { return stringDecl_ && type.isStruct() && type.structDecl == stringDecl_; }
+    bool isList(Type type) const { return listDecl_ && type.isStruct() && type.structDecl->generic == listDecl_; }
+    static Type elementOf(Type list) { return list.structDecl->typeArgs[0]; }
+
+    // `v[i]`: an element of a list, with an i64 index (D12, D35).
+    Type checkIndex(IndexExpr& node) {
+        Type object = checkExpr(node.object, std::nullopt);
+        bool indexOk = coerce(node.index, Type::intType(64, true));
+        if (object.isError() || !indexOk) return Type::error();
+        if (!isList(object)) {
+            diag_->error(node.loc, isString(object) ? std::string("a string cannot be indexed yet (D100)")
+                                                    : "only a list has elements, found " + object.name() + " (D35)");
+            return Type::error();
+        }
+        return elementOf(object);
+    }
+
+    // The built-in functions: `panic` (D102), and the `unsafe` dialect of the
+    // standard library (D98).
+    Type checkIntrinsic(CallExpr& call, Intrinsic kind) {
+        call.intrinsic = kind;
+        bool generic = kind == Intrinsic::SizeOf || kind == Intrinsic::Take || kind == Intrinsic::Put ||
+                       kind == Intrinsic::Destroy || kind == Intrinsic::CopyAt;
+        std::string what = "'" + call.callee + "'";
+        if (generic) {
+            std::vector<Type> args;
+            if (!resolveTypeArgs(call.typeArgs, 1, what, call.loc, args)) {
+                checkIgnored(call.args);
+                return Type::error();
+            }
+            call.typeArg = args[0];
+        } else if (!call.typeArgs.empty()) {
+            diag_->error(call.loc, what + " has no type arguments");
+            checkIgnored(call.args);
+            return Type::error();
+        }
+
+        struct Signature {
+            ParamMode mode;
+            const char* name;
+            Type type;
+        };
+        Type i64 = Type::intType(64, true);
+        Type addr = Type::addrType();
+        Type element = call.typeArg;
+        std::vector<Signature> params;
+        Type result = Type::voidType();
+        switch (kind) {
+        case Intrinsic::Panic: params = {{ParamMode::Read, "reason", stringType()}}; break;
+        case Intrinsic::Alloc: params = {{ParamMode::Read, "bytes", i64}}; result = addr; break;
+        case Intrinsic::Resize: params = {{ParamMode::Read, "p", addr}, {ParamMode::Read, "bytes", i64}}; result = addr; break;
+        case Intrinsic::Free: params = {{ParamMode::Read, "p", addr}}; break;
+        case Intrinsic::SizeOf: result = i64; break;
+        case Intrinsic::Offset: params = {{ParamMode::Read, "p", addr}, {ParamMode::Read, "bytes", i64}}; result = addr; break;
+        case Intrinsic::Take: params = {{ParamMode::Read, "p", addr}}; result = element; break;
+        case Intrinsic::Put: params = {{ParamMode::Read, "p", addr}, {ParamMode::Move, "value", element}}; break;
+        case Intrinsic::Destroy: params = {{ParamMode::Read, "p", addr}}; break;
+        case Intrinsic::CopyAt: params = {{ParamMode::Read, "p", addr}}; result = element; break;
+        case Intrinsic::CopyMemory:
+            params = {{ParamMode::Read, "dest", addr}, {ParamMode::Read, "source", addr}, {ParamMode::Read, "bytes", i64}};
+            break;
+        case Intrinsic::CompareMemory:
+            params = {{ParamMode::Read, "a", addr}, {ParamMode::Read, "b", addr}, {ParamMode::Read, "bytes", i64}};
+            result = Type::intType(32, true);
+            break;
+        case Intrinsic::CheckIndex: params = {{ParamMode::Read, "index", i64}, {ParamMode::Read, "length", i64}}; break;
+        case Intrinsic::None: break;
+        }
+
+        if (kind == Intrinsic::CopyAt && !element.isParam()) {  // D85: checked for each type
+            if (!canCopy(element)) {
+                diag_->error(call.loc, "values of type " + element.name() + " cannot be copied: it has a destructor, or a "
+                                                                            "field that cannot be copied, and no copy() (D35)");
+                checkIgnored(call.args);
+                return Type::error();
+            }
+            if (element.isStruct()) copyFunction(*element.structDecl, call.loc);
+        }
+
+        FunctionDecl signature;
+        signature.name = call.callee;
+        signature.loc = call.loc;
+        signature.resolvedReturn = result;
+        for (const Signature& param : params) {
+            Param written;
+            written.mode = param.mode;
+            written.name = param.name;
+            written.loc = call.loc;
+            signature.params.push_back(written);
+            signature.paramTypes.push_back(param.type);
+        }
+        if (!checkArgs(call.args, signature, what, call.loc, &call.overlaps)) return Type::error();
+        return result;
     }
 
     // Finds the common type of the two operands, giving literals the type of the
@@ -1642,6 +1995,10 @@ private:
         if (!typed) {
             if (std::optional<Type> target = findBuiltinType(call.callee)) return checkConversion(expr, *target);
             if (isPrintFunction(call.callee)) return checkPrint(expr);
+            if (call.callee == "panic") return checkIntrinsic(call, Intrinsic::Panic);
+        }
+        if (inLibrary(call.loc)) {
+            if (std::optional<Intrinsic> intrinsic = findIntrinsic(call.callee)) return checkIntrinsic(call, *intrinsic);
         }
 
         auto structFound = structs_.find(call.callee);
@@ -1700,7 +2057,7 @@ private:
             return Type::error();
         }
         call.function = function;
-        if (!checkArgs(call.args, *function, "'" + call.callee + "'", call.loc)) return Type::error();
+        if (!checkArgs(call.args, *function, "'" + call.callee + "'", call.loc, &call.overlaps)) return Type::error();
         return function->resolvedReturn;
     }
 
@@ -1797,7 +2154,10 @@ private:
         Type type = Type::structType(decl);
 
         if (decl->constructor) {
-            if (!checkArgs(node.args, *decl->constructor, "the constructor of " + decl->name, node.loc)) return Type::error();
+            use(decl->constructor, node.loc);
+            if (!checkArgs(node.args, *decl->constructor, "the constructor of " + decl->name, node.loc, &node.overlaps)) {
+                return Type::error();
+            }
         } else if (!node.args.empty()) {
             diag_->error(node.loc, decl->name + " has no constructor: " + decl->name + "() gives its default value (D71)");
             return Type::error();
@@ -1869,7 +2229,7 @@ private:
                 } else if (type.isVoid()) {
                     diag_->error(arg->loc, "this call does not return a value");
                     ok = false;
-                } else if (type.isStruct() || type.isParam() || type.isInterface()) {
+                } else if ((type.isStruct() && !isString(type)) || type.isParam() || type.isInterface()) {
                     diag_->error(arg->loc, "a " + type.name() + " cannot be printed yet (D76)");
                     ok = false;
                 } else if (type.isError()) {
@@ -2061,6 +2421,18 @@ private:
     FunctionDecl* current_ = nullptr;
     std::vector<std::map<std::string, Variable*>> scopes_;
     std::vector<bool> loops_;  // one entry per enclosing loop: true if it contains a break
+
+    // The lists that the enclosing `for` loops go over (D101).
+    struct LoopBorrow {
+        Path path;
+        std::string text;
+    };
+    std::vector<LoopBorrow> loopBorrows_;
+
+    // The types of the standard library (D97).
+    StructDecl* stringDecl_ = nullptr;
+    StructDecl* listDecl_ = nullptr;
+
     bool moveAllowed_ = false;  // set by coerceValue for the expression it checks
 };
 

@@ -1,0 +1,21 @@
+// expect-exit: 101
+// expect-output: 5
+// expect-stderr: panic: something went wrong at
+// expect-stderr: panic.cro:10:9
+i32 main() {
+    println("{}", positive(5))
+    i32 x = 3
+    if (x > 2) {
+        // a panic ends the path: no 'ret' is needed after it (D102)
+        panic("something went wrong")
+    }
+    println("never")
+    ret 0
+}
+
+i32 positive(i32 x) {
+    if (x > 0) {
+        ret x
+    }
+    panic("not positive")
+}

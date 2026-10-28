@@ -74,7 +74,7 @@ void appendUtf8(std::string& out, uint32_t cp) {
 
 class Lexer {
 public:
-    Lexer(const SourceFile& file, Diagnostics& diag) : src_(file.text), diag_(diag) {}
+    Lexer(const SourceFile& file, int fileIndex, Diagnostics& diag) : src_(file.text), file_(fileIndex), diag_(diag) {}
 
     std::vector<Token> run() {
         while (pos_ < src_.size()) {
@@ -112,7 +112,7 @@ private:
         return pos_ + ahead < src_.size() ? src_[pos_ + ahead] : '\0';
     }
 
-    SourceLocation here() const { return SourceLocation{line_, column_}; }
+    SourceLocation here() const { return SourceLocation{line_, column_, file_}; }
 
     void advance() {
         char c = src_[pos_++];
@@ -400,6 +400,7 @@ private:
     }
 
     const std::string& src_;
+    int file_;  // index of the file, for the locations
     Diagnostics& diag_;
     std::vector<Token> tokens_;
     size_t pos_ = 0;
@@ -460,8 +461,8 @@ std::string describe(TokenKind kind) {
     }
 }
 
-std::vector<Token> tokenize(const SourceFile& file, Diagnostics& diag) {
-    return Lexer(file, diag).run();
+std::vector<Token> tokenize(const SourceFile& file, int fileIndex, Diagnostics& diag) {
+    return Lexer(file, fileIndex, diag).run();
 }
 
 }  // namespace cromo

@@ -562,9 +562,26 @@ private:
         }
         if (!expect(TokenKind::LParen, "or '{' after 'for'")) return nullptr;
 
-        if (isForEach()) {
-            diag_.error(peek().loc, "'for' over the elements of a list arrives with lists (milestone M5)");
-            return nullptr;
+        if (isForEach()) {  // '(' ['ref'] type name 'in' expression ')' (D25)
+            stmt->form = ForForm::Each;
+            stmt->isRef = match(TokenKind::KwRef);
+            if (check(TokenKind::Identifier) && peek(1).kind == TokenKind::KwIn) {
+                diag_.error(peek().loc, "write the type of the element: for (T " + peek().text + " in ...) (D54)");
+                return nullptr;
+            }
+            if (!parseType(stmt->elementType)) return nullptr;
+            if (!check(TokenKind::Identifier)) {
+                errorAtCurrent("the name of the element");
+                return nullptr;
+            }
+            stmt->elementName = peek().text;
+            stmt->elementLoc = advance().loc;
+            if (!expect(TokenKind::KwIn, "after the name of the element")) return nullptr;
+            stmt->list = parseExpression();
+            if (!stmt->list) return nullptr;
+            if (!expect(TokenKind::RParen, "to close the 'for' header")) return nullptr;
+            if (!parseBody(stmt->body, "the 'for' header")) return nullptr;
+            return stmt;
         }
 
         if (hasSemicolonBeforeClose()) {
@@ -598,11 +615,10 @@ private:
     }
 
     bool isForEach() const {
-        size_t i = 0;
-        if (peek(i).kind == TokenKind::KwRef) ++i;
-        return peek(i).kind == TokenKind::Identifier &&
-               (peek(i + 1).kind == TokenKind::KwIn ||
-                (peek(i + 1).kind == TokenKind::Identifier && peek(i + 2).kind == TokenKind::KwIn));
+        size_t i = peek(0).kind == TokenKind::KwRef ? 1 : 0;
+        if (peek(i).kind == TokenKind::Identifier && peek(i + 1).kind == TokenKind::KwIn) return true;  // no type: an error
+        size_t afterType = skipType(i);
+        return afterType && peek(afterType).kind == TokenKind::Identifier && peek(afterType + 1).kind == TokenKind::KwIn;
     }
 
     // True if the 'for' header contains a ';' before its closing parenthesis.
@@ -750,7 +766,15 @@ private:
         } else {
             expr = parsePrimary();
         }
-        while (expr && check(TokenKind::Dot)) {
+        while (expr && (check(TokenKind::Dot) || check(TokenKind::LBracket))) {
+            if (check(TokenKind::LBracket)) {  // `v[i]` (D35)
+                SourceLocation loc = advance().loc;
+                ExprPtr index = parseExpression();
+                if (!index) return nullptr;
+                if (!expect(TokenKind::RBracket, "to close the index")) return nullptr;
+                expr = std::make_unique<IndexExpr>(loc, std::move(expr), std::move(index));
+                continue;
+            }
             advance();
             if (!check(TokenKind::Identifier)) {
                 errorAtCurrent("the name of a field or method after '.'");

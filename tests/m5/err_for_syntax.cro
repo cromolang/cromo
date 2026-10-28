@@ -1,0 +1,7 @@
+// expect-error: write the type of the element: for (T x in ...) (D54)
+i32 main() {
+    list<i32> v
+    for (x in v) {
+    }
+    ret 0
+}

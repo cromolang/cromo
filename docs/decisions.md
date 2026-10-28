@@ -608,6 +608,61 @@ An interface lists method signatures: no fields, no method bodies, no constructo
 - They are built with explicit type arguments, `Pair<i32, f64>()`: deduction (D86) applies only to functions.
 - Their methods use the type parameters of the struct; methods with type parameters of their own will come later.
 
+### D93. The runtime in C stays until it is needed
+*2026-10-28.* It amends D58. In M5 the `unsafe` dialect arrives, with `list<T>` and `string` written in Cromo. The runtime in C stays for the calls to the operating system, the output and the formatting of numbers, until `extern` (M7), the bitwise operators and fixed-size arrays exist: without them, the exact formatting of floating-point numbers is very awkward to write.
+
+### D94. `move` can be omitted for simple types
+*2026-10-28.* It amends D22 and D82. Passing a simple type to a `move` parameter, `move` can be omitted, because nobody gives up anything: the value is copied (D80). For the other types it stays mandatory.
+
+```cromo
+grades.add(grade)          // ok: f64
+grades.add(move grade)     // ok as well
+students.add(anna)         // ERROR: Student
+students.add(move anna)    // ok
+```
+
+### D95. Operators on `string`
+*2026-10-28.* `==`, `!=`, `<`, `<=`, `>`, `>=`, `+` and `+=` are operations of the language on `string`, as for the numbers. The order is the order of the bytes, which in UTF-8 is the order of the code points. The interfaces that will give operators to user-defined types (D87) come later, in a step of their own.
+
+### D96. Lists of interfaces after M5
+*2026-10-28.* In M5 `list<T>` takes only concrete types, and D91 stays. `list<Shape>` (D49), where every element is allocated on the heap with its method table, comes in a later step.
+
+### D97. The standard library
+*2026-10-28.*
+- It is the file `library/core.cro`, embedded in `cromo` and compiled with every program. In M5 it contains `list<T>` and `string`.
+- It is the only code that can use the `unsafe` dialect (D37). There is no syntax to mark it yet: it will come with modules (M7).
+
+### D98. The `unsafe` dialect in M5
+*2026-10-28.*
+- The type `addr`: an address without a type. Its default value is null, and it can be compared with `==` and `!=`.
+- Built-in functions: `alloc(bytes)`, `resize(p, bytes)` and `free(p)` for the heap; `sizeOf<T>()`; `offset(p, bytes)`; `take<T>(p)`, which moves the value out of `p`; `put<T>(p, move value)`, which moves it in without destroying what was there; `destroy<T>(p)`; `copyAt<T>(p)`, which returns a copy (D35); `copyMemory(dest, source, bytes)` and `compareMemory(a, b, bytes)`; `checkIndex(index, length)`, the bounds check of D30.
+
+### D99. `list<T>`
+*2026-10-28.*
+- `list<T>()` is the empty list, which is also the default value.
+- Its methods: `add(move T)`, `insert(i64 index, move T)`, `remove(i64 index)`, which returns the element, `len()`, `clear()`, `reserve(i64 count)` and `copy()`.
+- `v[i]` is the element itself, with bounds checking (D30, D35): it can be read, assigned, passed with `ref`, and moved with `move v[i]`, which leaves the default value (D78).
+
+### D100. `string`
+*2026-10-28.*
+- A string literal is a `string` wherever a `string` is expected (D55). It does not allocate memory until it is modified.
+- `len()` is the length in bytes (D12). The other methods are `append`, `reserve` and `copy`, besides the operators of D95.
+- Indexing, slicing and `format()` (D38) come later.
+
+### D101. `for` over the elements
+*2026-10-28.*
+- `for (T x in v)` gives each element read-only; `for (ref T x in v)` lets the body modify it (D25). The type of `x` is written, and it must be exactly the type of the elements.
+- In the body the list can be read, but not modified, except its elements through `x`: no method that changes it, no assignment and no `ref` or `move` of the list or of its other elements.
+
+### D102. `panic`
+*2026-10-28.*
+- `panic("reason")` stops the program as in D62. Like `ret`, it ends the paths of a function (D67).
+- A panic inside the standard library, for example an index out of bounds in `remove`, reports the line of the user's code that called it, as `#[track_caller]` does in Rust.
+
+### D103. The methods of generic structs are checked when they are used
+*2026-10-28.*
+For an instance with real types, a method is checked (and emitted) only if it is used. This extends D85: `list<File>` can be used even if `File` cannot be copied, as long as `copy()` of the list is not called. The definition of the generic is still checked whole, once (D52).
+
 ---
 
 ## Open

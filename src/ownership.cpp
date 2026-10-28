@@ -92,6 +92,10 @@ private:
         case StmtKind::Assign: {
             // The value is computed before the target is written.
             const auto& assign = static_cast<const AssignStmt&>(statement);
+            if (assign.call) {  // `s += t` (D95)
+                visit(*assign.call);
+                break;
+            }
             visit(*assign.value);
             if (assign.target->kind == ExprKind::Name && assign.op == AssignOp::Assign) {
                 set(static_cast<const NameExpr&>(*assign.target).variable, kLive);  // usable again (D81)
@@ -101,7 +105,15 @@ private:
             break;
         }
         case StmtKind::IncDec: visit(*static_cast<const IncDecStmt&>(statement).target); break;
-        case StmtKind::Expr: visit(*static_cast<const ExprStmt&>(statement).expr); break;
+        case StmtKind::Expr: {
+            const Expr& expr = *static_cast<const ExprStmt&>(statement).expr;
+            visit(expr);
+            // D102: nothing runs after a panic.
+            if (expr.kind == ExprKind::Call && static_cast<const CallExpr&>(expr).intrinsic == Intrinsic::Panic) {
+                state_ = unreachable();
+            }
+            break;
+        }
         case StmtKind::If: {
             const auto& ifStmt = static_cast<const IfStmt&>(statement);
             visit(*ifStmt.condition);
@@ -135,6 +147,7 @@ private:
     // reporting errors; then once more, reporting them.
     void checkFor(const ForStmt& statement) {
         if (statement.init) checkStatement(*statement.init);
+        if (statement.list) visit(*statement.list);
         State head = state_;
         bool report = report_;
         report_ = false;
@@ -158,6 +171,7 @@ private:
             visit(*statement.condition);
             whenFalse = state_;
         }
+        if (statement.form == ForForm::Each) whenFalse = state_;  // the list may have no more elements
         loops_.emplace_back();
         checkBlock(statement.body);
         Loop loop = std::move(loops_.back());
@@ -224,6 +238,12 @@ private:
         }
         case ExprKind::Ref: visit(*static_cast<const RefExpr&>(expr).operand); break;
         case ExprKind::Copy: visit(*static_cast<const CopyExpr&>(expr).operand); break;
+        case ExprKind::Index: {
+            const auto& element = static_cast<const IndexExpr&>(expr);
+            visit(*element.object);
+            visit(*element.index);
+            break;
+        }
         }
     }
 

@@ -4,7 +4,6 @@
 // expect-error: struct 'Loop' contains itself through field 'next'
 // expect-error: the initial value of a field must be a literal (D73)
 // expect-error: a destructor has no parameters
-// expect-error: the type 'string' arrives in milestone M5
 struct Twice {
     i32 x
     i32 x

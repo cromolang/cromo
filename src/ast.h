@@ -36,6 +36,7 @@ enum class VariableKind {
     ReadParam,  // read-only, the caller remains the owner (D22)
     RefParam,   // the caller's object, which the function can modify (D22)
     MoveParam,  // owned by the function (D22)
+    Element,    // the element of a `for` over a list: read-only, or `ref` (D25)
 };
 
 // A local variable or a parameter, created by sema.
@@ -53,7 +54,7 @@ struct Variable {
 
 enum class ExprKind {
     IntLiteral, FloatLiteral, BoolLiteral, StringLiteral, Name, Unary, Binary, Call, Conversion, Print,
-    Field, MethodCall, Construct, Self, Move, Ref, Copy,
+    Field, MethodCall, Construct, Self, Move, Ref, Copy, Index,
 };
 
 struct Expr {
@@ -123,6 +124,17 @@ struct BinaryExpr : Expr {
     Type operandType;  // set by sema: the common type of the two operands
 };
 
+// Functions built into the compiler: `panic` (D102) and, in the standard library
+// only, the `unsafe` dialect (D37, D98).
+enum class Intrinsic {
+    None, Panic, Alloc, Resize, Free, SizeOf, Offset, Take, Put, Destroy, CopyAt, CopyMemory, CompareMemory, CheckIndex,
+};
+
+// Pairs of arguments that must not be the same element of a list: when the
+// indices are not constants, they are compared at runtime (D35). -1 is the
+// object of a method.
+using OverlapChecks = std::vector<std::pair<int, int>>;
+
 // `name(args)`: a free function, a conversion, a print, or a constructor (sema decides).
 struct CallExpr : Expr {
     CallExpr(SourceLocation l, std::string c) : Expr(ExprKind::Call, l), callee(std::move(c)) {}
@@ -131,6 +143,9 @@ struct CallExpr : Expr {
     std::vector<TypeName> typeArgs;  // written type arguments: `max<Money>(a, b)` (D86)
     std::vector<ExprPtr> args;
     FunctionDecl* function = nullptr;  // set by sema
+    Intrinsic intrinsic = Intrinsic::None;
+    Type typeArg;                      // of the intrinsics with a type argument: `sizeOf<T>()`
+    OverlapChecks overlaps;
 };
 
 // Conversion to `type`: written as `f64(x)`, or inserted by sema when it is lossless (D33).
@@ -191,6 +206,7 @@ struct MethodCallExpr : Expr {
     std::string method;
     std::vector<ExprPtr> args;
     FunctionDecl* function = nullptr;  // set by sema
+    OverlapChecks overlaps;
 };
 
 // `Student("Anna")`: a new object of a struct, made by sema from a CallExpr.
@@ -200,6 +216,7 @@ struct ConstructExpr : Expr {
 
     const struct StructDecl* decl;
     std::vector<ExprPtr> args;
+    OverlapChecks overlaps;
 };
 
 // The object a method works on. It cannot be written in the source (D70).
@@ -234,6 +251,14 @@ struct CopyExpr : Expr {
     CopyExpr(SourceLocation l, ExprPtr o) : Expr(ExprKind::Copy, l), operand(std::move(o)) { type = operand->type; }
 
     ExprPtr operand;
+};
+
+// `v[i]`: an element of a list, with bounds checking (D30, D35).
+struct IndexExpr : Expr {
+    IndexExpr(SourceLocation l, ExprPtr o, ExprPtr i) : Expr(ExprKind::Index, l), object(std::move(o)), index(std::move(i)) {}
+
+    ExprPtr object;
+    ExprPtr index;
 };
 
 // ---- Statements ----
@@ -275,6 +300,7 @@ struct AssignStmt : Stmt {
     ExprPtr target;  // a variable or a field
     AssignOp op;
     ExprPtr value;
+    ExprPtr call;    // set by sema: `s += t` on strings is `s.append(t)` (D95)
 };
 
 struct IncDecStmt : Stmt {
@@ -298,7 +324,7 @@ struct IfStmt : Stmt {
     std::unique_ptr<Block> elseBlock;  // `else if` is an else block holding a single IfStmt
 };
 
-enum class ForForm { Infinite, Condition, Classic };
+enum class ForForm { Infinite, Condition, Classic, Each };
 
 struct ForStmt : Stmt {
     ForStmt(SourceLocation l) : Stmt(StmtKind::For, l) {}
@@ -308,6 +334,14 @@ struct ForStmt : Stmt {
     ExprPtr condition;   // Condition and Classic, may be null in Classic
     StmtPtr step;        // Classic only, may be null
     Block body;
+
+    // Each: `for ([ref] T x in v)` (D25).
+    bool isRef = false;
+    TypeName elementType;
+    std::string elementName;
+    SourceLocation elementLoc;
+    ExprPtr list;
+    Variable* element = nullptr;  // set by sema
 };
 
 struct BreakStmt : Stmt {
@@ -362,6 +396,7 @@ struct FunctionDecl {
     TypeBindings typeBindings;              // also for the members of an instance of a generic struct
     bool isAbstract = false;                // has type parameters as types: checked, never emitted
     bool isDefinition = false;              // the check of a generic with its own type parameters (D52)
+    bool scheduled = false;                 // its body is waiting to be checked, or has been (D103)
     bool bodyChecked = false;
 };
 
@@ -420,6 +455,14 @@ struct Module {
     // Instances of generic structs and functions, created by sema (D39).
     std::vector<std::unique_ptr<StructDecl>> structInstances;
     std::vector<std::unique_ptr<FunctionDecl>> functionInstances;
+
+    // Adds the declarations of another file, as parsed: the program after the
+    // standard library (D97).
+    void append(Module&& other) {
+        for (InterfaceDecl& decl : other.interfaces) interfaces.push_back(std::move(decl));
+        for (StructDecl& decl : other.structs) structs.push_back(std::move(decl));
+        for (FunctionDecl& function : other.functions) functions.push_back(std::move(function));
+    }
 };
 
 // Deep copies of declarations that sema has not checked yet: each instance of a

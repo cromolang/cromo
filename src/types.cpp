@@ -16,6 +16,7 @@ std::string Type::name() const {
     case TypeKind::Param: return param->name;
     case TypeKind::Interface: return interfaceDecl->name;
     case TypeKind::SelfType: return "Self";
+    case TypeKind::Addr: return "addr";
     case TypeKind::UntypedInt: return "integer literal";
     case TypeKind::UntypedFloat: return "decimal literal";
     }
@@ -65,6 +66,7 @@ int sizeOf(Type type) {
     case TypeKind::Float: return type.bits / 8;
     case TypeKind::Struct: return type.structDecl->size;
     case TypeKind::Interface: return 16;
+    case TypeKind::Addr: return 8;
     default: return 0;
     }
 }
@@ -85,6 +87,7 @@ std::string llvmType(Type type) {
     case TypeKind::String: return "ptr";
     case TypeKind::Struct: return llvmName('%', "struct." + type.structDecl->name);
     case TypeKind::Interface: return "{ ptr, ptr }";
+    case TypeKind::Addr: return "ptr";
     default: return "<invalid>";
     }
 }

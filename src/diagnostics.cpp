@@ -31,7 +31,7 @@ void Diagnostics::error(SourceLocation loc, const std::string& message) {
 void Diagnostics::error(const std::string& message) {
     if (muted_) return;
     ++errorCount_;
-    std::fprintf(stderr, "%s: error: %s\n", file_.path.c_str(), (message + context_).c_str());
+    std::fprintf(stderr, "%s: error: %s\n", files_[0]->path.c_str(), (message + context_).c_str());
 }
 
 void Diagnostics::warning(SourceLocation loc, const std::string& message) {
@@ -40,9 +40,10 @@ void Diagnostics::warning(SourceLocation loc, const std::string& message) {
 }
 
 void Diagnostics::report(const char* kind, SourceLocation loc, const std::string& message) {
-    std::fprintf(stderr, "%s:%d:%d: %s: %s\n", file_.path.c_str(), loc.line, loc.column, kind, message.c_str());
+    const SourceFile& file = *files_[loc.file];
+    std::fprintf(stderr, "%s:%d:%d: %s: %s\n", file.path.c_str(), loc.line, loc.column, kind, message.c_str());
 
-    std::string source = lineAt(file_.text, loc.line);
+    std::string source = lineAt(file.text, loc.line);
     if (source.empty()) return;
     std::fprintf(stderr, "    %s\n    ", source.c_str());
 

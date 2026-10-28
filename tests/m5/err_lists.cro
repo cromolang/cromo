@@ -1,0 +1,49 @@
+// expect-error: the elements of this list are i32: write for (i32 x in ...) (D101)
+// expect-error: 'v' cannot be modified while a 'for' goes over the elements of 'v' (D101)
+// expect-error: 'x' is an element of a read-only 'for': write 'for (ref i32 x in ...)' to modify it (D25)
+// expect-error: cannot modify the elements: 'fixed' is const and cannot be modified (D26)
+// expect-error: a string cannot be indexed yet (D100)
+// expect-error: only a list has elements, found i32 (D35)
+// expect-error: 'addr' belongs to the unsafe dialect of the standard library (D37)
+// expect-error: unknown function 'alloc'
+// expect-error: the fields of string belong to the standard library: use its methods (D97)
+// expect-error: parameter 'value' is 'move': write 'move f' (D22)
+// expect-error: 'v[0]' overlaps 'v[0]' in the same call, and the call can modify both (D22)
+// expect-error: 'panic' is a built-in name
+struct File {
+    i32 fd
+
+    ~File() {
+    }
+}
+
+void swap(ref i32 a, ref i32 b) {
+}
+
+void panic() {
+}
+
+i32 main() {
+    list<i32> v
+    for (i64 x in v) {
+    }
+    for (i32 x in v) {
+        v.add(1)
+        x = 2
+    }
+    const list<i32> fixed = list<i32>()
+    for (ref i32 y in fixed) {
+    }
+    string s = "abc"
+    u8 c = s[0]
+    i32 n = 5
+    i32 m = n[0]
+    addr p
+    alloc(5)
+    i64 length = s.length
+    list<File> files
+    File f = File()
+    files.add(f)
+    swap(ref v[0], ref v[0])
+    ret 0
+}

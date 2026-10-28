@@ -1,0 +1,98 @@
+// expect-output: [0][1][2][3]
+// expect-output: [100][0][2][3]
+// expect-output: 10 4
+// expect-output: [200][0][4][6]
+// expect-output: 4 0
+// expect-output: 204
+// expect-output: 2 7 10
+// expect-output: create 1
+// expect-output: create 2
+// expect-output: taken 1 left 0
+// expect-output: removed 2 len 1
+// expect-output: end
+// expect-output: destroy 2
+// expect-output: destroy 1
+// expect-output: destroy 0
+// list<T> (D13, D99) and `for` over the elements (D25, D101).
+struct Noisy {
+    i32 id
+
+    Noisy(i32 n) {
+        id = n
+        println("create {}", id)
+    }
+
+    ~Noisy() {
+        println("destroy {}", id)
+    }
+}
+
+// A read parameter: the list is passed by address, without a copy.
+void printAll(list<i64> values) {
+    for (i64 v in values) {
+        print("[{}]", v)
+    }
+    println("")
+}
+
+void doubleAll(ref list<i64> values) {
+    for (ref i64 v in values) {
+        v *= 2
+    }
+}
+
+list<i64> range(i64 count) {
+    list<i64> result
+    for (i64 i = 0; i < count; i++) {
+        result.add(i)  // a simple type: move can be omitted (D94)
+    }
+    ret result
+}
+
+i32 main() {
+    list<i64> v = range(4)
+    printAll(v)
+    v[1] = 10
+    v.insert(0, 100)
+    i64 removed = v.remove(2)
+    printAll(v)
+    println("{} {}", removed, v.len())
+    doubleAll(ref v)
+    printAll(v)
+    list<i64> w = v.copy()
+    w.clear()
+    println("{} {}", v.len(), w.len())
+
+    i64 total = 0
+    for (i64 x in v) {
+        if (x == 0) {
+            continue
+        }
+        if (x == 6) {
+            break
+        }
+        total += x
+    }
+    println("{}", total)
+
+    list<list<i32>> grid
+    for (i64 r = 0; r < 2; r++) {
+        list<i32> row
+        row.add(i32(r))
+        row.add(i32(r) * 10)
+        grid.add(move row)
+    }
+    grid[1][0] = 7
+    println("{} {} {}", grid.len(), grid[1][0], grid[1][1])
+
+    // Noisy has no copy(): list<Noisy> works as long as copy() is not used (D103).
+    list<Noisy> things
+    things.add(Noisy(1))
+    things.add(Noisy(2))
+    Noisy taken = move things[0]  // the element keeps the default value (D78)
+    println("taken {} left {}", taken.id, things[0].id)
+    Noisy last = things.remove(1)
+    println("removed {} len {}", last.id, things.len())
+    println("end")
+    ret 0
+}

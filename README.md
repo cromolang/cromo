@@ -12,7 +12,7 @@ The name comes from chromium (*cromo* in Italian), the element that makes steel 
 
 ## Status
 
-**Milestones M0 to M4 completed.** The bootstrap compiler in C++ (`src/`) compiles programs with numbers, `bool`, variables, `if`/`for`, functions, `println`, structs with methods, constructors and destructors (RAII), ownership with `ref`, `move` and `copy()`, generics and interfaces into Windows executables with no C runtime. Lists, strings and the standard library come with the next milestones (see [docs/compiler.md](docs/compiler.md)). The design choices are in the documents under `docs/`; of the examples under `examples/`, only `02_loops.cro` can be compiled for now.
+**Milestones M0 to M5 completed.** The bootstrap compiler in C++ (`src/`) compiles programs with numbers, `bool`, variables, `if`/`for`, functions, `println`, structs with methods, constructors and destructors (RAII), ownership with `ref`, `move` and `copy()`, generics and interfaces, `list<T>` and `string` into Windows executables with no C runtime. The standard library is written in Cromo, in `library/core.cro`. Exceptions, enums and modules come with the next milestones (see [docs/compiler.md](docs/compiler.md)). The design choices are in the documents under `docs/`; of the examples under `examples/`, `01_functions.cro`, `02_loops.cro` and `04_lists.cro` can be compiled.
 
 ## Building and trying it
 

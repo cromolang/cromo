@@ -4,6 +4,7 @@
 #include "lexer.h"
 #include "ownership.h"
 #include "parser.h"
+#include "runtime_blob.h"
 #include "sema.h"
 
 #include <cstdio>
@@ -87,13 +88,17 @@ int main(int argc, char** argv) {
         return 2;
     }
 
+    // The standard library is compiled together with the program (D97).
+    cromo::SourceFile library{"cromo:core.cro", std::string(cromo::coreLibrary())};
     cromo::Diagnostics diag(file);
-    std::vector<cromo::Token> tokens = cromo::tokenize(file, diag);
-    cromo::Module module = cromo::parse(tokens, diag);
+    int libraryIndex = diag.addFile(library);
+    cromo::Module module = cromo::parse(cromo::tokenize(library, libraryIndex, diag), diag);
+    cromo::Module program = cromo::parse(cromo::tokenize(file, 0, diag), diag);
+    module.append(std::move(program));
     if (diag.hasErrors() || !cromo::check(module, diag) || !cromo::checkMoves(module, diag)) return 1;
 
     std::string sourceName = std::filesystem::path(inputPath).filename().string();
-    codegen.sourcePath = inputPath;
+    codegen.sourcePaths = {inputPath, library.path};
     std::string ir = cromo::generateIR(module, codegen);
     if (emitIr) {
         std::fwrite(ir.data(), 1, ir.size(), stdout);

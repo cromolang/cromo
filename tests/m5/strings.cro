@@ -1,0 +1,56 @@
+// expect-output: città 6
+// expect-output: città città!
+// expect-output: hello, Anna
+// expect-output: true true true true
+// expect-output: [] 0 true
+// expect-output: ababab 6
+// expect-output: [   abc] [abc   ] [ci]
+// expect-output: Marco / Marco Rossi
+// expect-output: <uno><città!?><abc>
+// string (D10, D100) and its operators (D95).
+struct Person {
+    string name
+    i32 age
+}
+
+string greet(string name) {
+    ret "hello, " + name
+}
+
+i32 main() {
+    string a = "città"
+    println("{} {}", a, a.len())  // the length is in bytes (D12)
+    string b = a.copy()
+    b += "!"  // the literal is copied the first time it changes
+    println("{} {}", a, b)
+    println("{}", greet("Anna"))
+
+    string c = "abc"
+    println("{} {} {} {}", c == "abc", c != "abd", c < "abd", "b" > c)
+    string empty
+    println("[{}] {} {}", empty, empty.len(), empty == "")
+
+    string built
+    for (i32 i = 0; i < 3; i++) {
+        built += "ab"
+    }
+    println("{} {}", built, built.len())
+    println("[{:>6}] [{:<6}] [{:.2}]", c, c, a)
+
+    Person p
+    p.name = "Marco"
+    p.age = 30
+    Person q = p.copy()  // generated: it copies the name with its copy() (D35)
+    q.name += " Rossi"
+    println("{} / {}", p.name, q.name)
+
+    list<string> words
+    words.add("uno")
+    words.add(b + "?")
+    words.add(move c)
+    for (string w in words) {
+        print("<{}>", w)
+    }
+    println("")
+    ret 0
+}

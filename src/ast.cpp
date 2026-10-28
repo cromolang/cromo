@@ -82,6 +82,10 @@ ExprPtr cloneExpr(const Expr& expr) {
         return std::make_unique<RefExpr>(expr.loc, clone(*static_cast<const RefExpr&>(expr).operand));
     case ExprKind::Copy:
         return std::make_unique<CopyExpr>(expr.loc, clone(*static_cast<const CopyExpr&>(expr).operand));
+    case ExprKind::Index: {
+        const auto& from = static_cast<const IndexExpr&>(expr);
+        return std::make_unique<IndexExpr>(from.loc, clone(*from.object), clone(*from.index));
+    }
     }
     return nullptr;
 }
@@ -134,6 +138,11 @@ StmtPtr clone(const Stmt& stmt) {
         to->condition = cloneOrNull(from.condition);
         if (from.step) to->step = clone(*from.step);
         to->body = clone(from.body);
+        to->isRef = from.isRef;
+        to->elementType = from.elementType;
+        to->elementName = from.elementName;
+        to->elementLoc = from.elementLoc;
+        to->list = cloneOrNull(from.list);
         return to;
     }
     case StmtKind::Break: return std::make_unique<BreakStmt>(stmt.loc);

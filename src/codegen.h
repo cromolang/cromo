@@ -3,6 +3,7 @@
 #include "ast.h"
 
 #include <string>
+#include <vector>
 
 namespace cromo {
 
@@ -10,7 +11,7 @@ namespace cromo {
 inline constexpr const char* kTargetTriple = "x86_64-pc-windows-msvc";
 
 struct CodegenOptions {
-    std::string sourcePath;  // shown in panic messages (D62)
+    std::vector<std::string> sourcePaths;  // by SourceLocation::file, shown in panic messages (D62)
     bool release = false;    // D57: no overflow checks, integers wrap around
 };
 

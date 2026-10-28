@@ -1,6 +1,7 @@
-// Temporary bootstrap runtime of Cromo (D58): printing, panics and program exit.
+// Bootstrap runtime of Cromo (D58, D93): printing, panics, heap and program exit.
 // Freestanding C without the C library: it talks to Windows through kernel32.dll
-// (D19). It will be rewritten in Cromo `unsafe` in milestone M5 (D37).
+// (D19). It will be rewritten in Cromo `unsafe` when extern (M7), the bitwise
+// operators and fixed-size arrays exist (D37, D93).
 
 typedef unsigned char u8;
 typedef unsigned short u16;
@@ -19,6 +20,10 @@ __declspec(dllimport) int WINAPI WriteConsoleW(void* console, const u16* text, u
 __declspec(dllimport) int WINAPI MultiByteToWideChar(u32 codePage, u32 flags, const char* text, int size, u16* out,
                                                      int outSize);
 __declspec(dllimport) __declspec(noreturn) void WINAPI ExitProcess(u32 code);
+__declspec(dllimport) void* WINAPI GetProcessHeap(void);
+__declspec(dllimport) void* WINAPI HeapAlloc(void* heap, u32 flags, u64 size);
+__declspec(dllimport) void* WINAPI HeapReAlloc(void* heap, u32 flags, void* memory, u64 size);
+__declspec(dllimport) int WINAPI HeapFree(void* heap, u32 flags, void* memory);
 
 // The Microsoft x64 ABI requires this symbol when floating point is used (D19).
 int _fltused = 0;
@@ -626,12 +631,65 @@ __declspec(noreturn) void cromo_exit(i32 code) {
     ExitProcess((u32)code);
 }
 
-// D62: "panic: <reason> at <file>:<line>:<column>" on stderr, exit code 101.
-__declspec(noreturn) void cromo_panic(const u8* message, u64 size) {
+// Where a panic happens: "<file>:<line>:<column>", a constant built by the compiler.
+typedef struct {
+    const u8* text;
+    u64 size;
+} Where;
+
+static void panicStart(void) {
     flush(1);
     put(2, (const u8*)"panic: ", 7);
-    put(2, message, size);
+}
+
+static __declspec(noreturn) void panicEnd(const Where* where) {
+    if (where) {
+        put(2, (const u8*)" at ", 4);
+        put(2, where->text, where->size);
+    }
     put(2, (const u8*)"\n", 1);
     flush(2);
     ExitProcess(101);
+}
+
+// D62: "panic: <reason> at <file>:<line>:<column>" on stderr, exit code 101.
+__declspec(noreturn) void cromo_panic(const u8* message, u64 size, const Where* where) {
+    panicStart();
+    put(2, message, size);
+    panicEnd(where);
+}
+
+// D30: an index out of the bounds of a list.
+__declspec(noreturn) void cromo_panic_index(i64 index, i64 length, const Where* where) {
+    panicStart();
+    put(2, (const u8*)"index out of bounds: the index is ", 34);
+    cromo_fmt_int(2, (u64)index, 1, 0);
+    put(2, (const u8*)" but the length is ", 19);
+    cromo_fmt_int(2, (u64)length, 1, 0);
+    panicEnd(where);
+}
+
+// ---- Heap, for list and string (D98) ----
+
+static __declspec(noreturn) void outOfMemory(void) {
+    panicStart();
+    put(2, (const u8*)"out of memory", 13);
+    panicEnd(0);
+}
+
+void* cromo_alloc(i64 size) {
+    void* memory = size >= 0 ? HeapAlloc(GetProcessHeap(), 0, (u64)size) : 0;
+    if (!memory) outOfMemory();
+    return memory;
+}
+
+void* cromo_realloc(void* memory, i64 size) {
+    if (!memory) return cromo_alloc(size);
+    void* result = size >= 0 ? HeapReAlloc(GetProcessHeap(), 0, memory, (u64)size) : 0;
+    if (!result) outOfMemory();
+    return result;
+}
+
+void cromo_free(void* memory) {
+    if (memory) HeapFree(GetProcessHeap(), 0, memory);
 }
