@@ -14,7 +14,13 @@ public:
         Module module;
         skipNewlines();
         while (!check(TokenKind::EndOfFile)) {
-            if (auto function = parseFunction()) {
+            if (check(TokenKind::KwStruct)) {
+                if (auto decl = parseStruct()) {
+                    module.structs.push_back(std::move(*decl));
+                } else {
+                    skipToNextDeclaration();
+                }
+            } else if (auto function = parseFunction()) {
                 module.functions.push_back(std::move(*function));
             } else {
                 skipToNextDeclaration();
@@ -103,31 +109,20 @@ private:
         return false;
     }
 
-    // function := type name '(' [param {',' param}] ')' block
-    std::optional<FunctionDecl> parseFunction() {
-        FunctionDecl function;
-        if (!parseType(function.returnType)) return std::nullopt;
-
-        if (!check(TokenKind::Identifier)) {
-            errorAtCurrent("the function name");
-            return std::nullopt;
-        }
-        function.name = peek().text;
-        function.loc = peek().loc;
-        advance();
-
-        if (!expect(TokenKind::LParen, "after the function name")) return std::nullopt;
+    // params := '(' [param {',' param}] ')'
+    bool parseParams(FunctionDecl& function) {
+        if (!expect(TokenKind::LParen, "after the function name")) return false;
         if (!check(TokenKind::RParen)) {
             do {
                 if (check(TokenKind::KwRef) || check(TokenKind::KwMove)) {
                     diag_.error(peek().loc, "'ref' and 'move' parameters arrive in milestone M3");
-                    return std::nullopt;
+                    return false;
                 }
                 Param param;
-                if (!parseType(param.type)) return std::nullopt;
+                if (!parseType(param.type)) return false;
                 if (!check(TokenKind::Identifier)) {
                     errorAtCurrent("the parameter name");
-                    return std::nullopt;
+                    return false;
                 }
                 param.name = peek().text;
                 param.loc = peek().loc;
@@ -135,15 +130,125 @@ private:
                 function.params.push_back(std::move(param));
             } while (match(TokenKind::Comma));
         }
-        if (!expect(TokenKind::RParen, "to close the parameter list")) return std::nullopt;
+        return expect(TokenKind::RParen, "to close the parameter list");
+    }
 
+    bool parseFunctionBody(FunctionDecl& function) {
         skipNewlines();  // the '{' may also be on the next line (D32)
         if (!check(TokenKind::LBrace)) {
             errorAtCurrent("'{' to open the function body");
-            return std::nullopt;
+            return false;
         }
         function.body = parseBlock();
+        return true;
+    }
+
+    // function := type name params ['const'] block
+    std::optional<FunctionDecl> parseFunction(bool inStruct = false) {
+        FunctionDecl function;
+        if (!parseType(function.returnType)) return std::nullopt;
+        if (!check(TokenKind::Identifier)) {
+            errorAtCurrent(inStruct ? "the name of the field or method" : "the function name");
+            return std::nullopt;
+        }
+        function.name = peek().text;
+        function.loc = peek().loc;
+        advance();
+        if (!parseParams(function)) return std::nullopt;
+        if (check(TokenKind::KwConst)) {
+            if (!inStruct) {
+                diag_.error(peek().loc, "only methods can be const (D24)");
+                return std::nullopt;
+            }
+            function.isConst = true;
+            advance();
+        }
+        if (!parseFunctionBody(function)) return std::nullopt;
         return function;
+    }
+
+    // struct := 'struct' name '{' { member } '}'
+    // member := field | constructor | destructor | method
+    std::optional<StructDecl> parseStruct() {
+        StructDecl decl;
+        advance();  // 'struct'
+        if (!check(TokenKind::Identifier)) {
+            errorAtCurrent("the name of the struct");
+            return std::nullopt;
+        }
+        decl.name = peek().text;
+        decl.loc = peek().loc;
+        advance();
+        if (check(TokenKind::Colon)) {
+            diag_.error(peek().loc, "interfaces arrive in milestone M4");
+            return std::nullopt;
+        }
+        skipNewlines();
+        if (!expect(TokenKind::LBrace, "to open the struct")) return std::nullopt;
+        skipNewlines();
+        while (!check(TokenKind::RBrace) && !check(TokenKind::EndOfFile)) {
+            if (!parseMember(decl)) skipToNextStatement();
+            if (!match(TokenKind::Newline) && !check(TokenKind::RBrace)) {
+                errorAtCurrent("a newline after the member");
+                skipToNextStatement();
+            }
+            skipNewlines();
+        }
+        if (!expect(TokenKind::RBrace, "to close the struct")) return std::nullopt;
+        return decl;
+    }
+
+    bool parseMember(StructDecl& decl) {
+        // ~Name() { ... }
+        if (check(TokenKind::Tilde)) {
+            FunctionDecl destructor;
+            destructor.kind = FunctionKind::Destructor;
+            destructor.loc = advance().loc;
+            if (!check(TokenKind::Identifier) || peek().text != decl.name) {
+                errorAtCurrent("'" + decl.name + "' after '~'");
+                return false;
+            }
+            advance();
+            destructor.name = "~" + decl.name;
+            destructor.returnType = TypeName{"void", destructor.loc};
+            if (!parseParams(destructor) || !parseFunctionBody(destructor)) return false;
+            decl.members.push_back(std::move(destructor));
+            return true;
+        }
+        // Name(params) { ... }
+        if (check(TokenKind::Identifier) && peek().text == decl.name && peek(1).kind == TokenKind::LParen) {
+            FunctionDecl constructor;
+            constructor.kind = FunctionKind::Constructor;
+            constructor.name = decl.name;
+            constructor.loc = advance().loc;
+            constructor.returnType = TypeName{"void", constructor.loc};
+            if (!parseParams(constructor) || !parseFunctionBody(constructor)) return false;
+            decl.members.push_back(std::move(constructor));
+            return true;
+        }
+        // type name ['=' literal]   or   type name params ['const'] block
+        if (peek(2).kind == TokenKind::LParen) {
+            auto method = parseFunction(true);
+            if (!method) return false;
+            method->kind = FunctionKind::Method;
+            decl.members.push_back(std::move(*method));
+            return true;
+        }
+        FieldDecl field;
+        if (!parseType(field.type)) return false;
+        if (!check(TokenKind::Identifier)) {
+            errorAtCurrent("the name of the field");
+            return false;
+        }
+        field.name = peek().text;
+        field.loc = peek().loc;
+        advance();
+        if (match(TokenKind::Assign)) {
+            field.init = parseExpression();
+            if (!field.init) return false;
+        }
+        decl.fields.push_back(std::move(field));
+        return true;
     }
 
     // ---- Statements ----
@@ -237,43 +342,33 @@ private:
         return decl;
     }
 
-    // Assignment, ++/-- or expression (a call).
+    // Assignment, ++/-- or expression (a call). The target of an assignment is an
+    // expression too: sema checks that it is a variable or a field.
     StmtPtr parseSimpleStatement() {
-        if (check(TokenKind::Identifier)) {
-            TokenKind next = peek(1).kind;
-            std::optional<AssignOp> op;
-            switch (next) {
-            case TokenKind::Assign: op = AssignOp::Assign; break;
-            case TokenKind::PlusAssign: op = AssignOp::Add; break;
-            case TokenKind::MinusAssign: op = AssignOp::Sub; break;
-            case TokenKind::StarAssign: op = AssignOp::Mul; break;
-            case TokenKind::SlashAssign: op = AssignOp::Div; break;
-            case TokenKind::PercentAssign: op = AssignOp::Rem; break;
-            default: break;
-            }
-            if (op) {
-                auto assign = std::make_unique<AssignStmt>(peek().loc);
-                assign->target = peek().text;
-                assign->targetLoc = peek().loc;
-                assign->op = *op;
-                advance();
-                advance();
-                assign->value = parseExpression();
-                if (!assign->value) return nullptr;
-                return assign;
-            }
-            if (next == TokenKind::PlusPlus || next == TokenKind::MinusMinus) {
-                const Token& name = advance();
-                advance();
-                return std::make_unique<IncDecStmt>(name.loc, name.text, next == TokenKind::PlusPlus);
-            }
-        }
         SourceLocation loc = peek().loc;
         ExprPtr expr = parseExpression();
         if (!expr) return nullptr;
+
+        std::optional<AssignOp> op;
+        switch (peek().kind) {
+        case TokenKind::Assign: op = AssignOp::Assign; break;
+        case TokenKind::PlusAssign: op = AssignOp::Add; break;
+        case TokenKind::MinusAssign: op = AssignOp::Sub; break;
+        case TokenKind::StarAssign: op = AssignOp::Mul; break;
+        case TokenKind::SlashAssign: op = AssignOp::Div; break;
+        case TokenKind::PercentAssign: op = AssignOp::Rem; break;
+        default: break;
+        }
+        if (op) {
+            advance();
+            auto assign = std::make_unique<AssignStmt>(loc, std::move(expr), *op);
+            assign->value = parseExpression();
+            if (!assign->value) return nullptr;
+            return assign;
+        }
         if (check(TokenKind::PlusPlus) || check(TokenKind::MinusMinus)) {
-            diag_.error(peek().loc, "'++' and '--' can only follow a variable name, as a statement on its own (D32)");
-            return nullptr;
+            bool increment = advance().kind == TokenKind::PlusPlus;
+            return std::make_unique<IncDecStmt>(loc, std::move(expr), increment);
         }
         return std::make_unique<ExprStmt>(loc, std::move(expr));
     }
@@ -468,23 +563,47 @@ private:
         return parsePostfix();
     }
 
-    // A name followed by '(' is a call; a type name followed by '(' is a conversion (D20).
+    bool parseArgs(std::vector<ExprPtr>& args) {
+        advance();  // '('
+        if (!check(TokenKind::RParen)) {
+            do {
+                ExprPtr arg = parseExpression();
+                if (!arg) return false;
+                args.push_back(std::move(arg));
+            } while (match(TokenKind::Comma));
+        }
+        return expect(TokenKind::RParen, "to close the arguments");
+    }
+
+    // A name followed by '(' is a call: of a function, of a constructor, or a
+    // conversion when the name is a type (D20). Then any number of `.field` and
+    // `.method(args)`.
     ExprPtr parsePostfix() {
+        ExprPtr expr;
         if (check(TokenKind::Identifier) && peek(1).kind == TokenKind::LParen) {
             const Token& name = advance();
             auto call = std::make_unique<CallExpr>(name.loc, name.text);
-            advance();  // '('
-            if (!check(TokenKind::RParen)) {
-                do {
-                    ExprPtr arg = parseExpression();
-                    if (!arg) return nullptr;
-                    call->args.push_back(std::move(arg));
-                } while (match(TokenKind::Comma));
-            }
-            if (!expect(TokenKind::RParen, "to close the arguments")) return nullptr;
-            return call;
+            if (!parseArgs(call->args)) return nullptr;
+            expr = std::move(call);
+        } else {
+            expr = parsePrimary();
         }
-        return parsePrimary();
+        while (expr && check(TokenKind::Dot)) {
+            advance();
+            if (!check(TokenKind::Identifier)) {
+                errorAtCurrent("the name of a field or method after '.'");
+                return nullptr;
+            }
+            const Token& name = advance();
+            if (check(TokenKind::LParen)) {
+                auto call = std::make_unique<MethodCallExpr>(name.loc, std::move(expr), name.text);
+                if (!parseArgs(call->args)) return nullptr;
+                expr = std::move(call);
+            } else {
+                expr = std::make_unique<FieldExpr>(name.loc, std::move(expr), name.text);
+            }
+        }
+        return expr;
     }
 
     ExprPtr parsePrimary() {

@@ -44,15 +44,22 @@ The compiler keeps a stack of the live objects for each scope. At every exit fro
 ```llvm
 define i32 @main() {
 entry:
-  %f = alloca %File
-  call void @File.ctor(ptr %f, ptr @.str.0)
+  %f = alloca %struct.File
+  call void @File..new(ptr %f, ptr @.str.0)
   ; ... use of f ...
-  call void @File.dtor(ptr %f)
+  call void @File..drop(ptr %f)
   ret i32 0
 }
 ```
 
 Pointers exist in the IR (`ptr`), even though the language has none: the compiler manages them.
+
+How M2 implements the rules of D68:
+- **Constructor.** `T..new(ptr self, args)` first writes the default value of the struct (D48), then runs the body.
+- **Destructor.** `T..drop(ptr self)` runs the body, then destroys the fields in reverse order; a `ret` inside the body jumps to the block that destroys the fields. A struct without a destructor whose fields need one gets a `T..drop` that only destroys the fields.
+- **Temporaries.** An object created inside an expression (a constructor, or a call that returns a struct) gets a slot in the entry block and is destroyed at the end of the statement. In the condition of an `if` or a `for` it is destroyed before the branch; in the right side of `&&` and `||` at the end of that side, because it exists only on that path.
+- **`ret` of a local variable** moves it (D23): the variable is copied to the return value and is not destroyed.
+- **Assignment of a new object** to a variable that needs destruction (D75): the new value is built in a temporary, then the old value is destroyed, then the new one is copied into place.
 
 Container destructors first destroy the elements and then free their own memory. This way, when a variable goes out of scope, everything it contains is freed, at any depth (D11).
 
@@ -84,7 +91,11 @@ A comparison, then a branch to a block that calls `@cromo_panic`. LLVM removes t
 - **Beyond 16 bytes:** by address, marked `readonly`, `noalias` and `dereferenceable(n)`. `noalias` is correct because during the call nobody can modify the object: there are no pointers, and an object passed for reading cannot also be passed with `ref` in the same call.
 - **`extern` functions to C:** they follow the platform ABI, not this rule.
 
-**Watch out for the `x = f(x)` case.** The result of `f` would be constructed directly in `x` (see how return values are passed) while `f` is still reading `x` by address. The compiler must treat the destination of the assignment as a modification of `x`. In that case it constructs the result in a temporary and moves it into `x` at the end.
+**Return values.** A struct of up to 16 bytes is returned by value; a larger one is written through a hidden `sret` pointer, which points to the variable being initialized or to a temporary.
+
+**Watch out for the `x = f(x)` case.** The result of `f` would be constructed directly in `x` while `f` is still reading `x` by address. The compiler must treat the destination of the assignment as a modification of `x`. In M2 every assignment of a struct builds the new value in a temporary and copies it into `x` at the end; LLVM removes the copy when it can.
+
+**State in M2.** Large read parameters are `readonly`, but not yet `noalias`: the object of a method that is not `const` can be modified during the call, for example in `box.update(box.content)`, and the exclusivity check (D22) arrives together with `ref` in M3.
 
 Zig had a similar rule, with the compiler free to pass "by value" parameters by reference, and removed it in version 0.10 precisely because of aliasing problems. There, however, the main cause was pointers, which do not exist in Cromo.
 
@@ -103,6 +114,8 @@ No string is parsed at runtime.
 
 ### Symbol names
 A naming scheme is needed for functions, methods and instances of generics, for example `@module.Type.method`. It must be defined taking modules (D50) and generics (D39) into account.
+
+Provisional names since M2: the type of struct `T` is `%struct.T`, its methods are `@T.method`, the constructor `@T..new` and the destructor `@T..drop`. The double dot cannot clash with the name of a method. A method receives the object as its first parameter, `ptr %self` (`readonly` for `const` methods), after the `sret` pointer if there is one.
 
 ## 4. Toolchain (D28)
 
@@ -176,7 +189,7 @@ Implementation for x86-64:
   // expect-error: 's' has been moved
   // expect-warning: unreachable code
   ```
-  `tests/run-tests.ps1` compiles and runs each file and compares the result with the expected one; `-Flags -O0` passes extra options to every compilation.
+  `tests/run-tests.ps1` compiles and runs each file and compares the result with the expected one; `-Flags -O0` passes extra options to every compilation. With `-Flags --release` the three tests that check the panics of debug mode fail, as expected.
 - **IR tests:** a few checks that verify the attributes that matter for the optimizer, for example that a `ref` parameter is really `noalias`.
 - **Later:** differential tests with generated programs.
 
@@ -187,6 +200,7 @@ Each milestone lists the decisions still open that are needed **before** writing
 **Status:**
 - **M0** completed on 2026-10-28: `cromo.exe` compiles `i32 main() { ret 42 }` into a 2 KB executable that imports only `ExitProcess` from `kernel32.dll`. Tests in `tests/m0/`.
 - **M1** completed on 2026-10-28: integer, floating-point and `bool` types, `char` literals, arithmetic with the overflow and division checks, conversions, variables with default values and `const`, `if`/`else`, the three forms of `for` with `break`/`continue`, functions with parameters and recursion, `print`/`println`/`eprint`/`eprintln` with formatting, debug and `--release` modes, and the temporary runtime (D58). Tests in `tests/m1/`; the choices made for M1 are decisions D54–D67 in [decisions.md](decisions.md).
+- **M2** completed on 2026-10-28: structs with initial values of the fields, nested structs, methods and `const` methods, one constructor, destructors, destruction at the end of the scope and on `ret`/`break`/`continue`, temporaries destroyed at the end of the statement, structs passed and returned by value or by address depending on the size. Tests in `tests/m2/`; the choices made for M2 are decisions D68–D76 in [decisions.md](decisions.md).
 
 | Milestone | Content | Open decisions |
 |---|---|---|

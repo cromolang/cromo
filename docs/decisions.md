@@ -483,6 +483,44 @@ A local variable cannot have the same name as another local variable or paramete
 *2026-10-28.*
 A non-`void` function must end with a terminating statement: a `ret`, an `if` with an `else` whose branches all terminate, or an infinite `for` without a `break`, as in Go. Code after `ret`, `break` or `continue` gets a warning, because it is unreachable.
 
+### D68. Object lifetime
+*2026-10-28.* The rules of [language.md](language.md) §6, modeled on C++:
+- an object is destroyed at the end of the scope where it is declared; the objects of the same scope are destroyed in reverse order of declaration;
+- temporary objects are destroyed at the end of the statement that contains them;
+- after the body of a destructor, the fields are destroyed in reverse order of declaration;
+- `ret`, `break` and `continue` destroy everything that is alive in the scopes they leave;
+- a destructor is never called by hand.
+
+### D69. One constructor per struct
+*2026-10-28.* A struct has at most one constructor. The default value (D48) already covers the case without arguments. Overloading will be decided later, together with the overloading of functions.
+
+### D70. Fields by name inside methods
+*2026-10-28.* Inside a method, constructor or destructor, the fields of the object are used by their name, as in the examples: `fd = os.open(path)`. There is no `this`. A local variable or a parameter cannot have the same name as a field (extends D66).
+
+### D71. `T()` without a constructor is the default value
+*2026-10-28.* For a struct without a constructor, `Point()` gives its default value (D48). To set the fields, assign them afterwards or write a constructor: there is no positional initialization like `Point(1.0, 2.0)`.
+
+### D72. Calls inside methods
+*2026-10-28.* Inside a method, `f()` refers to a method of the same struct if there is one, otherwise to a free function. The name closest to the code wins, as with the fields (D70) and as in C++.
+
+### D73. Initial values of fields are literals
+*2026-10-28.* For now the initial value of a field (D51) must be a literal: a number, `true`, `false` or a character. The default value of a struct is then a constant known by the compiler. Expressions and constructor calls will come later.
+
+### D74. Memory layout of structs
+*2026-10-28.* The fields stay in the order in which they are declared, with the natural alignment of C. This keeps the layout predictable and compatible with C (D42).
+
+### D75. Structs that need destruction are not copied
+*2026-10-28.* A struct that needs destruction (it has a destructor, or a field that has one) cannot be copied implicitly (D23). Until `move` arrives in M3 it can only be:
+- created directly in a variable: `File f = File("a.txt")`;
+- returned from a function: `ret f` of a local variable moves it (D23);
+- used as a temporary, which is destroyed at the end of the statement (D68);
+- replaced with a new temporary: `f = File("b.txt")` builds the new value, destroys the old one and puts the new one in its place.
+
+A parameter or a field of such a struct cannot be returned, because it would be a copy.
+
+### D76. Structs are not compared or printed yet
+*2026-10-28.* `==` and `{}` in `println` do not work on structs: they need a way for the type to say how, which will come with interfaces (D38, D40).
+
 ---
 
 ## Open
@@ -494,5 +532,5 @@ There are currently no open questions. Still to be defined later, when needed:
 - the symbol naming scheme for modules and generics (D39, D50);
 - the interface for making user-defined types printable (D38);
 - fixed-size arrays (`i32[4]`);
-- the proposals still in [language.md](language.md): object lifetime rules (§6), `switch` without fall-through and no `goto` (§9);
+- the proposals still in [language.md](language.md): `switch` without fall-through and no `goto` (§9);
 - the content of the standard library.

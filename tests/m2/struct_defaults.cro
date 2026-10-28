@@ -1,0 +1,38 @@
+// expect-output: 0 0 1.5 true
+// expect-output: -1 97 2
+// expect-output: 3 4 8 true
+// expect-output: 3 10
+// A struct without a constructor starts from the initial values of its fields (D48, D71).
+struct Inner {
+    i32 a
+    i64 b = -1
+    char c = 'a'
+}
+
+struct Outer {
+    i32 x
+    i32 y
+    f64 scale = 1.5
+    bool visible = true
+    Inner inner
+    f32 ratio = 2
+}
+
+i32 main() {
+    Outer o
+    println("{} {} {} {}", o.x, o.y, o.scale, o.visible)
+    println("{} {} {}", o.inner.b, o.inner.c, o.ratio)
+
+    Outer p = Outer()
+    p.x = 3
+    p.y += 4
+    p.inner.a++
+    p.inner.a *= 8
+    println("{} {} {} {}", p.x, p.y, p.inner.a, p.visible)
+
+    // A struct without a destructor is copied.
+    Outer q = p
+    q.x = 10
+    println("{} {}", p.x, q.x)
+    ret 0
+}

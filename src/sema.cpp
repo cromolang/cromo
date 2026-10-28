@@ -62,6 +62,26 @@ bool isUntypedLiteral(const Expr& expr) {
     }
 }
 
+// A literal, possibly negative: the only initial value a field can have for now (D73).
+bool isConstantLiteral(const Expr& expr) {
+    switch (expr.kind) {
+    case ExprKind::IntLiteral:
+    case ExprKind::FloatLiteral:
+    case ExprKind::BoolLiteral: return true;
+    case ExprKind::Unary: {
+        const auto& unary = static_cast<const UnaryExpr&>(expr);
+        return unary.op == UnaryOp::Negate &&
+               (unary.operand->kind == ExprKind::IntLiteral || unary.operand->kind == ExprKind::FloatLiteral);
+    }
+    default: return false;
+    }
+}
+
+// A new object that nobody owns yet: it can be moved into a variable (D75).
+bool isTemporary(const Expr& expr) {
+    return expr.kind == ExprKind::Construct || expr.kind == ExprKind::Call || expr.kind == ExprKind::MethodCall;
+}
+
 bool fits(uint64_t magnitude, bool negative, Type type) {
     if (negative && magnitude != 0) {
         if (!type.isSigned) return false;
@@ -82,12 +102,18 @@ std::string rangeOf(Type type) {
     return "0 .. " + std::to_string(max);
 }
 
+int alignUp(int value, int align) { return (value + align - 1) / align * align; }
+
 class Checker {
 public:
     Checker(Module& module, Diagnostics& diag) : module_(module), diag_(diag) {}
 
     void run() {
+        declareStructs();
         declareFunctions();
+        for (StructDecl& decl : module_.structs) {
+            for (FunctionDecl& member : decl.members) checkFunction(member);
+        }
         for (FunctionDecl& function : module_.functions) checkFunction(function);
     }
 
@@ -97,6 +123,8 @@ private:
     std::optional<Type> resolveType(const TypeName& name) {
         if (name.name == "void") return Type::voidType();
         if (auto type = findBuiltinType(name.name)) return type;
+        auto found = structs_.find(name.name);
+        if (found != structs_.end()) return Type::structType(found->second);
         if (name.name == "string" || name.name == "list") {
             diag_.error(name.loc, "the type '" + name.name + "' arrives in milestone M5");
         } else {
@@ -105,7 +133,111 @@ private:
         return std::nullopt;
     }
 
+    void declareStructs() {
+        for (StructDecl& decl : module_.structs) {
+            if (structs_.count(decl.name)) {
+                diag_.error(decl.loc, "struct '" + decl.name + "' is already defined");
+            } else if (findBuiltinType(decl.name) || isPrintFunction(decl.name) || decl.name == "void") {
+                diag_.error(decl.loc, "'" + decl.name + "' is a built-in name");
+            } else {
+                structs_[decl.name] = &decl;
+            }
+        }
+
+        for (StructDecl& decl : module_.structs) {
+            std::map<std::string, const FieldDecl*> fieldNames;
+            for (FieldDecl& field : decl.fields) {
+                if (fieldNames.count(field.name)) {
+                    diag_.error(field.loc, "field '" + field.name + "' is already defined in " + decl.name);
+                }
+                fieldNames[field.name] = &field;
+                field.resolved = resolveType(field.type).value_or(Type::error());
+                if (field.resolved.isVoid()) {
+                    diag_.error(field.type.loc, "a field cannot be void");
+                    field.resolved = Type::error();
+                }
+                if (!field.init || field.resolved.isError()) continue;
+                if (field.resolved.isStruct()) {
+                    diag_.error(field.init->loc, "a field of type " + field.resolved.name() +
+                                                     " cannot have an initial value yet (D73)");
+                } else if (!isConstantLiteral(*field.init)) {
+                    diag_.error(field.init->loc, "for now the initial value of a field must be a literal (D73)");
+                } else {
+                    coerce(field.init, field.resolved);
+                }
+            }
+
+            for (FunctionDecl& member : decl.members) {
+                member.owner = &decl;
+                if (member.kind == FunctionKind::Constructor) {
+                    if (decl.constructor) diag_.error(member.loc, "a struct has only one constructor (D69)");
+                    else decl.constructor = &member;
+                } else if (member.kind == FunctionKind::Destructor) {
+                    if (decl.destructor) diag_.error(member.loc, "a struct has only one destructor");
+                    else decl.destructor = &member;
+                    if (!member.params.empty()) diag_.error(member.params[0].loc, "a destructor has no parameters");
+                } else if (fieldNames.count(member.name)) {
+                    diag_.error(member.loc, "'" + member.name + "' is already a field of " + decl.name);
+                } else if (decl.methods.count(member.name)) {
+                    diag_.error(member.loc, "method '" + member.name + "' is already defined in " + decl.name);
+                } else {
+                    decl.methods[member.name] = &member;
+                }
+            }
+        }
+
+        for (StructDecl& decl : module_.structs) layout(decl);
+    }
+
+    // Computes size, alignment and need for destruction, and rejects structs
+    // that contain themselves (D11).
+    void layout(StructDecl& decl) {
+        int& state = layoutState_[&decl];
+        if (state == 2) return;
+        if (state == 1) return;  // cycle: reported by the struct that closes it
+        state = 1;
+        int offset = 0;
+        int align = 1;
+        bool destruct = decl.destructor != nullptr;
+        for (FieldDecl& field : decl.fields) {
+            Type type = field.resolved;
+            if (type.isStruct()) {
+                auto* inner = const_cast<StructDecl*>(type.structDecl);
+                if (layoutState_[inner] == 1) {
+                    diag_.error(field.loc, "struct '" + decl.name + "' contains itself through field '" + field.name +
+                                               "': use a list instead (D11)");
+                    field.resolved = Type::error();
+                    continue;
+                }
+                layout(*inner);
+                destruct = destruct || inner->needsDestruction;
+            }
+            if (type.isError()) continue;
+            offset = alignUp(offset, alignOf(type)) + sizeOf(type);
+            align = std::max(align, alignOf(type));
+        }
+        decl.size = alignUp(offset, align);
+        decl.align = align;
+        decl.needsDestruction = destruct;
+        state = 2;
+    }
+
+    void resolveSignature(FunctionDecl& function) {
+        function.resolvedReturn = resolveType(function.returnType).value_or(Type::error());
+        for (const Param& param : function.params) {
+            Type type = resolveType(param.type).value_or(Type::error());
+            if (type.isVoid()) {
+                diag_.error(param.type.loc, "a parameter cannot be void");
+                type = Type::error();
+            }
+            function.paramTypes.push_back(type);
+        }
+    }
+
     void declareFunctions() {
+        for (StructDecl& decl : module_.structs) {
+            for (FunctionDecl& member : decl.members) resolveSignature(member);
+        }
         for (FunctionDecl& function : module_.functions) {
             if (functions_.count(function.name)) {
                 diag_.error(function.loc, "function '" + function.name + "' is already defined");
@@ -113,19 +245,12 @@ private:
                 diag_.error(function.loc, "the name '" + function.name + "' is reserved for the runtime");
             } else if (isPrintFunction(function.name) || findBuiltinType(function.name)) {
                 diag_.error(function.loc, "'" + function.name + "' is a built-in name");
+            } else if (structs_.count(function.name)) {
+                diag_.error(function.loc, "'" + function.name + "' is already the name of a struct");
             } else {
                 functions_[function.name] = &function;
             }
-
-            function.resolvedReturn = resolveType(function.returnType).value_or(Type::error());
-            for (const Param& param : function.params) {
-                Type type = resolveType(param.type).value_or(Type::error());
-                if (type.isVoid()) {
-                    diag_.error(param.type.loc, "a parameter cannot be void");
-                    type = Type::error();
-                }
-                function.paramTypes.push_back(type);
-            }
+            resolveSignature(function);
         }
 
         auto main = functions_.find("main");
@@ -163,7 +288,7 @@ private:
         }
     }
 
-    // ---- Variables ----
+    // ---- Variables and fields ----
 
     Variable* lookup(const std::string& name) {
         for (auto scope = scopes_.rbegin(); scope != scopes_.rend(); ++scope) {
@@ -173,9 +298,23 @@ private:
         return nullptr;
     }
 
+    // Field of the struct whose method is being checked (D70).
+    int ownFieldIndex(const std::string& name) const {
+        if (!current_ || !current_->owner) return -1;
+        const auto& fields = current_->owner->fields;
+        for (size_t i = 0; i < fields.size(); ++i) {
+            if (fields[i].name == name) return static_cast<int>(i);
+        }
+        return -1;
+    }
+
     Variable* declare(const std::string& name, Type type, SourceLocation loc, bool isConst) {
-        if (findBuiltinType(name)) {
+        if (findBuiltinType(name) || structs_.count(name)) {
             diag_.error(loc, "'" + name + "' is a type name");
+            return nullptr;
+        }
+        if (ownFieldIndex(name) >= 0) {
+            diag_.error(loc, "'" + name + "' is a field of " + current_->owner->name + ": choose another name (D70)");
             return nullptr;
         }
         if (Variable* existing = lookup(name)) {  // D66: no shadowing
@@ -195,19 +334,58 @@ private:
         return result;
     }
 
-    // Variable that an assignment, `++` or `--` wants to modify.
-    Variable* modifiable(const std::string& name, SourceLocation loc) {
-        Variable* variable = lookup(name);
-        if (!variable) {
-            diag_.error(loc, "unknown name '" + name + "'");
-        } else if (variable->isParam) {
-            diag_.error(loc, "parameter '" + name + "' cannot be modified: parameters are read-only (D22)");
-            return nullptr;
-        } else if (variable->isConst) {
-            diag_.error(loc, "'" + name + "' is const and cannot be modified (D26)");
-            return nullptr;
+    // Why a place cannot be modified, or an empty string if it can (D22, D24, D26).
+    std::string readOnlyReason(const Expr& expr) const {
+        switch (expr.kind) {
+        case ExprKind::Name: {
+            const Variable* variable = static_cast<const NameExpr&>(expr).variable;
+            if (!variable) return "";
+            if (variable->isParam) return "parameter '" + variable->name + "' cannot be modified: parameters are read-only (D22)";
+            if (variable->isConst) return "'" + variable->name + "' is const and cannot be modified (D26)";
+            return "";
         }
-        return variable;
+        case ExprKind::Field:
+            return readOnlyReason(*static_cast<const FieldExpr&>(expr).object);  // const is deep (D24)
+        case ExprKind::Self:
+            if (current_->isConst) return "method '" + current_->name + "' is const and cannot modify the fields (D24)";
+            return "";
+        default:
+            return "";
+        }
+    }
+
+    // A variable, or a field of a variable or of the object of a method.
+    static bool isPlace(const Expr& expr) {
+        if (expr.kind == ExprKind::Name) return true;
+        if (expr.kind == ExprKind::Field) {
+            const Expr& object = *static_cast<const FieldExpr&>(expr).object;
+            return object.kind == ExprKind::Self || isPlace(object);
+        }
+        return false;
+    }
+
+    // Checks the target of an assignment, `++` or `--`. Returns its type, or an error.
+    Type checkTarget(ExprPtr& target) {
+        Type type = checkExpr(target, std::nullopt);
+        if (type.isError()) return type;
+        if (!isPlace(*target)) {
+            diag_.error(target->loc, "only a variable or a field can be assigned");
+            return Type::error();
+        }
+        std::string reason = readOnlyReason(*target);
+        if (!reason.empty()) {
+            diag_.error(target->loc, reason);
+            return Type::error();
+        }
+        return type;
+    }
+
+    // D75: a struct that needs destruction is not copied implicitly.
+    bool checkNotCopied(const Expr& value, Type type) {
+        if (!needsDestruction(type) || isTemporary(value)) return true;
+        diag_.error(value.loc, "a " + type.name() + " cannot be copied, because it needs destruction (D75): "
+                                                    "create it directly here, or wait for 'move' (milestone M3)");
+        return false;
     }
 
     // ---- Statements ----
@@ -259,22 +437,22 @@ private:
         if (decl.isConst && !decl.init) {
             diag_.error(decl.nameLoc, "a const variable must have a value (D51)");
         }
-        if (decl.init && !type.isError()) coerce(decl.init, type);
+        if (decl.init && !type.isError()) {
+            if (coerce(decl.init, type)) checkNotCopied(*decl.init, type);
+        }
         decl.variable = declare(decl.name, type, decl.nameLoc, decl.isConst);
     }
 
     void checkAssign(AssignStmt& assign) {
-        Variable* variable = modifiable(assign.target, assign.targetLoc);
-        if (!variable || variable->type.isError()) {
+        Type type = checkTarget(assign.target);
+        if (type.isError()) {
             Type ignored = checkExpr(assign.value, std::nullopt);
             (void)ignored;
             return;
         }
-        Type type = variable->type;
         if (assign.op != AssignOp::Assign) {
             if (!type.isNumeric()) {
-                diag_.error(assign.loc, "this compound assignment needs a number, but '" + assign.target + "' is of type " +
-                                            type.name());
+                diag_.error(assign.loc, "this compound assignment needs a number, found " + type.name());
                 return;
             }
             if (assign.op == AssignOp::Rem && !type.isInt()) {
@@ -282,25 +460,19 @@ private:
                 return;
             }
         }
-        coerce(assign.value, type);
-        assign.variable = variable;
+        if (coerce(assign.value, type)) checkNotCopied(*assign.value, type);
     }
 
     void checkIncDec(IncDecStmt& incDec) {
-        Variable* variable = modifiable(incDec.target, incDec.loc);
-        if (!variable) return;
-        if (!variable->type.isInt()) {
-            if (!variable->type.isError()) {
-                diag_.error(incDec.loc, "'++' and '--' only work on integers, but '" + incDec.target + "' is of type " +
-                                            variable->type.name());
-            }
-            return;
+        Type type = checkTarget(incDec.target);
+        if (!type.isError() && !type.isInt()) {
+            diag_.error(incDec.loc, "'++' and '--' only work on integers, found " + type.name());
         }
-        incDec.variable = variable;
     }
 
     void checkExprStmt(ExprStmt& statement) {
-        if (statement.expr->kind != ExprKind::Call) {
+        ExprKind kind = statement.expr->kind;
+        if (kind != ExprKind::Call && kind != ExprKind::MethodCall) {
             diag_.error(statement.expr->loc, "this expression does nothing: only function calls can be statements");
             return;
         }
@@ -354,7 +526,18 @@ private:
             diag_.error(ret.loc, "missing value after 'ret': function '" + current_->name + "' returns " + type.name());
             return;
         }
-        coerce(ret.value, type);
+        if (!coerce(ret.value, type)) return;
+
+        // D23: `ret` of a local variable moves it; anything else that needs
+        // destruction must be a new object (D75).
+        if (needsDestruction(type) && !isTemporary(*ret.value)) {
+            const Expr& value = *ret.value;
+            const Variable* variable = value.kind == ExprKind::Name ? static_cast<const NameExpr&>(value).variable : nullptr;
+            if (!variable || variable->isParam) {
+                diag_.error(value.loc, "a " + type.name() + " cannot be copied, because it needs destruction (D75): "
+                                                            "return a local variable or a new object");
+            }
+        }
     }
 
     // ---- Expressions ----
@@ -378,8 +561,12 @@ private:
             expr = std::make_unique<ConversionExpr>(loc, std::move(inner), target, false);
             return true;
         }
-        diag_.error(expr->loc, "a value of type " + type.name() + " cannot be used as " + target.name() +
-                                   " without an explicit conversion, for example " + target.name() + "(x) (D33)");
+        if (type.isStruct() || target.isStruct()) {
+            diag_.error(expr->loc, "a value of type " + type.name() + " cannot be used as " + target.name());
+        } else {
+            diag_.error(expr->loc, "a value of type " + type.name() + " cannot be used as " + target.name() +
+                                       " without an explicit conversion, for example " + target.name() + "(x) (D33)");
+        }
         return false;
     }
 
@@ -397,12 +584,16 @@ private:
         case ExprKind::StringLiteral:
             diag_.error(expr->loc, "strings arrive in milestone M5: for now a string literal can only be printed (D65)");
             return Type::error();
-        case ExprKind::Name: return checkName(static_cast<NameExpr&>(*expr));
+        case ExprKind::Name: return checkName(expr);
         case ExprKind::Unary: return checkUnary(expr, expected);
         case ExprKind::Binary: return checkBinary(static_cast<BinaryExpr&>(*expr), expected);
         case ExprKind::Call: return checkCall(expr);
+        case ExprKind::Field: return checkField(static_cast<FieldExpr&>(*expr));
+        case ExprKind::MethodCall: return checkMethodCall(static_cast<MethodCallExpr&>(*expr));
+        case ExprKind::Self: return Type::structType(current_->owner);
         case ExprKind::Conversion:
-        case ExprKind::Print: return expr->type;
+        case ExprKind::Print:
+        case ExprKind::Construct: return expr->type;
         }
         return Type::error();
     }
@@ -439,17 +630,86 @@ private:
         return *expected;
     }
 
-    Type checkName(NameExpr& name) {
+    // A local variable or parameter; inside a method also a field (D70).
+    Type checkName(ExprPtr& expr) {
+        auto& name = static_cast<NameExpr&>(*expr);
         if (Variable* variable = lookup(name.name)) {
             name.variable = variable;
             return variable->type;
         }
-        if (functions_.count(name.name) || isPrintFunction(name.name)) {
+        if (ownFieldIndex(name.name) >= 0) {
+            SourceLocation loc = name.loc;
+            std::string field = name.name;
+            expr = std::make_unique<FieldExpr>(loc, std::make_unique<SelfExpr>(loc), field);
+            return checkField(static_cast<FieldExpr&>(*expr));
+        }
+        if (functions_.count(name.name) || isPrintFunction(name.name) ||
+            (current_->owner && current_->owner->methods.count(name.name))) {
             diag_.error(name.loc, "'" + name.name + "' is a function: call it with '()'");
         } else {
             diag_.error(name.loc, "unknown name '" + name.name + "'");
         }
         return Type::error();
+    }
+
+    Type checkField(FieldExpr& field) {
+        Type object = checkExpr(field.object, std::nullopt);
+        if (object.isError()) return object;
+        if (!object.isStruct()) {
+            diag_.error(field.loc, "a " + object.name() + " has no fields");
+            return Type::error();
+        }
+        const auto& fields = object.structDecl->fields;
+        for (size_t i = 0; i < fields.size(); ++i) {
+            if (fields[i].name == field.field) {
+                field.index = static_cast<int>(i);
+                return fields[i].resolved;
+            }
+        }
+        diag_.error(field.loc, object.name() + " has no field named '" + field.field + "'");
+        return Type::error();
+    }
+
+    // Checks the arguments of a call against the parameters of `function`.
+    bool checkArgs(std::vector<ExprPtr>& args, const FunctionDecl& function, const std::string& what, SourceLocation loc) {
+        size_t expected = function.params.size();
+        if (args.size() != expected) {
+            diag_.error(loc, what + " takes " + std::to_string(expected) + (expected == 1 ? " argument, but " : " arguments, but ") +
+                                 std::to_string(args.size()) + " were given");
+            return false;
+        }
+        bool ok = true;
+        for (size_t i = 0; i < args.size(); ++i) {
+            if (function.paramTypes[i].isError()) continue;
+            ok = coerce(args[i], function.paramTypes[i]) && ok;
+        }
+        return ok;
+    }
+
+    Type checkMethodCall(MethodCallExpr& call) {
+        Type object = checkExpr(call.object, std::nullopt);
+        if (object.isError()) return object;
+        if (!object.isStruct()) {
+            diag_.error(call.loc, "a " + object.name() + " has no methods");
+            return Type::error();
+        }
+        auto found = object.structDecl->methods.find(call.method);
+        if (found == object.structDecl->methods.end()) {
+            diag_.error(call.loc, object.name() + " has no method named '" + call.method + "'");
+            return Type::error();
+        }
+        FunctionDecl* method = found->second;
+        if (!method->isConst) {
+            std::string reason = readOnlyReason(*call.object);
+            if (!reason.empty()) {
+                diag_.error(call.loc, "cannot call '" + call.method + "', which is not const (D24): " +
+                                          reason);
+                return Type::error();
+            }
+        }
+        call.function = method;
+        if (!checkArgs(call.args, *method, "'" + call.method + "'", call.loc)) return Type::error();
+        return method->resolvedReturn;
     }
 
     Type checkUnary(ExprPtr& expr, std::optional<Type> expected) {
@@ -518,6 +778,10 @@ private:
         if (operand.isError()) return operand;
         binary.operandType = operand;
 
+        if (operand.isStruct()) {
+            diag_.error(binary.loc, std::string("'") + spelling(binary.op) + "' does not work on structs yet (D76)");
+            return Type::error();
+        }
         if (arithmetic) {
             if (!operand.isNumeric()) {
                 diag_.error(binary.loc, std::string("'") + spelling(binary.op) + "' needs numbers, found " + operand.name());
@@ -592,9 +856,24 @@ private:
         if (std::optional<Type> target = findBuiltinType(call.callee)) return checkConversion(expr, *target);
         if (isPrintFunction(call.callee)) return checkPrint(expr);
 
+        auto structFound = structs_.find(call.callee);
+        if (structFound != structs_.end()) return checkConstruct(expr, structFound->second);
+
+        // D72: inside a method, a call refers first to a method of the same struct.
+        if (current_->owner) {
+            auto method = current_->owner->methods.find(call.callee);
+            if (method != current_->owner->methods.end()) {
+                SourceLocation loc = call.loc;
+                auto methodCall = std::make_unique<MethodCallExpr>(loc, std::make_unique<SelfExpr>(loc), call.callee);
+                methodCall->args = std::move(call.args);
+                expr = std::move(methodCall);
+                return checkMethodCall(static_cast<MethodCallExpr&>(*expr));
+            }
+        }
+
         auto found = functions_.find(call.callee);
         if (found == functions_.end()) {
-            if (lookup(call.callee)) {
+            if (lookup(call.callee) || ownFieldIndex(call.callee) >= 0) {
                 diag_.error(call.loc, "'" + call.callee + "' is a variable, not a function");
             } else {
                 diag_.error(call.loc, "unknown function '" + call.callee + "'");
@@ -607,20 +886,27 @@ private:
         }
 
         FunctionDecl* function = found->second;
-        if (call.args.size() != function->params.size()) {
-            size_t expected = function->params.size();
-            diag_.error(call.loc, "'" + call.callee + "' takes " + std::to_string(expected) +
-                                      (expected == 1 ? " argument, but " : " arguments, but ") +
-                                      std::to_string(call.args.size()) + " were given");
+        call.function = function;
+        if (!checkArgs(call.args, *function, "'" + call.callee + "'", call.loc)) return Type::error();
+        return function->resolvedReturn;
+    }
+
+    // `Student("Anna")`: calls the constructor; without one, `Point()` is the default value (D71).
+    Type checkConstruct(ExprPtr& expr, StructDecl* decl) {
+        auto& call = static_cast<CallExpr&>(*expr);
+        auto construct = std::make_unique<ConstructExpr>(call.loc, decl);
+        construct->args = std::move(call.args);
+        expr = std::move(construct);
+        auto& node = static_cast<ConstructExpr&>(*expr);
+        Type type = Type::structType(decl);
+
+        if (decl->constructor) {
+            if (!checkArgs(node.args, *decl->constructor, "the constructor of " + decl->name, node.loc)) return Type::error();
+        } else if (!node.args.empty()) {
+            diag_.error(node.loc, decl->name + " has no constructor: " + decl->name + "() gives its default value (D71)");
             return Type::error();
         }
-        bool ok = true;
-        for (size_t i = 0; i < call.args.size(); ++i) {
-            if (function->paramTypes[i].isError()) continue;
-            ok = coerce(call.args[i], function->paramTypes[i]) && ok;
-        }
-        call.function = function;
-        return ok ? function->resolvedReturn : Type::error();
+        return type;
     }
 
     // `f64(x)`: explicit conversion (D20, D61).
@@ -641,7 +927,7 @@ private:
             type = checkExpr(operand, std::nullopt);
         }
         if (type.isError()) return type;
-        if (type.isUntyped() || type.isVoid() || type.kind == TypeKind::String) {
+        if (type.isUntyped() || type.isVoid() || type.kind == TypeKind::String || type.isStruct()) {
             diag_.error(operand->loc, "cannot convert this value to " + target.name());
             return Type::error();
         }
@@ -685,6 +971,9 @@ private:
                     ok = false;
                 } else if (type.isVoid()) {
                     diag_.error(arg->loc, "this call does not return a value");
+                    ok = false;
+                } else if (type.isStruct()) {
+                    diag_.error(arg->loc, "a " + type.name() + " cannot be printed yet (D76)");
                     ok = false;
                 } else if (type.isError()) {
                     ok = false;
@@ -855,6 +1144,8 @@ private:
     Module& module_;
     Diagnostics& diag_;
     std::map<std::string, FunctionDecl*> functions_;
+    std::map<std::string, StructDecl*> structs_;
+    std::map<const StructDecl*, int> layoutState_;  // 0 to do, 1 in progress, 2 done
     FunctionDecl* current_ = nullptr;
     std::vector<std::map<std::string, Variable*>> scopes_;
     std::vector<bool> loops_;  // one entry per enclosing loop: true if it contains a break

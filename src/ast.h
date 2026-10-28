@@ -4,6 +4,7 @@
 #include "types.h"
 
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -14,7 +15,7 @@ struct FunctionDecl;
 
 // A type as written in the source. Its meaning is decided by sema.
 struct TypeName {
-    std::string name;  // "i32", "void", ...
+    std::string name;  // "i32", "void", "Student", ...
     SourceLocation loc;
 };
 
@@ -30,7 +31,10 @@ struct Variable {
 
 // ---- Expressions ----
 
-enum class ExprKind { IntLiteral, FloatLiteral, BoolLiteral, StringLiteral, Name, Unary, Binary, Call, Conversion, Print };
+enum class ExprKind {
+    IntLiteral, FloatLiteral, BoolLiteral, StringLiteral, Name, Unary, Binary, Call, Conversion, Print,
+    Field, MethodCall, Construct, Self,
+};
 
 struct Expr {
     Expr(ExprKind k, SourceLocation l) : kind(k), loc(l) {}
@@ -99,6 +103,7 @@ struct BinaryExpr : Expr {
     Type operandType;  // set by sema: the common type of the two operands
 };
 
+// `name(args)`: a free function, a conversion, a print, or a constructor (sema decides).
 struct CallExpr : Expr {
     CallExpr(SourceLocation l, std::string c) : Expr(ExprKind::Call, l), callee(std::move(c)) {}
 
@@ -147,6 +152,40 @@ struct PrintExpr : Expr {
     std::vector<ExprPtr> args;
 };
 
+// `object.field`; inside a method a bare field name becomes `self.field` (D70).
+struct FieldExpr : Expr {
+    FieldExpr(SourceLocation l, ExprPtr o, std::string f) : Expr(ExprKind::Field, l), object(std::move(o)), field(std::move(f)) {}
+
+    ExprPtr object;
+    std::string field;
+    int index = -1;  // set by sema
+};
+
+// `object.method(args)`; inside a method a bare call to a method becomes `self.method(args)`.
+struct MethodCallExpr : Expr {
+    MethodCallExpr(SourceLocation l, ExprPtr o, std::string m)
+        : Expr(ExprKind::MethodCall, l), object(std::move(o)), method(std::move(m)) {}
+
+    ExprPtr object;
+    std::string method;
+    std::vector<ExprPtr> args;
+    FunctionDecl* function = nullptr;  // set by sema
+};
+
+// `Student("Anna")`: a new object of a struct, made by sema from a CallExpr.
+// Without a constructor it is the default value (D71).
+struct ConstructExpr : Expr {
+    ConstructExpr(SourceLocation l, const struct StructDecl* d) : Expr(ExprKind::Construct, l), decl(d) {}
+
+    const struct StructDecl* decl;
+    std::vector<ExprPtr> args;
+};
+
+// The object a method works on. It cannot be written in the source (D70).
+struct SelfExpr : Expr {
+    explicit SelfExpr(SourceLocation l) : Expr(ExprKind::Self, l) {}
+};
+
 // ---- Statements ----
 
 enum class StmtKind { VarDecl, Assign, IncDec, Expr, If, For, Break, Continue, Return };
@@ -181,21 +220,18 @@ struct VarDeclStmt : Stmt {
 enum class AssignOp { Assign, Add, Sub, Mul, Div, Rem };
 
 struct AssignStmt : Stmt {
-    AssignStmt(SourceLocation l) : Stmt(StmtKind::Assign, l) {}
+    AssignStmt(SourceLocation l, ExprPtr t, AssignOp o) : Stmt(StmtKind::Assign, l), target(std::move(t)), op(o) {}
 
-    std::string target;
-    SourceLocation targetLoc;
-    AssignOp op = AssignOp::Assign;
+    ExprPtr target;  // a variable or a field
+    AssignOp op;
     ExprPtr value;
-    Variable* variable = nullptr;  // set by sema
 };
 
 struct IncDecStmt : Stmt {
-    IncDecStmt(SourceLocation l, std::string t, bool inc) : Stmt(StmtKind::IncDec, l), target(std::move(t)), increment(inc) {}
+    IncDecStmt(SourceLocation l, ExprPtr t, bool inc) : Stmt(StmtKind::IncDec, l), target(std::move(t)), increment(inc) {}
 
-    std::string target;
+    ExprPtr target;  // a variable or a field
     bool increment;
-    Variable* variable = nullptr;  // set by sema
 };
 
 struct ExprStmt : Stmt {
@@ -246,20 +282,57 @@ struct Param {
     SourceLocation loc;
 };
 
+enum class FunctionKind { Free, Method, Constructor, Destructor };
+
+struct StructDecl;
+
 struct FunctionDecl {
+    FunctionKind kind = FunctionKind::Free;
     TypeName returnType;
     std::string name;
     SourceLocation loc;  // the name
     std::vector<Param> params;
+    bool isConst = false;         // `const` method (D24)
     Block body;
 
     // Set by sema.
+    StructDecl* owner = nullptr;  // for methods, constructors and destructors
     Type resolvedReturn;
     std::vector<Type> paramTypes;
     std::vector<std::unique_ptr<Variable>> variables;  // parameters first
 };
 
+struct FieldDecl {
+    TypeName type;
+    std::string name;
+    SourceLocation loc;
+    ExprPtr init;  // initial value (D51), a literal for now (D73)
+    Type resolved; // set by sema
+};
+
+struct StructDecl {
+    // Move only. Without this, std::vector would copy it when it grows, because
+    // the move of std::map is not noexcept in MSVC.
+    StructDecl() = default;
+    StructDecl(StructDecl&&) = default;
+    StructDecl& operator=(StructDecl&&) = default;
+
+    std::string name;
+    SourceLocation loc;
+    std::vector<FieldDecl> fields;
+    std::vector<FunctionDecl> members;  // methods, constructor and destructor
+
+    // Set by sema.
+    FunctionDecl* constructor = nullptr;
+    FunctionDecl* destructor = nullptr;
+    std::map<std::string, FunctionDecl*> methods;
+    bool needsDestruction = false;
+    int size = 0;
+    int align = 1;
+};
+
 struct Module {
+    std::vector<StructDecl> structs;
     std::vector<FunctionDecl> functions;
 };
 

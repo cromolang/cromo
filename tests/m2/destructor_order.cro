@@ -1,0 +1,57 @@
+// expect-output: create 1
+// expect-output: create 2
+// expect-output: create 3
+// expect-output: inner
+// expect-output: destroy 3
+// expect-output: create 4
+// expect-output: destroy 0
+// expect-output: end
+// expect-output: destroy owner 9
+// expect-output: destroy 0
+// expect-output: destroy 4
+// expect-output: destroy 0
+// expect-output: destroy 2
+// expect-output: destroy 1
+// Objects are destroyed at the end of their scope, in reverse order (D68).
+struct Noisy {
+    i32 id
+
+    Noisy(i32 n) {
+        id = n
+        println("create {}", id)
+    }
+
+    ~Noisy() {
+        println("destroy {}", id)
+    }
+}
+
+// No destructor of its own: it still destroys its fields, in reverse order.
+struct Pair {
+    Noisy first
+    Noisy second
+}
+
+// The fields are destroyed after the body of the destructor.
+struct Owner {
+    i32 tag = 9
+    Noisy part
+
+    ~Owner() {
+        println("destroy owner {}", tag)
+    }
+}
+
+i32 main() {
+    Noisy a = Noisy(1)
+    Noisy b = Noisy(2)
+    if (true) {
+        Noisy c = Noisy(3)
+        println("inner")
+    }
+    Pair p
+    p.second = Noisy(4)  // the old value is destroyed
+    Owner o
+    println("end")
+    ret 0
+}

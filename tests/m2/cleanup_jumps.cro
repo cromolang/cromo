@@ -1,0 +1,82 @@
+// expect-output: create 7
+// expect-output: create 107
+// expect-output: destroy 107
+// expect-output: got 7
+// expect-output: create 50
+// expect-output: create 0
+// expect-output: body 0
+// expect-output: destroy 0
+// expect-output: create 1
+// expect-output: destroy 1
+// expect-output: create 2
+// expect-output: destroy 2
+// expect-output: destroy 50
+// expect-output: found 2
+// expect-output: create 60
+// expect-output: destroy 60
+// expect-output: create 70
+// expect-output: temporary 70
+// expect-output: destroy 70
+// expect-output: create 80
+// expect-output: create 81
+// expect-output: destroy 81
+// expect-output: destroy 80
+// expect-output: condition
+// expect-output: create 8
+// expect-output: create 108
+// expect-output: destroy 108
+// expect-output: destroy 7
+// expect-output: now 8
+// expect-output: destroy 8
+// ret, break and continue destroy what they leave behind; temporaries live
+// until the end of their statement (D68).
+struct Noisy {
+    i32 id
+
+    Noisy(i32 n) {
+        id = n
+        println("create {}", id)
+    }
+
+    ~Noisy() {
+        println("destroy {}", id)
+    }
+}
+
+Noisy make(i32 n) {
+    Noisy kept = Noisy(n)
+    Noisy other = Noisy(n + 100)
+    ret kept  // moved out: only other is destroyed
+}
+
+i32 find(i32 limit) {
+    Noisy guard = Noisy(50)
+    for (i32 i = 0; i < limit; i++) {
+        Noisy step = Noisy(i)
+        if (i == 1) {
+            continue
+        }
+        if (i == 2) {
+            ret i
+        }
+        println("body {}", i)
+    }
+    ret -1
+}
+
+i32 main() {
+    Noisy m = make(7)
+    println("got {}", m.id)
+    println("found {}", find(5))
+    for {
+        Noisy x = Noisy(60)
+        break
+    }
+    println("temporary {}", Noisy(70).id)
+    if (Noisy(80).id == 80 && Noisy(81).id == 81) {
+        println("condition")
+    }
+    m = make(8)
+    println("now {}", m.id)
+    ret 0
+}

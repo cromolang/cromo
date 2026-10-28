@@ -1,0 +1,66 @@
+// expect-output: create 5
+// expect-output: destroy 5
+// expect-output: create 1
+// expect-output: destroy 0
+// expect-output: create 2
+// expect-output: holder ready
+// expect-output: destroy 2
+// expect-output: destroy holder
+// expect-output: destroy 1
+// expect-output: create 0
+// expect-output: destroy 0
+// expect-output: loop 0
+// expect-output: create 1
+// expect-output: destroy 1
+// expect-output: loop 1
+// expect-output: create 2
+// expect-output: destroy 2
+struct Noisy {
+    i32 id
+
+    Noisy(i32 n) {
+        id = n
+        println("create {}", id)
+    }
+
+    ~Noisy() {
+        println("destroy {}", id)
+    }
+}
+
+struct Holder {
+    Noisy part
+    bool early = true
+
+    void replace(i32 n) {
+        part = Noisy(n)  // the old part is destroyed
+    }
+
+    Noisy next() const {
+        ret Noisy(part.id + 1)
+    }
+
+    // A ret in the destructor still destroys the fields.
+    ~Holder() {
+        println("destroy holder")
+        if (early) {
+            ret
+        }
+        println("never")
+    }
+}
+
+i32 main() {
+    Noisy(5)  // a temporary: destroyed at the end of the statement
+    if (true) {
+        Holder h
+        h.replace(1)
+        Noisy c = h.next()
+        println("holder ready")
+    }
+    // The temporary of the condition is destroyed before the body, at every iteration.
+    for (i32 i = 0; Noisy(i).id < 2; i++) {
+        println("loop {}", i)
+    }
+    ret 0
+}

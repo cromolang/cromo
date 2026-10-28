@@ -1,0 +1,45 @@
+// expect-error: a struct has only one constructor (D69)
+// expect-error: field 'x' is already defined in Twice
+// expect-error: 'x' is already a field of Clash
+// expect-error: struct 'Loop' contains itself through field 'next'
+// expect-error: the initial value of a field must be a literal (D73)
+// expect-error: a destructor has no parameters
+// expect-error: the type 'string' arrives in milestone M5
+struct Twice {
+    i32 x
+    i32 x
+
+    Twice() {
+    }
+
+    Twice(i32 v) {
+    }
+}
+
+struct Clash {
+    i32 x
+
+    void x() {
+    }
+}
+
+struct Loop {
+    i32 value
+    Loop next
+}
+
+i32 seven() {
+    ret 7
+}
+
+struct Computed {
+    i32 a = seven()
+    string name
+
+    ~Computed(i32 v) {
+    }
+}
+
+i32 main() {
+    ret 0
+}

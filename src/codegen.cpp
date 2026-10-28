@@ -16,6 +16,19 @@ struct Value {
     Type type;
 };
 
+// An object that must be destroyed when its scope or statement ends (D68).
+struct LiveObject {
+    std::string address;
+    Type type;
+    const Variable* variable = nullptr;  // null for temporaries
+};
+
+struct Loop {
+    std::string continueLabel;
+    std::string breakLabel;
+    size_t scopeDepth;  // scopes opened inside the loop are above this index
+};
+
 // Writes an integer constant as a signed value of the given width, as LLVM
 // expects: for example 255 in a u8 becomes -1.
 std::string intConstant(uint64_t magnitude, bool negative, int bits) {
@@ -41,10 +54,59 @@ std::string floatConstant(double value, int bits) {
     return text;
 }
 
-std::string zeroOf(Type type) {
+// Structs larger than 16 bytes are passed and returned through a pointer.
+bool byPointer(Type type) { return type.isStruct() && sizeOf(type) > 16; }
+
+std::string structName(const StructDecl& decl) { return "%struct." + decl.name; }
+
+// Symbols of the members of a struct. The double dot cannot clash with a method.
+std::string methodSymbol(const StructDecl& decl, const std::string& method) { return "@" + decl.name + "." + method; }
+std::string constructorSymbol(const StructDecl& decl) { return "@" + decl.name + "..new"; }
+std::string dropSymbol(const StructDecl& decl) { return "@" + decl.name + "..drop"; }
+
+std::string symbolOf(const FunctionDecl& function) {
+    switch (function.kind) {
+    case FunctionKind::Free: return "@" + function.name;
+    case FunctionKind::Method: return methodSymbol(*function.owner, function.name);
+    case FunctionKind::Constructor: return constructorSymbol(*function.owner);
+    case FunctionKind::Destructor: return dropSymbol(*function.owner);
+    }
+    return "@?";
+}
+
+// The constant value of a literal of type `type` (field initial values, D73).
+std::string literalConstant(const Expr& expr, Type type) {
+    switch (expr.kind) {
+    case ExprKind::IntLiteral: {
+        const auto& literal = static_cast<const IntLiteralExpr&>(expr);
+        if (type.isFloat()) {
+            double value = static_cast<double>(literal.magnitude);
+            return floatConstant(literal.negative ? -value : value, type.bits);
+        }
+        return intConstant(literal.magnitude, literal.negative, type.bits);
+    }
+    case ExprKind::FloatLiteral: return floatConstant(static_cast<const FloatLiteralExpr&>(expr).value, type.bits);
+    case ExprKind::BoolLiteral: return static_cast<const BoolLiteralExpr&>(expr).value ? "true" : "false";
+    case ExprKind::Conversion: return literalConstant(*static_cast<const ConversionExpr&>(expr).operand, type);
+    default: return "undef";
+    }
+}
+
+// The default value of a type (D31, D48): zero, or the initial values of the fields.
+std::string defaultConstant(Type type) {
     if (type.isBool()) return "false";
     if (type.isFloat()) return floatConstant(0, type.bits);
-    return "0";
+    if (!type.isStruct()) return "0";
+    const StructDecl& decl = *type.structDecl;
+    if (decl.fields.empty()) return "zeroinitializer";
+    std::string out = "{ ";
+    for (size_t i = 0; i < decl.fields.size(); ++i) {
+        const FieldDecl& field = decl.fields[i];
+        if (i) out += ", ";
+        out += llvmType(field.resolved) + " " +
+               (field.init ? literalConstant(*field.init, field.resolved) : defaultConstant(field.resolved));
+    }
+    return out + " }";
 }
 
 class Generator {
@@ -57,6 +119,18 @@ public:
         out << "source_filename = " << quoted(options_.sourcePath) << "\n";
         out << "target triple = \"" << kTargetTriple << "\"\n\n";
 
+        for (const StructDecl& decl : module.structs) {
+            out << structName(decl) << " = type { ";
+            for (size_t i = 0; i < decl.fields.size(); ++i) out << (i ? ", " : "") << llvmType(decl.fields[i].resolved);
+            out << (decl.fields.empty() ? "}\n" : " }\n");
+        }
+        if (!module.structs.empty()) out << "\n";
+
+        for (const StructDecl& decl : module.structs) {
+            for (const FunctionDecl& member : decl.members) out << generateFunction(member);
+            // Without a destructor of its own, a struct still destroys its fields.
+            if (decl.needsDestruction && !decl.destructor) out << generateFieldsDrop(decl);
+        }
         const FunctionDecl* mainFunction = nullptr;
         for (const FunctionDecl& function : module.functions) {
             out << generateFunction(function);
@@ -98,6 +172,13 @@ private:
 
     std::string temp() { return "%t" + std::to_string(nextTemp_++); }
     std::string label(const char* base) { return std::string(base) + "." + std::to_string(nextLabel_++); }
+
+    // A stack slot in the entry block, where mem2reg and SROA can find it.
+    std::string slot(Type type) {
+        std::string name = "%slot." + std::to_string(nextSlot_++);
+        allocas_ << "  " << name << " = alloca " << llvmType(type) << "\n";
+        return name;
+    }
 
     // Code after a terminator (ret, br) is unreachable: give it its own block.
     void ensureLive() {
@@ -167,43 +248,106 @@ private:
         block(ok);
     }
 
-    // ---- Functions ----
-
-    static std::string variableRef(const Variable& variable) {
-        return "%v" + std::to_string(variable.id) + "." + variable.name;
+    void copyStruct(const std::string& dest, const std::string& source, Type type) {
+        std::string fn = intrinsic("declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1)", "@llvm.memcpy.p0.p0.i64");
+        inst("call void " + fn + "(ptr " + dest + ", ptr " + source + ", i64 " + std::to_string(sizeOf(type)) + ", i1 false)");
     }
+
+    std::string fieldAddress(const std::string& object, const StructDecl& decl, int index) {
+        std::string result = temp();
+        inst(result + " = getelementptr inbounds " + structName(decl) + ", ptr " + object + ", i32 0, i32 " +
+             std::to_string(index));
+        return result;
+    }
+
+    // ---- Functions ----
 
     std::string generateFunction(const FunctionDecl& function) {
         body_.str("");
         body_.clear();
+        allocas_.str("");
+        allocas_.clear();
         nextTemp_ = 0;
         nextLabel_ = 0;
+        nextSlot_ = 0;
         terminated_ = false;
         current_ = "entry";
-        returnType_ = function.resolvedReturn;
+        function_ = &function;
+        scopes_.clear();
+        temporaries_.clear();
+        loops_.clear();
+        addresses_.assign(function.variables.size(), "");
+        dropFields_.clear();
 
-        std::ostringstream out;
-        out << "define " << llvmType(function.resolvedReturn) << " @" << function.name << "(";
+        Type ret = function.resolvedReturn;
+        std::vector<std::string> params;
+        if (byPointer(ret)) params.push_back("ptr noalias sret(" + llvmType(ret) + ") %ret");
+        if (function.owner) params.push_back(std::string("ptr ") + (function.isConst ? "readonly " : "") + "%self");
         for (size_t i = 0; i < function.paramTypes.size(); ++i) {
-            if (i) out << ", ";
-            out << llvmType(function.paramTypes[i]) << " %arg." << i;
+            Type type = function.paramTypes[i];
+            std::string arg = "%arg." + std::to_string(i);
+            params.push_back(byPointer(type) ? "ptr readonly " + arg : llvmType(type) + " " + arg);
         }
-        out << ") nounwind {\nentry:\n";
 
         // Every variable gets a stack slot; mem2reg turns them into registers.
-        for (const auto& variable : function.variables) {
-            out << "  " << variableRef(*variable) << " = alloca " << llvmType(variable->type) << "\n";
+        // A large struct parameter is used through the pointer it arrives with.
+        for (size_t i = 0; i < function.variables.size(); ++i) {
+            const Variable& variable = *function.variables[i];
+            if (i < function.paramTypes.size() && byPointer(variable.type)) {
+                addresses_[variable.id] = "%arg." + std::to_string(i);
+                continue;
+            }
+            addresses_[variable.id] = "%v" + std::to_string(variable.id) + "." + variable.name;
+            allocas_ << "  " << addresses_[variable.id] << " = alloca " << llvmType(variable.type) << "\n";
         }
         for (size_t i = 0; i < function.paramTypes.size(); ++i) {
+            if (byPointer(function.paramTypes[i])) continue;
             inst("store " + llvmType(function.paramTypes[i]) + " %arg." + std::to_string(i) + ", ptr " +
-                 variableRef(*function.variables[i]));
+                 addresses_[function.variables[i]->id]);
         }
 
-        generateBlock(function.body);
-        if (!terminated_) term(function.resolvedReturn.isVoid() ? "ret void" : "unreachable");
+        if (function.kind == FunctionKind::Constructor) {
+            // The constructor starts from the default value (D48).
+            Type type = Type::structType(function.owner);
+            inst("store " + llvmType(type) + " " + defaultConstant(type) + ", ptr %self");
+        }
+        if (function.kind == FunctionKind::Destructor) dropFields_ = label("drop.fields");
 
-        out << body_.str() << "}\n\n";
+        generateBlock(function.body);
+
+        if (!dropFields_.empty()) {
+            // D68: after the body of the destructor, the fields are destroyed.
+            block(dropFields_);
+            dropFieldsOf(*function.owner);
+            term("ret void");
+        } else if (!terminated_) {
+            term(ret.isVoid() || byPointer(ret) ? "ret void" : "unreachable");
+        }
+
+        std::string returnType = byPointer(ret) ? "void" : llvmType(ret);
+        std::ostringstream out;
+        out << "define " << returnType << " " << symbolOf(function) << "(";
+        for (size_t i = 0; i < params.size(); ++i) out << (i ? ", " : "") << params[i];
+        out << ") nounwind {\nentry:\n" << allocas_.str() << body_.str() << "}\n\n";
         return out.str();
+    }
+
+    void dropFieldsOf(const StructDecl& decl) {
+        for (size_t i = decl.fields.size(); i-- > 0;) {
+            Type type = decl.fields[i].resolved;
+            if (needsDestruction(type)) drop(fieldAddress("%self", decl, static_cast<int>(i)), type);
+        }
+    }
+
+    // `T..drop` of a struct with no destructor whose fields need destruction.
+    std::string generateFieldsDrop(const StructDecl& decl) {
+        body_.str("");
+        body_.clear();
+        nextTemp_ = 0;
+        terminated_ = false;
+        dropFieldsOf(decl);
+        term("ret void");
+        return "define void " + dropSymbol(decl) + "(ptr %self) nounwind {\nentry:\n" + body_.str() + "}\n\n";
     }
 
     std::string entryPoint(const FunctionDecl& mainFunction) {
@@ -222,72 +366,152 @@ private:
         return out.str();
     }
 
+    // ---- Lifetimes (D68) ----
+
+    void drop(const std::string& address, Type type) {
+        inst("call void " + dropSymbol(*type.structDecl) + "(ptr " + address + ")");
+    }
+
+    // Destroys the objects of a scope in reverse order, except `kept` (moved by `ret`).
+    void dropScope(const std::vector<LiveObject>& scope, const Variable* kept = nullptr) {
+        for (auto object = scope.rbegin(); object != scope.rend(); ++object) {
+            if (object->variable && object->variable == kept) continue;
+            drop(object->address, object->type);
+        }
+    }
+
+    // Destroys the temporaries created since `mark`.
+    void dropTemporaries(size_t mark) {
+        if (temporaries_.size() <= mark) return;
+        if (!terminated_) {
+            for (size_t i = temporaries_.size(); i-- > mark;) drop(temporaries_[i].address, temporaries_[i].type);
+        }
+        temporaries_.resize(mark);
+    }
+
     // ---- Statements ----
 
     void generateBlock(const Block& block) {
+        scopes_.emplace_back();
         for (const StmtPtr& statement : block.statements) generateStatement(*statement);
+        if (!terminated_) dropScope(scopes_.back());
+        scopes_.pop_back();
     }
 
     void generateStatement(const Stmt& statement) {
+        size_t mark = temporaries_.size();
         switch (statement.kind) {
-        case StmtKind::VarDecl: {
-            const auto& decl = static_cast<const VarDeclStmt&>(statement);
-            const Variable& variable = *decl.variable;
-            std::string value = decl.init ? generateExpr(*decl.init).ref : zeroOf(variable.type);
-            inst("store " + llvmType(variable.type) + " " + value + ", ptr " + variableRef(variable));
-            break;
-        }
-        case StmtKind::Assign: {
-            const auto& assign = static_cast<const AssignStmt&>(statement);
-            const Variable& variable = *assign.variable;
-            Value value = generateExpr(*assign.value);
-            if (assign.op != AssignOp::Assign) {
-                static const BinaryOp ops[] = {BinaryOp::Add, BinaryOp::Add, BinaryOp::Sub, BinaryOp::Mul, BinaryOp::Div, BinaryOp::Rem};
-                Value current = load(variable);
-                value = arithmetic(ops[static_cast<int>(assign.op)], current, value, assign.loc);
-            }
-            inst("store " + llvmType(variable.type) + " " + value.ref + ", ptr " + variableRef(variable));
-            break;
-        }
+        case StmtKind::VarDecl: generateVarDecl(static_cast<const VarDeclStmt&>(statement)); break;
+        case StmtKind::Assign: generateAssign(static_cast<const AssignStmt&>(statement)); break;
         case StmtKind::IncDec: {
             const auto& incDec = static_cast<const IncDecStmt&>(statement);
-            const Variable& variable = *incDec.variable;
-            Value current = load(variable);
-            Value one{"1", variable.type};
-            Value value = arithmetic(incDec.increment ? BinaryOp::Add : BinaryOp::Sub, current, one, incDec.loc);
-            inst("store " + llvmType(variable.type) + " " + value.ref + ", ptr " + variableRef(variable));
+            std::string address = addressOf(*incDec.target);
+            Type type = incDec.target->type;
+            Value current = load(address, type);
+            Value value = arithmetic(incDec.increment ? BinaryOp::Add : BinaryOp::Sub, current, Value{"1", type}, incDec.loc);
+            inst("store " + llvmType(type) + " " + value.ref + ", ptr " + address);
             break;
         }
-        case StmtKind::Expr:
-            generateExpr(*static_cast<const ExprStmt&>(statement).expr);
-            break;
-        case StmtKind::If:
-            generateIf(static_cast<const IfStmt&>(statement));
-            break;
-        case StmtKind::For:
-            generateFor(static_cast<const ForStmt&>(statement));
-            break;
-        case StmtKind::Break:
-            term("br label %" + loops_.back().second);
-            break;
-        case StmtKind::Continue:
-            term("br label %" + loops_.back().first);
-            break;
-        case StmtKind::Return: {
-            const auto& ret = static_cast<const ReturnStmt&>(statement);
-            if (ret.value) {
-                Value value = generateExpr(*ret.value);
-                term("ret " + llvmType(returnType_) + " " + value.ref);
+        case StmtKind::Expr: {
+            const Expr& expr = *static_cast<const ExprStmt&>(statement).expr;
+            if (expr.type.isStruct()) {
+                addressOf(expr);  // a temporary, destroyed below
             } else {
-                term("ret void");
+                generateExpr(expr);
             }
             break;
         }
+        case StmtKind::If: generateIf(static_cast<const IfStmt&>(statement)); break;
+        case StmtKind::For: generateFor(static_cast<const ForStmt&>(statement)); break;
+        case StmtKind::Break:
+        case StmtKind::Continue: {
+            const Loop& loop = loops_.back();
+            for (size_t i = scopes_.size(); i-- > loop.scopeDepth;) dropScope(scopes_[i]);
+            term("br label %" + (statement.kind == StmtKind::Break ? loop.breakLabel : loop.continueLabel));
+            break;
+        }
+        case StmtKind::Return: generateReturn(static_cast<const ReturnStmt&>(statement)); break;
+        }
+        dropTemporaries(mark);
+    }
+
+    void generateVarDecl(const VarDeclStmt& decl) {
+        const Variable& variable = *decl.variable;
+        const std::string& address = addresses_[variable.id];
+        Type type = variable.type;
+        if (type.isStruct()) {
+            if (decl.init) {
+                generateStructInto(*decl.init, address);
+            } else {
+                inst("store " + llvmType(type) + " " + defaultConstant(type) + ", ptr " + address);
+            }
+            if (needsDestruction(type)) scopes_.back().push_back(LiveObject{address, type, &variable});
+            return;
+        }
+        std::string value = decl.init ? generateExpr(*decl.init).ref : defaultConstant(type);
+        inst("store " + llvmType(type) + " " + value + ", ptr " + address);
+    }
+
+    void generateAssign(const AssignStmt& assign) {
+        Type type = assign.target->type;
+        if (type.isStruct()) {
+            // The new value is built apart: it may read the old one (D75).
+            std::string fresh = slot(type);
+            generateStructInto(*assign.value, fresh);
+            std::string address = addressOf(*assign.target);
+            if (needsDestruction(type)) drop(address, type);
+            copyStruct(address, fresh, type);
+            return;
+        }
+        Value value = generateExpr(*assign.value);
+        std::string address = addressOf(*assign.target);
+        if (assign.op != AssignOp::Assign) {
+            static const BinaryOp ops[] = {BinaryOp::Add, BinaryOp::Add, BinaryOp::Sub, BinaryOp::Mul, BinaryOp::Div, BinaryOp::Rem};
+            Value current = load(address, type);
+            value = arithmetic(ops[static_cast<int>(assign.op)], current, value, assign.loc);
+        }
+        inst("store " + llvmType(type) + " " + value.ref + ", ptr " + address);
+    }
+
+    void generateReturn(const ReturnStmt& ret) {
+        Type type = function_->resolvedReturn;
+        const Variable* moved = nullptr;
+        std::string result;
+        if (ret.value && type.isStruct()) {
+            // `ret local` moves the variable out (D23): it is not destroyed.
+            if (ret.value->kind == ExprKind::Name) moved = static_cast<const NameExpr&>(*ret.value).variable;
+            std::string dest = byPointer(type) ? "%ret" : slot(type);
+            generateStructInto(*ret.value, dest);
+            if (!byPointer(type)) result = dest;
+        } else if (ret.value) {
+            result = generateExpr(*ret.value).ref;
+        }
+
+        dropTemporaries(0);
+        for (size_t i = scopes_.size(); i-- > 0;) dropScope(scopes_[i], moved);
+
+        if (!dropFields_.empty()) {
+            term("br label %" + dropFields_);
+        } else if (!ret.value || byPointer(type)) {
+            term("ret void");
+        } else if (type.isStruct()) {
+            Value value = load(result, type);
+            term("ret " + llvmType(type) + " " + value.ref);
+        } else {
+            term("ret " + llvmType(type) + " " + result);
         }
     }
 
+    // Evaluates a condition, destroying its temporaries before the branch (D68).
+    Value generateCondition(const Expr& condition) {
+        size_t mark = temporaries_.size();
+        Value value = generateExpr(condition);
+        dropTemporaries(mark);
+        return value;
+    }
+
     void generateIf(const IfStmt& statement) {
-        Value condition = generateExpr(*statement.condition);
+        Value condition = generateCondition(*statement.condition);
         std::string thenLabel = label("if.then");
         std::string elseLabel = statement.elseBlock ? label("if.else") : "";
         std::string endLabel = label("if.end");
@@ -304,6 +528,7 @@ private:
     }
 
     void generateFor(const ForStmt& statement) {
+        scopes_.emplace_back();  // the variable of the classic form
         if (statement.init) generateStatement(*statement.init);
         std::string condLabel = label("for.cond");
         std::string bodyLabel = label("for.body");
@@ -312,51 +537,140 @@ private:
 
         block(condLabel);
         if (statement.condition) {
-            Value condition = generateExpr(*statement.condition);
+            Value condition = generateCondition(*statement.condition);
             term("br i1 " + condition.ref + ", label %" + bodyLabel + ", label %" + endLabel);
         }
         block(bodyLabel);
-        loops_.emplace_back(stepLabel, endLabel);
+        loops_.push_back(Loop{stepLabel, endLabel, scopes_.size()});
         generateBlock(statement.body);
         loops_.pop_back();
         block(stepLabel);
         if (statement.step) generateStatement(*statement.step);
         term("br label %" + condLabel);
         block(endLabel);
+        dropScope(scopes_.back());
+        scopes_.pop_back();
+    }
+
+    // ---- Structs ----
+
+    // The address of a struct or of a place. A new object gets a slot and
+    // lives until the end of the statement (D68).
+    std::string addressOf(const Expr& expr) {
+        switch (expr.kind) {
+        case ExprKind::Name: return addresses_[static_cast<const NameExpr&>(expr).variable->id];
+        case ExprKind::Self: return "%self";
+        case ExprKind::Field: {
+            const auto& field = static_cast<const FieldExpr&>(expr);
+            std::string object = addressOf(*field.object);
+            return fieldAddress(object, *field.object->type.structDecl, field.index);
+        }
+        default: {
+            std::string address = slot(expr.type);
+            generateStructInto(expr, address);
+            if (needsDestruction(expr.type)) temporaries_.push_back(LiveObject{address, expr.type, nullptr});
+            return address;
+        }
+        }
+    }
+
+    // Builds the value of a struct expression directly in `dest`, which then owns it.
+    void generateStructInto(const Expr& expr, const std::string& dest) {
+        switch (expr.kind) {
+        case ExprKind::Construct: {
+            const auto& construct = static_cast<const ConstructExpr&>(expr);
+            const StructDecl& decl = *construct.decl;
+            if (!decl.constructor) {
+                inst("store " + structName(decl) + " " + defaultConstant(expr.type) + ", ptr " + dest);
+                return;
+            }
+            emitCall(*decl.constructor, dest, construct.args, "");
+            return;
+        }
+        case ExprKind::Call: {
+            const auto& call = static_cast<const CallExpr&>(expr);
+            emitCall(*call.function, "", call.args, dest);
+            return;
+        }
+        case ExprKind::MethodCall: {
+            const auto& call = static_cast<const MethodCallExpr&>(expr);
+            std::string self = addressOf(*call.object);
+            emitCall(*call.function, self, call.args, dest);
+            return;
+        }
+        default:
+            // A copy of a place: sema allows it only for structs without destruction (D75).
+            copyStruct(dest, addressOf(expr), expr.type);
+            return;
+        }
+    }
+
+    // Calls a function, a method (with `self`) or a constructor (with `self` set
+    // to the new object). A struct result is written to `dest`.
+    Value emitCall(const FunctionDecl& function, const std::string& self, const std::vector<ExprPtr>& args,
+                   const std::string& dest) {
+        Type ret = function.resolvedReturn;
+        std::vector<std::string> list;
+        if (byPointer(ret)) list.push_back("ptr " + dest);
+        if (!self.empty()) list.push_back("ptr " + self);
+        for (size_t i = 0; i < args.size(); ++i) list.push_back(argument(*args[i], function.paramTypes[i]));
+        std::string joined;
+        for (size_t i = 0; i < list.size(); ++i) joined += (i ? ", " : "") + list[i];
+
+        if (ret.isVoid() || byPointer(ret)) {
+            inst("call void " + symbolOf(function) + "(" + joined + ")");
+            return {"", ret};
+        }
+        std::string result = temp();
+        inst(result + " = call " + llvmType(ret) + " " + symbolOf(function) + "(" + joined + ")");
+        if (ret.isStruct()) inst("store " + llvmType(ret) + " " + result + ", ptr " + dest);
+        return {result, ret};
+    }
+
+    // An argument as the callee expects it: large structs by pointer, the rest by value.
+    std::string argument(const Expr& expr, Type type) {
+        if (byPointer(type)) return "ptr " + addressOf(expr);
+        if (type.isStruct()) return llvmType(type) + " " + load(addressOf(expr), type).ref;
+        Value value = generateExpr(expr);
+        return llvmType(value.type) + " " + value.ref;
     }
 
     // ---- Expressions ----
 
-    Value load(const Variable& variable) {
+    Value load(const std::string& address, Type type) {
         std::string result = temp();
-        inst(result + " = load " + llvmType(variable.type) + ", ptr " + variableRef(variable));
-        return {result, variable.type};
+        inst(result + " = load " + llvmType(type) + ", ptr " + address);
+        return {result, type};
     }
 
     Value generateExpr(const Expr& expr) {
         switch (expr.kind) {
-        case ExprKind::IntLiteral: {
-            const auto& literal = static_cast<const IntLiteralExpr&>(expr);
-            if (expr.type.isFloat()) {
-                double value = static_cast<double>(literal.magnitude);
-                return {floatConstant(literal.negative ? -value : value, expr.type.bits), expr.type};
-            }
-            return {intConstant(literal.magnitude, literal.negative, expr.type.bits), expr.type};
-        }
+        case ExprKind::IntLiteral:
         case ExprKind::FloatLiteral:
-            return {floatConstant(static_cast<const FloatLiteralExpr&>(expr).value, expr.type.bits), expr.type};
         case ExprKind::BoolLiteral:
-            return {static_cast<const BoolLiteralExpr&>(expr).value ? "true" : "false", expr.type};
+            return {literalConstant(expr, expr.type), expr.type};
         case ExprKind::StringLiteral:
             return {stringConstant(static_cast<const StringLiteralExpr&>(expr).value), expr.type};
         case ExprKind::Name:
-            return load(*static_cast<const NameExpr&>(expr).variable);
+        case ExprKind::Field:
+        case ExprKind::Self:
+        case ExprKind::Construct:
+            return load(addressOf(expr), expr.type);
         case ExprKind::Unary:
             return generateUnary(static_cast<const UnaryExpr&>(expr));
         case ExprKind::Binary:
             return generateBinary(static_cast<const BinaryExpr&>(expr));
-        case ExprKind::Call:
-            return generateCall(static_cast<const CallExpr&>(expr));
+        case ExprKind::Call: {
+            if (expr.type.isStruct()) return load(addressOf(expr), expr.type);
+            const auto& call = static_cast<const CallExpr&>(expr);
+            return emitCall(*call.function, "", call.args, "");
+        }
+        case ExprKind::MethodCall: {
+            if (expr.type.isStruct()) return load(addressOf(expr), expr.type);
+            const auto& call = static_cast<const MethodCallExpr&>(expr);
+            std::string self = addressOf(*call.object);
+            return emitCall(*call.function, self, call.args, "");
+        }
         case ExprKind::Conversion: {
             const auto& conversion = static_cast<const ConversionExpr&>(expr);
             return convert(generateExpr(*conversion.operand), expr.type, expr.loc);
@@ -414,7 +728,8 @@ private:
         return {result, Type::boolType()};
     }
 
-    // && and || evaluate the right side only when needed (D59).
+    // && and || evaluate the right side only when needed (D59). The temporaries
+    // of the right side exist only on that path: they are destroyed there.
     Value shortCircuit(const BinaryExpr& binary) {
         bool isAnd = binary.op == BinaryOp::And;
         Value lhs = generateExpr(*binary.lhs);
@@ -427,7 +742,7 @@ private:
             term("br i1 " + lhs.ref + ", label %" + endLabel + ", label %" + rhsLabel);
         }
         block(rhsLabel);
-        Value rhs = generateExpr(*binary.rhs);
+        Value rhs = generateCondition(*binary.rhs);
         std::string rhsBlock = current_;
         term("br label %" + endLabel);
         block(endLabel);
@@ -569,25 +884,6 @@ private:
         return {result, to};
     }
 
-    Value generateCall(const CallExpr& call) {
-        std::vector<std::string> args;
-        for (size_t i = 0; i < call.args.size(); ++i) {
-            Value value = generateExpr(*call.args[i]);
-            args.push_back(llvmType(value.type) + " " + value.ref);
-        }
-        std::string list;
-        for (size_t i = 0; i < args.size(); ++i) list += (i ? ", " : "") + args[i];
-
-        Type type = call.function->resolvedReturn;
-        if (type.isVoid()) {
-            inst("call void @" + call.callee + "(" + list + ")");
-            return {"", type};
-        }
-        std::string result = temp();
-        inst(result + " = call " + llvmType(type) + " @" + call.callee + "(" + list + ")");
-        return {result, type};
-    }
-
     // print/println: the format was parsed by sema, so here there are only calls
     // to the runtime, one per piece (D38).
     void generatePrint(const PrintExpr& print) {
@@ -631,14 +927,20 @@ private:
 
     const CodegenOptions& options_;
     std::ostringstream body_;
+    std::ostringstream allocas_;
     std::ostringstream globals_;
     std::map<std::string, std::string> strings_;
     std::set<std::string> intrinsics_;
-    std::vector<std::pair<std::string, std::string>> loops_;  // continue and break targets
+    const FunctionDecl* function_ = nullptr;
+    std::vector<std::string> addresses_;            // by Variable::id
+    std::vector<std::vector<LiveObject>> scopes_;   // variables to destroy, one list per open block
+    std::vector<LiveObject> temporaries_;           // to destroy at the end of the statement
+    std::vector<Loop> loops_;
+    std::string dropFields_;                        // in a destructor: the block that destroys the fields
     std::string current_;
-    Type returnType_;
     int nextTemp_ = 0;
     int nextLabel_ = 0;
+    int nextSlot_ = 0;
     int nextSpec_ = 0;
     bool terminated_ = false;
 };

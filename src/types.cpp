@@ -1,5 +1,7 @@
 #include "types.h"
 
+#include "ast.h"
+
 namespace cromo {
 
 std::string Type::name() const {
@@ -10,6 +12,7 @@ std::string Type::name() const {
     case TypeKind::Int: return (isSigned ? "i" : "u") + std::to_string(bits);
     case TypeKind::Float: return "f" + std::to_string(bits);
     case TypeKind::String: return "string";
+    case TypeKind::Struct: return structDecl->name;
     case TypeKind::UntypedInt: return "integer literal";
     case TypeKind::UntypedFloat: return "decimal literal";
     }
@@ -44,6 +47,26 @@ bool convertsLosslessly(Type from, Type to) {
     return false;
 }
 
+bool needsDestruction(Type type) {
+    return type.isStruct() && type.structDecl->needsDestruction;
+}
+
+int sizeOf(Type type) {
+    switch (type.kind) {
+    case TypeKind::Bool: return 1;
+    case TypeKind::Int:
+    case TypeKind::Float: return type.bits / 8;
+    case TypeKind::Struct: return type.structDecl->size;
+    default: return 0;
+    }
+}
+
+int alignOf(Type type) {
+    if (type.isStruct()) return type.structDecl->align;
+    int size = sizeOf(type);
+    return size > 0 ? size : 1;
+}
+
 std::string llvmType(Type type) {
     switch (type.kind) {
     case TypeKind::Void: return "void";
@@ -51,6 +74,7 @@ std::string llvmType(Type type) {
     case TypeKind::Int: return "i" + std::to_string(type.bits);
     case TypeKind::Float: return type.bits == 32 ? "float" : "double";
     case TypeKind::String: return "ptr";
+    case TypeKind::Struct: return "%struct." + type.structDecl->name;
     default: return "<invalid>";
     }
 }

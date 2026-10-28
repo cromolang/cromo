@@ -1,0 +1,53 @@
+// expect-output: 5
+// expect-output: 25
+// expect-output: 7 100
+// expect-output: 3
+struct Counter {
+    i32 count
+    i32 step = 1
+
+    void add() {
+        count += step
+    }
+
+    void addTwice() {
+        add()  // a method of the same struct (D72)
+        add()
+    }
+
+    i32 value() const {
+        ret count
+    }
+
+    i32 square() const {
+        ret value() * value()
+    }
+}
+
+// A free function with the same name as a method.
+i32 value() {
+    ret 100
+}
+
+Counter make(i32 step) {
+    Counter c
+    c.step = step
+    ret c
+}
+
+i32 main() {
+    Counter c
+    c.step = 2
+    c.addTwice()
+    c.step = 1
+    c.add()
+    println("{}", c.value())
+    println("{}", c.square())
+
+    Counter d = make(7)
+    d.add()
+    println("{} {}", d.value(), value())
+
+    println("{}", make(3).step)
+    ret 0
+}

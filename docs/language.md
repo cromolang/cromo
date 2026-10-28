@@ -162,8 +162,15 @@ struct File {
 ```
 
 The shape of the struct (fields, constructor `Name(...)`, destructor `~Name()`, methods) is decided (D20).
+- A struct has at most one constructor (D69). Without a constructor, `Point()` gives the default value (D71).
+- Inside methods, constructor and destructor, the fields are used by name; there is no `this`, and a local variable or parameter cannot have the name of a field (D70). A call `f()` refers first to a method of the same struct, then to a free function (D72).
+- For now the initial value of a field is a literal (D73).
+- The fields are laid out in memory in the order of declaration, with the alignment of C (D74).
+- A destructor is never called by hand (D68).
+- Until `move` arrives, a struct that needs destruction is not copied: it is created directly in its variable, returned with `ret` of a local variable, or replaced with a new object (D75).
+- `==` and printing with `{}` do not work on structs yet (D76).
 
-**Lifetime rules (proposal, modeled on C++):**
+**Lifetime rules (D68, modeled on C++):**
 1. An object is destroyed at the end of the scope in which it is declared. Objects of the same scope are destroyed in reverse order of declaration.
 2. Temporary objects are destroyed at the end of the statement that contains them.
 3. After the destructor body, the fields are destroyed, in reverse order of declaration.

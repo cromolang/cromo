@@ -50,15 +50,16 @@ foreach ($test in Get-ChildItem $PSScriptRoot -Recurse -Filter *.cro | Sort-Obje
     $name = $test.FullName.Substring($PSScriptRoot.Length + 1)
     if ($Filter -and -not $name.Contains($Filter)) { continue }
 
-    $flags = @()
-    if ($Flags) { $flags += ($Flags -split '\s+') }
+    # Not $flags: names are case-insensitive, it would overwrite the -Flags parameter.
+    $compileFlags = @()
+    if ($Flags) { $compileFlags += ($Flags -split '\s+') }
     $expectExit = $null
     $expectOutput = @()
     $expectStderr = @()
     $expectError = @()
     $expectWarning = @()
     foreach ($line in Get-Content $test.FullName -Encoding UTF8) {
-        if ($line -match '^\s*//\s*cromo-flags:\s*(.+?)\s*$') { $flags += ($matches[1] -split '\s+') }
+        if ($line -match '^\s*//\s*cromo-flags:\s*(.+?)\s*$') { $compileFlags += ($matches[1] -split '\s+') }
         elseif ($line -match '^\s*//\s*expect-exit:\s*(-?\d+)\s*$') { $expectExit = [int64]$matches[1] }
         elseif ($line -match '^\s*//\s*expect-output:\s?(.*)$') { $expectOutput += $matches[1] }
         elseif ($line -match '^\s*//\s*expect-stderr:\s*(.+?)\s*$') { $expectStderr += $matches[1] }
@@ -67,7 +68,7 @@ foreach ($test in Get-ChildItem $PSScriptRoot -Recurse -Filter *.cro | Sort-Obje
     }
 
     $exe = Join-Path $out ($test.BaseName + '.exe')
-    $compile = Invoke-Program $Cromo (@($test.FullName, '-o', $exe) + $flags)
+    $compile = Invoke-Program $Cromo (@($test.FullName, '-o', $exe) + $compileFlags)
     $compileText = $compile.Out + $compile.Err
 
     $problems = @()

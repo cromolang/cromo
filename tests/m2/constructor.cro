@@ -1,0 +1,43 @@
+// expect-output: balance before the body: 10
+// expect-output: 7 15 1
+// expect-output: balance before the body: 10
+// expect-output: 8 11 1
+// expect-output: 0 9
+// expect-exit: 11
+// The constructor starts from the initial values of the fields.
+struct Account {
+    i64 id
+    i64 balance = 10
+    i32 operations
+
+    Account(i64 number, i64 initial) {
+        println("balance before the body: {}", balance)
+        id = number
+        deposit(initial)
+    }
+
+    void deposit(i64 amount) {
+        balance += amount
+        operations++
+    }
+}
+
+struct Clamp {
+    i32 value
+
+    Clamp(i32 v) {
+        if (v < 0) {
+            ret
+        }
+        value = v
+    }
+}
+
+i32 main() {
+    Account a = Account(7, 5)
+    println("{} {} {}", a.id, a.balance, a.operations)
+    a = Account(8, 1)
+    println("{} {} {}", a.id, a.balance, a.operations)
+    println("{} {}", Clamp(-5).value, Clamp(9).value)
+    ret i32(a.balance)
+}

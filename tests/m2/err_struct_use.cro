@@ -1,0 +1,56 @@
+// expect-error: Point has no constructor: Point() gives its default value (D71)
+// expect-error: a File cannot be copied, because it needs destruction (D75)
+// expect-error: a Point cannot be printed yet (D76)
+// expect-error: '==' does not work on structs yet (D76)
+// expect-error: 'x' is a field of Point: choose another name (D70)
+// expect-error: cannot call 'shift', which is not const (D24)
+// expect-error: method 'peek' is const and cannot modify the fields (D24)
+// expect-error: 'origin' is const and cannot be modified (D26)
+// expect-error: Point has no field named 'z'
+// expect-error: Point has no method named 'scale'
+// expect-error: parameter 'p' cannot be modified
+struct Point {
+    f64 x
+    f64 y
+
+    void shift(f64 dx) {
+        x += dx
+    }
+
+    f64 peek() const {
+        y = 1.0
+        ret x
+    }
+
+    void rename(i32 x) {
+    }
+}
+
+struct File {
+    i32 handle
+
+    ~File() {
+    }
+}
+
+void use(Point p) {
+    p.shift(1.0)
+    p.x = 2.0
+}
+
+File copy(File f) {
+    ret f
+}
+
+i32 main() {
+    Point p = Point(1.0, 2.0)
+    File a = File()
+    File b = a
+    println("{}", p)
+    bool same = p == p
+    const Point origin = Point()
+    origin.x = 1.0
+    f64 z = p.z
+    p.scale(2.0)
+    ret 0
+}

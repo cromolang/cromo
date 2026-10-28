@@ -1,0 +1,77 @@
+// expect-output: 42
+// expect-output: 6
+// expect-output: 11 2 3
+// expect-output: 12
+// expect-output: 16 11
+// expect-output: 40 0
+// expect-exit: 3
+// Up to 16 bytes a struct is passed by value, above by pointer: the program
+// cannot tell the difference.
+struct Small {
+    i64 a
+    i32 b
+}
+
+struct Large {
+    i64 x
+    i64 y
+    i64 z
+}
+
+i64 sumSmall(Small s) {
+    ret s.a + i64(s.b)
+}
+
+i64 sumLarge(Large l) {
+    ret l.x + l.y + l.z
+}
+
+Small makeSmall(i64 a, i32 b) {
+    Small s
+    s.a = a
+    s.b = b
+    ret s
+}
+
+Large makeLarge(i64 base) {
+    Large l
+    l.x = base
+    l.y = base * 2
+    l.z = base * 3
+    ret l
+}
+
+Large shift(Large l, i64 by) {
+    Large result = l
+    result.x += by
+    ret result
+}
+
+struct Box {
+    Large content
+
+    i64 total() const {
+        ret sumLarge(content)
+    }
+
+    Large get() const {
+        ret content
+    }
+}
+
+i32 main() {
+    Small s = makeSmall(40, 2)
+    println("{}", sumSmall(s))
+    Large l = makeLarge(1)
+    println("{}", sumLarge(l))
+    l = shift(l, 10)
+    println("{} {} {}", l.x, l.y, l.z)
+    println("{}", sumLarge(makeLarge(2)))
+    Box box
+    box.content = l
+    println("{} {}", box.total(), box.get().x)
+    Small t = s
+    t.a = 0
+    println("{} {}", s.a, t.a)
+    ret i32(sumSmall(makeSmall(1, 2)))
+}
