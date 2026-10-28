@@ -740,6 +740,78 @@ case Empty {
 - `==` and `!=` work on enums whose cases have no data, as `color == Color.Red`. With data, the case is told by a `switch` (D76).
 - Explicit numeric values of the cases (`Red = 1`) and conversions to numbers come with `extern` (M7, D42); printing with `{}` comes with the interface for printing (D38).
 
+### D113. Destructors and `finally` do not let exceptions out
+*2026-10-28.* It amends D36. If the body of a destructor or of a `finally` block can throw without catching, it is a compile error, as for the `noexcept` destructors of C++11 and `drop` in Rust. This way a second exception can never arise while one is propagating, and the cleanup has no special cases.
+
+### D114. The variable of a `catch` and rethrowing
+*2026-10-28.* The exception of a `catch` is read-only, like a read parameter (only `const` methods, D24), both in `catch (IoError e)` and in `catch (Exception e)`. `throw` alone rethrows it, as `throw;` in C++.
+
+```cromo
+try {
+    load()
+} catch (IoError e) {
+    println("{}", e.message())
+    throw                       // the same exception again
+} catch (Exception e) {
+    println("{}", e.message())
+}
+```
+
+### D115. The interface `Exception`
+*2026-10-28.* The standard library declares `interface Exception { string message() const }`, and a ready-made struct `Error : Exception` that holds the message, for the simple cases: `throw Error("bad input")`.
+
+### D116. `break` and `continue` in a `switch` are errors
+*2026-10-28.* Since a branch of a `switch` ends by itself (D108), `break` and `continue` written directly in a branch are errors, with a message that explains it. This avoids the trap of the C habit, where a `break` written to close the case would leave the loop instead.
+
+### D117. `switch` without a subject in the methods of an enum
+*2026-10-28.* Inside a method of an enum, `switch { ... }` without parentheses looks at the value of the method. It agrees with D70 (no `this`), as the fields of a struct are used by name. The whole value cannot be named, for example to pass it to a function.
+
+```cromo
+enum Shape {
+    Circle(f64 radius)
+    Rect(f64 width, f64 height)
+
+    f64 area() const {
+        switch {
+            case Circle(f64 r) {
+                ret 3.14 * r * r
+            }
+            case Rect(f64 w, f64 h) {
+                ret w * h
+            }
+        }
+    }
+}
+```
+
+### D118. `try` and `catch`
+*2026-10-28.*
+- `try { ... } catch (T e) { ... } finally { ... }`: `catch` and `finally` may start on the next line, like `else` (D32). A `try` has at least one `catch` or a `finally`.
+- `T` is a struct that implements `Exception`, or `Exception` itself, which catches everything. The first `catch` that matches wins; a `catch` after one that catches everything, or a repeated one, is an error, because it would never be reached.
+
+### D119. `throw`
+*2026-10-28.*
+- What is thrown is a struct that implements `Exception`: a new object, or `move x` (D23). `throw` ends the path, like `ret` (D67).
+- `throw` alone (D114) is allowed only inside a `catch`, where there is an exception to rethrow.
+
+### D120. Leaving `finally`
+*2026-10-28.* `ret`, `break` and `continue` cannot leave a `finally` block, as in C#: they would silently discard an exception or a value being returned. With D113, `finally` always ends normally.
+
+### D121. Uncaught exceptions
+*2026-10-28.* An exception that leaves `main` stops the program with `uncaught exception: <message>` on stderr and exit code 1. A panic stays different: exit code 101 (D62).
+
+### D122. `copy()` and `message()` do not let exceptions out either
+*2026-10-28.* Like destructors (D113), a `copy()` and a `message()` written by hand cannot throw without catching: the compiler calls them in places where nobody could catch, such as the copies it generates (D35) and the report of an uncaught exception (D121).
+
+### D123. A constructor that throws
+*2026-10-28.* The fields of the object, which start from their default values (D48), are destroyed, but the destructor does not run, because the object was never complete (D16). The variable being initialized is not created.
+
+### D124. The data of a case are given like `move` parameters
+*2026-10-28.* `Message.Text(move name)`, or a new value: the enum becomes their owner. For simple types `move` can be omitted (D94).
+
+### D125. The value of a `switch` while a branch uses its data
+*2026-10-28.* While a branch has names for the data of the case, the value of the `switch` cannot be modified, except through the names given with `ref`, as the list in a `for` (D101).
+
 ---
 ---
 

@@ -73,6 +73,17 @@ Hidden error return, as in Swift. Every function that can throw returns, in addi
 - The code is the same on every platform, and no runtime is needed.
 - LLVM already has support for this technique: the `swifterror` attribute keeps the indicator in a dedicated register. Whether to use it remains to be evaluated.
 
+How M6 implements it:
+- **Which functions can throw.** Sema records, for every function, the `throw` statements and the calls that no enclosing `try` with `catch (Exception e)` protects, and computes a fixpoint over the program: a function can throw if one of those calls goes to a function that can. A method of an interface can throw if one of its implementations can, and then all of them get the hidden parameter, because they share the method table. The functions that cannot throw are compiled as before, at no cost.
+- **The slot.** A function that can throw has a last hidden parameter `ptr %raised`, pointing to `{ ptr object, ptr descriptor }` in the caller; the others use a slot of their own. `throw x` allocates the object on the heap, writes it with its descriptor into the slot and leaves; after every call that can throw, a non-null object in the slot means an exception.
+- **Leaving.** The code that handles an exception at a point destroys the temporaries and the objects of the scopes it leaves, runs the `finally` blocks on the way, and jumps to the dispatch of the nearest `try` body, or returns from the function with the exception still in the slot. A constructor first destroys the fields of its object (D123).
+- **The descriptor** of a thrown struct, `@"exception.T" = { drop, methods of Exception }`, tells the `catch` clauses its type, frees it, and gives `catch (Exception e)` its method table. A `catch` moves the exception out of the slot and frees it at its end, unless `throw` alone gives it back.
+- **`finally`** is generated again at every exit of its `try` (end of the body or of a `catch`, `ret`, `break`, `continue`, exception), as the C# compilers do. It can always be copied, because it can neither jump out nor let an exception out (D113, D120).
+- **`main`** that can throw is called by `cromo_start` with a slot: an exception left there is reported with its `message()` (D121).
+
+### Enums (D104)
+An enum is `{ [0 x i64], i32 tag, [n x i8] padding, data of the first case, [m x i8] padding }`: the field of size zero gives it the alignment of its most aligned case, the data of every case start at the same offset after the tag, and the size is that of the largest case. Each case also has a type of its own, `%"case.Shape.Rect" = type { double, double }`, used to read its data at that offset. The default value is a constant: the first case with the defaults of its data (D111). `switch` on an enum is a `switch` of LLVM on the tag; destroying and copying an enum look at the tag too.
+
 ### Information for the optimizer
 This is where the rules of the language become performance:
 
@@ -190,6 +201,7 @@ The generated code calls these functions (all `nounwind`):
 | `cromo_panic(message, len, where)` | panic (D62), exit code 101; `where` points to `{ text, length }` |
 | `cromo_panic_index(index, length, where)` | an index out of bounds (D30) |
 | `cromo_alloc(size)`, `cromo_realloc(p, size)`, `cromo_free(p)` | the heap of the process (`HeapAlloc`); out of memory is a panic |
+| `cromo_uncaught(message, len)` | an exception that leaves `main` (D121), exit code 1 |
 
 `spec` points to a constant `FmtSpec` built by the compiler from the format specification, or is null for `{}`.
 
@@ -225,6 +237,7 @@ Each milestone lists the decisions still open that are needed **before** writing
 - **M3** completed on 2026-10-28: `ref` and `move` parameters, `move` in initializations, assignments and `ret`, the error on the use of a moved variable along every path, drop flags, moving fields and `ref` parameters with the default value left in place, `copy()` written by hand or generated, exclusivity with the copy of simple read arguments. Tests in `tests/m3/`; the choices made for M3 are decisions D77–D83 in [decisions.md](decisions.md).
 - **M4** completed on 2026-10-28: generic functions and structs with constraints, deduction of the type arguments, interfaces with `Self`, structs that implement them, static calls through generics and dynamic calls through parameters of interface type. Tests in `tests/m4/`; the choices made for M4 are decisions D84–D92 in [decisions.md](decisions.md).
 - **M5** completed on 2026-10-28: the standard library `library/core.cro` with `list<T>` and `string` written in the `unsafe` dialect, indexing with bounds checking, `for` over the elements, the operators of `string`, `panic`, and the runtime checks of exclusivity between elements. The runtime in C stays (D93). Tests in `tests/m5/`, among them the program of `examples/04_lists.cro`; the choices made for M5 are decisions D93–D103 in [decisions.md](decisions.md).
+- **M6** completed on 2026-10-28: enums with data, methods and type parameters, `switch` on enums, integers and strings, and exceptions with `throw`, `try`, `catch` and `finally`, the interface `Exception` and the struct `Error` of the library. Tests in `tests/m6/`; the choices made for M6 are decisions D104–D125 in [decisions.md](decisions.md).
 
 | Milestone | Content | Open decisions |
 |---|---|---|

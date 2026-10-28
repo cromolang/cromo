@@ -669,6 +669,16 @@ __declspec(noreturn) void cromo_panic_index(i64 index, i64 length, const Where* 
     panicEnd(where);
 }
 
+// D121: an exception that leaves main, with its message; exit code 1.
+__declspec(noreturn) void cromo_uncaught(const u8* message, u64 size) {
+    flush(1);
+    put(2, (const u8*)"uncaught exception: ", 20);
+    put(2, message, size);
+    put(2, (const u8*)"\n", 1);
+    flush(2);
+    ExitProcess(1);
+}
+
 // ---- Heap, for list and string (D98) ----
 
 static __declspec(noreturn) void outOfMemory(void) {

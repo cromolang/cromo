@@ -173,3 +173,21 @@ struct string {
         ret result
     }
 }
+
+// What can be thrown (D36, D115).
+interface Exception {
+    string message() const
+}
+
+// A ready-made exception with its message, for the simple cases (D115).
+struct Error : Exception {
+    string text
+
+    Error(move string description) {
+        text = move description
+    }
+
+    string message() const {
+        ret text.copy()
+    }
+}

@@ -1,0 +1,6 @@
+// expect-error: 'try' needs at least one 'catch' or a 'finally'
+i32 main() {
+    try {
+    }
+    ret 0
+}

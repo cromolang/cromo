@@ -39,6 +39,7 @@ public:
             if (variable->kind != VariableKind::Local) state_.variables[variable->id] = kLive;
         }
         loops_.clear();
+        raises_.clear();
         checkBlock(function.body);
     }
 
@@ -126,6 +127,31 @@ private:
             break;
         }
         case StmtKind::For: checkFor(static_cast<const ForStmt&>(statement)); break;
+        case StmtKind::Switch: {
+            // Every branch starts from the same state; without a branch for every
+            // value, the switch can also do nothing.
+            const auto& switchStmt = static_cast<const SwitchStmt&>(statement);
+            visit(*switchStmt.value);
+            State before = state_;
+            State after = switchStmt.exhaustive ? unreachable() : before;
+            auto branch = [&](const Block& body) {
+                state_ = before;
+                checkBlock(body);
+                after = merge(after, state_);
+            };
+            for (const SwitchBranch& item : switchStmt.branches) branch(item.body);
+            if (switchStmt.defaultBlock) branch(*switchStmt.defaultBlock);
+            state_ = after;
+            break;
+        }
+        case StmtKind::Throw: {
+            const auto& throwStmt = static_cast<const ThrowStmt&>(statement);
+            if (throwStmt.value) visit(*throwStmt.value);
+            noteRaise();
+            state_ = unreachable();
+            break;
+        }
+        case StmtKind::Try: checkTry(static_cast<const TryStmt&>(statement)); break;
         case StmtKind::Break:
             loops_.back().breaks.push_back(state_);
             state_ = unreachable();
@@ -141,6 +167,33 @@ private:
             break;
         }
         }
+    }
+
+    // A `catch` starts from any point of the body where an exception can arise:
+    // the states at those points are merged. `finally` runs on every exit.
+    void checkTry(const TryStmt& statement) {
+        raises_.push_back(state_);
+        checkBlock(statement.body);
+        State atCatch = raises_.back();
+        raises_.pop_back();
+        State after = state_;
+        for (const CatchClause& clause : statement.catches) {
+            state_ = atCatch;
+            checkBlock(clause.body);
+            after = merge(after, state_);
+        }
+        if (!statement.finallyBlock) {
+            state_ = after;
+            return;
+        }
+        state_ = merge(after, atCatch);
+        checkBlock(*statement.finallyBlock);
+        if (!after.reachable) state_ = unreachable();
+    }
+
+    // A point where an exception can arise: a call or a `throw`.
+    void noteRaise() {
+        for (State& state : raises_) state = merge(state, state_);
     }
 
     // A loop is visited until the state at its start no longer changes, without
@@ -216,15 +269,23 @@ private:
         }
         case ExprKind::Call:
             for (const ExprPtr& arg : static_cast<const CallExpr&>(expr).args) visit(*arg);
+            noteRaise();
             break;
         case ExprKind::MethodCall: {
             const auto& call = static_cast<const MethodCallExpr&>(expr);
             visit(*call.object);
             for (const ExprPtr& arg : call.args) visit(*arg);
+            noteRaise();
             break;
         }
         case ExprKind::Construct:
             for (const ExprPtr& arg : static_cast<const ConstructExpr&>(expr).args) visit(*arg);
+            noteRaise();
+            break;
+        case ExprKind::EnumCase:
+            for (const ExprPtr& arg : static_cast<const EnumCaseExpr&>(expr).args) visit(*arg);
+            break;
+        case ExprKind::TypeRef:
             break;
         case ExprKind::Conversion: visit(*static_cast<const ConversionExpr&>(expr).operand); break;
         case ExprKind::Print:
@@ -250,6 +311,7 @@ private:
     Diagnostics& diag_;
     State state_;
     std::vector<Loop> loops_;
+    std::vector<State> raises_;  // for each enclosing `try` body: where an exception can arise
     bool report_ = true;
 };
 

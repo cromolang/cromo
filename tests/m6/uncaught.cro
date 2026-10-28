@@ -1,0 +1,14 @@
+// expect-exit: 1
+// expect-output: start
+// expect-stderr: uncaught exception: something broke
+// An exception that leaves main stops the program (D121).
+void fail() {
+    throw Error("something broke")
+}
+
+i32 main() {
+    println("start")
+    fail()
+    println("never")
+    ret 0
+}

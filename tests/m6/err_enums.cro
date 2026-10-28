@@ -1,0 +1,94 @@
+// expect-error: 'switch' does not cover Blue of Color: add the cases, or 'default' (D34)
+// expect-error: Color has no case 'Purple'
+// expect-error: case 'Red' is already in this 'switch'
+// expect-error: case 'Rect' has 2 data, but 1 names were given (D107)
+// expect-error: the data 'radius' of Circle is f64: write f64 r (D107)
+// expect-error: 'r' is data of the case, read-only: write 'ref f64 r' in the case to modify it (D107)
+// expect-error: '==' works on the enums whose cases have no data: tell the case with 'switch' (D112)
+// expect-error: 'break' cannot be used in a 'switch': a branch ends by itself (D116)
+// expect-error: 'switch' needs a value
+// expect-error: 'Shape.Circle' has data: write Shape.Circle(...) (D105)
+// expect-error: 'switch' works on enums, integers and strings, found f64 (D109)
+// expect-error: this value is already in this 'switch'
+// expect-error: 's' cannot be modified while a 'switch' uses the data of its case (D125)
+// expect-error: cannot modify the data with 'ref': parameter 'p' cannot be modified
+enum Color {
+    Red
+    Green
+    Blue
+}
+
+enum Shape {
+    Circle(f64 radius)
+    Rect(f64 width, f64 height)
+    Empty
+}
+
+void grow(Shape p) {
+    switch (p) {
+        case Circle(ref f64 r) {
+        }
+        default {
+        }
+    }
+}
+
+i32 main() {
+    Color c = Color.Red
+    switch (c) {
+        case Red {
+        }
+        case Green {
+        }
+    }
+    switch (c) {
+        case Purple {
+        }
+        default {
+        }
+    }
+    switch (c) {
+        case Red {
+        }
+        case Red {
+        }
+        default {
+        }
+    }
+    Shape s = Shape.Empty
+    switch (s) {
+        case Rect(f64 w) {
+        }
+        case Circle(i32 r) {
+        }
+        default {
+        }
+    }
+    switch (s) {
+        case Circle(f64 r) {
+            r = 2.0
+            s = Shape.Empty
+        }
+        default {
+        }
+    }
+    bool same = s == s
+    for (i32 i = 0; i < 3; i++) {
+        switch (i) {
+            case 1 {
+                break
+            }
+            case 2, 1 {
+            }
+        }
+    }
+    switch {
+    }
+    Shape t = Shape.Circle
+    f64 x = 1.0
+    switch (x) {
+        default {
+        }
+    }
+    ret 0
+}

@@ -21,6 +21,22 @@ struct LiveObject {
     std::string address;
     Type type;
     const Variable* variable = nullptr;  // null for temporaries
+    std::string flag;                    // an i1 that says if it is still alive, when it can be given away
+    bool isException = false;            // the exception of a `catch`: `address` holds { object, descriptor }
+};
+
+// The objects of a block, and what leaving it means: a `try` with `finally` runs
+// it (D16), and the body of a `try` sends its exceptions to `handler` (D36).
+struct Scope {
+    std::vector<LiveObject> objects;
+    const Block* finallyBlock = nullptr;
+    std::string handler;
+};
+
+// The exception that a `catch` owns, for `throw` alone (D114).
+struct Caught {
+    std::string box;   // { object, descriptor }
+    std::string flag;
 };
 
 struct Loop {
@@ -72,8 +88,21 @@ std::string dropSymbol(const StructDecl& decl) { return llvmName('@', decl.name 
 
 // The functions of the standard library receive where they were called from,
 // and their panics report it (D102).
+// A method that implements a method of an interface: it is also called through
+// a method table, which knows nothing of hidden parameters.
+bool implementsInterfaceMethod(const FunctionDecl& function) {
+    if (!function.owner || function.kind != FunctionKind::Method) return false;
+    for (const InterfaceDecl* iface : function.owner->implements) {
+        for (const FunctionDecl& method : iface->methods) {
+            if (method.name == function.name) return true;
+        }
+    }
+    return false;
+}
+
 bool tracksCaller(const FunctionDecl& function) {
-    return function.loc.file == kLibraryFile && function.kind != FunctionKind::Destructor && !function.isGenerated;
+    return function.loc.file == kLibraryFile && function.kind != FunctionKind::Destructor && !function.isGenerated &&
+           !implementsInterfaceMethod(function);
 }
 
 int fieldIndexOf(const StructDecl& decl, const std::string& name) {
@@ -112,12 +141,44 @@ std::string literalConstant(const Expr& expr, Type type) {
 }
 
 // The default value of a type (D31, D48): zero, or the initial values of the fields.
+std::string defaultConstant(Type type);
+
+// An enum in memory (D104): a field of size zero that gives it the alignment of
+// its most aligned case, the tag, padding up to where the data start, the data
+// of the first case, and padding up to the size of the largest case:
+// { [0 x i64], i32, [4 x i8], double, [8 x i8] }. The other cases are read
+// through their own type, at the same offset.
+std::string alignmentType(int align) { return align >= 8 ? "i64" : "i32"; }
+
+int enumTail(const StructDecl& decl) { return decl.size - decl.payloadOffset - decl.cases[0].size; }
+
+std::string enumTypeBody(const StructDecl& decl) {
+    std::string out = "{ [0 x " + alignmentType(decl.align) + "], i32, [" + std::to_string(decl.payloadOffset - 4) + " x i8]";
+    for (const FieldDecl& field : decl.cases[0].fields) out += ", " + llvmType(field.resolved);
+    return out + ", [" + std::to_string(enumTail(decl)) + " x i8] }";
+}
+
+std::string caseTypeName(const StructDecl& decl, const EnumCase& item) {
+    return llvmName('%', "case." + decl.name + "." + item.name);
+}
+
+// The default value of an enum is its first case, with the defaults of its data (D111).
+std::string enumDefault(const StructDecl& decl) {
+    std::string out = "{ [0 x " + alignmentType(decl.align) + "] zeroinitializer, i32 0, [" +
+                      std::to_string(decl.payloadOffset - 4) + " x i8] zeroinitializer";
+    for (const FieldDecl& field : decl.cases[0].fields) {
+        out += ", " + llvmType(field.resolved) + " " + defaultConstant(field.resolved);
+    }
+    return out + ", [" + std::to_string(enumTail(decl)) + " x i8] zeroinitializer }";
+}
+
 std::string defaultConstant(Type type) {
     if (type.isBool()) return "false";
     if (type.isFloat()) return floatConstant(0, type.bits);
     if (type.kind == TypeKind::Addr) return "null";
     if (!type.isStruct()) return "0";
     const StructDecl& decl = *type.structDecl;
+    if (decl.isEnum) return enumDefault(decl);
     if (decl.fields.empty()) return "zeroinitializer";
     std::string out = "{ ";
     for (size_t i = 0; i < decl.fields.size(); ++i) {
@@ -139,6 +200,10 @@ public:
         out << "source_filename = " << quoted(options_.sourcePaths[0]) << "\n";
         out << "target triple = \"" << kTargetTriple << "\"\n\n";
 
+        for (const InterfaceDecl& iface : module.interfaces) {
+            if (iface.name == "Exception" && iface.loc.file == kLibraryFile) exceptionInterface_ = &iface;
+        }
+
         // Generics are emitted only through their instances with real types (D39).
         std::vector<const StructDecl*> structs;
         for (const StructDecl& decl : module.structs) {
@@ -156,6 +221,15 @@ public:
         }
 
         for (const StructDecl* decl : structs) {
+            if (decl->isEnum) {
+                out << structName(*decl) << " = type " << enumTypeBody(*decl) << "\n";
+                for (const EnumCase& item : decl->cases) {
+                    out << caseTypeName(*decl, item) << " = type { ";
+                    for (size_t i = 0; i < item.fields.size(); ++i) out << (i ? ", " : "") << llvmType(item.fields[i].resolved);
+                    out << (item.fields.empty() ? "}\n" : " }\n");
+                }
+                continue;
+            }
             out << structName(*decl) << " = type { ";
             for (size_t i = 0; i < decl->fields.size(); ++i) out << (i ? ", " : "") << llvmType(decl->fields[i].resolved);
             out << (decl->fields.empty() ? "}\n" : " }\n");
@@ -177,6 +251,7 @@ public:
         }
         if (mainFunction) out << entryPoint(*mainFunction);
 
+        if (freesExceptions_) out << freeExceptionFunction();
         out << globals_.str() << "\n";
         out << "declare void @cromo_write(i32, ptr, i64) nounwind\n";
         out << "declare void @cromo_fmt_int(i32, i64, i32, ptr) nounwind\n";
@@ -192,6 +267,7 @@ public:
         out << "declare ptr @cromo_realloc(ptr, i64) nounwind\n";
         out << "declare void @cromo_free(ptr) nounwind\n";
         out << "declare i32 @memcmp(ptr, ptr, i64) nounwind\n";
+        out << "declare void @cromo_uncaught(ptr, i64) noreturn nounwind cold\n";
         for (const std::string& declaration : intrinsics_) out << declaration << "\n";
         return out.str();
     }
@@ -341,6 +417,8 @@ private:
         flags_.assign(addresses_.size(), "");
         dropFields_.clear();
         tracksCaller_ = false;
+        localRaised_.clear();
+        catches_.clear();
     }
 
     std::string finishFunction(const std::string& returnType, const std::string& symbol, const std::vector<std::string>& params) {
@@ -371,12 +449,15 @@ private:
         }
         tracksCaller_ = tracksCaller(function);
         if (tracksCaller_) params.push_back("ptr %caller");
+        if (function.canThrow) params.push_back("ptr %raised");  // where an exception goes (D36)
 
         // Every variable gets a stack slot; mem2reg turns them into registers.
         // A parameter passed by address is used through the pointer it arrives with.
         for (size_t i = 0; i < function.variables.size(); ++i) {
             const Variable& variable = *function.variables[i];
-            if (variable.kind == VariableKind::Element) continue;  // its address changes at every iteration
+            // The element of a `for` and the data of a case are where they are in memory.
+            if (variable.kind == VariableKind::Element || variable.kind == VariableKind::Binding) continue;
+            if (variable.kind == VariableKind::Caught && !variable.type.isInterface()) continue;  // the thrown object
             std::string name = "%v" + std::to_string(variable.id) + "." + variable.name;
             if (variable.needsDropFlag) {
                 flags_[variable.id] = name + ".alive";
@@ -402,7 +483,7 @@ private:
         for (size_t i = 0; i < function.paramTypes.size(); ++i) {
             const Variable& variable = *function.variables[i];
             if (variable.kind == VariableKind::MoveParam && needsDestruction(variable.type)) {
-                scopes_.back().push_back(LiveObject{addresses_[variable.id], variable.type, &variable});
+                scopes_.back().objects.push_back(LiveObject{addresses_[variable.id], variable.type, &variable});
             }
         }
 
@@ -414,7 +495,7 @@ private:
         if (function.kind == FunctionKind::Destructor) dropFields_ = label("drop.fields");
 
         generateBlock(function.body);
-        if (!terminated_) dropScope(scopes_.back());
+        if (!terminated_) dropObjects(scopes_.back().objects);
 
         if (!dropFields_.empty()) {
             // D68: after the body of the destructor, the fields are destroyed.
@@ -437,9 +518,61 @@ private:
     // `T..drop` of a struct with no destructor whose fields need destruction.
     std::string generateFieldsDrop(const StructDecl& decl) {
         startFunction(nullptr);
-        dropFieldsOf(decl);
+        if (decl.isEnum) {
+            // The data of the current case (D111).
+            forEachCase(decl, "%self", [&](const EnumCase& item, const std::string& payload) {
+                for (size_t i = item.fields.size(); i-- > 0;) {
+                    Type type = item.fields[i].resolved;
+                    if (needsDestruction(type)) drop(caseField(payload, decl, item, i), type);
+                }
+            });
+        } else {
+            dropFieldsOf(decl);
+        }
         term("ret void");
         return finishFunction("void", dropSymbol(decl), {"ptr noalias %self"});
+    }
+
+    std::string enumTag(const std::string& address, const StructDecl& decl) {
+        std::string result = temp();
+        inst(result + " = getelementptr inbounds " + structName(decl) + ", ptr " + address + ", i32 0, i32 1");
+        return result;
+    }
+
+    std::string enumPayload(const std::string& address, const StructDecl& decl) {
+        std::string result = temp();
+        inst(result + " = getelementptr inbounds i8, ptr " + address + ", i64 " + std::to_string(decl.payloadOffset));
+        return result;
+    }
+
+    std::string caseField(const std::string& payload, const StructDecl& decl, const EnumCase& item, size_t index) {
+        std::string result = temp();
+        inst(result + " = getelementptr inbounds " + caseTypeName(decl, item) + ", ptr " + payload + ", i32 0, i32 " +
+             std::to_string(index));
+        return result;
+    }
+
+    // Runs `body` for the current case of the enum at `address`, with the address
+    // of its data; only for the cases that have data.
+    template <typename Body>
+    void forEachCase(const StructDecl& decl, const std::string& address, Body body) {
+        Value tag = load(enumTag(address, decl), Type::intType(32, true));
+        std::string done = label("case.done");
+        std::vector<std::string> labels(decl.cases.size());
+        std::string table;
+        for (size_t i = 0; i < decl.cases.size(); ++i) {
+            if (decl.cases[i].fields.empty()) continue;
+            labels[i] = label("case");
+            table += " i32 " + std::to_string(i) + ", label %" + labels[i];
+        }
+        term("switch i32 " + tag.ref + ", label %" + done + " [" + table + " ]");
+        for (size_t i = 0; i < decl.cases.size(); ++i) {
+            if (labels[i].empty()) continue;
+            block(labels[i]);
+            body(decl.cases[i], enumPayload(address, decl));
+            term("br label %" + done);
+        }
+        block(done);
     }
 
     // `copy()` generated by the compiler (D35): the simple fields are copied, the
@@ -448,6 +581,21 @@ private:
         startFunction(nullptr);
         Type type = Type::structType(&decl);
         std::string dest = byPointer(type) ? "%ret" : slot(type);
+        if (decl.isEnum) {
+            // The tag, then the data of the current case (D111).
+            copyStruct(dest, "%self", type);
+            if (decl.needsDestruction) {
+                forEachCase(decl, "%self", [&](const EnumCase& item, const std::string& payload) {
+                    std::string target = enumPayload(dest, decl);
+                    for (size_t i = 0; i < item.fields.size(); ++i) {
+                        Type field = item.fields[i].resolved;
+                        if (!needsDestruction(field)) continue;
+                        emitCall(*field.structDecl->methods.at("copy"), caseField(payload, decl, item, i), field, {},
+                                 caseField(target, decl, item, i), decl.loc);
+                    }
+                });
+            }
+        }
         for (size_t i = 0; i < decl.fields.size(); ++i) {
             Type field = decl.fields[i].resolved;
             std::string source = fieldAddress("%self", decl, static_cast<int>(i));
@@ -474,16 +622,66 @@ private:
         std::ostringstream out;
         out << "define void @cromo_start() noreturn nounwind {\n";
         out << "entry:\n";
-        if (mainFunction.resolvedReturn.isVoid()) {
-            out << "  call void @main()\n";
-            out << "  call void @cromo_exit(i32 0)\n";
-        } else {
-            out << "  %code = call i32 @main()\n";
-            out << "  call void @cromo_exit(i32 %code)\n";
+        std::string raised = mainFunction.canThrow ? "ptr %raised" : "";
+        if (mainFunction.canThrow) {
+            out << "  %raised = alloca { ptr, ptr }\n";
+            out << "  store { ptr, ptr } zeroinitializer, ptr %raised\n";
         }
+        if (mainFunction.resolvedReturn.isVoid()) {
+            out << "  call void @main(" << raised << ")\n";
+        } else {
+            out << "  %code = call i32 @main(" << raised << ")\n";
+        }
+        std::string code = mainFunction.resolvedReturn.isVoid() ? "0" : "%code";
+        if (mainFunction.canThrow && exceptionInterface_) {
+            // D121: an exception that leaves main stops the program with its message.
+            const FunctionDecl& message = exceptionInterface_->methods[0];
+            const StructDecl& text = *message.resolvedReturn.structDecl;
+            out << "  %object = load ptr, ptr %raised\n";
+            out << "  %threw = icmp ne ptr %object, null\n";
+            out << "  br i1 %threw, label %uncaught, label %done\n";
+            out << "uncaught:\n";
+            out << "  %descriptorAddress = getelementptr inbounds { ptr, ptr }, ptr %raised, i32 0, i32 1\n";
+            out << "  %descriptor = load ptr, ptr %descriptorAddress\n";
+            out << "  %tableAddress = getelementptr inbounds { ptr, ptr }, ptr %descriptor, i32 0, i32 1\n";
+            out << "  %table = load ptr, ptr %tableAddress\n";
+            out << "  %method = load ptr, ptr %table\n";
+            out << "  %text = alloca " << structName(text) << "\n";
+            out << "  call void %method(ptr %text, ptr %object)\n";
+            out << "  %dataAddress = getelementptr inbounds " << structName(text) << ", ptr %text, i32 0, i32 "
+                << fieldIndexOf(text, "data") << "\n";
+            out << "  %data = load ptr, ptr %dataAddress\n";
+            out << "  %lengthAddress = getelementptr inbounds " << structName(text) << ", ptr %text, i32 0, i32 "
+                << fieldIndexOf(text, "length") << "\n";
+            out << "  %length = load i64, ptr %lengthAddress\n";
+            out << "  call void @cromo_uncaught(ptr %data, i64 %length)\n";
+            out << "  unreachable\n";
+            out << "done:\n";
+        }
+        out << "  call void @cromo_exit(i32 " << code << ")\n";
         out << "  unreachable\n";
         out << "}\n\n";
         return out.str();
+    }
+
+    // Destroys the object of an exception and frees its memory, through the
+    // descriptor that travels with it.
+    static std::string freeExceptionFunction() {
+        return "define private void @cromo.exception.free(ptr %box) nounwind {\n"
+               "entry:\n"
+               "  %object = load ptr, ptr %box\n"
+               "  %descriptorAddress = getelementptr inbounds { ptr, ptr }, ptr %box, i32 0, i32 1\n"
+               "  %descriptor = load ptr, ptr %descriptorAddress\n"
+               "  %drop = load ptr, ptr %descriptor\n"
+               "  %destroy = icmp ne ptr %drop, null\n"
+               "  br i1 %destroy, label %drop.object, label %free\n"
+               "drop.object:\n"
+               "  call void %drop(ptr %object)\n"
+               "  br label %free\n"
+               "free:\n"
+               "  call void @cromo_free(ptr %object)\n"
+               "  ret void\n"
+               "}\n\n";
     }
 
     // ---- Lifetimes (D68) ----
@@ -494,39 +692,250 @@ private:
 
     // Destroys a variable, checking its drop flag if it may have been moved (D77).
     void dropVariable(const std::string& address, Type type, const Variable* variable) {
-        if (!variable || !variable->needsDropFlag) {
-            drop(address, type);
-            return;
+        dropObject(LiveObject{address, type, variable});
+    }
+
+    void dropObject(const LiveObject& object) {
+        std::string flag = object.flag;
+        if (flag.empty() && object.variable && object.variable->needsDropFlag) flag = flags_[object.variable->id];
+        std::string done;
+        if (!flag.empty()) {
+            std::string alive = temp();
+            std::string yes = label("drop");
+            done = label("dropped");
+            inst(alive + " = load i1, ptr " + flag);
+            term("br i1 " + alive + ", label %" + yes + ", label %" + done);
+            block(yes);
         }
-        std::string alive = temp();
-        std::string yes = label("drop");
-        std::string done = label("dropped");
-        inst(alive + " = load i1, ptr " + flags_[variable->id]);
-        term("br i1 " + alive + ", label %" + yes + ", label %" + done);
-        block(yes);
-        drop(address, type);
-        block(done);
+        if (object.isException) {
+            freesExceptions_ = true;
+            inst("call void @cromo.exception.free(ptr " + object.address + ")");
+        } else {
+            drop(object.address, object.type);
+        }
+        if (!done.empty()) block(done);
     }
 
     void setAlive(const Variable& variable, bool alive) {
         if (variable.needsDropFlag) inst(std::string("store i1 ") + (alive ? "true" : "false") + ", ptr " + flags_[variable.id]);
     }
 
-    // Destroys the objects of a scope in reverse order, except `kept` (moved by `ret`).
-    void dropScope(const std::vector<LiveObject>& scope, const Variable* kept = nullptr) {
-        for (auto object = scope.rbegin(); object != scope.rend(); ++object) {
+    // Destroys objects in reverse order, except `kept` (moved by `ret`).
+    void dropObjects(const std::vector<LiveObject>& objects, const Variable* kept = nullptr) {
+        for (auto object = objects.rbegin(); object != objects.rend(); ++object) {
             if (object->variable && object->variable == kept) continue;
-            dropVariable(object->address, object->type, object->variable);
+            dropObject(*object);
         }
+    }
+
+    // Leaves the scope at `index`: destroys its objects and runs its `finally` (D16).
+    void leaveScope(size_t index, const Variable* kept) {
+        Scope scope = scopes_[index];  // a copy: running finally opens scopes
+        dropObjects(scope.objects, kept);
+        if (scope.finallyBlock) generateFinally(*scope.finallyBlock, index);
+    }
+
+    // Runs a `finally` block where the code leaves its `try`. It cannot jump out or
+    // let an exception out (D113, D120), so it runs as if the scopes from `index` on
+    // were already closed.
+    void generateFinally(const Block& finallyBlock, size_t index) {
+        std::vector<Scope> inner(scopes_.begin() + static_cast<std::ptrdiff_t>(index), scopes_.end());
+        std::vector<LiveObject> temporaries = std::move(temporaries_);
+        scopes_.resize(index);
+        temporaries_.clear();
+        generateBlock(finallyBlock);
+        scopes_.insert(scopes_.end(), inner.begin(), inner.end());
+        temporaries_ = std::move(temporaries);
     }
 
     // Destroys the temporaries created since `mark`.
     void dropTemporaries(size_t mark) {
         if (temporaries_.size() <= mark) return;
         if (!terminated_) {
-            for (size_t i = temporaries_.size(); i-- > mark;) drop(temporaries_[i].address, temporaries_[i].type);
+            for (size_t i = temporaries_.size(); i-- > mark;) dropObject(temporaries_[i]);
         }
         temporaries_.resize(mark);
+    }
+
+    // ---- Exceptions (D36) ----
+
+    // Where the exceptions of this function go: the slot of the caller, or one of
+    // its own when nothing can leave it.
+    std::string raisedSlot() {
+        if (function_ && function_->canThrow) return "%raised";
+        if (localRaised_.empty()) {
+            localRaised_ = "%raised.local";
+            allocas_ << "  %raised.local = alloca { ptr, ptr }\n";
+            allocas_ << "  store { ptr, ptr } zeroinitializer, ptr %raised.local\n";
+        }
+        return localRaised_;
+    }
+
+    // After a call that can throw: an object in the slot is an exception.
+    void checkRaised() {
+        std::string object = temp();
+        std::string raised = temp();
+        inst(object + " = load ptr, ptr " + raisedSlot());
+        inst(raised + " = icmp ne ptr " + object + ", null");
+        std::string unwind = label("unwind");
+        std::string ok = label("ok");
+        term("br i1 " + raised + ", label %" + unwind + ", label %" + ok);
+        block(unwind);
+        emitPropagation();
+        block(ok);
+    }
+
+    // An exception is in the slot: leave the scopes up to the nearest `try` body,
+    // or out of the function. Nothing is popped: the code goes on after it.
+    void emitPropagation() {
+        for (size_t i = temporaries_.size(); i-- > 0;) dropObject(temporaries_[i]);
+        for (size_t i = scopes_.size(); i-- > 0;) {
+            if (!scopes_[i].handler.empty()) {
+                term("br label %" + scopes_[i].handler);
+                return;
+            }
+            leaveScope(i, nullptr);
+        }
+        // Out of the function, with the exception still in the slot of the caller.
+        // A constructor destroys the fields of its object (D16, D123).
+        if (function_ && function_->kind == FunctionKind::Constructor) dropFieldsOf(*function_->owner);
+        Type ret = function_ ? function_->resolvedReturn : Type::voidType();
+        if (ret.isVoid() || byPointer(ret)) {
+            term("ret void");
+        } else {
+            term("ret " + llvmType(ret) + " " + defaultConstant(ret));
+        }
+    }
+
+    // What a thrown struct carries with it: its destructor, to free it, and its
+    // methods of Exception, for `catch (Exception e)`. Its address also tells the
+    // `catch` clauses its type.
+    std::string exceptionDescriptor(const StructDecl& decl) {
+        std::string name = llvmName('@', "exception." + decl.name);
+        if (!tables_.insert(name).second) return name;
+        std::string table = methodTable(decl, *exceptionInterface_);  // first: it writes a global of its own
+        std::string destroy = decl.needsDestruction ? dropSymbol(decl) : "null";
+        globals_ << name << " = private unnamed_addr constant { ptr, ptr } { ptr " << destroy << ", ptr " << table << " }\n";
+        return name;
+    }
+
+    // `throw x`: the object goes to the heap, with its descriptor, into the slot.
+    // `throw` alone gives the exception of the `catch` back (D114).
+    void generateThrow(const ThrowStmt& statement) {
+        std::string target = raisedSlot();
+        if (!statement.value) {
+            const Caught& caught = catches_.back();
+            std::string pair = temp();
+            inst(pair + " = load { ptr, ptr }, ptr " + caught.box);
+            inst("store { ptr, ptr } " + pair + ", ptr " + target);
+            inst("store i1 false, ptr " + caught.flag);
+            emitPropagation();
+            return;
+        }
+        Type type = statement.value->type;
+        std::string object = temp();
+        inst(object + " = call ptr @cromo_alloc(i64 " + std::to_string(std::max(sizeOf(type), 1)) + ")");
+        generateStructInto(*statement.value, object);
+        std::string descriptor = exceptionDescriptor(*type.structDecl);
+        std::string first = temp();
+        std::string pair = temp();
+        inst(first + " = insertvalue { ptr, ptr } undef, ptr " + object + ", 0");
+        inst(pair + " = insertvalue { ptr, ptr } " + first + ", ptr " + descriptor + ", 1");
+        inst("store { ptr, ptr } " + pair + ", ptr " + target);
+        emitPropagation();
+    }
+
+    // `try`, `catch` and `finally` (D16): the exceptions of the body go to a
+    // dispatch that compares their descriptor with the type of each `catch`.
+    void generateTry(const TryStmt& statement) {
+        const Block* finallyBlock = statement.finallyBlock.get();
+        std::string end = label("try.end");
+        std::string dispatch = statement.catches.empty() ? "" : label("try.dispatch");
+
+        scopes_.push_back(Scope{{}, finallyBlock, dispatch});
+        generateBlock(statement.body);
+        scopes_.pop_back();
+        if (!terminated_) {
+            if (finallyBlock) generateFinally(*finallyBlock, scopes_.size());
+            term("br label %" + end);
+        }
+        if (dispatch.empty()) {
+            block(end);
+            return;
+        }
+
+        block(dispatch);
+        size_t frame = scopes_.size();
+        scopes_.push_back(Scope{{}, finallyBlock, ""});  // leaving a catch runs finally
+        std::string slotAddress = raisedSlot();
+        std::string descriptorAddress = temp();
+        std::string descriptor = temp();
+        inst(descriptorAddress + " = getelementptr inbounds { ptr, ptr }, ptr " + slotAddress + ", i32 0, i32 1");
+        inst(descriptor + " = load ptr, ptr " + descriptorAddress);
+        std::vector<std::string> labels;
+        bool catchesAll = false;
+        for (const CatchClause& clause : statement.catches) {
+            labels.push_back(label("catch"));
+            if (clause.resolved.isInterface()) {
+                term("br label %" + labels.back());
+                catchesAll = true;
+                break;
+            }
+            std::string match = temp();
+            std::string next = label("catch.next");
+            inst(match + " = icmp eq ptr " + descriptor + ", " + exceptionDescriptor(*clause.resolved.structDecl));
+            term("br i1 " + match + ", label %" + labels.back() + ", label %" + next);
+            block(next);
+        }
+        if (!catchesAll) emitPropagation();  // no catch matches: on, through finally
+
+        for (size_t i = 0; i < labels.size(); ++i) {
+            const CatchClause& clause = statement.catches[i];
+            block(labels[i]);
+            // The catch takes the exception out of the slot, and owns it (D114).
+            std::string box = "%caught." + std::to_string(nextSlot_++);
+            std::string flag = box + ".alive";
+            allocas_ << "  " << box << " = alloca { ptr, ptr }\n";
+            allocas_ << "  " << flag << " = alloca i1\n";
+            std::string pair = temp();
+            inst(pair + " = load { ptr, ptr }, ptr " + slotAddress);
+            inst("store { ptr, ptr } " + pair + ", ptr " + box);
+            inst("store { ptr, ptr } zeroinitializer, ptr " + slotAddress);
+            inst("store i1 true, ptr " + flag);
+            scopes_.emplace_back();
+            scopes_.back().objects.push_back(LiveObject{box, Type::error(), nullptr, flag, true});
+            if (clause.variable) {
+                std::string object = temp();
+                inst(object + " = extractvalue { ptr, ptr } " + pair + ", 0");
+                if (clause.resolved.isInterface()) {
+                    // An interface value: the object with its methods of Exception (D49).
+                    std::string described = temp();
+                    std::string tableAddress = temp();
+                    std::string table = temp();
+                    std::string first = temp();
+                    std::string value = temp();
+                    inst(described + " = extractvalue { ptr, ptr } " + pair + ", 1");
+                    inst(tableAddress + " = getelementptr inbounds { ptr, ptr }, ptr " + described + ", i32 0, i32 1");
+                    inst(table + " = load ptr, ptr " + tableAddress);
+                    inst(first + " = insertvalue { ptr, ptr } undef, ptr " + object + ", 0");
+                    inst(value + " = insertvalue { ptr, ptr } " + first + ", ptr " + table + ", 1");
+                    inst("store { ptr, ptr } " + value + ", ptr " + addresses_[clause.variable->id]);
+                } else {
+                    addresses_[clause.variable->id] = object;
+                }
+            }
+            catches_.push_back(Caught{box, flag});
+            generateBlock(clause.body);
+            catches_.pop_back();
+            if (!terminated_) dropObjects(scopes_.back().objects);
+            scopes_.pop_back();
+            if (!terminated_) {
+                if (finallyBlock) generateFinally(*finallyBlock, frame);
+                term("br label %" + end);
+            }
+        }
+        scopes_.pop_back();
+        block(end);
     }
 
     // ---- Statements ----
@@ -534,7 +943,7 @@ private:
     void generateBlock(const Block& block) {
         scopes_.emplace_back();
         for (const StmtPtr& statement : block.statements) generateStatement(*statement);
-        if (!terminated_) dropScope(scopes_.back());
+        if (!terminated_) dropObjects(scopes_.back().objects);
         scopes_.pop_back();
     }
 
@@ -566,11 +975,14 @@ private:
         case StmtKind::Break:
         case StmtKind::Continue: {
             const Loop& loop = loops_.back();
-            for (size_t i = scopes_.size(); i-- > loop.scopeDepth;) dropScope(scopes_[i]);
+            for (size_t i = scopes_.size(); i-- > loop.scopeDepth;) leaveScope(i, nullptr);
             term("br label %" + (statement.kind == StmtKind::Break ? loop.breakLabel : loop.continueLabel));
             break;
         }
         case StmtKind::Return: generateReturn(static_cast<const ReturnStmt&>(statement)); break;
+        case StmtKind::Switch: generateSwitch(static_cast<const SwitchStmt&>(statement)); break;
+        case StmtKind::Throw: generateThrow(static_cast<const ThrowStmt&>(statement)); break;
+        case StmtKind::Try: generateTry(static_cast<const TryStmt&>(statement)); break;
         }
         dropTemporaries(mark);
     }
@@ -585,7 +997,7 @@ private:
             } else {
                 inst("store " + llvmType(type) + " " + defaultConstant(type) + ", ptr " + address);
             }
-            if (needsDestruction(type)) scopes_.back().push_back(LiveObject{address, type, &variable});
+            if (needsDestruction(type)) scopes_.back().objects.push_back(LiveObject{address, type, &variable});
             setAlive(variable, true);
             return;
         }
@@ -637,7 +1049,7 @@ private:
         }
 
         dropTemporaries(0);
-        for (size_t i = scopes_.size(); i-- > 0;) dropScope(scopes_[i], moved);
+        for (size_t i = scopes_.size(); i-- > 0;) leaveScope(i, moved);
 
         if (!dropFields_.empty()) {
             term("br label %" + dropFields_);
@@ -674,6 +1086,80 @@ private:
             generateBlock(*statement.elseBlock);
         }
         block(endLabel);
+    }
+
+    // `switch` (D106): on an enum it jumps on the tag, on an integer it is a
+    // `switch` of LLVM, on a string it compares the literals in turn (D109).
+    void generateSwitch(const SwitchStmt& statement) {
+        Type type = statement.value->type;
+        std::string end = label("switch.end");
+        std::string otherwise = label("switch.default");
+        std::vector<std::string> labels;
+        for (size_t i = 0; i < statement.branches.size(); ++i) labels.push_back(label("switch.case"));
+
+        std::string address;
+        if (type.isStruct() && type.structDecl->isEnum) {
+            address = addressOf(*statement.value);
+            const StructDecl& decl = *type.structDecl;
+            Value tag = load(enumTag(address, decl), Type::intType(32, true));
+            std::string table;
+            for (size_t b = 0; b < statement.branches.size(); ++b) {
+                for (const CasePattern& pattern : statement.branches[b].patterns) {
+                    table += " i32 " + std::to_string(pattern.caseIndex) + ", label %" + labels[b];
+                }
+            }
+            term("switch i32 " + tag.ref + ", label %" + otherwise + " [" + table + " ]");
+        } else if (type.isInt()) {
+            Value value = generateExpr(*statement.value);
+            std::string table;
+            for (size_t b = 0; b < statement.branches.size(); ++b) {
+                for (const CasePattern& pattern : statement.branches[b].patterns) {
+                    table += " " + llvmType(type) + " " + literalConstant(*pattern.literal, type) + ", label %" + labels[b];
+                }
+            }
+            term("switch " + llvmType(type) + " " + value.ref + ", label %" + otherwise + " [" + table + " ]");
+        } else {
+            std::string text = addressOf(*statement.value);
+            const FunctionDecl& equals = *type.structDecl->methods.at("equals");
+            for (size_t b = 0; b < statement.branches.size(); ++b) {
+                for (const CasePattern& pattern : statement.branches[b].patterns) {
+                    std::string literal = addressOf(*pattern.literal);
+                    std::string same = temp();
+                    std::string call = same + " = call i1 " + symbolOf(equals) + "(ptr " + text + ", ptr " + literal;
+                    if (tracksCaller(equals)) call += ", ptr " + where(pattern.loc);
+                    inst(call + ")");
+                    std::string next = label("switch.next");
+                    term("br i1 " + same + ", label %" + labels[b] + ", label %" + next);
+                    block(next);
+                }
+            }
+            term("br label %" + otherwise);
+        }
+
+        for (size_t b = 0; b < statement.branches.size(); ++b) {
+            const SwitchBranch& branch = statement.branches[b];
+            block(labels[b]);
+            for (const CasePattern& pattern : branch.patterns) {
+                if (!pattern.hasBindings) continue;  // D107: the data of the case, where they are
+                const StructDecl& decl = *type.structDecl;
+                const EnumCase& item = decl.cases[pattern.caseIndex];
+                std::string payload = enumPayload(address, decl);
+                for (size_t i = 0; i < pattern.bindings.size(); ++i) {
+                    if (pattern.bindings[i].variable) {
+                        addresses_[pattern.bindings[i].variable->id] = caseField(payload, decl, item, i);
+                    }
+                }
+            }
+            generateBlock(branch.body);
+            if (!terminated_) term("br label %" + end);
+        }
+        block(otherwise);
+        if (statement.defaultBlock) {
+            generateBlock(*statement.defaultBlock);
+        } else if (statement.exhaustive) {
+            term("unreachable");
+        }
+        block(end);
     }
 
     // `for ([ref] T x in v)` (D25): `x` is the address of each element in turn.
@@ -740,7 +1226,7 @@ private:
         if (statement.step) generateStatement(*statement.step);
         term("br label %" + condLabel);
         block(endLabel);
-        dropScope(scopes_.back());
+        dropObjects(scopes_.back().objects);
         scopes_.pop_back();
     }
 
@@ -817,6 +1303,24 @@ private:
         case ExprKind::StringLiteral:
             inst("store " + llvmType(expr.type) + " " + stringValue(static_cast<const StringLiteralExpr&>(expr)) + ", ptr " + dest);
             return;
+        case ExprKind::EnumCase: {
+            // The data are moved in (D124), then the tag says which case it is.
+            const auto& node = static_cast<const EnumCaseExpr&>(expr);
+            const StructDecl& decl = *node.decl;
+            const EnumCase& item = decl.cases[node.index];
+            std::string payload = enumPayload(dest, decl);
+            for (size_t i = 0; i < node.args.size(); ++i) {
+                Type type = item.fields[i].resolved;
+                std::string field = caseField(payload, decl, item, i);
+                if (type.isStruct()) {
+                    generateStructInto(*node.args[i], field);
+                } else {
+                    inst("store " + llvmType(type) + " " + generateExpr(*node.args[i]).ref + ", ptr " + field);
+                }
+            }
+            inst("store i32 " + std::to_string(node.index) + ", ptr " + enumTag(dest, decl));
+            return;
+        }
         case ExprKind::Construct: {
             const auto& construct = static_cast<const ConstructExpr&>(expr);
             const StructDecl& decl = *construct.decl;
@@ -910,23 +1414,40 @@ private:
         if (!self.empty()) list.push_back("ptr " + self);
         bool checks = overlaps && !overlaps->empty();
         std::vector<std::string> addresses(args.size());
+        Handover handover;
         for (size_t i = 0; i < args.size(); ++i) {
-            list.push_back(argument(*args[i], function.params[i], function.paramTypes[i], checks ? &addresses[i] : nullptr));
+            list.push_back(
+                argument(*args[i], function.params[i], function.paramTypes[i], checks ? &addresses[i] : nullptr, &handover));
         }
         if (tracksCaller(function)) list.push_back("ptr " + where(loc));
+        if (function.canThrow) list.push_back("ptr " + raisedSlot());
         if (checks) checkOverlaps(*overlaps, self, selfType, args, addresses, loc);
+        // From here the callee owns its `move` arguments (D22): until now, an
+        // exception in another argument destroyed them here.
+        for (auto owned = handover.owned.rbegin(); owned != handover.owned.rend(); ++owned) {
+            temporaries_.erase(temporaries_.begin() + static_cast<std::ptrdiff_t>(*owned));
+        }
+        for (auto& [move, address] : handover.variables) finishMove(*move, address);
         std::string joined;
         for (size_t i = 0; i < list.size(); ++i) joined += (i ? ", " : "") + list[i];
 
         if (ret.isVoid() || byPointer(ret)) {
             inst("call void " + (callee.empty() ? symbolOf(function) : callee) + "(" + joined + ")");
+            if (function.canThrow) checkRaised();
             return {"", ret};
         }
         std::string result = temp();
         inst(result + " = call " + llvmType(ret) + " " + (callee.empty() ? symbolOf(function) : callee) + "(" + joined + ")");
+        if (function.canThrow) checkRaised();
         if (ret.isStruct()) inst("store " + llvmType(ret) + " " + result + ", ptr " + dest);
         return {result, ret};
     }
+
+    // The `move` arguments of a call, given to the callee only when it is called.
+    struct Handover {
+        std::vector<size_t> owned;  // temporaries that the callee will own
+        std::vector<std::pair<const MoveExpr*, std::string>> variables;  // whole variables handed over in place
+    };
 
     // D35: two arguments that may be the same element of a list are compared
     // at runtime, before the call.
@@ -959,7 +1480,8 @@ private:
     // An argument as the callee expects it (D22): `ref` and large structs by
     // address, the rest by value. `address`, if given, receives the address of
     // the place passed, for the checks of D35.
-    std::string argument(const Expr& expr, const Param& param, Type type, std::string* address = nullptr) {
+    std::string argument(const Expr& expr, const Param& param, Type type, std::string* address = nullptr,
+                         Handover* handover = nullptr) {
         auto remember = [address](const std::string& place) {
             if (address) *address = place;
             return place;
@@ -984,11 +1506,19 @@ private:
                 static_cast<const MoveExpr&>(expr).moveKind == MoveKind::Variable) {
                 const auto& move = static_cast<const MoveExpr&>(expr);
                 std::string variable = addressOf(*move.operand);
-                finishMove(move, variable);
+                if (handover) {
+                    handover->variables.emplace_back(&move, variable);
+                } else {
+                    finishMove(move, variable);
+                }
                 return "ptr " + variable;
             }
             std::string owned = slot(type);
             generateStructInto(expr, owned);
+            if (handover && needsDestruction(type)) {
+                handover->owned.push_back(temporaries_.size());
+                temporaries_.push_back(LiveObject{owned, type, nullptr});
+            }
             if (byPointer(type)) return "ptr " + owned;
             return llvmType(type) + " " + load(owned, type).ref;
         }
@@ -1112,6 +1642,7 @@ private:
         case ExprKind::Index:
         case ExprKind::Self:
         case ExprKind::Construct:
+        case ExprKind::EnumCase:
             return load(addressOf(expr), expr.type);
         case ExprKind::Unary:
             return generateUnary(static_cast<const UnaryExpr&>(expr));
@@ -1142,6 +1673,8 @@ private:
                                                             : *static_cast<const CopyExpr&>(expr).operand);
         case ExprKind::Ref:
             return generateExpr(*static_cast<const RefExpr&>(expr).operand);
+        case ExprKind::TypeRef:
+            break;
         }
         return {"", Type::error()};
     }
@@ -1171,6 +1704,15 @@ private:
         }
 
         Type type = binary.operandType;
+        if (type.isStruct()) {  // enums without data: their tags (D112)
+            std::string left = temp();
+            std::string right = temp();
+            std::string result = temp();
+            inst(left + " = extractvalue " + llvmType(type) + " " + lhs.ref + ", 1");
+            inst(right + " = extractvalue " + llvmType(type) + " " + rhs.ref + ", 1");
+            inst(result + " = icmp " + (binary.op == BinaryOp::Eq ? "eq" : "ne") + " i32 " + left + ", " + right);
+            return {result, Type::boolType()};
+        }
         std::string predicate;
         if (type.isFloat()) {
             static const std::map<BinaryOp, std::string> floats = {
@@ -1409,7 +1951,7 @@ private:
     const FunctionDecl* function_ = nullptr;
     std::vector<std::string> addresses_;            // by Variable::id
     std::vector<std::string> flags_;                // drop flags (D77), by Variable::id
-    std::vector<std::vector<LiveObject>> scopes_;   // variables to destroy, one list per open block
+    std::vector<Scope> scopes_;                     // variables to destroy, one list per open block
     std::vector<LiveObject> temporaries_;           // to destroy at the end of the statement
     std::vector<Loop> loops_;
     std::string dropFields_;                        // in a destructor: the block that destroys the fields
@@ -1420,6 +1962,10 @@ private:
     int nextSpec_ = 0;
     bool terminated_ = false;
     bool tracksCaller_ = false;  // in the standard library: panics report the caller (D102)
+    std::string localRaised_;    // the slot for exceptions of a function that cannot throw
+    std::vector<Caught> catches_;
+    bool freesExceptions_ = false;
+    const InterfaceDecl* exceptionInterface_ = nullptr;
 };
 
 }  // namespace

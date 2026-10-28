@@ -1,0 +1,177 @@
+// expect-output: 3.14 6 0
+// expect-output: red true false cold
+// expect-output: 12.56 3.14
+// expect-output: two other
+// expect-output: 1 0 -1
+// expect-output: text hello
+// expect-output: create 5
+// expect-output: destroy 5
+// expect-output: create 6
+// expect-output: 3.14
+// expect-output: known 42 false
+// expect-output: end
+// expect-output: destroy 6
+// Enums with data (D104-D107) and switch (D108, D109, D117).
+struct Noisy {
+    i32 id
+
+    Noisy(i32 n) {
+        id = n
+        println("create {}", id)
+    }
+
+    ~Noisy() {
+        println("destroy {}", id)
+    }
+}
+
+enum Shape {
+    Circle(f64 radius)
+    Rect(f64 width, f64 height)
+    Empty
+
+    // Without a subject, switch looks at the value of the method (D117).
+    f64 area() const {
+        switch {
+            case Circle(f64 r) {
+                ret 3.14 * r * r
+            }
+            case Rect(f64 w, f64 h) {
+                ret w * h
+            }
+            case Empty {
+                ret 0.0
+            }
+        }
+    }
+
+    void grow(f64 factor) {
+        switch {
+            case Circle(ref f64 r) {
+                r *= factor
+            }
+            case Rect(ref f64 w, ref f64 h) {
+                w *= factor
+                h *= factor
+            }
+            default {
+            }
+        }
+    }
+}
+
+enum Color {
+    Red
+    Green
+    Blue
+}
+
+string name(Color c) {
+    switch (c) {
+        case Red {
+            ret "red"
+        }
+        case Green, Blue {
+            ret "cold"
+        }
+    }
+}
+
+string describe(i32 n) {
+    switch (n) {
+        case 1 {
+            ret "one"
+        }
+        case 2, 3 {
+            ret "two"
+        }
+        default {
+            ret "other"
+        }
+    }
+}
+
+i32 code(string s) {
+    switch (s) {
+        case "yes" {
+            ret 1
+        }
+        case "no" {
+            ret 0
+        }
+    }
+    ret -1
+}
+
+enum Message {
+    Quit
+    Text(string body)
+    Owned(Noisy item)
+}
+
+enum Answer<T> {
+    Unknown
+    Known(T value)
+
+    bool isKnown() const {
+        switch {
+            case Known {
+                ret true
+            }
+            default {
+                ret false
+            }
+        }
+    }
+}
+
+i32 main() {
+    Shape c = Shape.Circle(1.0)
+    Shape r = Shape.Rect(2.0, 3.0)
+    Shape e  // the first case, with its default data (D111)
+    println("{} {} {}", c.area(), r.area(), e.area())
+
+    Color k = Color.Red
+    println("{} {} {} {}", name(k), k == Color.Red, k != Color.Red, name(Color.Blue))
+
+    Shape before = c  // a simple enum is copied
+    c.grow(2.0)
+    println("{} {}", c.area(), before.area())
+    println("{} {}", describe(2), describe(9))
+    println("{} {} {}", code("yes"), code("no"), code("maybe"))
+
+    Message m = Message.Text("hello")
+    switch (m) {
+        case Text(string body) {
+            println("text {}", body)
+        }
+        default {
+            println("other")
+        }
+    }
+    Message owned = Message.Owned(Noisy(5))
+    owned = Message.Quit  // the old value is destroyed with its data
+    Message again = Message.Owned(Noisy(6))
+
+    list<Shape> shapes
+    shapes.add(Shape.Circle(1.0))
+    shapes.add(Shape.Empty)
+    f64 total = 0.0
+    for (Shape s in shapes) {
+        total += s.area()
+    }
+    println("{}", total)
+
+    Answer<i32> found = Answer<i32>.Known(42)
+    switch (found) {
+        case Known(i32 v) {
+            print("known {}", v)
+        }
+        case Unknown {
+            print("unknown")
+        }
+    }
+    println(" {}", Answer<string>.Unknown.isKnown())
+    println("end")
+    ret 0
+}

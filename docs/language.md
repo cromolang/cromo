@@ -338,6 +338,9 @@ Shape s = Shape.Circle(1.0)     // a value is created with the name of the enum
 - No fall-through from one case to the next, and several cases without data in one branch: `case Red, Green { ... }`. There is no `goto` (D108).
 - `switch` also works on integers and strings, with literals as cases; there `default` is optional (D109).
 - Enums can have methods, implement interfaces and be generic, like structs (D110). An enum whose cases have no data can be compared with `==` (D112).
+- In a method of the enum, `switch { ... }` without a value is the `switch` on the enum itself (D117).
+- `break` and `continue` written directly in a branch of a `switch` are errors: the branch ends by itself, and a `break` written out of C habit would leave the loop instead (D116).
+- While a branch uses the data of a case, the value of the `switch` cannot be modified (D125).
 
 ## 10. Errors and exceptions (D16, D36)
 
@@ -351,7 +354,7 @@ i32 main() {
     try {
         println("{}", firstLine("data.txt"))
     } catch (IoError e) {
-        println("error: {}", e.message)
+        println("error: {}", e.message())
         ret 1
     } finally {
         println("done")
@@ -360,13 +363,15 @@ i32 main() {
 }
 ```
 
-- The types that are thrown implement the `Exception` interface. Until interfaces are ready, there is a predefined `Exception` type with a message and a code.
+- The types that are thrown implement the `Exception` interface of the library, `string message() const`; the library also has a ready-made `Error` with a message: `throw Error("bad input")` (D115).
+- The exception of a `catch` is read-only, and `throw` alone rethrows it (D114). `catch (Exception e)` catches everything.
 - Exceptions are not declared in the signature.
 - While an exception propagates, all the live objects in the scopes it leaves are destroyed (RAII).
 - `finally` is executed on every exit from the `try` block: normal, `ret`, `break`, `continue` or exception.
 - Programming errors (index out of bounds, overflow, division by zero) are not exceptions: they terminate the program.
 - `panic("reason")` terminates the program on purpose, as those errors do (D62). Like `ret`, it ends a path of the function (D102).
-- A destructor that throws while an exception is already propagating terminates the program.
+- Destructors and `finally` cannot let an exception out: it must be caught inside them, or it is a compile error (D113).
+- An exception that leaves `main` stops the program with `uncaught exception: <message>` (D121).
 
 ## 11. Printing and formatting (D21, D38)
 

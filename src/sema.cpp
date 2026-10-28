@@ -7,6 +7,7 @@
 #include <map>
 #include <optional>
 #include <set>
+#include <tuple>
 #include <utility>
 
 namespace cromo {
@@ -103,7 +104,7 @@ bool isConstantLiteral(const Expr& expr) {
 // A new object that nobody owns yet: it is moved without writing `move` (D23).
 bool isTemporary(const Expr& expr) {
     return expr.kind == ExprKind::Construct || expr.kind == ExprKind::Call || expr.kind == ExprKind::MethodCall ||
-           expr.kind == ExprKind::StringLiteral;
+           expr.kind == ExprKind::StringLiteral || expr.kind == ExprKind::EnumCase;
 }
 
 // A variable, or a field or an element (D35) of a variable or of the object of a method.
@@ -236,6 +237,8 @@ public:
             return found != structs_.end() && inLibrary(found->second->loc) ? found->second : nullptr;
         };
         stringDecl_ = library("string");
+        auto exception = interfaces_.find("Exception");
+        if (exception != interfaces_.end() && inLibrary(exception->second->loc)) exceptionDecl_ = exception->second;
         listDecl_ = library("list");
         declareInterfaces();
         declareTypeParams();
@@ -259,6 +262,7 @@ public:
             if (function.typeParams.empty()) checkFunction(function);
         }
         checkBodies(instances_);  // it grows while the instances ask for others
+        computeThrows();
     }
 
 private:
@@ -472,6 +476,14 @@ private:
         instance->name = instanceName(generic.name, args);
         instance->loc = generic.loc;
         instance->interfaces = generic.interfaces;
+        instance->isEnum = generic.isEnum;
+        for (const EnumCase& item : generic.cases) {
+            EnumCase copy;
+            copy.name = item.name;
+            copy.loc = item.loc;
+            for (const FieldDecl& field : item.fields) copy.fields.push_back(clone(field));
+            instance->cases.push_back(std::move(copy));
+        }
         for (const FieldDecl& field : generic.fields) instance->fields.push_back(clone(field));
         for (const FunctionDecl& member : generic.members) instance->members.push_back(clone(member));
         instance->generic = &generic;
@@ -667,6 +679,26 @@ private:
             }
         }
 
+        // The cases of an enum, with their data (D104).
+        for (EnumCase& item : decl.cases) {
+            if (fieldNames.count(item.name)) diag_->error(item.loc, "case '" + item.name + "' is already defined in " + decl.name);
+            fieldNames[item.name] = nullptr;
+            std::map<std::string, bool> dataNames;
+            for (FieldDecl& field : item.fields) {
+                if (dataNames.count(field.name)) {
+                    diag_->error(field.loc, "the case '" + item.name + "' already has data named '" + field.name + "'");
+                }
+                dataNames[field.name] = true;
+                field.resolved = resolveType(field.type).value_or(Type::error());
+                if (field.resolved.isVoid()) {
+                    diag_->error(field.type.loc, "the data of a case cannot be void");
+                    field.resolved = Type::error();
+                }
+                if (!checkNotInterface(field.resolved, field.type.loc, "the data of a case")) field.resolved = Type::error();
+            }
+        }
+        if (decl.isEnum && decl.cases.empty()) diag_->error(decl.loc, "an enum needs at least one case (D104)");
+
         for (FunctionDecl& member : decl.members) {
             member.owner = &decl;
             member.typeBindings = decl.typeBindings;
@@ -682,7 +714,8 @@ private:
                 else decl.destructor = &member;
                 if (!member.params.empty()) diag_->error(member.params[0].loc, "a destructor has no parameters");
             } else if (fieldNames.count(member.name)) {
-                diag_->error(member.loc, "'" + member.name + "' is already a field of " + decl.name);
+                diag_->error(member.loc, "'" + member.name + "' is already " + (decl.isEnum ? "a case" : "a field") + " of " +
+                                             decl.name);
             } else if (decl.methods.count(member.name)) {
                 diag_->error(member.loc, "method '" + member.name + "' is already defined in " + decl.name);
             } else {
@@ -703,15 +736,39 @@ private:
         if (state == 2) return;
         if (state == 1) return;  // cycle: reported by the struct that closes it
         state = 1;
+        bool destruct = decl.destructor != nullptr;
+        auto [size, align] = layoutFields(decl, decl.fields, destruct);
+        decl.size = size;
+        decl.align = align;
+        if (decl.isEnum) {
+            // A tag, then the data of the current case: the largest case decides
+            // the size, the most aligned one where the data start.
+            int largest = 0;
+            align = 4;
+            for (EnumCase& item : decl.cases) {
+                std::tie(item.size, item.align) = layoutFields(decl, item.fields, destruct);
+                largest = std::max(largest, item.size);
+                align = std::max(align, item.align);
+            }
+            decl.payloadOffset = alignUp(4, align);
+            decl.size = alignUp(decl.payloadOffset + largest, align);
+            decl.align = align;
+        }
+        decl.needsDestruction = destruct;
+        state = 2;
+    }
+
+    // Size and alignment of fields laid out as in C (D74).
+    std::pair<int, int> layoutFields(const StructDecl& decl, std::vector<FieldDecl>& fields, bool& destruct) {
         int offset = 0;
         int align = 1;
-        bool destruct = decl.destructor != nullptr;
-        for (FieldDecl& field : decl.fields) {
+        for (FieldDecl& field : fields) {
             Type type = field.resolved;
             if (type.isStruct()) {
                 auto* inner = const_cast<StructDecl*>(type.structDecl);
                 if (layoutState_[inner] == 1) {
-                    diag_->error(field.loc, "struct '" + decl.name + "' contains itself through field '" + field.name +
+                    diag_->error(field.loc, std::string(decl.isEnum ? "enum '" : "struct '") + decl.name +
+                                                "' contains itself through " + (decl.isEnum ? "the data '" : "field '") + field.name +
                                                 "': use a list instead (D11)");
                     field.resolved = Type::error();
                     continue;
@@ -725,10 +782,7 @@ private:
             offset = alignUp(offset, alignOf(type)) + sizeOf(type);
             align = std::max(align, alignOf(type));
         }
-        decl.size = alignUp(offset, align);
-        decl.align = align;
-        decl.needsDestruction = destruct;
-        state = 2;
+        return {alignUp(offset, align), align};
     }
 
     // The interfaces a struct declares, resolved the first time they are needed.
@@ -858,6 +912,21 @@ private:
         bindings_ = &function.typeBindings;
         scopes_.assign(1, {});
         loops_.clear();
+        tryContexts_.clear();
+        catchTypes_.clear();
+        finallyLoops_.clear();
+        regions_.clear();
+        // D113, D122: the functions that the compiler calls where nobody can catch.
+        if (function.kind == FunctionKind::Destructor) {
+            regions_.push_back({0, "a destructor cannot let an exception out: catch it inside (D113)"});
+        } else if (function.kind == FunctionKind::Method && function.owner && !function.isGenerated) {
+            if (function.name == "copy" && function.owner->needsDestruction) {
+                regions_.push_back({0, "copy() cannot let an exception out: catch it inside (D122)"});
+            }
+            if (function.name == "message" && implementsException(*function.owner)) {
+                regions_.push_back({0, "message() cannot let an exception out: catch it inside (D122)"});
+            }
+        }
         for (size_t i = 0; i < function.params.size(); ++i) {
             const Param& param = function.params[i];
             Variable* variable = declare(param.name, function.paramTypes[i], param.loc, param.isConst);
@@ -937,6 +1006,13 @@ private:
                 return "'" + variable->name + "' is an element of a read-only 'for': write 'for (ref " + variable->type.name() +
                        " " + variable->name + " in ...)' to modify it (D25)";
             }
+            if (variable->kind == VariableKind::Binding && variable->isConst) {
+                return "'" + variable->name + "' is data of the case, read-only: write 'ref " + variable->type.name() + " " +
+                       variable->name + "' in the case to modify it (D107)";
+            }
+            if (variable->kind == VariableKind::Caught) {
+                return "'" + variable->name + "' is the exception of a 'catch', which is read-only (D114)";
+            }
             if (variable->isConst) return "'" + variable->name + "' is const and cannot be modified (D26)";
             return "";
         }
@@ -976,8 +1052,7 @@ private:
         if (!path) return true;
         for (const LoopBorrow& borrow : loopBorrows_) {
             if (overlaps(*path, borrow.path) == Overlap::No) continue;
-            diag_->error(loc, "'" + placeText(place) + "' cannot be modified while a 'for' goes over the elements of '" +
-                                  borrow.text + "' (D101)");
+            diag_->error(loc, "'" + placeText(place) + "' cannot be modified " + borrow.reason);
             return false;
         }
         return true;
@@ -988,7 +1063,8 @@ private:
         if (place.kind == ExprKind::Name) {
             const Variable* variable = static_cast<const NameExpr&>(place).variable;
             return variable && variable->kind != VariableKind::ReadParam &&
-                   !(variable->kind == VariableKind::Element && variable->isConst);
+                   !((variable->kind == VariableKind::Element || variable->kind == VariableKind::Binding) && variable->isConst) &&
+                   variable->kind != VariableKind::Caught;
         }
         return readOnlyReason(place).empty();
     }
@@ -1001,6 +1077,11 @@ private:
         if (decl.destructor) return false;
         for (const FieldDecl& field : decl.fields) {
             if (!canCopy(field.resolved)) return false;
+        }
+        for (const EnumCase& item : decl.cases) {
+            for (const FieldDecl& field : item.fields) {
+                if (!canCopy(field.resolved)) return false;
+            }
         }
         return true;
     }
@@ -1016,6 +1097,11 @@ private:
         if (!canCopy(Type::structType(&decl))) return nullptr;
         for (const FieldDecl& field : decl.fields) {
             if (needsDestruction(field.resolved)) copyFunction(*field.resolved.structDecl, loc);
+        }
+        for (const EnumCase& item : decl.cases) {
+            for (const FieldDecl& field : item.fields) {
+                if (needsDestruction(field.resolved)) copyFunction(*field.resolved.structDecl, loc);
+            }
         }
         auto copy = std::make_unique<FunctionDecl>();
         copy->kind = FunctionKind::Method;
@@ -1082,9 +1168,15 @@ private:
                 diag_->error(node.loc, "parameter '" + variable->name +
                                           "' is read-only: it belongs to the caller and cannot be moved (D82)");
                 return Type::error();
+            case VariableKind::Caught:
+                diag_->error(node.loc, "cannot move '" + variable->name + "': it is the exception of a 'catch' (D114)");
+                return Type::error();
+            case VariableKind::Binding:
             case VariableKind::Element:
                 if (variable->isConst) {
-                    diag_->error(node.loc, "cannot move '" + variable->name + "': it is an element of a read-only 'for' (D25)");
+                    diag_->error(node.loc, "cannot move '" + variable->name + "': " +
+                                              (variable->kind == VariableKind::Element ? "it is an element of a read-only 'for' (D25)"
+                                                                                        : "it is read-only data of the case (D107)"));
                     return Type::error();
                 }
                 node.moveKind = MoveKind::Take;  // D78
@@ -1134,9 +1226,18 @@ private:
         case StmtKind::Expr: return checkExprStmt(static_cast<ExprStmt&>(statement));
         case StmtKind::If: return checkIf(static_cast<IfStmt&>(statement));
         case StmtKind::For: return checkFor(static_cast<ForStmt&>(statement));
+        case StmtKind::Switch: return checkSwitch(static_cast<SwitchStmt&>(statement));
+        case StmtKind::Throw: return checkThrow(static_cast<ThrowStmt&>(statement));
+        case StmtKind::Try: return checkTry(static_cast<TryStmt&>(statement));
         case StmtKind::Break:
         case StmtKind::Continue:
-            if (loops_.empty()) {
+            if (!switchLoops_.empty() && switchLoops_.back() == loops_.size()) {
+                diag_->error(statement.loc, std::string("'") + (statement.kind == StmtKind::Break ? "break" : "continue") +
+                                               "' cannot be used in a 'switch': a branch ends by itself (D116)");
+            } else if (!finallyLoops_.empty() && loops_.size() <= finallyLoops_.back()) {
+                diag_->error(statement.loc, std::string("'") + (statement.kind == StmtKind::Break ? "break" : "continue") +
+                                               "' cannot leave a 'finally' block (D120)");
+            } else if (loops_.empty()) {
                 diag_->error(statement.loc, std::string("'") + (statement.kind == StmtKind::Break ? "break" : "continue") +
                                                "' can only be used inside a 'for'");
             } else if (statement.kind == StmtKind::Break) {
@@ -1237,6 +1338,317 @@ private:
         return thenFlow == Flow::Returns && elseFlow == Flow::Returns ? Flow::Returns : Flow::Jumps;
     }
 
+    // `switch` on an enum, an integer or a string (D34, D106-D109, D116, D117).
+    Flow checkSwitch(SwitchStmt& statement) {
+        if (!statement.value) {
+            if (!current_->owner || !current_->owner->isEnum) {
+                diag_->error(statement.loc, "'switch' needs a value, switch (x) { ... }: only in the methods of an enum it "
+                                            "looks at the value of the method (D117)");
+                return Flow::Continues;
+            }
+            statement.value = std::make_unique<SelfExpr>(statement.loc);
+        }
+        Type type = checkExpr(statement.value, std::nullopt);
+        bool isEnum = type.isStruct() && type.structDecl->isEnum;
+        bool ok = !type.isError();
+        if (ok && !isEnum && !type.isInt() && !isString(type)) {
+            diag_->error(statement.value->loc, "'switch' works on enums, integers and strings, found " + type.name() + " (D109)");
+            ok = false;
+        }
+        const Expr& value = *statement.value;
+        bool modifiable = (isPlace(value) || value.kind == ExprKind::Self) && readOnlyReason(value).empty();
+        std::optional<Path> path = pathOf(value);
+        std::vector<bool> covered(isEnum ? type.structDecl->cases.size() : 0, false);
+        std::vector<std::string> seen;
+        std::vector<Flow> flows;
+        switchLoops_.push_back(loops_.size());
+        for (SwitchBranch& branch : statement.branches) {
+            scopes_.emplace_back();
+            bool named = false;
+            for (CasePattern& pattern : branch.patterns) {
+                if (!ok) break;
+                if (isEnum) {
+                    named = checkCasePattern(pattern, type, covered, branch.patterns.size(), modifiable, value) || named;
+                } else {
+                    checkLiteralPattern(pattern, type, seen);
+                }
+            }
+            if (named && path) loopBorrows_.push_back({*path, "while a 'switch' uses the data of its case (D125)"});
+            flows.push_back(checkBlock(branch.body));
+            if (named && path) loopBorrows_.pop_back();
+            scopes_.pop_back();
+        }
+        if (statement.defaultBlock) flows.push_back(checkBlock(*statement.defaultBlock));
+        switchLoops_.pop_back();
+
+        bool all = isEnum && std::all_of(covered.begin(), covered.end(), [](bool c) { return c; });
+        statement.exhaustive = statement.defaultBlock || all;
+        if (ok && isEnum && !statement.exhaustive) {
+            std::string missing;
+            for (size_t i = 0; i < covered.size(); ++i) {
+                if (!covered[i]) missing += (missing.empty() ? "" : ", ") + type.structDecl->cases[i].name;
+            }
+            diag_->error(statement.loc, "'switch' does not cover " + missing + " of " + type.name() +
+                                            ": add the cases, or 'default' (D34)");
+        }
+        if (!statement.exhaustive) return Flow::Continues;
+        bool returns = true;
+        for (Flow flow : flows) {
+            if (flow == Flow::Continues) return Flow::Continues;
+            returns = returns && flow == Flow::Returns;
+        }
+        return returns ? Flow::Returns : Flow::Jumps;
+    }
+
+    // A case of an enum in a `switch`. Returns true if it names the data (D107).
+    bool checkCasePattern(CasePattern& pattern, Type type, std::vector<bool>& covered, size_t patterns, bool modifiable,
+                          const Expr& value) {
+        const StructDecl& decl = *type.structDecl;
+        if (pattern.literal) {
+            diag_->error(pattern.loc, "the cases of " + decl.name + " are written by their name (D106)");
+            return false;
+        }
+        int index = -1;
+        for (size_t i = 0; i < decl.cases.size(); ++i) {
+            if (decl.cases[i].name == pattern.name) index = static_cast<int>(i);
+        }
+        if (index < 0) {
+            diag_->error(pattern.loc, decl.name + " has no case '" + pattern.name + "'");
+            return false;
+        }
+        pattern.caseIndex = index;
+        if (covered[index]) diag_->error(pattern.loc, "case '" + pattern.name + "' is already in this 'switch'");
+        covered[index] = true;
+        if (!pattern.hasBindings) return false;
+        const EnumCase& item = decl.cases[index];
+        if (patterns > 1) {
+            diag_->error(pattern.loc, "a branch with several cases cannot name their data (D108)");
+            return false;
+        }
+        if (pattern.bindings.size() != item.fields.size()) {
+            size_t count = item.fields.size();
+            diag_->error(pattern.loc, "case '" + item.name + "' has " + std::to_string(count) + " data" +
+                                          ", but " + std::to_string(pattern.bindings.size()) + " names were given (D107)");
+            return false;
+        }
+        for (size_t i = 0; i < pattern.bindings.size(); ++i) {
+            CaseBinding& binding = pattern.bindings[i];
+            const FieldDecl& field = item.fields[i];
+            Type written = resolveType(binding.type).value_or(Type::error());
+            if (!written.isError() && written != field.resolved) {
+                diag_->error(binding.type.loc, "the data '" + field.name + "' of " + item.name + " is " + field.resolved.name() +
+                                                   ": write " + field.resolved.name() + " " + binding.name + " (D107)");
+                written = Type::error();
+            }
+            if (binding.isRef && !modifiable) {
+                std::string reason = isPlace(value) || value.kind == ExprKind::Self
+                                         ? readOnlyReason(value)
+                                         : "the value of the 'switch' is not a variable or a field";
+                diag_->error(binding.loc, "cannot modify the data with 'ref': " + reason);
+            }
+            Variable* variable = declare(binding.name, written, binding.loc, !binding.isRef);
+            if (variable) variable->kind = VariableKind::Binding;
+            binding.variable = variable;
+        }
+        return true;
+    }
+
+    // A literal in a `switch` on an integer or a string (D109).
+    void checkLiteralPattern(CasePattern& pattern, Type type, std::vector<std::string>& seen) {
+        if (!pattern.literal) {
+            diag_->error(pattern.loc, "the cases of a switch on a " + type.name() + " are literals (D109)");
+            return;
+        }
+        bool text = pattern.literal->kind == ExprKind::StringLiteral;
+        if (text != isString(type)) {
+            diag_->error(pattern.loc, "this case is not a " + type.name());
+            return;
+        }
+        if (!coerce(pattern.literal, type)) return;
+        std::string key = text ? static_cast<const StringLiteralExpr&>(*pattern.literal).value : constantText(*pattern.literal);
+        if (std::find(seen.begin(), seen.end(), key) != seen.end()) {
+            diag_->error(pattern.loc, "this value is already in this 'switch'");
+            return;
+        }
+        seen.push_back(key);
+    }
+
+    // The value of an integer literal, as text, after coerce.
+    static std::string constantText(const Expr& expr) {
+        if (expr.kind == ExprKind::Conversion) return constantText(*static_cast<const ConversionExpr&>(expr).operand);
+        if (expr.kind != ExprKind::IntLiteral) return "?";
+        const auto& literal = static_cast<const IntLiteralExpr&>(expr);
+        return (literal.negative && literal.magnitude ? "-" : "") + std::to_string(literal.magnitude);
+    }
+
+    bool implementsException(const StructDecl& decl) {
+        if (!exceptionDecl_) return false;
+        const auto& list = implementsOf(decl);
+        return std::find(list.begin(), list.end(), exceptionDecl_) != list.end();
+    }
+
+    // The methods that a struct gives to an interface: used through its method table (D103).
+    void useMethodsFor(Type type, const InterfaceDecl& iface, SourceLocation loc) {
+        if (!type.isStruct()) return;
+        for (const FunctionDecl& method : iface.methods) {
+            auto found = type.structDecl->methods.find(method.name);
+            if (found != type.structDecl->methods.end()) use(found->second, loc);
+        }
+    }
+
+    // `throw x`, or `throw` alone in a `catch` (D36, D114, D119).
+    Flow checkThrow(ThrowStmt& statement) {
+        if (!statement.value) {
+            if (catchTypes_.empty()) {
+                diag_->error(statement.loc, "'throw' alone rethrows the exception of a 'catch': it can be used only inside one (D114)");
+            } else {
+                Type caught = catchTypes_.back();
+                noteThrow(caught.isStruct() ? caught.structDecl : nullptr, statement.loc);
+            }
+            return Flow::Returns;
+        }
+        moveAllowed_ = statement.value->kind == ExprKind::Move;
+        Type type = checkExpr(statement.value, std::nullopt);
+        if (type.isError()) return Flow::Returns;
+        if (!type.isStruct() || !implementsException(*type.structDecl)) {
+            diag_->error(statement.value->loc, "only a struct that implements Exception can be thrown, found " + type.name() +
+                                                   " (D36)");
+            return Flow::Returns;
+        }
+        checkNotCopied(*statement.value, type);
+        useMethodsFor(type, *exceptionDecl_, statement.loc);
+        noteThrow(type.structDecl, statement.loc);
+        return Flow::Returns;
+    }
+
+    // `try`, `catch` and `finally` (D16, D113, D114, D118, D120).
+    Flow checkTry(TryStmt& statement) {
+        TryContext context;
+        for (CatchClause& clause : statement.catches) {
+            Type type = resolveType(clause.type).value_or(Type::error());
+            clause.resolved = type;
+            if (type.isError()) continue;
+            bool all = type.isInterface() && type.interfaceDecl == exceptionDecl_;
+            if (!all && !(type.isStruct() && implementsException(*type.structDecl))) {
+                diag_->error(clause.type.loc, "a 'catch' takes a struct that implements Exception, or Exception itself, found " +
+                                                  type.name() + " (D118)");
+                clause.resolved = Type::error();
+                continue;
+            }
+            bool repeated = !all && std::find(context.caught.begin(), context.caught.end(), type.structDecl) != context.caught.end();
+            if (context.catchAll || repeated) {
+                diag_->error(clause.type.loc, "this 'catch' is never reached: a previous one already catches " +
+                                                  (context.catchAll ? std::string("every exception") : type.name()) + " (D118)");
+            }
+            if (all) {
+                context.catchAll = true;
+            } else {
+                context.caught.push_back(type.structDecl);
+                useMethodsFor(type, *exceptionDecl_, clause.type.loc);
+            }
+        }
+
+        tryContexts_.push_back(context);
+        std::vector<Flow> flows{checkBlock(statement.body)};
+        tryContexts_.pop_back();
+        for (CatchClause& clause : statement.catches) {
+            scopes_.emplace_back();
+            Variable* variable = declare(clause.name, clause.resolved, clause.nameLoc, true);
+            if (variable) variable->kind = VariableKind::Caught;
+            clause.variable = variable;
+            catchTypes_.push_back(clause.resolved);
+            flows.push_back(checkBlock(clause.body));
+            catchTypes_.pop_back();
+            scopes_.pop_back();
+        }
+        if (statement.finallyBlock) {
+            regions_.push_back({tryContexts_.size(), "a 'finally' block cannot let an exception out: catch it inside (D113)"});
+            finallyLoops_.push_back(loops_.size());
+            Flow ignored = checkBlock(*statement.finallyBlock);
+            (void)ignored;
+            finallyLoops_.pop_back();
+            regions_.pop_back();
+        }
+
+        bool returns = true;
+        for (Flow flow : flows) {
+            if (flow == Flow::Continues) return Flow::Continues;
+            returns = returns && flow == Flow::Returns;
+        }
+        return returns ? Flow::Returns : Flow::Jumps;
+    }
+
+    // D36: where an exception can come from. A call is protected by an enclosing
+    // `try` that catches everything; the regions of D113 are checked at the end,
+    // when it is known which functions can throw.
+    void noteCall(FunctionDecl* callee, SourceLocation loc) {
+        if (!callee || current_->isAbstract) return;
+        if (!protectedFrom(nullptr, 0)) throwInfo_[current_].calls.push_back(callee);
+        for (const Region& region : regions_) {
+            if (!protectedFrom(nullptr, region.base)) escapes_.push_back({loc, callee, region.message});
+        }
+    }
+
+    void noteThrow(const StructDecl* thrown, SourceLocation loc) {
+        if (current_->isAbstract) return;
+        if (!protectedFrom(thrown, 0)) throwInfo_[current_].throws = true;
+        for (const Region& region : regions_) {
+            if (!protectedFrom(thrown, region.base)) escapes_.push_back({loc, nullptr, region.message});
+        }
+    }
+
+    // Whether an enclosing `try` body, from `base` on, catches the exception
+    // (any exception, when it is not known).
+    bool protectedFrom(const StructDecl* thrown, size_t base) const {
+        for (size_t i = base; i < tryContexts_.size(); ++i) {
+            const TryContext& context = tryContexts_[i];
+            if (context.catchAll) return true;
+            if (thrown && std::find(context.caught.begin(), context.caught.end(), thrown) != context.caught.end()) return true;
+        }
+        return false;
+    }
+
+    // D36: which functions can let an exception out, from the calls that are not
+    // caught. An interface method can throw if one of its implementations can,
+    // and then all of them take the hidden parameter of the exception.
+    void computeThrows() {
+        for (auto& [function, info] : throwInfo_) function->canThrow = info.throws;
+        std::vector<std::pair<FunctionDecl*, FunctionDecl*>> implementations;  // (interface method, struct method)
+        auto collect = [&](StructDecl& decl) {
+            if (decl.isAbstract || !decl.typeParams.empty()) return;
+            for (const InterfaceDecl* iface : implementsOf(decl)) {
+                for (const FunctionDecl& required : iface->methods) {
+                    auto found = decl.methods.find(required.name);
+                    if (found != decl.methods.end()) implementations.emplace_back(const_cast<FunctionDecl*>(&required), found->second);
+                }
+            }
+        };
+        for (StructDecl& decl : module_.structs) collect(decl);
+        for (auto& decl : module_.structInstances) collect(*decl);
+
+        for (bool changed = true; changed;) {
+            changed = false;
+            for (auto& [function, info] : throwInfo_) {
+                if (function->canThrow) continue;
+                for (FunctionDecl* callee : info.calls) {
+                    if (!callee->canThrow) continue;
+                    function->canThrow = true;
+                    changed = true;
+                    break;
+                }
+            }
+            for (auto& [required, method] : implementations) {
+                if (method->canThrow != required->canThrow) {
+                    required->canThrow = method->canThrow = true;
+                    changed = true;
+                }
+            }
+        }
+        for (const Escape& escape : escapes_) {
+            if (!escape.callee || escape.callee->canThrow) diag_->error(escape.loc, escape.message);
+        }
+    }
+
     // `for ([ref] T x in v)` (D25, D101).
     Flow checkForEach(ForStmt& statement) {
         scopes_.emplace_back();
@@ -1267,7 +1679,7 @@ private:
         statement.element = variable;
 
         std::optional<Path> path = pathOf(*statement.list);
-        if (path) loopBorrows_.push_back({*path, placeText(*statement.list)});
+        if (path) loopBorrows_.push_back({*path, "while a 'for' goes over the elements of '" + placeText(*statement.list) + "' (D101)"});
         loops_.push_back(false);
         checkBlock(statement.body);
         loops_.pop_back();
@@ -1294,6 +1706,7 @@ private:
     }
 
     void checkReturn(ReturnStmt& ret) {
+        if (!finallyLoops_.empty()) diag_->error(ret.loc, "'ret' cannot leave a 'finally' block (D120)");
         Type type = current_->resolvedReturn;
         if (type.isError()) return;
         if (type.isVoid()) {
@@ -1324,12 +1737,7 @@ private:
         if (type == target) return true;
         if (target.isInterface()) {
             if (satisfies(type, target.interfaceDecl)) {  // passed with its method table (D49)
-                if (type.isStruct()) {
-                    for (const FunctionDecl& method : target.interfaceDecl->methods) {
-                        auto found = type.structDecl->methods.find(method.name);
-                        if (found != type.structDecl->methods.end()) use(found->second, expr->loc);
-                    }
-                }
+                useMethodsFor(type, *target.interfaceDecl, expr->loc);
                 return true;
             }
             diag_->error(expr->loc, type.name() + " does not implement " + target.name() + " (D49)");
@@ -1380,7 +1788,7 @@ private:
         case ExprKind::Unary: return checkUnary(expr, expected);
         case ExprKind::Binary: return checkBinary(expr, expected);
         case ExprKind::Call: return checkCall(expr);
-        case ExprKind::Field: return checkField(static_cast<FieldExpr&>(*expr));
+        case ExprKind::Field: return checkField(expr);
         case ExprKind::MethodCall: return checkMethodCall(expr);
         case ExprKind::Self: return Type::structType(current_->owner);
         case ExprKind::Move:
@@ -1396,7 +1804,11 @@ private:
         case ExprKind::Conversion:
         case ExprKind::Print:
         case ExprKind::Construct:
+        case ExprKind::EnumCase:
         case ExprKind::Copy: return expr->type;
+        case ExprKind::TypeRef:
+            diag_->error(expr->loc, "a type is not a value");
+            return Type::error();
         }
         return Type::error();
     }
@@ -1444,7 +1856,7 @@ private:
             SourceLocation loc = name.loc;
             std::string field = name.name;
             expr = std::make_unique<FieldExpr>(loc, std::make_unique<SelfExpr>(loc), field);
-            return checkField(static_cast<FieldExpr&>(*expr));
+            return checkField(expr);
         }
         if (functions_.count(name.name) || isPrintFunction(name.name) ||
             (current_->owner && current_->owner->methods.count(name.name))) {
@@ -1455,7 +1867,78 @@ private:
         return Type::error();
     }
 
-    Type checkField(FieldExpr& field) {
+    // `Shape` in `Shape.Circle(1.0)`: an enum named as a type, not a variable (D105).
+    // Nothing if the expression is not that; an error type after an error.
+    std::optional<Type> enumNamed(const Expr& object) {
+        if (object.kind == ExprKind::TypeRef) {
+            std::optional<Type> type = resolveType(static_cast<const TypeRefExpr&>(object).name);
+            if (!type) return Type::error();
+            if (!type->isStruct() || !type->structDecl->isEnum) {
+                diag_->error(object.loc, type->name() + " is not an enum: only the values of an enum are created with '.' (D105)");
+                return Type::error();
+            }
+            return type;
+        }
+        if (object.kind != ExprKind::Name) return std::nullopt;
+        const std::string& name = static_cast<const NameExpr&>(object).name;
+        if (lookup(name) || ownFieldIndex(name) >= 0) return std::nullopt;
+        auto found = structs_.find(name);
+        if (found == structs_.end() || !found->second->isEnum) return std::nullopt;
+        if (!found->second->typeParams.empty()) {
+            diag_->error(object.loc, name + " is generic: write its type arguments, " + name + "<...>." + "Case (D92)");
+            return Type::error();
+        }
+        return Type::structType(found->second);
+    }
+
+    // `Shape.Circle(1.0)` and `Color.Red` (D105). The data are given like `move`
+    // parameters (D124).
+    Type checkEnumCase(ExprPtr& expr, Type type, const std::string& name, std::vector<ExprPtr>* args, SourceLocation loc) {
+        if (type.isError()) {
+            if (args) checkIgnored(*args);
+            return Type::error();
+        }
+        const StructDecl& decl = *type.structDecl;
+        int index = -1;
+        for (size_t i = 0; i < decl.cases.size(); ++i) {
+            if (decl.cases[i].name == name) index = static_cast<int>(i);
+        }
+        if (index < 0) {
+            diag_->error(loc, decl.name + " has no case '" + name + "'");
+            if (args) checkIgnored(*args);
+            return Type::error();
+        }
+        const EnumCase& item = decl.cases[index];
+        std::string what = "'" + decl.name + "." + name + "'";
+        if (!args && !item.fields.empty()) {
+            diag_->error(loc, what + " has data: write " + decl.name + "." + name + "(...) (D105)");
+            return Type::error();
+        }
+        auto node = std::make_unique<EnumCaseExpr>(loc, &decl, index);
+        if (args) node->args = std::move(*args);
+        expr = std::move(node);
+        auto& created = static_cast<EnumCaseExpr&>(*expr);
+
+        FunctionDecl signature;
+        signature.name = name;
+        signature.loc = loc;
+        for (const FieldDecl& field : item.fields) {
+            Param param;
+            param.mode = ParamMode::Move;
+            param.name = field.name;
+            param.loc = field.loc;
+            signature.params.push_back(param);
+            signature.paramTypes.push_back(field.resolved);
+        }
+        if (!checkArgs(created.args, signature, what, loc, &created.overlaps)) return Type::error();
+        return type;
+    }
+
+    Type checkField(ExprPtr& expr) {
+        auto& field = static_cast<FieldExpr&>(*expr);
+        if (std::optional<Type> named = enumNamed(*field.object)) {
+            return checkEnumCase(expr, *named, field.field, nullptr, field.loc);
+        }
         Type object = checkExpr(field.object, std::nullopt);
         if (object.isError()) return object;
         if (!object.isStruct()) {
@@ -1622,6 +2105,9 @@ private:
 
     Type checkMethodCall(ExprPtr& expr) {
         auto& call = static_cast<MethodCallExpr&>(*expr);
+        if (std::optional<Type> named = enumNamed(*call.object)) {
+            return checkEnumCase(expr, *named, call.method, &call.args, call.loc);
+        }
         Type object = checkExpr(call.object, std::nullopt);
         if (object.isError()) return object;
         // `x.copy()` of a number or a bool is the value itself, so that generics can copy any T (D89).
@@ -1665,6 +2151,7 @@ private:
         }
         call.function = method;
         use(method, call.loc);
+        noteCall(method, call.loc);
         if (!checkArgs(call.args, *method, "'" + call.method + "'", call.loc, &call.overlaps, call.object.get())) {
             return Type::error();
         }
@@ -1698,6 +2185,7 @@ private:
             }
         }
         call.function = method;
+        noteCall(method, call.loc);
         if (!checkArgs(call.args, *method, "'" + call.method + "'", call.loc, &call.overlaps, call.object.get(), object)) {
             return Type::error();
         }
@@ -1777,6 +2265,16 @@ private:
                                          operand.name() + ": no interface provides it yet (D87)");
             return Type::error();
         }
+        bool equality = binary.op == BinaryOp::Eq || binary.op == BinaryOp::Ne;
+        if (operand.isStruct() && operand.structDecl->isEnum && equality) {
+            for (const EnumCase& item : operand.structDecl->cases) {
+                if (item.fields.empty()) continue;
+                diag_->error(binary.loc, std::string("'") + spelling(binary.op) +
+                                             "' works on the enums whose cases have no data: tell the case with 'switch' (D112)");
+                return Type::error();
+            }
+            return Type::boolType();
+        }
         if (operand.isStruct()) {
             diag_->error(binary.loc, std::string("'") + spelling(binary.op) + "' does not work on structs yet (D76)");
             return Type::error();
@@ -1792,7 +2290,6 @@ private:
             }
             return operand;
         }
-        bool equality = binary.op == BinaryOp::Eq || binary.op == BinaryOp::Ne;
         if (!operand.isNumeric() && !(equality && (operand.isBool() || operand.kind == TypeKind::Addr))) {
             diag_->error(binary.loc, std::string("'") + spelling(binary.op) + "' cannot compare " + operand.name() + " values");
             return Type::error();
@@ -2057,6 +2554,7 @@ private:
             return Type::error();
         }
         call.function = function;
+        noteCall(function, call.loc);
         if (!checkArgs(call.args, *function, "'" + call.callee + "'", call.loc, &call.overlaps)) return Type::error();
         return function->resolvedReturn;
     }
@@ -2155,6 +2653,7 @@ private:
 
         if (decl->constructor) {
             use(decl->constructor, node.loc);
+            noteCall(decl->constructor, node.loc);
             if (!checkArgs(node.args, *decl->constructor, "the constructor of " + decl->name, node.loc, &node.overlaps)) {
                 return Type::error();
             }
@@ -2425,9 +2924,38 @@ private:
     // The lists that the enclosing `for` loops go over (D101).
     struct LoopBorrow {
         Path path;
-        std::string text;
+        std::string reason;
     };
-    std::vector<LoopBorrow> loopBorrows_;
+    std::vector<LoopBorrow> loopBorrows_;  // also the values of `switch` whose data are named (D125)
+    std::vector<size_t> switchLoops_;      // for each enclosing `switch`, how many loops enclose it (D116)
+
+    // Exceptions (D36): the `try` bodies around the code being checked, the types
+    // of the enclosing `catch`, the loops around each `finally` (D120), and the
+    // regions that cannot let an exception out (D113, D122).
+    struct TryContext {
+        bool catchAll = false;
+        std::vector<const StructDecl*> caught;
+    };
+    struct Region {
+        size_t base;  // the `try` bodies inside the region start here
+        const char* message;
+    };
+    struct ThrowInfo {
+        bool throws = false;               // a `throw` that is not caught
+        std::vector<FunctionDecl*> calls;  // calls that are not caught
+    };
+    struct Escape {
+        SourceLocation loc;
+        FunctionDecl* callee;  // null for a `throw`
+        const char* message;
+    };
+    std::vector<TryContext> tryContexts_;
+    std::vector<Type> catchTypes_;
+    std::vector<size_t> finallyLoops_;
+    std::vector<Region> regions_;
+    std::map<FunctionDecl*, ThrowInfo> throwInfo_;
+    std::vector<Escape> escapes_;
+    InterfaceDecl* exceptionDecl_ = nullptr;
 
     // The types of the standard library (D97).
     StructDecl* stringDecl_ = nullptr;

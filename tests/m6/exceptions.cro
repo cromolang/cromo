@@ -1,0 +1,195 @@
+// expect-output: create 1
+// expect-output: opened a
+// expect-output: destroy 1
+// expect-output: create 1
+// expect-output: destroy 1
+// expect-output: caught: cannot open missing
+// expect-output: finally 1
+// expect-output: finally 2
+// expect-output: 10
+// expect-output: rethrowing line -3
+// expect-output: outer: parse error
+// expect-output: create 10
+// expect-output: destroy 10
+// expect-output: loop 0
+// expect-output: finally 0
+// expect-output: finally 1
+// expect-output: create 12
+// expect-output: destroy 12
+// expect-output: loop 2
+// expect-output: finally 2
+// expect-output: plain
+// expect-output: create 20
+// expect-output: destroy 0
+// expect-output: destroy 0
+// expect-output: destroy 20
+// expect-output: constructor failed
+// expect-output: fine
+// expect-output: task failed
+// throw, try, catch and finally (D16, D36, D113-D115).
+struct Noisy {
+    i32 id
+
+    Noisy(i32 n) {
+        id = n
+        println("create {}", id)
+    }
+
+    ~Noisy() {
+        println("destroy {}", id)
+    }
+}
+
+struct IoError : Exception {
+    string path
+
+    IoError(move string p) {
+        path = move p
+    }
+
+    string message() const {
+        ret "cannot open " + path
+    }
+}
+
+struct ParseError : Exception {
+    i32 line
+
+    string message() const {
+        ret "parse error"
+    }
+}
+
+// The objects alive when the exception leaves are destroyed (D16).
+void open(string path) {
+    Noisy guard = Noisy(1)
+    if (path == "missing") {
+        throw IoError(path.copy())
+    }
+    println("opened {}", path)
+}
+
+i32 parse(i32 n) {
+    if (n < 0) {
+        ParseError e
+        e.line = n
+        throw move e
+    }
+    ret n * 2
+}
+
+void steps() {
+    try {
+        open("a")
+        open("missing")
+        println("never")
+    } catch (IoError e) {
+        println("caught: {}", e.message())
+    } finally {
+        println("finally 1")
+    }
+}
+
+// finally runs after the value of ret is computed.
+i32 tryRet() {
+    try {
+        ret parse(5)
+    } finally {
+        println("finally 2")
+    }
+}
+
+void rethrow() {
+    try {
+        i32 x = parse(-3)
+    } catch (ParseError e) {
+        println("rethrowing line {}", e.line)
+        throw  // the same exception again (D114)
+    }
+}
+
+// A constructor that throws destroys the fields of its object, not the object (D123).
+struct Resource {
+    Noisy a
+    Noisy b
+
+    Resource(bool fail) {
+        a = Noisy(20)
+        if (fail) {
+            throw Error("constructor failed")
+        }
+        b = Noisy(21)
+    }
+
+    ~Resource() {
+        println("destroy resource")
+    }
+}
+
+interface Task {
+    void run()
+}
+
+struct Failing : Task {
+    void run() {
+        throw Error("task failed")
+    }
+}
+
+struct Fine : Task {
+    void run() {
+        println("fine")
+    }
+}
+
+void runTask(ref Task task) {
+    task.run()
+}
+
+i32 main() {
+    steps()
+    println("{}", tryRet())
+    try {
+        rethrow()
+    } catch (Exception e) {
+        println("outer: {}", e.message())
+    }
+
+    for (i32 i = 0; i < 3; i++) {
+        try {
+            if (i == 1) {
+                continue  // finally runs here too
+            }
+            Noisy n = Noisy(10 + i)
+            parse(-1)
+        } catch (Exception e) {
+            println("loop {}", i)
+        } finally {
+            println("finally {}", i)
+        }
+    }
+
+    try {
+        throw Error("plain")
+    } catch (Error e) {
+        println("{}", e.message())
+    }
+
+    try {
+        Resource r = Resource(true)
+        println("never")
+    } catch (Error e) {
+        println("{}", e.message())
+    }
+
+    // Through a method table: every implementation can throw.
+    Fine fine
+    Failing failing
+    try {
+        runTask(ref fine)
+        runTask(ref failing)
+    } catch (Exception e) {
+        println("{}", e.message())
+    }
+    ret 0
+}

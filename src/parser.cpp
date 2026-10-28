@@ -20,6 +20,12 @@ public:
                 } else {
                     skipToNextDeclaration();
                 }
+            } else if (check(TokenKind::KwEnum)) {
+                if (auto decl = parseEnum()) {
+                    module.structs.push_back(std::move(*decl));
+                } else {
+                    skipToNextDeclaration();
+                }
             } else if (check(TokenKind::KwInterface)) {
                 if (auto decl = parseInterface()) {
                     module.interfaces.push_back(std::move(*decl));
@@ -144,6 +150,13 @@ private:
         }
     }
 
+    // A generic type before a `.`: `Result<i32, string>.Ok(5)`.
+    bool isGenericType() const {
+        if (!check(TokenKind::Identifier) || peek(1).kind != TokenKind::Less) return false;
+        size_t after = skipTypeArgs(1);
+        return after && peek(after).kind == TokenKind::Dot;
+    }
+
     // A call with type arguments: `max<Money>(a, b)`.
     bool isGenericCall() const {
         if (!check(TokenKind::Identifier) || peek(1).kind != TokenKind::Less) return false;
@@ -247,6 +260,85 @@ private:
         if (!parseSignature(function, inStruct)) return std::nullopt;
         if (!parseFunctionBody(function)) return std::nullopt;
         return function;
+    }
+
+    // enum := 'enum' name [typeParams] [':' interfaces] '{' { case | method } '}'
+    // case := name ['(' type name {',' type name} ')']   (D104)
+    std::optional<StructDecl> parseEnum() {
+        StructDecl decl;
+        decl.isEnum = true;
+        advance();  // 'enum'
+        if (!check(TokenKind::Identifier)) {
+            errorAtCurrent("the name of the enum");
+            return std::nullopt;
+        }
+        decl.name = peek().text;
+        decl.loc = peek().loc;
+        advance();
+        if (check(TokenKind::Less) && !parseTypeParams(decl.typeParams)) return std::nullopt;
+        if (match(TokenKind::Colon)) {
+            do {
+                TypeName name;
+                if (!parseType(name)) return std::nullopt;
+                decl.interfaces.push_back(std::move(name));
+            } while (match(TokenKind::Comma));
+        }
+        skipNewlines();
+        if (!expect(TokenKind::LBrace, "to open the enum")) return std::nullopt;
+        skipNewlines();
+        while (!check(TokenKind::RBrace) && !check(TokenKind::EndOfFile)) {
+            if (!parseEnumMember(decl)) {
+                skipToNextStatement();  // it also takes the newline
+                skipNewlines();
+                continue;
+            }
+            if (!match(TokenKind::Newline) && !check(TokenKind::RBrace)) {
+                errorAtCurrent("a newline after the case");
+                skipToNextStatement();
+            }
+            skipNewlines();
+        }
+        if (!expect(TokenKind::RBrace, "to close the enum")) return std::nullopt;
+        return decl;
+    }
+
+    bool parseEnumMember(StructDecl& decl) {
+        if (check(TokenKind::Tilde) || (check(TokenKind::Identifier) && peek().text == decl.name)) {
+            diag_.error(peek().loc, "an enum has no constructor or destructor (D110)");
+            return false;
+        }
+        size_t afterType = skipType(0);
+        if (afterType && peek(afterType).kind == TokenKind::Identifier) {  // a method
+            auto method = parseFunction(true);
+            if (!method) return false;
+            method->kind = FunctionKind::Method;
+            decl.members.push_back(std::move(*method));
+            return true;
+        }
+        if (!check(TokenKind::Identifier)) {
+            errorAtCurrent("a case or a method");
+            return false;
+        }
+        EnumCase item;
+        item.name = peek().text;
+        item.loc = advance().loc;
+        if (check(TokenKind::LParen)) {
+            FunctionDecl data;  // the data are written like parameters (D104)
+            if (!parseParams(data)) return false;
+            for (Param& param : data.params) {
+                if (param.mode != ParamMode::Read) {
+                    diag_.error(param.loc, "the data of a case have no 'ref' or 'move' (D104)");
+                    return false;
+                }
+                FieldDecl field;
+                field.type = std::move(param.type);
+                field.name = std::move(param.name);
+                field.loc = param.loc;
+                item.fields.push_back(std::move(field));
+            }
+        }
+        decl.cases.push_back(std::move(item));
+        return true;
     }
 
     // interface := 'interface' name '{' { signature } '}'   (D49, D90)
@@ -458,6 +550,19 @@ private:
             return parseIf();
         case TokenKind::KwFor:
             return parseFor();
+        case TokenKind::KwSwitch:
+            return parseSwitch();
+        case TokenKind::KwTry:
+            return parseTry();
+        case TokenKind::KwThrow: {
+            SourceLocation loc = advance().loc;
+            ExprPtr value;
+            if (!check(TokenKind::Newline) && !check(TokenKind::RBrace) && !check(TokenKind::EndOfFile)) {
+                value = parseExpression();
+                if (!value) return nullptr;
+            }
+            return std::make_unique<ThrowStmt>(loc, std::move(value));
+        }
         case TokenKind::KwBreak:
             return std::make_unique<BreakStmt>(advance().loc);
         case TokenKind::KwContinue:
@@ -516,6 +621,118 @@ private:
             return std::make_unique<IncDecStmt>(loc, std::move(expr), increment);
         }
         return std::make_unique<ExprStmt>(loc, std::move(expr));
+    }
+
+    // switch := 'switch' ['(' expression ')'] '{' { branch } '}'
+    // branch := 'case' pattern {',' pattern} block | 'default' block   (D106, D108)
+    StmtPtr parseSwitch() {
+        auto stmt = std::make_unique<SwitchStmt>(advance().loc);
+        if (match(TokenKind::LParen)) {
+            stmt->value = parseExpression();
+            if (!stmt->value) return nullptr;
+            if (!expect(TokenKind::RParen, "to close the value of 'switch'")) return nullptr;
+        }
+        skipNewlines();
+        if (!expect(TokenKind::LBrace, "to open the 'switch'")) return nullptr;
+        skipNewlines();
+        while (!check(TokenKind::RBrace) && !check(TokenKind::EndOfFile)) {
+            if (check(TokenKind::KwDefault)) {
+                SourceLocation loc = advance().loc;
+                if (stmt->defaultBlock) {
+                    diag_.error(loc, "'switch' has only one 'default'");
+                    return nullptr;
+                }
+                stmt->defaultBlock = std::make_unique<Block>();
+                if (!parseBody(*stmt->defaultBlock, "'default'")) return nullptr;
+            } else if (match(TokenKind::KwCase)) {
+                SwitchBranch branch;
+                do {
+                    CasePattern pattern;
+                    if (!parsePattern(pattern)) return nullptr;
+                    branch.patterns.push_back(std::move(pattern));
+                } while (match(TokenKind::Comma));
+                if (!parseBody(branch.body, "the case")) return nullptr;
+                stmt->branches.push_back(std::move(branch));
+            } else {
+                errorAtCurrent("'case' or 'default'");
+                return nullptr;
+            }
+            skipNewlines();
+        }
+        if (!expect(TokenKind::RBrace, "to close the 'switch'")) return nullptr;
+        return stmt;
+    }
+
+    // pattern := name ['(' ['ref'] type name {',' ...} ')'] | literal | '-' literal
+    bool parsePattern(CasePattern& pattern) {
+        pattern.loc = peek().loc;
+        if (check(TokenKind::Identifier)) {
+            pattern.name = advance().text;
+            if (match(TokenKind::LParen)) {
+                pattern.hasBindings = true;
+                if (!check(TokenKind::RParen)) {
+                    do {
+                        CaseBinding binding;
+                        binding.isRef = match(TokenKind::KwRef);
+                        if (!parseType(binding.type)) return false;
+                        if (!check(TokenKind::Identifier)) {
+                            errorAtCurrent("the name of the data");
+                            return false;
+                        }
+                        binding.name = peek().text;
+                        binding.loc = advance().loc;
+                        pattern.bindings.push_back(std::move(binding));
+                    } while (match(TokenKind::Comma));
+                }
+                if (!expect(TokenKind::RParen, "to close the data of the case")) return false;
+            }
+            return true;
+        }
+        bool literal = check(TokenKind::IntegerLiteral) || check(TokenKind::CharLiteral) || check(TokenKind::StringLiteral) ||
+                       (check(TokenKind::Minus) && peek(1).kind == TokenKind::IntegerLiteral);
+        if (!literal) {
+            errorAtCurrent("a case of the enum or a literal");
+            return false;
+        }
+        pattern.literal = parseUnary();
+        return pattern.literal != nullptr;
+    }
+
+    // try := 'try' block {'catch' '(' type name ')' block} ['finally' block]   (D16)
+    StmtPtr parseTry() {
+        auto stmt = std::make_unique<TryStmt>(advance().loc);
+        if (!parseBody(stmt->body, "'try'")) return nullptr;
+        for (;;) {
+            // `catch` and `finally` may also start on the next line, like `else` (D32).
+            size_t ahead = 0;
+            while (peek(ahead).kind == TokenKind::Newline) ++ahead;
+            TokenKind next = peek(ahead).kind;
+            if (next != TokenKind::KwCatch && next != TokenKind::KwFinally) break;
+            pos_ += ahead;
+            if (match(TokenKind::KwFinally)) {
+                stmt->finallyBlock = std::make_unique<Block>();
+                if (!parseBody(*stmt->finallyBlock, "'finally'")) return nullptr;
+                break;
+            }
+            advance();  // 'catch'
+            CatchClause clause;
+            if (!expect(TokenKind::LParen, "after 'catch'")) return nullptr;
+            if (!parseType(clause.type)) return nullptr;
+            if (!check(TokenKind::Identifier)) {
+                errorAtCurrent("the name of the exception");
+                return nullptr;
+            }
+            clause.name = peek().text;
+            clause.nameLoc = advance().loc;
+            if (!expect(TokenKind::RParen, "to close the 'catch'")) return nullptr;
+            if (!parseBody(clause.body, "the 'catch'")) return nullptr;
+            stmt->catches.push_back(std::move(clause));
+        }
+        if (stmt->catches.empty() && !stmt->finallyBlock) {
+            diag_.error(stmt->loc, "'try' needs at least one 'catch' or a 'finally'");
+            return nullptr;
+        }
+        return stmt;
     }
 
     // if := 'if' '(' expression ')' block ['else' (if | block)]
@@ -750,7 +967,12 @@ private:
     // `.method(args)`.
     ExprPtr parsePostfix() {
         ExprPtr expr;
-        if (check(TokenKind::Identifier) && (peek(1).kind == TokenKind::LParen || isGenericCall())) {
+        if (isGenericType()) {  // `Result<i32, string>.Ok(5)` (D105)
+            SourceLocation loc = peek().loc;
+            TypeName name;
+            if (!parseType(name)) return nullptr;
+            expr = std::make_unique<TypeRefExpr>(loc, std::move(name));
+        } else if (check(TokenKind::Identifier) && (peek(1).kind == TokenKind::LParen || isGenericCall())) {
             const Token& name = advance();
             auto call = std::make_unique<CallExpr>(name.loc, name.text);
             if (match(TokenKind::Less)) {  // `max<Money>(a, b)`, `Pair<i32>()` (D86, D92)

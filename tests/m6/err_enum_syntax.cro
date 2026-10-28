@@ -1,0 +1,11 @@
+// expect-error: an enum has no constructor or destructor (D110)
+enum Shape {
+    Circle(f64 radius)
+
+    Shape(f64 r) {
+    }
+}
+
+i32 main() {
+    ret 0
+}

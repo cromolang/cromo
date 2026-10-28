@@ -3,8 +3,8 @@
 // Decided: RAII constructors and destructors (D6), try / catch / finally (D16),
 //          struct, throw and catch syntax (D20), format(...) (D38),
 //          initial value of fields (D51)
-// Draft:   IoError and e.message (D36: types that implement Exception),
-//          os.open / os.close / os.readLine (library still to be defined)
+//          IoError implements Exception and its message() (D36, D115)
+// Draft:   os.open / os.close / os.readLine (library still to be defined)
 
 struct File {
     i32 fd = -1                          // default: no file open
@@ -36,7 +36,7 @@ i32 main() {
     try {
         println("{}", firstLine("data.txt"))
     } catch (IoError e) {
-        println("error: {}", e.message)
+        println("error: {}", e.message())
         ret 1                            // finally runs before leaving
     } finally {
         println("done")                  // always runs

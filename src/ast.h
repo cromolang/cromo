@@ -37,6 +37,8 @@ enum class VariableKind {
     RefParam,   // the caller's object, which the function can modify (D22)
     MoveParam,  // owned by the function (D22)
     Element,    // the element of a `for` over a list: read-only, or `ref` (D25)
+    Binding,    // the data of a case in a `switch`: read-only, or `ref` (D107)
+    Caught,     // the exception of a `catch`: read-only (D114)
 };
 
 // A local variable or a parameter, created by sema.
@@ -54,7 +56,7 @@ struct Variable {
 
 enum class ExprKind {
     IntLiteral, FloatLiteral, BoolLiteral, StringLiteral, Name, Unary, Binary, Call, Conversion, Print,
-    Field, MethodCall, Construct, Self, Move, Ref, Copy, Index,
+    Field, MethodCall, Construct, Self, Move, Ref, Copy, Index, EnumCase, TypeRef,
 };
 
 struct Expr {
@@ -261,9 +263,26 @@ struct IndexExpr : Expr {
     ExprPtr index;
 };
 
+// `Shape.Circle(1.0)`, `Color.Red`: a value of an enum (D105), made by sema.
+struct EnumCaseExpr : Expr {
+    EnumCaseExpr(SourceLocation l, const struct StructDecl* d, int c) : Expr(ExprKind::EnumCase, l), decl(d), index(c) {}
+
+    const struct StructDecl* decl;
+    int index;  // of the case
+    std::vector<ExprPtr> args;
+    OverlapChecks overlaps;
+};
+
+// `Result<i32, string>` before a `.`: the type of a generic enum, to create its values.
+struct TypeRefExpr : Expr {
+    TypeRefExpr(SourceLocation l, TypeName n) : Expr(ExprKind::TypeRef, l), name(std::move(n)) {}
+
+    TypeName name;
+};
+
 // ---- Statements ----
 
-enum class StmtKind { VarDecl, Assign, IncDec, Expr, If, For, Break, Continue, Return };
+enum class StmtKind { VarDecl, Assign, IncDec, Expr, If, For, Break, Continue, Return, Switch, Throw, Try };
 
 struct Stmt {
     Stmt(StmtKind k, SourceLocation l) : kind(k), loc(l) {}
@@ -344,6 +363,63 @@ struct ForStmt : Stmt {
     Variable* element = nullptr;  // set by sema
 };
 
+// The data of a case, named in a `switch` (D107).
+struct CaseBinding {
+    bool isRef = false;
+    TypeName type;
+    std::string name;
+    SourceLocation loc;
+    Variable* variable = nullptr;  // set by sema
+};
+
+// A pattern of a branch: a case of an enum, with or without names for its data,
+// or a literal (D109).
+struct CasePattern {
+    SourceLocation loc;
+    std::string name;             // a case of an enum
+    bool hasBindings = false;     // `Circle(f64 r)`
+    std::vector<CaseBinding> bindings;
+    ExprPtr literal;              // a number or a string
+    int caseIndex = -1;           // set by sema
+};
+
+struct SwitchBranch {
+    std::vector<CasePattern> patterns;
+    Block body;
+};
+
+struct SwitchStmt : Stmt {
+    SwitchStmt(SourceLocation l) : Stmt(StmtKind::Switch, l) {}
+
+    ExprPtr value;  // without one, in the methods of an enum: the value of the method (D117)
+    std::vector<SwitchBranch> branches;
+    std::unique_ptr<Block> defaultBlock;
+    bool exhaustive = false;  // set by sema: some branch runs for every value
+};
+
+struct ThrowStmt : Stmt {
+    ThrowStmt(SourceLocation l, ExprPtr v) : Stmt(StmtKind::Throw, l), value(std::move(v)) {}
+
+    ExprPtr value;  // null: rethrows the exception of the `catch` (D114)
+};
+
+struct CatchClause {
+    TypeName type;
+    std::string name;
+    SourceLocation nameLoc;
+    Block body;
+    Type resolved;                 // set by sema: a struct, or the interface Exception
+    Variable* variable = nullptr;  // set by sema
+};
+
+struct TryStmt : Stmt {
+    TryStmt(SourceLocation l) : Stmt(StmtKind::Try, l) {}
+
+    Block body;
+    std::vector<CatchClause> catches;
+    std::unique_ptr<Block> finallyBlock;
+};
+
 struct BreakStmt : Stmt {
     explicit BreakStmt(SourceLocation l) : Stmt(StmtKind::Break, l) {}
 };
@@ -398,6 +474,7 @@ struct FunctionDecl {
     bool isDefinition = false;              // the check of a generic with its own type parameters (D52)
     bool scheduled = false;                 // its body is waiting to be checked, or has been (D103)
     bool bodyChecked = false;
+    bool canThrow = false;                  // set by sema: an exception can leave it (D36)
 };
 
 // `interface Shape { f64 area() const }`: method signatures only (D40, D49).
@@ -416,6 +493,15 @@ struct FieldDecl {
     Type resolved; // set by sema
 };
 
+// A case of an enum, with its data (D104).
+struct EnumCase {
+    std::string name;
+    SourceLocation loc;
+    std::vector<FieldDecl> fields;
+    int size = 0;   // set by sema: the layout of the data, as a struct
+    int align = 1;
+};
+
 struct StructDecl {
     // Move only. Without this, std::vector would copy it when it grows, because
     // the move of std::map is not noexcept in MSVC.
@@ -429,6 +515,8 @@ struct StructDecl {
     std::vector<TypeName> interfaces;    // `struct Circle : Shape` (D40)
     std::vector<FieldDecl> fields;
     std::vector<FunctionDecl> members;  // methods, constructor and destructor
+    bool isEnum = false;                // an enum: its data are in the cases (D104)
+    std::vector<EnumCase> cases;
 
     // Set by sema.
     FunctionDecl* constructor = nullptr;
@@ -439,6 +527,7 @@ struct StructDecl {
     bool needsDestruction = false;
     int size = 0;
     int align = 1;
+    int payloadOffset = 0;  // of an enum: where the data of the cases start, after the tag
 
     // Instances of generics (D39), created by sema.
     const StructDecl* generic = nullptr;  // the generic struct this is an instance of

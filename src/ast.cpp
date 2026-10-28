@@ -86,6 +86,14 @@ ExprPtr cloneExpr(const Expr& expr) {
         const auto& from = static_cast<const IndexExpr&>(expr);
         return std::make_unique<IndexExpr>(from.loc, clone(*from.object), clone(*from.index));
     }
+    case ExprKind::EnumCase: {
+        const auto& from = static_cast<const EnumCaseExpr&>(expr);
+        auto to = std::make_unique<EnumCaseExpr>(from.loc, from.decl, from.index);
+        to->args = cloneAll(from.args);
+        return to;
+    }
+    case ExprKind::TypeRef:
+        return std::make_unique<TypeRefExpr>(expr.loc, static_cast<const TypeRefExpr&>(expr).name);
     }
     return nullptr;
 }
@@ -143,6 +151,46 @@ StmtPtr clone(const Stmt& stmt) {
         to->elementName = from.elementName;
         to->elementLoc = from.elementLoc;
         to->list = cloneOrNull(from.list);
+        return to;
+    }
+    case StmtKind::Switch: {
+        const auto& from = static_cast<const SwitchStmt&>(stmt);
+        auto to = std::make_unique<SwitchStmt>(from.loc);
+        to->value = cloneOrNull(from.value);
+        for (const SwitchBranch& branch : from.branches) {
+            SwitchBranch copy;
+            for (const CasePattern& pattern : branch.patterns) {
+                CasePattern p;
+                p.loc = pattern.loc;
+                p.name = pattern.name;
+                p.hasBindings = pattern.hasBindings;
+                for (const CaseBinding& binding : pattern.bindings) {
+                    p.bindings.push_back(CaseBinding{binding.isRef, binding.type, binding.name, binding.loc, nullptr});
+                }
+                p.literal = cloneOrNull(pattern.literal);
+                copy.patterns.push_back(std::move(p));
+            }
+            copy.body = clone(branch.body);
+            to->branches.push_back(std::move(copy));
+        }
+        if (from.defaultBlock) to->defaultBlock = std::make_unique<Block>(clone(*from.defaultBlock));
+        return to;
+    }
+    case StmtKind::Throw:
+        return std::make_unique<ThrowStmt>(stmt.loc, cloneOrNull(static_cast<const ThrowStmt&>(stmt).value));
+    case StmtKind::Try: {
+        const auto& from = static_cast<const TryStmt&>(stmt);
+        auto to = std::make_unique<TryStmt>(from.loc);
+        to->body = clone(from.body);
+        for (const CatchClause& clause : from.catches) {
+            CatchClause copy;
+            copy.type = clause.type;
+            copy.name = clause.name;
+            copy.nameLoc = clause.nameLoc;
+            copy.body = clone(clause.body);
+            to->catches.push_back(std::move(copy));
+        }
+        if (from.finallyBlock) to->finallyBlock = std::make_unique<Block>(clone(*from.finallyBlock));
         return to;
     }
     case StmtKind::Break: return std::make_unique<BreakStmt>(stmt.loc);
