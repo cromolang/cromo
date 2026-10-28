@@ -60,6 +60,7 @@ add_custom_command(
 
 add_executable(cromo
   src/main.cpp
+  src/ast.cpp
   src/diagnostics.cpp
   src/lexer.cpp
   src/parser.cpp

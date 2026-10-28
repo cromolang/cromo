@@ -1,0 +1,21 @@
+// expect-error: an interface contains only methods (D90)
+// expect-error: the methods of an interface have no body (D90)
+// expect-error: an interface cannot extend another interface (D90)
+interface Shape {
+    f64 size
+    f64 area() const
+}
+
+interface Named {
+    i32 id() const {
+        ret 0
+    }
+}
+
+interface Colored : Shape {
+    i32 color() const
+}
+
+i32 main() {
+    ret 0
+}

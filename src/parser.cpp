@@ -20,6 +20,12 @@ public:
                 } else {
                     skipToNextDeclaration();
                 }
+            } else if (check(TokenKind::KwInterface)) {
+                if (auto decl = parseInterface()) {
+                    module.interfaces.push_back(std::move(*decl));
+                } else {
+                    skipToNextDeclaration();
+                }
             } else if (auto function = parseFunction()) {
                 module.functions.push_back(std::move(*function));
             } else {
@@ -93,6 +99,7 @@ private:
 
     // ---- Declarations ----
 
+    // type := 'void' | name ['<' type {',' type} '>']
     bool parseType(TypeName& out) {
         const Token& token = peek();
         if (token.kind == TokenKind::KwVoid) {
@@ -100,13 +107,72 @@ private:
             advance();
             return true;
         }
-        if (token.kind == TokenKind::Identifier) {
-            out = TypeName{token.text, token.loc};
-            advance();
-            return true;
+        if (token.kind != TokenKind::Identifier) {
+            errorAtCurrent("a type");
+            return false;
         }
-        errorAtCurrent("a type");
-        return false;
+        out = TypeName{token.text, token.loc};
+        advance();
+        if (match(TokenKind::Less)) {
+            do {
+                TypeName arg;
+                if (!parseType(arg)) return false;
+                out.args.push_back(std::move(arg));
+            } while (match(TokenKind::Comma));
+            if (!expect(TokenKind::Greater, "to close the type arguments")) return false;
+        }
+        return true;
+    }
+
+    // Looks ahead without consuming: the position after the type that starts at
+    // `i`, or 0 if there is no type there.
+    size_t skipType(size_t i) const {
+        if (peek(i).kind == TokenKind::KwVoid) return i + 1;
+        if (peek(i).kind != TokenKind::Identifier) return 0;
+        if (peek(i + 1).kind != TokenKind::Less) return i + 1;
+        return skipTypeArgs(i + 1);
+    }
+
+    // The position after the type arguments that start with the '<' at `i`, or 0.
+    size_t skipTypeArgs(size_t i) const {
+        for (++i;;) {
+            i = skipType(i);
+            if (i == 0) return 0;
+            if (peek(i).kind == TokenKind::Greater) return i + 1;
+            if (peek(i).kind != TokenKind::Comma) return 0;
+            ++i;
+        }
+    }
+
+    // A call with type arguments: `max<Money>(a, b)`.
+    bool isGenericCall() const {
+        if (!check(TokenKind::Identifier) || peek(1).kind != TokenKind::Less) return false;
+        size_t after = skipTypeArgs(1);
+        return after && peek(after).kind == TokenKind::LParen;
+    }
+
+    // typeParams := '<' name [':' type {'+' type}] {',' ...} '>'   (D52, D88)
+    bool parseTypeParams(std::vector<TypeParam>& out) {
+        advance();  // '<'
+        do {
+            if (!check(TokenKind::Identifier)) {
+                errorAtCurrent("the name of a type parameter");
+                return false;
+            }
+            TypeParam param;
+            param.name = peek().text;
+            param.loc = peek().loc;
+            advance();
+            if (match(TokenKind::Colon)) {
+                do {
+                    TypeName constraint;
+                    if (!parseType(constraint)) return false;
+                    param.constraints.push_back(std::move(constraint));
+                } while (match(TokenKind::Plus));
+            }
+            out.push_back(std::move(param));
+        } while (match(TokenKind::Comma));
+        return expect(TokenKind::Greater, "to close the type parameters");
     }
 
     // params := '(' [param {',' param}] ')'
@@ -152,28 +218,87 @@ private:
         return true;
     }
 
-    // function := type name params ['const'] block
-    std::optional<FunctionDecl> parseFunction(bool inStruct = false) {
-        FunctionDecl function;
-        if (!parseType(function.returnType)) return std::nullopt;
+    // signature := type name [typeParams] params ['const']
+    bool parseSignature(FunctionDecl& function, bool inStruct) {
+        if (!parseType(function.returnType)) return false;
         if (!check(TokenKind::Identifier)) {
             errorAtCurrent(inStruct ? "the name of the field or method" : "the function name");
-            return std::nullopt;
+            return false;
         }
         function.name = peek().text;
         function.loc = peek().loc;
         advance();
-        if (!parseParams(function)) return std::nullopt;
+        if (check(TokenKind::Less) && !parseTypeParams(function.typeParams)) return false;
+        if (!parseParams(function)) return false;
         if (check(TokenKind::KwConst)) {
             if (!inStruct) {
                 diag_.error(peek().loc, "only methods can be const (D24)");
-                return std::nullopt;
+                return false;
             }
             function.isConst = true;
             advance();
         }
+        return true;
+    }
+
+    // function := signature block
+    std::optional<FunctionDecl> parseFunction(bool inStruct = false) {
+        FunctionDecl function;
+        if (!parseSignature(function, inStruct)) return std::nullopt;
         if (!parseFunctionBody(function)) return std::nullopt;
         return function;
+    }
+
+    // interface := 'interface' name '{' { signature } '}'   (D49, D90)
+    std::optional<InterfaceDecl> parseInterface() {
+        InterfaceDecl decl;
+        advance();  // 'interface'
+        if (!check(TokenKind::Identifier)) {
+            errorAtCurrent("the name of the interface");
+            return std::nullopt;
+        }
+        decl.name = peek().text;
+        decl.loc = peek().loc;
+        advance();
+        if (check(TokenKind::Less)) {
+            diag_.error(peek().loc, "an interface has no type parameters: its methods use Self (D84)");
+            return std::nullopt;
+        }
+        if (check(TokenKind::Colon)) {
+            diag_.error(peek().loc, "an interface cannot extend another interface (D90)");
+            return std::nullopt;
+        }
+        skipNewlines();
+        if (!expect(TokenKind::LBrace, "to open the interface")) return std::nullopt;
+        skipNewlines();
+        while (!check(TokenKind::RBrace) && !check(TokenKind::EndOfFile)) {
+            FunctionDecl method;
+            method.kind = FunctionKind::Method;
+            size_t afterType = skipType(0);
+            bool ok = false;
+            if (afterType && peek(afterType).kind == TokenKind::Identifier && peek(afterType + 1).kind != TokenKind::LParen) {
+                diag_.error(peek(afterType).loc, "an interface contains only methods (D90)");
+            } else if (parseSignature(method, true)) {
+                if (check(TokenKind::LBrace)) {
+                    diag_.error(peek().loc, "the methods of an interface have no body (D90)");
+                    parseBlock();  // skipped, to go on with the next method
+                }
+                decl.methods.push_back(std::move(method));
+                ok = true;
+            }
+            if (!ok) {
+                skipToNextStatement();  // it also takes the newline
+                skipNewlines();
+                continue;
+            }
+            if (!match(TokenKind::Newline) && !check(TokenKind::RBrace)) {
+                errorAtCurrent("a newline after the method");
+                skipToNextStatement();
+            }
+            skipNewlines();
+        }
+        if (!expect(TokenKind::RBrace, "to close the interface")) return std::nullopt;
+        return decl;
     }
 
     // struct := 'struct' name '{' { member } '}'
@@ -188,15 +313,23 @@ private:
         decl.name = peek().text;
         decl.loc = peek().loc;
         advance();
-        if (check(TokenKind::Colon)) {
-            diag_.error(peek().loc, "interfaces arrive in milestone M4");
-            return std::nullopt;
+        if (check(TokenKind::Less) && !parseTypeParams(decl.typeParams)) return std::nullopt;
+        if (match(TokenKind::Colon)) {  // the interfaces it implements (D49, D88)
+            do {
+                TypeName name;
+                if (!parseType(name)) return std::nullopt;
+                decl.interfaces.push_back(std::move(name));
+            } while (match(TokenKind::Comma));
         }
         skipNewlines();
         if (!expect(TokenKind::LBrace, "to open the struct")) return std::nullopt;
         skipNewlines();
         while (!check(TokenKind::RBrace) && !check(TokenKind::EndOfFile)) {
-            if (!parseMember(decl)) skipToNextStatement();
+            if (!parseMember(decl)) {
+                skipToNextStatement();  // it also takes the newline
+                skipNewlines();
+                continue;
+            }
             if (!match(TokenKind::Newline) && !check(TokenKind::RBrace)) {
                 errorAtCurrent("a newline after the member");
                 skipToNextStatement();
@@ -236,7 +369,9 @@ private:
             return true;
         }
         // type name ['=' literal]   or   type name params ['const'] block
-        if (peek(2).kind == TokenKind::LParen) {
+        size_t afterType = skipType(0);
+        if (afterType && peek(afterType).kind == TokenKind::Identifier &&
+            (peek(afterType + 1).kind == TokenKind::LParen || peek(afterType + 1).kind == TokenKind::Less)) {
             auto method = parseFunction(true);
             if (!method) return false;
             method->kind = FunctionKind::Method;
@@ -303,8 +438,9 @@ private:
     }
 
     bool startsDeclaration() const {
-        return check(TokenKind::KwConst) ||
-               (check(TokenKind::Identifier) && peek(1).kind == TokenKind::Identifier);
+        if (check(TokenKind::KwConst)) return true;
+        size_t afterType = check(TokenKind::Identifier) ? skipType(0) : 0;
+        return afterType && peek(afterType).kind == TokenKind::Identifier;
     }
 
     StmtPtr parseStatement() {
@@ -598,9 +734,17 @@ private:
     // `.method(args)`.
     ExprPtr parsePostfix() {
         ExprPtr expr;
-        if (check(TokenKind::Identifier) && peek(1).kind == TokenKind::LParen) {
+        if (check(TokenKind::Identifier) && (peek(1).kind == TokenKind::LParen || isGenericCall())) {
             const Token& name = advance();
             auto call = std::make_unique<CallExpr>(name.loc, name.text);
+            if (match(TokenKind::Less)) {  // `max<Money>(a, b)`, `Pair<i32>()` (D86, D92)
+                do {
+                    TypeName arg;
+                    if (!parseType(arg)) return nullptr;
+                    call->typeArgs.push_back(std::move(arg));
+                } while (match(TokenKind::Comma));
+                if (!expect(TokenKind::Greater, "to close the type arguments")) return nullptr;
+            }
             if (!parseArgs(call->args)) return nullptr;
             expr = std::move(call);
         } else {

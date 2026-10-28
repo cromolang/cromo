@@ -356,7 +356,7 @@ eprintln("error: {}", message)               // to stderr
 
 ## 12. Interfaces and generics (D39, D40)
 
-There is no inheritance: polymorphism goes through interfaces. The syntax of interfaces (D49) and of generic constraints (D52) is decided.
+There is no inheritance: polymorphism goes through interfaces. The syntax of interfaces (D49) and of generic constraints (D52) is decided. Inside an interface, `Self` is the type that implements it (D84).
 
 ```cromo
 interface Shape {
@@ -391,6 +391,10 @@ shapes.add(Square(2.0))
 - Interface-typed parameters are always allowed: they are passed by reference, without allocating anything.
 - Objects of different types can be together only in a `list` of interfaces, where each element is allocated on the heap with its method table.
 - Variables and fields of interface type are not allowed in the first version: a generic is used instead.
+- Calling a generic function, the type arguments are deduced from the arguments: `doubleArea(c)`. They are written when they cannot be deduced, `zero<i64>()` (D86). A generic struct is always written with its type arguments: `Pair<i32, f64>`.
+- A generic is checked once, at its definition: on a `T` only the methods of its constraints can be called (D52). Whether a `T` can be copied is checked for each type it is used with (D85).
+- An interface that uses `Self` can only be a constraint: `T max<T : Comparable>(T a, T b)` (D84).
+- The numbers and `bool` do not implement interfaces yet: the built-in interfaces for comparison, equality, printing and arithmetic will come with the standard library (D87).
 
 ## 13. Modules (D41, D50)
 

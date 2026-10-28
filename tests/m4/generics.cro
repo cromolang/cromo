@@ -1,0 +1,104 @@
+// expect-output: 1 2.5
+// expect-output: 7 false
+// expect-output: 2 1
+// expect-output: 1
+// expect-output: 1.5
+// expect-output: 0
+// expect-output: create 5
+// expect-output: create 6
+// expect-output: destroy 0
+// expect-output: destroy 0
+// expect-output: 6 5
+// expect-output: create 7
+// expect-output: destroy 0
+// expect-output: taken 7 left 0
+// expect-output: destroy 7
+// expect-output: destroy 0
+// expect-output: destroy 5
+// expect-output: destroy 6
+// Generic functions and structs: one version for each type used (D39).
+struct Noisy {
+    i32 id
+
+    Noisy(i32 n) {
+        id = n
+        println("create {}", id)
+    }
+
+    ~Noisy() {
+        println("destroy {}", id)
+    }
+}
+
+struct Pair<A, B> {
+    A first
+    B second
+
+    Pair(A a, B b) {
+        first = a
+        second = b
+    }
+
+    B getSecond() const {
+        ret second
+    }
+}
+
+// Works for simple types and for resources alike (D78, D80).
+void swap<T>(ref T a, ref T b) {
+    T t = move a
+    a = move b
+    b = move t
+}
+
+// Copies a T: checked for each type it is used with (D85).
+T pick<T>(bool first, T a, T b) {
+    if (first) {
+        ret a
+    }
+    ret b
+}
+
+T zero<T>() {
+    T value
+    ret value
+}
+
+struct Box<T> {
+    T item
+
+    Box(move T value) {
+        item = move value
+    }
+
+    T take() {
+        ret move item
+    }
+}
+
+i32 main() {
+    Pair<i32, f64> p = Pair<i32, f64>(1, 2.5)
+    println("{} {}", p.first, p.getSecond())
+
+    Pair<Pair<i32, i32>, bool> nested
+    nested.first.second = 7
+    println("{} {}", nested.first.second, nested.second)
+
+    i32 a = 1
+    i32 b = 2
+    swap(ref a, ref b)
+    println("{} {}", a, b)
+    println("{}", pick(false, a, b))
+    println("{}", pick<f64>(true, 1.5, 2))  // only literals: T is written (D86)
+    println("{}", zero<i64>())
+
+    Noisy x = Noisy(5)
+    Noisy y = Noisy(6)
+    swap(ref x, ref y)
+    println("{} {}", x.id, y.id)
+
+    Box<Noisy> box = Box<Noisy>(Noisy(7))
+    Noisy taken = box.take()
+    println("taken {} left {}", taken.id, box.item.id)
+    ret 0
+}

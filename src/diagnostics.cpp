@@ -23,17 +23,20 @@ std::string lineAt(const std::string& text, int line) {
 }  // namespace
 
 void Diagnostics::error(SourceLocation loc, const std::string& message) {
+    if (muted_) return;
     ++errorCount_;
-    report("error", loc, message);
+    report("error", loc, message + context_);
 }
 
 void Diagnostics::error(const std::string& message) {
+    if (muted_) return;
     ++errorCount_;
-    std::fprintf(stderr, "%s: error: %s\n", file_.path.c_str(), message.c_str());
+    std::fprintf(stderr, "%s: error: %s\n", file_.path.c_str(), (message + context_).c_str());
 }
 
 void Diagnostics::warning(SourceLocation loc, const std::string& message) {
-    report("warning", loc, message);
+    if (muted_) return;
+    report("warning", loc, message + context_);
 }
 
 void Diagnostics::report(const char* kind, SourceLocation loc, const std::string& message) {

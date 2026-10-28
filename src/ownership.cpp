@@ -237,10 +237,20 @@ private:
 
 bool checkMoves(const Module& module, Diagnostics& diag) {
     MoveChecker checker(diag);
+    // A generic is checked in its definition, where T may need destruction: that
+    // is stricter than any of its instances (D80, D85).
+    auto check = [&](const FunctionDecl& function) {
+        bool instance = function.generic || (function.owner && function.owner->generic);
+        if (function.bodyChecked && (!instance || function.isDefinition)) checker.checkFunction(function);
+    };
     for (const StructDecl& decl : module.structs) {
-        for (const FunctionDecl& member : decl.members) checker.checkFunction(member);
+        for (const FunctionDecl& member : decl.members) check(member);
     }
-    for (const FunctionDecl& function : module.functions) checker.checkFunction(function);
+    for (const auto& decl : module.structInstances) {
+        for (const FunctionDecl& member : decl->members) check(member);
+    }
+    for (const FunctionDecl& function : module.functions) check(function);
+    for (const auto& function : module.functionInstances) check(*function);
     return !diag.hasErrors();
 }
 

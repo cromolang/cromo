@@ -6,6 +6,8 @@
 namespace cromo {
 
 struct StructDecl;
+struct InterfaceDecl;
+struct TypeParam;
 
 enum class TypeKind {
     Error,         // a type error has already been reported
@@ -15,6 +17,9 @@ enum class TypeKind {
     Float,
     String,        // only string literals for now (D65)
     Struct,
+    Param,         // a type parameter inside a generic: `T` (D39)
+    Interface,     // only for parameters: a reference with its method table (D49)
+    SelfType,      // `Self` in the methods of an interface (D84)
     UntypedInt,    // integer literal still waiting for its type (D55)
     UntypedFloat,  // floating-point literal still waiting for its type (D55)
 };
@@ -24,6 +29,8 @@ struct Type {
     int bits = 0;          // Int and Float
     bool isSigned = false; // Int
     const StructDecl* structDecl = nullptr;  // Struct
+    const TypeParam* param = nullptr;        // Param
+    const InterfaceDecl* interfaceDecl = nullptr;  // Interface
 
     static Type error() { return {}; }
     static Type voidType() { return {TypeKind::Void, 0, false}; }
@@ -32,6 +39,9 @@ struct Type {
     static Type floatType(int bits) { return {TypeKind::Float, bits, false}; }
     static Type stringType() { return {TypeKind::String, 0, false}; }
     static Type structType(const StructDecl* decl) { return {TypeKind::Struct, 0, false, decl}; }
+    static Type paramType(const TypeParam* param) { return {TypeKind::Param, 0, false, nullptr, param}; }
+    static Type interfaceType(const InterfaceDecl* decl) { return {TypeKind::Interface, 0, false, nullptr, nullptr, decl}; }
+    static Type selfType() { return {TypeKind::SelfType, 0, false}; }
     static Type untypedInt() { return {TypeKind::UntypedInt, 0, false}; }
     static Type untypedFloat() { return {TypeKind::UntypedFloat, 0, false}; }
 
@@ -42,6 +52,8 @@ struct Type {
     bool isFloat() const { return kind == TypeKind::Float; }
     bool isNumeric() const { return isInt() || isFloat(); }
     bool isStruct() const { return kind == TypeKind::Struct; }
+    bool isParam() const { return kind == TypeKind::Param; }
+    bool isInterface() const { return kind == TypeKind::Interface; }
     bool isUntyped() const { return kind == TypeKind::UntypedInt || kind == TypeKind::UntypedFloat; }
 
     bool operator==(const Type&) const = default;
@@ -56,8 +68,11 @@ std::optional<Type> findBuiltinType(const std::string& name);
 bool convertsLosslessly(Type from, Type to);
 
 // True for structs that need destruction: with a destructor, or with a field that
-// needs one. They are not copied implicitly (D23).
+// needs one. They are not copied implicitly (D23). A type parameter may need it.
 bool needsDestruction(Type type);
+
+// True if the type mentions a type parameter: such an instance is never emitted.
+bool isAbstract(Type type);
 
 // Size in bytes with the natural alignment of C (D74).
 int sizeOf(Type type);
@@ -65,5 +80,9 @@ int alignOf(Type type);
 
 // LLVM IR spelling of the type.
 std::string llvmType(Type type);
+
+// An LLVM name with its sigil, quoted when it has characters such as `<`:
+// `%"struct.Pair<i32>"`.
+std::string llvmName(char sigil, const std::string& name);
 
 }  // namespace cromo

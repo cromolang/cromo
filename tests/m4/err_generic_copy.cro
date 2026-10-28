@@ -1,0 +1,25 @@
+// expect-error: values of type File are not copied implicitly (D23)
+// expect-error: (in pick<File>, used at line 23)
+// A generic that copies a T can be used only with types that are copied (D85).
+struct File {
+    i32 fd
+
+    ~File() {
+    }
+}
+
+T pick<T>(bool first, T a, T b) {
+    if (first) {
+        ret a
+    }
+    ret b
+}
+
+i32 main() {
+    i32 n = pick(true, 1, i32(2))
+    File a = File()
+    File b = File()
+    // the error is reported in pick, at the line that copies
+    File c = pick(true, a, b)
+    ret n
+}

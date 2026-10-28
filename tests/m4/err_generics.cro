@@ -1,0 +1,68 @@
+// expect-error: cannot deduce T in this call of 'max': write the type arguments, max<...>(...) (D86)
+// expect-error: i32 does not implement Comparable, required by T of 'max' (D52, D87)
+// expect-error: T is i32 for a previous argument, but i64 here: write the type arguments, pick<...>(...) (D86)
+// expect-error: 'Pair' takes 2 type arguments, but 1 were given
+// expect-error: Pair is generic: write its type arguments, Pair<...>(...) (D92)
+// expect-error: '+' does not work on values of type T: no interface provides it yet (D87)
+// expect-error: T has no method named 'area': only the methods of its constraints can be called (D52)
+// expect-error: an interface cannot be a type argument until list<Named> (D91)
+// expect-error: a constraint must be an interface, found 'Point' (D52)
+// expect-error: 'zero' is not generic: it has no type arguments
+interface Comparable {
+    i32 compare(Self other) const
+}
+
+interface Named {
+    i32 id() const
+}
+
+struct Point {
+    i32 x
+}
+
+struct Pair<A, B> {
+    A first
+    B second
+}
+
+T max<T : Comparable>(T a, T b) {
+    if (a.compare(b) >= 0) {
+        ret a
+    }
+    ret b
+}
+
+T pick<T>(bool first, T a, T b) {
+    if (first) {
+        ret a
+    }
+    ret b
+}
+
+T sum<T>(T a, T b) {
+    ret a + b
+}
+
+f64 measure<T>(T shape) {
+    ret shape.area()
+}
+
+void wrong<T : Point>(T x) {
+}
+
+i32 zero() {
+    ret 0
+}
+
+i32 main() {
+    i32 a = max(1, 2)
+    i32 b = max<i32>(1, 2)
+    i32 c = 1
+    i64 d = 2
+    i64 e = pick(true, c, d)
+    Pair<i32> half
+    Pair<i32, i32> whole = Pair(1, 2)
+    Pair<Named, i32> named
+    i32 z = zero<i32>()
+    ret 0
+}

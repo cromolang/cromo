@@ -13,6 +13,9 @@ std::string Type::name() const {
     case TypeKind::Float: return "f" + std::to_string(bits);
     case TypeKind::String: return "string";
     case TypeKind::Struct: return structDecl->name;
+    case TypeKind::Param: return param->name;
+    case TypeKind::Interface: return interfaceDecl->name;
+    case TypeKind::SelfType: return "Self";
     case TypeKind::UntypedInt: return "integer literal";
     case TypeKind::UntypedFloat: return "decimal literal";
     }
@@ -48,7 +51,11 @@ bool convertsLosslessly(Type from, Type to) {
 }
 
 bool needsDestruction(Type type) {
-    return type.isStruct() && type.structDecl->needsDestruction;
+    return type.isParam() || (type.isStruct() && type.structDecl->needsDestruction);
+}
+
+bool isAbstract(Type type) {
+    return type.isParam() || type.kind == TypeKind::SelfType || (type.isStruct() && type.structDecl->isAbstract);
 }
 
 int sizeOf(Type type) {
@@ -57,12 +64,14 @@ int sizeOf(Type type) {
     case TypeKind::Int:
     case TypeKind::Float: return type.bits / 8;
     case TypeKind::Struct: return type.structDecl->size;
+    case TypeKind::Interface: return 16;
     default: return 0;
     }
 }
 
 int alignOf(Type type) {
     if (type.isStruct()) return type.structDecl->align;
+    if (type.isInterface()) return 8;
     int size = sizeOf(type);
     return size > 0 ? size : 1;
 }
@@ -74,9 +83,32 @@ std::string llvmType(Type type) {
     case TypeKind::Int: return "i" + std::to_string(type.bits);
     case TypeKind::Float: return type.bits == 32 ? "float" : "double";
     case TypeKind::String: return "ptr";
-    case TypeKind::Struct: return "%struct." + type.structDecl->name;
+    case TypeKind::Struct: return llvmName('%', "struct." + type.structDecl->name);
+    case TypeKind::Interface: return "{ ptr, ptr }";
     default: return "<invalid>";
     }
+}
+
+std::string llvmName(char sigil, const std::string& name) {
+    bool plain = true;
+    for (char c : name) {
+        bool allowed = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '.' ||
+                       c == '$' || c == '-';
+        plain = plain && allowed;
+    }
+    if (plain) return sigil + name;
+    std::string out = std::string(1, sigil) + "\"";
+    for (unsigned char c : name) {
+        if (c == '"' || c == '\\' || c < 0x20 || c >= 0x7F) {
+            const char* hex = "0123456789ABCDEF";
+            out += '\\';
+            out += hex[c >> 4];
+            out += hex[c & 0xF];
+        } else {
+            out += static_cast<char>(c);
+        }
+    }
+    return out + "\"";
 }
 
 }  // namespace cromo

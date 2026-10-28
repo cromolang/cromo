@@ -58,18 +58,21 @@ std::string floatConstant(double value, int bits) {
 bool byPointer(Type type) { return type.isStruct() && sizeOf(type) > 16; }
 
 // A `ref` parameter is always an address; the others are when they are large (D22).
-bool byAddress(const Param& param, Type type) { return param.mode == ParamMode::Ref || byPointer(type); }
+// A parameter of interface type is always a pair of pointers passed by value (D49).
+bool byAddress(const Param& param, Type type) {
+    return !type.isInterface() && (param.mode == ParamMode::Ref || byPointer(type));
+}
 
-std::string structName(const StructDecl& decl) { return "%struct." + decl.name; }
+std::string structName(const StructDecl& decl) { return llvmName('%', "struct." + decl.name); }
 
 // Symbols of the members of a struct. The double dot cannot clash with a method.
-std::string methodSymbol(const StructDecl& decl, const std::string& method) { return "@" + decl.name + "." + method; }
-std::string constructorSymbol(const StructDecl& decl) { return "@" + decl.name + "..new"; }
-std::string dropSymbol(const StructDecl& decl) { return "@" + decl.name + "..drop"; }
+std::string methodSymbol(const StructDecl& decl, const std::string& method) { return llvmName('@', decl.name + "." + method); }
+std::string constructorSymbol(const StructDecl& decl) { return llvmName('@', decl.name + "..new"); }
+std::string dropSymbol(const StructDecl& decl) { return llvmName('@', decl.name + "..drop"); }
 
 std::string symbolOf(const FunctionDecl& function) {
     switch (function.kind) {
-    case FunctionKind::Free: return "@" + function.name;
+    case FunctionKind::Free: return llvmName('@', function.name);
     case FunctionKind::Method: return methodSymbol(*function.owner, function.name);
     case FunctionKind::Constructor: return constructorSymbol(*function.owner);
     case FunctionKind::Destructor: return dropSymbol(*function.owner);
@@ -122,23 +125,39 @@ public:
         out << "source_filename = " << quoted(options_.sourcePath) << "\n";
         out << "target triple = \"" << kTargetTriple << "\"\n\n";
 
+        // Generics are emitted only through their instances with real types (D39).
+        std::vector<const StructDecl*> structs;
         for (const StructDecl& decl : module.structs) {
-            out << structName(decl) << " = type { ";
-            for (size_t i = 0; i < decl.fields.size(); ++i) out << (i ? ", " : "") << llvmType(decl.fields[i].resolved);
-            out << (decl.fields.empty() ? "}\n" : " }\n");
+            if (decl.typeParams.empty()) structs.push_back(&decl);
         }
-        if (!module.structs.empty()) out << "\n";
+        for (const auto& decl : module.structInstances) {
+            if (!decl->isAbstract) structs.push_back(decl.get());
+        }
+        std::vector<const FunctionDecl*> functions;
+        for (const FunctionDecl& function : module.functions) {
+            if (function.typeParams.empty()) functions.push_back(&function);
+        }
+        for (const auto& function : module.functionInstances) {
+            if (!function->isAbstract) functions.push_back(function.get());
+        }
 
-        for (const StructDecl& decl : module.structs) {
-            for (const FunctionDecl& member : decl.members) out << generateFunction(member);
+        for (const StructDecl* decl : structs) {
+            out << structName(*decl) << " = type { ";
+            for (size_t i = 0; i < decl->fields.size(); ++i) out << (i ? ", " : "") << llvmType(decl->fields[i].resolved);
+            out << (decl->fields.empty() ? "}\n" : " }\n");
+        }
+        if (!structs.empty()) out << "\n";
+
+        for (const StructDecl* decl : structs) {
+            for (const FunctionDecl& member : decl->members) out << generateFunction(member);
             // Without a destructor of its own, a struct still destroys its fields.
-            if (decl.needsDestruction && !decl.destructor) out << generateFieldsDrop(decl);
-            if (decl.generatedCopy) out << generateCopy(decl);
+            if (decl->needsDestruction && !decl->destructor) out << generateFieldsDrop(*decl);
+            if (decl->generatedCopy) out << generateCopy(*decl);
         }
         const FunctionDecl* mainFunction = nullptr;
-        for (const FunctionDecl& function : module.functions) {
-            out << generateFunction(function);
-            if (function.name == "main") mainFunction = &function;
+        for (const FunctionDecl* function : functions) {
+            out << generateFunction(*function);
+            if (function->name == "main") mainFunction = function;
         }
         if (mainFunction) out << entryPoint(*mainFunction);
 
@@ -677,9 +696,7 @@ private:
             return;
         }
         case ExprKind::MethodCall: {
-            const auto& call = static_cast<const MethodCallExpr&>(expr);
-            std::string self = addressOf(*call.object);
-            emitCall(*call.function, self, call.args, dest);
+            emitMethodCall(static_cast<const MethodCallExpr&>(expr), dest);
             return;
         }
         case ExprKind::Move: {
@@ -711,8 +728,38 @@ private:
 
     // Calls a function, a method (with `self`) or a constructor (with `self` set
     // to the new object). A struct result is written to `dest`.
+    // A method call: direct, or through the method table of a parameter of
+    // interface type (D49).
+    Value emitMethodCall(const MethodCallExpr& call, const std::string& dest) {
+        if (!call.object->type.isInterface()) return emitCall(*call.function, addressOf(*call.object), call.args, dest);
+        const InterfaceDecl& iface = *call.object->type.interfaceDecl;
+        auto index = static_cast<size_t>(call.function - iface.methods.data());
+        Value pair = load(addressOf(*call.object), call.object->type);
+        std::string object = temp();
+        std::string table = temp();
+        std::string entry = temp();
+        std::string target = temp();
+        inst(object + " = extractvalue { ptr, ptr } " + pair.ref + ", 0");
+        inst(table + " = extractvalue { ptr, ptr } " + pair.ref + ", 1");
+        inst(entry + " = getelementptr inbounds ptr, ptr " + table + ", i64 " + std::to_string(index));
+        inst(target + " = load ptr, ptr " + entry);
+        return emitCall(*call.function, object, call.args, dest, target);
+    }
+
+    // The method table of a struct for an interface, emitted the first time it is used.
+    std::string methodTable(const StructDecl& decl, const InterfaceDecl& iface) {
+        std::string name = llvmName('@', "vtable." + decl.name + "." + iface.name);
+        if (!tables_.insert(name).second) return name;
+        globals_ << name << " = private unnamed_addr constant [" << iface.methods.size() << " x ptr] [";
+        for (size_t i = 0; i < iface.methods.size(); ++i) {
+            globals_ << (i ? ", " : "") << "ptr " << methodSymbol(decl, iface.methods[i].name);
+        }
+        globals_ << "]\n";
+        return name;
+    }
+
     Value emitCall(const FunctionDecl& function, const std::string& self, const std::vector<ExprPtr>& args,
-                   const std::string& dest) {
+                   const std::string& dest, const std::string& callee = "") {
         Type ret = function.resolvedReturn;
         std::vector<std::string> list;
         if (byPointer(ret)) list.push_back("ptr " + dest);
@@ -722,11 +769,11 @@ private:
         for (size_t i = 0; i < list.size(); ++i) joined += (i ? ", " : "") + list[i];
 
         if (ret.isVoid() || byPointer(ret)) {
-            inst("call void " + symbolOf(function) + "(" + joined + ")");
+            inst("call void " + (callee.empty() ? symbolOf(function) : callee) + "(" + joined + ")");
             return {"", ret};
         }
         std::string result = temp();
-        inst(result + " = call " + llvmType(ret) + " " + symbolOf(function) + "(" + joined + ")");
+        inst(result + " = call " + llvmType(ret) + " " + (callee.empty() ? symbolOf(function) : callee) + "(" + joined + ")");
         if (ret.isStruct()) inst("store " + llvmType(ret) + " " + result + ", ptr " + dest);
         return {result, ret};
     }
@@ -734,6 +781,18 @@ private:
     // An argument as the callee expects it (D22): `ref` and large structs by
     // address, the rest by value.
     std::string argument(const Expr& expr, const Param& param, Type type) {
+        if (type.isInterface()) {
+            // The object by address, with the method table of its struct (D49).
+            const Expr& value = param.mode == ParamMode::Ref ? *static_cast<const RefExpr&>(expr).operand : expr;
+            if (value.type.isInterface()) return "{ ptr, ptr } " + load(addressOf(value), type).ref;
+            std::string object = addressOf(value);
+            std::string table = methodTable(*value.type.structDecl, *type.interfaceDecl);
+            std::string first = temp();
+            std::string pair = temp();
+            inst(first + " = insertvalue { ptr, ptr } undef, ptr " + object + ", 0");
+            inst(pair + " = insertvalue { ptr, ptr } " + first + ", ptr " + table + ", 1");
+            return "{ ptr, ptr } " + pair;
+        }
         if (param.mode == ParamMode::Ref) return "ptr " + addressOf(*static_cast<const RefExpr&>(expr).operand);
         if (param.mode == ParamMode::Move && type.isStruct()) {
             // The callee becomes the owner. A whole variable is handed over where it
@@ -788,9 +847,7 @@ private:
         }
         case ExprKind::MethodCall: {
             if (expr.type.isStruct()) return load(addressOf(expr), expr.type);
-            const auto& call = static_cast<const MethodCallExpr&>(expr);
-            std::string self = addressOf(*call.object);
-            return emitCall(*call.function, self, call.args, "");
+            return emitMethodCall(static_cast<const MethodCallExpr&>(expr), "");
         }
         case ExprKind::Conversion: {
             const auto& conversion = static_cast<const ConversionExpr&>(expr);
@@ -1060,6 +1117,7 @@ private:
     std::ostringstream globals_;
     std::map<std::string, std::string> strings_;
     std::set<std::string> intrinsics_;
+    std::set<std::string> tables_;  // method tables already emitted
     const FunctionDecl* function_ = nullptr;
     std::vector<std::string> addresses_;            // by Variable::id
     std::vector<std::string> flags_;                // drop flags (D77), by Variable::id

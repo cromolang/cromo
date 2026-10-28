@@ -3,8 +3,10 @@
 #include <algorithm>
 #include <charconv>
 #include <cstring>
+#include <cstdint>
 #include <map>
 #include <optional>
+#include <set>
 #include <utility>
 
 namespace cromo {
@@ -157,87 +159,449 @@ int alignUp(int value, int align) { return (value + align - 1) / align * align; 
 
 class Checker {
 public:
-    Checker(Module& module, Diagnostics& diag) : module_(module), diag_(diag) {}
+    Checker(Module& module, Diagnostics& diag) : module_(module), diag_(&diag) {}
 
     void run() {
-        declareStructs();
-        declareFunctions();
+        declareNames();
+        declareInterfaces();
+        declareTypeParams();
+        // Every generic is checked once, with its type parameters as types (D52).
         for (StructDecl& decl : module_.structs) {
+            if (!decl.typeParams.empty()) instantiateStruct(decl, ownParams(decl.typeParams), decl.loc);
+        }
+        for (FunctionDecl& function : module_.functions) {
+            if (!function.typeParams.empty()) instantiateFunction(function, ownParams(function.typeParams), function.loc);
+        }
+        for (StructDecl& decl : module_.structs) {
+            if (decl.typeParams.empty()) completeStruct(decl);
+        }
+        declareFunctions();
+        checkBodies(definitions_);
+        for (StructDecl& decl : module_.structs) {
+            if (!decl.typeParams.empty()) continue;
             for (FunctionDecl& member : decl.members) checkFunction(member);
         }
-        for (FunctionDecl& function : module_.functions) checkFunction(function);
+        for (FunctionDecl& function : module_.functions) {
+            if (function.typeParams.empty()) checkFunction(function);
+        }
+        checkBodies(instances_);  // it grows while the instances ask for others
     }
 
 private:
-    // ---- Declarations ----
+    // A function body waiting to be checked: an instance of a generic.
+    struct PendingBody {
+        FunctionDecl* function;
+        const void* generic;  // the generic struct or function it comes from
+        bool definition;      // the check of the generic itself (D52)
+        std::string context;  // added to the messages
+    };
 
-    std::optional<Type> resolveType(const TypeName& name) {
-        if (name.name == "void") return Type::voidType();
-        if (auto type = findBuiltinType(name.name)) return type;
-        auto found = structs_.find(name.name);
-        if (found != structs_.end()) return Type::structType(found->second);
-        if (name.name == "string" || name.name == "list") {
-            diag_.error(name.loc, "the type '" + name.name + "' arrives in milestone M5");
-        } else {
-            diag_.error(name.loc, "unknown type '" + name.name + "'");
+    void checkBodies(std::vector<PendingBody>& queue) {
+        for (size_t i = 0; i < queue.size(); ++i) {
+            PendingBody pending = queue[i];  // a copy: the queue can grow meanwhile
+            if (!pending.definition && failed_.count(pending.generic)) continue;  // already reported at the definition
+            int before = diag_->errorCount();
+            diag_->setContext(pending.context);
+            checkFunction(*pending.function);
+            diag_->setContext("");
+            if (pending.definition && diag_->errorCount() > before) failed_.insert(pending.generic);
         }
-        return std::nullopt;
     }
 
-    void declareStructs() {
+    // Sets the type parameters visible while resolving types, until the end of the scope.
+    class BindingsScope {
+    public:
+        BindingsScope(const TypeBindings*& slot, const TypeBindings* value) : slot_(slot), saved_(slot) { slot = value; }
+        ~BindingsScope() { slot_ = saved_; }
+        BindingsScope(const BindingsScope&) = delete;
+        BindingsScope& operator=(const BindingsScope&) = delete;
+
+    private:
+        const TypeBindings*& slot_;
+        const TypeBindings* saved_;
+    };
+
+    // ---- Declarations ----
+
+    void declareNames() {
+        for (InterfaceDecl& decl : module_.interfaces) {
+            if (interfaces_.count(decl.name)) {
+                diag_->error(decl.loc, "interface '" + decl.name + "' is already defined");
+            } else if (findBuiltinType(decl.name) || isPrintFunction(decl.name) || decl.name == "void" || decl.name == "Self") {
+                diag_->error(decl.loc, "'" + decl.name + "' is a built-in name");
+            } else {
+                interfaces_[decl.name] = &decl;
+            }
+        }
         for (StructDecl& decl : module_.structs) {
             if (structs_.count(decl.name)) {
-                diag_.error(decl.loc, "struct '" + decl.name + "' is already defined");
-            } else if (findBuiltinType(decl.name) || isPrintFunction(decl.name) || decl.name == "void") {
-                diag_.error(decl.loc, "'" + decl.name + "' is a built-in name");
+                diag_->error(decl.loc, "struct '" + decl.name + "' is already defined");
+            } else if (findBuiltinType(decl.name) || isPrintFunction(decl.name) || decl.name == "void" || decl.name == "Self") {
+                diag_->error(decl.loc, "'" + decl.name + "' is a built-in name");
+            } else if (interfaces_.count(decl.name)) {
+                diag_->error(decl.loc, "'" + decl.name + "' is already the name of an interface");
             } else {
                 structs_[decl.name] = &decl;
             }
         }
+        for (FunctionDecl& function : module_.functions) {
+            if (functions_.count(function.name)) {
+                diag_->error(function.loc, "function '" + function.name + "' is already defined");
+            } else if (function.name.rfind("cromo_", 0) == 0 || function.name == "ExitProcess") {
+                diag_->error(function.loc, "the name '" + function.name + "' is reserved for the runtime");
+            } else if (isPrintFunction(function.name) || findBuiltinType(function.name)) {
+                diag_->error(function.loc, "'" + function.name + "' is a built-in name");
+            } else if (structs_.count(function.name) || interfaces_.count(function.name)) {
+                diag_->error(function.loc, "'" + function.name + "' is already the name of a type");
+            } else {
+                functions_[function.name] = &function;
+            }
+        }
+    }
 
-        for (StructDecl& decl : module_.structs) {
-            std::map<std::string, const FieldDecl*> fieldNames;
-            for (FieldDecl& field : decl.fields) {
-                if (fieldNames.count(field.name)) {
-                    diag_.error(field.loc, "field '" + field.name + "' is already defined in " + decl.name);
+    // The signatures of the interface methods, where `Self` is allowed (D84).
+    void declareInterfaces() {
+        selfAllowed_ = true;
+        for (InterfaceDecl& decl : module_.interfaces) {
+            std::map<std::string, const FunctionDecl*> names;
+            for (FunctionDecl& method : decl.methods) {
+                if (names.count(method.name)) {
+                    diag_->error(method.loc, "method '" + method.name + "' is already defined in " + decl.name);
                 }
-                fieldNames[field.name] = &field;
-                field.resolved = resolveType(field.type).value_or(Type::error());
-                if (field.resolved.isVoid()) {
-                    diag_.error(field.type.loc, "a field cannot be void");
-                    field.resolved = Type::error();
+                names[method.name] = &method;
+                if (!method.typeParams.empty()) {
+                    diag_->error(method.typeParams[0].loc, "methods with type parameters of their own will come later (D92)");
                 }
-                if (!field.init || field.resolved.isError()) continue;
-                if (field.resolved.isStruct()) {
-                    diag_.error(field.init->loc, "a field of type " + field.resolved.name() +
-                                                     " cannot have an initial value yet (D73)");
-                } else if (!isConstantLiteral(*field.init)) {
-                    diag_.error(field.init->loc, "for now the initial value of a field must be a literal (D73)");
-                } else {
-                    coerce(field.init, field.resolved);
+                resolveSignature(method);
+                bool usesSelf = method.resolvedReturn.kind == TypeKind::SelfType;
+                for (Type type : method.paramTypes) usesSelf = usesSelf || type.kind == TypeKind::SelfType;
+                decl.usesSelf = decl.usesSelf || usesSelf;
+            }
+        }
+        selfAllowed_ = false;
+    }
+
+    // The constraints of the type parameters of every generic (D52).
+    void declareTypeParams() {
+        auto declare = [this](std::vector<TypeParam>& params) {
+            std::map<std::string, bool> names;
+            for (TypeParam& param : params) {
+                if (names.count(param.name)) diag_->error(param.loc, "type parameter '" + param.name + "' is already defined");
+                names[param.name] = true;
+                if (findBuiltinType(param.name) || structs_.count(param.name) || interfaces_.count(param.name) ||
+                    param.name == "Self") {
+                    diag_->error(param.loc, "'" + param.name + "' is already the name of a type");
+                }
+                for (const TypeName& constraint : param.constraints) {
+                    auto found = interfaces_.find(constraint.name);
+                    if (found == interfaces_.end() || !constraint.args.empty()) {
+                        diag_->error(constraint.loc, "a constraint must be an interface, found '" + constraint.name + "' (D52)");
+                    } else {
+                        param.interfaces.push_back(found->second);
+                    }
                 }
             }
+        };
+        for (StructDecl& decl : module_.structs) declare(decl.typeParams);
+        for (FunctionDecl& function : module_.functions) declare(function.typeParams);
+    }
 
-            for (FunctionDecl& member : decl.members) {
-                member.owner = &decl;
-                if (member.kind == FunctionKind::Constructor) {
-                    if (decl.constructor) diag_.error(member.loc, "a struct has only one constructor (D69)");
-                    else decl.constructor = &member;
-                } else if (member.kind == FunctionKind::Destructor) {
-                    if (decl.destructor) diag_.error(member.loc, "a struct has only one destructor");
-                    else decl.destructor = &member;
-                    if (!member.params.empty()) diag_.error(member.params[0].loc, "a destructor has no parameters");
-                } else if (fieldNames.count(member.name)) {
-                    diag_.error(member.loc, "'" + member.name + "' is already a field of " + decl.name);
-                } else if (decl.methods.count(member.name)) {
-                    diag_.error(member.loc, "method '" + member.name + "' is already defined in " + decl.name);
-                } else {
-                    decl.methods[member.name] = &member;
+    static std::vector<Type> ownParams(const std::vector<TypeParam>& params) {
+        std::vector<Type> types;
+        for (const TypeParam& param : params) types.push_back(Type::paramType(&param));
+        return types;
+    }
+
+    static bool isDefinitionArgs(const std::vector<TypeParam>& params, const std::vector<Type>& args) {
+        for (size_t i = 0; i < args.size(); ++i) {
+            if (!args[i].isParam() || args[i].param != &params[i]) return false;
+        }
+        return true;
+    }
+
+    static std::string instanceName(const std::string& name, const std::vector<Type>& args) {
+        std::string result = name + "<";
+        for (size_t i = 0; i < args.size(); ++i) result += (i ? ", " : "") + args[i].name();
+        return result + ">";
+    }
+
+    // Identifies an instance: the generic and the identity of each type argument.
+    static std::string instanceKey(const void* generic, const std::vector<Type>& args) {
+        auto pointer = [](const void* p) { return std::to_string(reinterpret_cast<uintptr_t>(p)); };
+        std::string key = pointer(generic);
+        for (Type arg : args) {
+            key += "|" + std::to_string(static_cast<int>(arg.kind)) + ":" + std::to_string(arg.bits) + ":" +
+                   std::to_string(arg.isSigned) + ":" + pointer(arg.structDecl) + ":" + pointer(arg.param);
+        }
+        return key;
+    }
+
+    // How deep the type arguments are nested: Pair<Pair<i32>> is 2.
+    static int nesting(Type type) {
+        if (!type.isStruct() || !type.structDecl->generic) return 0;
+        int deepest = 0;
+        for (Type arg : type.structDecl->typeArgs) deepest = std::max(deepest, nesting(arg));
+        return deepest + 1;
+    }
+
+    static TypeBindings bind(const std::vector<TypeParam>& params, const std::vector<Type>& args) {
+        TypeBindings bindings;
+        for (size_t i = 0; i < params.size(); ++i) bindings.emplace_back(params[i].name, args[i]);
+        return bindings;
+    }
+
+    // Whether a type implements an interface, as a constraint requires (D52, D87).
+    bool satisfies(Type type, const InterfaceDecl* iface) {
+        std::vector<const InterfaceDecl*> list;
+        if (type.isStruct()) list = implementsOf(*type.structDecl);
+        if (type.isParam()) list = type.param->interfaces;
+        return std::find(list.begin(), list.end(), iface) != list.end();
+    }
+
+    bool checkConstraints(const std::vector<TypeParam>& params, const std::vector<Type>& args, const std::string& what,
+                          SourceLocation loc) {
+        bool ok = true;
+        for (size_t i = 0; i < params.size(); ++i) {
+            for (const InterfaceDecl* iface : params[i].interfaces) {
+                if (satisfies(args[i], iface)) continue;
+                std::string reason = args[i].isStruct() || args[i].isParam() ? " (D52)" : " (D52, D87)";
+                diag_->error(loc, args[i].name() + " does not implement " + iface->name + ", required by " + params[i].name +
+                                      " of " + what + reason);
+                ok = false;
+            }
+        }
+        return ok;
+    }
+
+    bool tooDeep(const std::vector<Type>& args, const std::string& name, SourceLocation loc) {
+        for (Type arg : args) {
+            if (nesting(arg) < kMaxNesting) continue;
+            diag_->error(loc, "the instances of " + name + " are nested too deeply: is a generic using itself with a "
+                                                     "bigger type?");
+            return true;
+        }
+        return false;
+    }
+
+    // An instance of a generic struct, created and completed the first time it is used.
+    StructDecl* instantiateStruct(StructDecl& generic, const std::vector<Type>& args, SourceLocation useLoc) {
+        std::string key = instanceKey(&generic, args);
+        auto found = structInstances_.find(key);
+        if (found != structInstances_.end()) return found->second;
+        bool definition = isDefinitionArgs(generic.typeParams, args);
+        if (!definition && failed_.count(&generic)) return nullptr;
+        if (!checkConstraints(generic.typeParams, args, generic.name, useLoc) || tooDeep(args, generic.name, useLoc)) {
+            return nullptr;
+        }
+
+        auto instance = std::make_unique<StructDecl>();
+        instance->name = instanceName(generic.name, args);
+        instance->loc = generic.loc;
+        instance->interfaces = generic.interfaces;
+        for (const FieldDecl& field : generic.fields) instance->fields.push_back(clone(field));
+        for (const FunctionDecl& member : generic.members) instance->members.push_back(clone(member));
+        instance->generic = &generic;
+        instance->typeArgs = args;
+        instance->typeBindings = bind(generic.typeParams, args);
+        for (Type arg : args) instance->isAbstract = instance->isAbstract || isAbstract(arg);
+        StructDecl* result = instance.get();
+        module_.structInstances.push_back(std::move(instance));
+        structInstances_[key] = result;
+
+        int before = diag_->errorCount();
+        completeStruct(*result);
+        if (definition && diag_->errorCount() > before) failed_.insert(&generic);
+        if (definition || !result->isAbstract) {
+            for (FunctionDecl& member : result->members) schedule(member, &generic, definition, result->name, useLoc);
+        }
+        return result;
+    }
+
+    // An instance of a generic function, created the first time it is used.
+    FunctionDecl* instantiateFunction(FunctionDecl& generic, const std::vector<Type>& args, SourceLocation useLoc) {
+        std::string key = instanceKey(&generic, args);
+        auto found = functionInstances_.find(key);
+        if (found != functionInstances_.end()) return found->second;
+        bool definition = isDefinitionArgs(generic.typeParams, args);
+        if (!definition && failed_.count(&generic)) return nullptr;
+        std::string what = "'" + generic.name + "'";
+        if (!checkConstraints(generic.typeParams, args, what, useLoc) || tooDeep(args, generic.name, useLoc)) return nullptr;
+
+        auto instance = std::make_unique<FunctionDecl>(clone(generic));
+        instance->typeParams.clear();
+        instance->name = instanceName(generic.name, args);
+        instance->generic = &generic;
+        instance->typeBindings = bind(generic.typeParams, args);
+        for (Type arg : args) instance->isAbstract = instance->isAbstract || isAbstract(arg);
+        instance->isDefinition = definition;
+        FunctionDecl* result = instance.get();
+        module_.functionInstances.push_back(std::move(instance));
+        functionInstances_[key] = result;
+
+        int before = diag_->errorCount();
+        {
+            BindingsScope scope(bindings_, &result->typeBindings);
+            resolveSignature(*result);
+        }
+        if (definition && diag_->errorCount() > before) failed_.insert(&generic);
+        if (definition || !result->isAbstract) schedule(*result, &generic, definition, result->name, useLoc);
+        return result;
+    }
+
+    void schedule(FunctionDecl& function, const void* generic, bool definition, const std::string& name, SourceLocation useLoc) {
+        if (definition) {
+            function.isDefinition = true;
+            definitions_.push_back({&function, generic, true, ""});
+        } else {
+            instances_.push_back({&function, generic, false, " (in " + name + ", used at line " + std::to_string(useLoc.line) + ")"});
+        }
+    }
+
+    std::optional<Type> resolveType(const TypeName& name) {
+        if (bindings_) {
+            for (const auto& [param, type] : *bindings_) {
+                if (param != name.name) continue;
+                if (!name.args.empty()) {
+                    diag_->error(name.loc, "'" + name.name + "' is a type parameter: it has no type arguments");
+                    return std::nullopt;
                 }
+                return type;
+            }
+        }
+        if (name.name == "Self") {
+            if (!selfAllowed_) {
+                diag_->error(name.loc, "Self can be used only in the methods of an interface (D84)");
+                return std::nullopt;
+            }
+            return Type::selfType();
+        }
+        std::optional<Type> builtin = name.name == "void" ? Type::voidType() : findBuiltinType(name.name);
+        if (builtin) {
+            if (!name.args.empty()) {
+                diag_->error(name.loc, "'" + name.name + "' has no type arguments");
+                return std::nullopt;
+            }
+            return builtin;
+        }
+        auto found = structs_.find(name.name);
+        if (found != structs_.end()) {
+            StructDecl& decl = *found->second;
+            if (decl.typeParams.empty()) {
+                if (!name.args.empty()) {
+                    diag_->error(name.loc, "'" + decl.name + "' is not generic: it has no type arguments");
+                    return std::nullopt;
+                }
+                return Type::structType(&decl);
+            }
+            std::vector<Type> args;
+            if (!resolveTypeArgs(name.args, decl.typeParams.size(), "'" + decl.name + "'", name.loc, args)) return std::nullopt;
+            StructDecl* instance = instantiateStruct(decl, args, name.loc);
+            if (!instance) return std::nullopt;
+            return Type::structType(instance);
+        }
+        auto iface = interfaces_.find(name.name);
+        if (iface != interfaces_.end()) {
+            if (!name.args.empty()) {
+                diag_->error(name.loc, "an interface has no type arguments (D84)");
+                return std::nullopt;
+            }
+            return Type::interfaceType(iface->second);
+        }
+        if (name.name == "string" || name.name == "list") {
+            diag_->error(name.loc, "the type '" + name.name + "' arrives in milestone M5");
+        } else {
+            diag_->error(name.loc, "unknown type '" + name.name + "'");
+        }
+        return std::nullopt;
+    }
+
+    bool resolveTypeArgs(const std::vector<TypeName>& names, size_t expected, const std::string& what, SourceLocation loc,
+                         std::vector<Type>& out) {
+        if (names.size() != expected) {
+            diag_->error(loc, what + " takes " + std::to_string(expected) +
+                                  (expected == 1 ? " type argument, but " : " type arguments, but ") +
+                                  std::to_string(names.size()) + " were given");
+            return false;
+        }
+        for (const TypeName& name : names) {
+            std::optional<Type> type = resolveType(name);
+            if (!type) return false;
+            if (type->isVoid() || type->kind == TypeKind::SelfType) {
+                diag_->error(name.loc, "'" + type->name() + "' cannot be a type argument");
+                return false;
+            }
+            if (type->isInterface()) {
+                diag_->error(name.loc, "an interface cannot be a type argument until list<" + type->name() + "> (D91)");
+                return false;
+            }
+            out.push_back(*type);
+        }
+        return true;
+    }
+
+    // D49, D91: an interface is only the type of a read or `ref` parameter.
+    bool checkNotInterface(Type type, SourceLocation loc, const std::string& what) {
+        if (!type.isInterface()) return true;
+        diag_->error(loc, what + " cannot have the interface type " + type.name() + ": use a generic, <T : " + type.name() +
+                              "> (D49)");
+        return false;
+    }
+
+    // Fields, members, layout and interfaces of a struct that is not generic, or of
+    // an instance of a generic one. Done once, when the struct is first needed.
+    void completeStruct(StructDecl& decl) {
+        if (!completed_.insert(&decl).second) return;
+        BindingsScope scope(bindings_, &decl.typeBindings);
+        std::map<std::string, const FieldDecl*> fieldNames;
+        for (FieldDecl& field : decl.fields) {
+            if (fieldNames.count(field.name)) {
+                diag_->error(field.loc, "field '" + field.name + "' is already defined in " + decl.name);
+            }
+            fieldNames[field.name] = &field;
+            field.resolved = resolveType(field.type).value_or(Type::error());
+            if (field.resolved.isVoid()) {
+                diag_->error(field.type.loc, "a field cannot be void");
+                field.resolved = Type::error();
+            }
+            if (!checkNotInterface(field.resolved, field.type.loc, "a field")) field.resolved = Type::error();
+            if (!field.init || field.resolved.isError()) continue;
+            if (field.resolved.isStruct()) {
+                diag_->error(field.init->loc, "a field of type " + field.resolved.name() +
+                                                  " cannot have an initial value yet (D73)");
+            } else if (!isConstantLiteral(*field.init)) {
+                diag_->error(field.init->loc, "for now the initial value of a field must be a literal (D73)");
+            } else {
+                coerce(field.init, field.resolved);
             }
         }
 
-        for (StructDecl& decl : module_.structs) layout(decl);
+        for (FunctionDecl& member : decl.members) {
+            member.owner = &decl;
+            member.typeBindings = decl.typeBindings;
+            member.isAbstract = decl.isAbstract;
+            if (!member.typeParams.empty()) {
+                diag_->error(member.typeParams[0].loc, "methods with type parameters of their own will come later (D92)");
+            }
+            if (member.kind == FunctionKind::Constructor) {
+                if (decl.constructor) diag_->error(member.loc, "a struct has only one constructor (D69)");
+                else decl.constructor = &member;
+            } else if (member.kind == FunctionKind::Destructor) {
+                if (decl.destructor) diag_->error(member.loc, "a struct has only one destructor");
+                else decl.destructor = &member;
+                if (!member.params.empty()) diag_->error(member.params[0].loc, "a destructor has no parameters");
+            } else if (fieldNames.count(member.name)) {
+                diag_->error(member.loc, "'" + member.name + "' is already a field of " + decl.name);
+            } else if (decl.methods.count(member.name)) {
+                diag_->error(member.loc, "method '" + member.name + "' is already defined in " + decl.name);
+            } else {
+                decl.methods[member.name] = &member;
+            }
+        }
+
+        layout(decl);
+        for (FunctionDecl& member : decl.members) resolveSignature(member);
+        checkCopySignature(decl);
+        checkImplements(decl);
     }
 
     // Computes size, alignment and need for destruction, and rejects structs
@@ -255,14 +619,16 @@ private:
             if (type.isStruct()) {
                 auto* inner = const_cast<StructDecl*>(type.structDecl);
                 if (layoutState_[inner] == 1) {
-                    diag_.error(field.loc, "struct '" + decl.name + "' contains itself through field '" + field.name +
-                                               "': use a list instead (D11)");
+                    diag_->error(field.loc, "struct '" + decl.name + "' contains itself through field '" + field.name +
+                                                "': use a list instead (D11)");
                     field.resolved = Type::error();
                     continue;
                 }
+                completeStruct(*inner);
                 layout(*inner);
                 destruct = destruct || inner->needsDestruction;
             }
+            if (type.isParam()) destruct = true;  // it may need destruction: decided by each instance
             if (type.isError()) continue;
             offset = alignUp(offset, alignOf(type)) + sizeOf(type);
             align = std::max(align, alignOf(type));
@@ -273,50 +639,113 @@ private:
         state = 2;
     }
 
+    // The interfaces a struct declares, resolved the first time they are needed.
+    const std::vector<const InterfaceDecl*>& implementsOf(const StructDecl& constDecl) {
+        auto& decl = const_cast<StructDecl&>(constDecl);
+        if (!implementsDone_.insert(&decl).second) return decl.implements;
+        for (const TypeName& name : decl.interfaces) {
+            auto found = interfaces_.find(name.name);
+            if (found == interfaces_.end() || !name.args.empty()) {
+                diag_->error(name.loc, "'" + name.name + "' is not an interface: a struct can only implement interfaces (D40)");
+            } else if (std::find(decl.implements.begin(), decl.implements.end(), found->second) != decl.implements.end()) {
+                diag_->error(name.loc, decl.name + " already implements " + name.name);
+            } else {
+                decl.implements.push_back(found->second);
+            }
+        }
+        return decl.implements;
+    }
+
+    static Type withSelf(Type type, Type self) { return type.kind == TypeKind::SelfType ? self : type; }
+
+    // As written in the source, with `Self` replaced: `f64 area() const`.
+    static std::string signatureText(const FunctionDecl& method, Type self) {
+        std::string text = withSelf(method.resolvedReturn, self).name() + " " + method.name + "(";
+        for (size_t i = 0; i < method.params.size(); ++i) {
+            const Param& param = method.params[i];
+            if (i) text += ", ";
+            if (param.mode == ParamMode::Ref) text += "ref ";
+            if (param.mode == ParamMode::Move) text += param.isConst ? "move const " : "move ";
+            text += withSelf(method.paramTypes[i], self).name() + " " + param.name;
+        }
+        return text + (method.isConst ? ") const" : ")");
+    }
+
+    static bool sameSignature(const FunctionDecl& method, const FunctionDecl& required, Type self) {
+        if (method.isConst != required.isConst || method.params.size() != required.params.size()) return false;
+        if (method.resolvedReturn != withSelf(required.resolvedReturn, self)) return false;
+        for (size_t i = 0; i < method.params.size(); ++i) {
+            if (method.params[i].mode != required.params[i].mode || method.params[i].isConst != required.params[i].isConst) {
+                return false;
+            }
+            if (method.paramTypes[i] != withSelf(required.paramTypes[i], self)) return false;
+        }
+        return true;
+    }
+
+    // D90: a struct has every method of the interfaces it declares, with the same signature.
+    void checkImplements(const StructDecl& decl) {
+        Type self = Type::structType(&decl);
+        for (const InterfaceDecl* iface : implementsOf(decl)) {
+            for (const FunctionDecl& required : iface->methods) {
+                auto found = decl.methods.find(required.name);
+                if (found == decl.methods.end()) {
+                    diag_->error(decl.loc, decl.name + " does not implement '" + required.name + "' of " + iface->name +
+                                               ": add '" + signatureText(required, self) + "' (D90)");
+                } else if (!sameSignature(*found->second, required, self)) {
+                    diag_->error(found->second->loc, "'" + required.name + "' does not match the interface " + iface->name +
+                                                         ": it must be '" + signatureText(required, self) + "' (D90)");
+                }
+            }
+        }
+    }
+
     void resolveSignature(FunctionDecl& function) {
         function.resolvedReturn = resolveType(function.returnType).value_or(Type::error());
+        if (!checkNotInterface(function.resolvedReturn, function.returnType.loc, "a return value")) {
+            function.resolvedReturn = Type::error();
+        }
         for (const Param& param : function.params) {
             Type type = resolveType(param.type).value_or(Type::error());
             if (type.isVoid()) {
-                diag_.error(param.type.loc, "a parameter cannot be void");
+                diag_->error(param.type.loc, "a parameter cannot be void");
+                type = Type::error();
+            }
+            if (type.isInterface() && param.mode == ParamMode::Move) {
+                diag_->error(param.type.loc, "a 'move' parameter cannot have the interface type " + type.name() +
+                                                 ": the size of the object is not known (D91)");
+                type = Type::error();
+            } else if (type.isInterface() && type.interfaceDecl->usesSelf) {
+                diag_->error(param.type.loc, type.name() + " uses Self, so it can only be a constraint: <T : " + type.name() +
+                                                 "> (D84)");
                 type = Type::error();
             }
             function.paramTypes.push_back(type);
         }
     }
 
+    // The signatures of the functions that are not generic, and main.
     void declareFunctions() {
-        for (StructDecl& decl : module_.structs) {
-            for (FunctionDecl& member : decl.members) resolveSignature(member);
-            checkCopySignature(decl);
-        }
         for (FunctionDecl& function : module_.functions) {
-            if (functions_.count(function.name)) {
-                diag_.error(function.loc, "function '" + function.name + "' is already defined");
-            } else if (function.name.rfind("cromo_", 0) == 0 || function.name == "ExitProcess") {
-                diag_.error(function.loc, "the name '" + function.name + "' is reserved for the runtime");
-            } else if (isPrintFunction(function.name) || findBuiltinType(function.name)) {
-                diag_.error(function.loc, "'" + function.name + "' is a built-in name");
-            } else if (structs_.count(function.name)) {
-                diag_.error(function.loc, "'" + function.name + "' is already the name of a struct");
-            } else {
-                functions_[function.name] = &function;
-            }
-            resolveSignature(function);
+            if (function.typeParams.empty()) resolveSignature(function);
         }
 
         auto main = functions_.find("main");
         if (main == functions_.end()) {
-            diag_.error("missing function main");
+            diag_->error("missing function main");
             return;
         }
         const FunctionDecl& function = *main->second;
+        if (!function.typeParams.empty()) {
+            diag_->error(function.loc, "main cannot be generic");
+            return;
+        }
         Type ret = function.resolvedReturn;
         if (!ret.isError() && !ret.isVoid() && !(ret.isInt() && ret.bits == 32 && ret.isSigned)) {
-            diag_.error(function.returnType.loc, "main must return i32 or void");
+            diag_->error(function.returnType.loc, "main must return i32 or void");
         }
         if (!function.params.empty()) {
-            diag_.error(function.params[0].loc, "main has no parameters");
+            diag_->error(function.params[0].loc, "main has no parameters");
         }
     }
 
@@ -326,14 +755,15 @@ private:
         if (found == decl.methods.end()) return;
         const FunctionDecl& copy = *found->second;
         if (!decl.needsDestruction) {
-            diag_.error(copy.loc, decl.name + " is copied implicitly: its copy() is generated by the compiler (D83)");
+            diag_->error(copy.loc, decl.name + " is copied implicitly: its copy() is generated by the compiler (D83)");
         } else if (!copy.params.empty() || !copy.isConst || copy.resolvedReturn != Type::structType(&decl)) {
-            diag_.error(copy.loc, "copy() must be written '" + decl.name + " copy() const' (D83)");
+            diag_->error(copy.loc, "copy() must be written '" + decl.name + " copy() const' (D83)");
         }
     }
 
     void checkFunction(FunctionDecl& function) {
         current_ = &function;
+        bindings_ = &function.typeBindings;
         scopes_.assign(1, {});
         loops_.clear();
         for (size_t i = 0; i < function.params.size(); ++i) {
@@ -346,12 +776,13 @@ private:
         }
 
         Flow flow = checkBlock(function.body);
+        function.bodyChecked = true;
 
         // D47, D67: a non-void function must not reach its end.
         Type ret = function.resolvedReturn;
         if (!ret.isVoid() && !ret.isError() && flow != Flow::Returns) {
-            diag_.error(function.body.close, "function '" + function.name + "' must end with 'ret' on every path: it returns " +
-                                                 ret.name());
+            diag_->error(function.body.close, "function '" + function.name + "' must end with 'ret' on every path: it returns " +
+                                                  ret.name());
         }
     }
 
@@ -377,15 +808,15 @@ private:
 
     Variable* declare(const std::string& name, Type type, SourceLocation loc, bool isConst) {
         if (findBuiltinType(name) || structs_.count(name)) {
-            diag_.error(loc, "'" + name + "' is a type name");
+            diag_->error(loc, "'" + name + "' is a type name");
             return nullptr;
         }
         if (ownFieldIndex(name) >= 0) {
-            diag_.error(loc, "'" + name + "' is a field of " + current_->owner->name + ": choose another name (D70)");
+            diag_->error(loc, "'" + name + "' is a field of " + current_->owner->name + ": choose another name (D70)");
             return nullptr;
         }
         if (Variable* existing = lookup(name)) {  // D66: no shadowing
-            diag_.error(loc, "a variable named '" + name + "' is already visible here (declared at line " +
+            diag_->error(loc, "a variable named '" + name + "' is already visible here (declared at line " +
                                  std::to_string(existing->loc.line) + ")");
             return nullptr;
         }
@@ -428,12 +859,12 @@ private:
         Type type = checkExpr(target, std::nullopt);
         if (type.isError()) return type;
         if (!isPlace(*target)) {
-            diag_.error(target->loc, "only a variable or a field can be assigned");
+            diag_->error(target->loc, "only a variable or a field can be assigned");
             return Type::error();
         }
         std::string reason = readOnlyReason(*target);
         if (!reason.empty()) {
-            diag_.error(target->loc, reason);
+            diag_->error(target->loc, reason);
             return Type::error();
         }
         return type;
@@ -486,6 +917,7 @@ private:
     // D23: a type that needs destruction is not copied implicitly. Returns false
     // after reporting the error.
     bool checkNotCopied(const Expr& value, Type type) {
+        if (type.isParam()) return true;  // D85: checked in each instance
         if (!needsDestruction(type) || isTemporary(value) || value.kind == ExprKind::Move) return true;
         std::string text = placeText(value);
         std::vector<std::string> fixes;
@@ -494,7 +926,7 @@ private:
         std::string advice = fixes.empty()    ? "it can be neither moved nor copied here"
                              : fixes.size() == 1 ? "write " + fixes[0]
                                                  : "write " + fixes[0] + " or " + fixes[1];
-        diag_.error(value.loc, "values of type " + type.name() + " are not copied implicitly (D23): " + advice);
+        diag_->error(value.loc, "values of type " + type.name() + " are not copied implicitly (D23): " + advice);
         return false;
     }
 
@@ -503,14 +935,14 @@ private:
         if (isTemporary(*node.operand)) {
             Type ignored = checkExpr(node.operand, std::nullopt);
             (void)ignored;
-            diag_.error(node.loc, "'move' is not needed before a new object: it is moved anyway (D23)");
+            diag_->error(node.loc, "'move' is not needed before a new object: it is moved anyway (D23)");
             return Type::error();
         }
         Type type = checkExpr(node.operand, std::nullopt);
         if (type.isError()) return type;
         const Expr& operand = *node.operand;
         if (!isPlace(operand)) {
-            diag_.error(node.loc, "'move' is written before a variable or a field (D82)");
+            diag_->error(node.loc, "'move' is written before a variable or a field (D82)");
             return Type::error();
         }
         if (!needsDestruction(type)) {
@@ -529,14 +961,14 @@ private:
                 node.moveKind = MoveKind::Take;  // D78
                 return type;
             case VariableKind::ReadParam:
-                diag_.error(node.loc, "parameter '" + variable->name +
+                diag_->error(node.loc, "parameter '" + variable->name +
                                           "' is read-only: it belongs to the caller and cannot be moved (D82)");
                 return Type::error();
             }
         }
         std::string reason = readOnlyReason(operand);
         if (!reason.empty()) {
-            diag_.error(node.loc, "cannot move '" + placeText(operand) + "': " + reason);
+            diag_->error(node.loc, "cannot move '" + placeText(operand) + "': " + reason);
             return Type::error();
         }
         node.moveKind = MoveKind::Take;  // D78
@@ -558,7 +990,7 @@ private:
         bool warned = false;
         for (StmtPtr& statement : block.statements) {
             if (flow != Flow::Continues && !warned) {
-                diag_.warning(statement->loc, "unreachable code");
+                diag_->warning(statement->loc, "unreachable code");
                 warned = true;
             }
             Flow next = checkStatement(*statement);
@@ -579,7 +1011,7 @@ private:
         case StmtKind::Break:
         case StmtKind::Continue:
             if (loops_.empty()) {
-                diag_.error(statement.loc, std::string("'") + (statement.kind == StmtKind::Break ? "break" : "continue") +
+                diag_->error(statement.loc, std::string("'") + (statement.kind == StmtKind::Break ? "break" : "continue") +
                                                "' can only be used inside a 'for'");
             } else if (statement.kind == StmtKind::Break) {
                 loops_.back() = true;
@@ -593,11 +1025,12 @@ private:
     void checkVarDecl(VarDeclStmt& decl) {
         Type type = resolveType(decl.typeName).value_or(Type::error());
         if (type.isVoid()) {
-            diag_.error(decl.typeName.loc, "a variable cannot be void");
+            diag_->error(decl.typeName.loc, "a variable cannot be void");
             type = Type::error();
         }
+        if (!checkNotInterface(type, decl.typeName.loc, "a variable")) type = Type::error();
         if (decl.isConst && !decl.init) {
-            diag_.error(decl.nameLoc, "a const variable must have a value (D51)");
+            diag_->error(decl.nameLoc, "a const variable must have a value (D51)");
         }
         if (decl.init && !type.isError()) {
             if (coerceValue(decl.init, type)) checkNotCopied(*decl.init, type);
@@ -615,11 +1048,11 @@ private:
         }
         if (assign.op != AssignOp::Assign) {
             if (!type.isNumeric()) {
-                diag_.error(assign.loc, "this compound assignment needs a number, found " + type.name());
+                diag_->error(assign.loc, "this compound assignment needs a number, found " + type.name());
                 return;
             }
             if (assign.op == AssignOp::Rem && !type.isInt()) {
-                diag_.error(assign.loc, "'%' only works on integers (D59)");
+                diag_->error(assign.loc, "'%' only works on integers (D59)");
                 return;
             }
         }
@@ -629,14 +1062,14 @@ private:
     void checkIncDec(IncDecStmt& incDec) {
         Type type = checkTarget(incDec.target);
         if (!type.isError() && !type.isInt()) {
-            diag_.error(incDec.loc, "'++' and '--' only work on integers, found " + type.name());
+            diag_->error(incDec.loc, "'++' and '--' only work on integers, found " + type.name());
         }
     }
 
     void checkExprStmt(ExprStmt& statement) {
         ExprKind kind = statement.expr->kind;
         if (kind != ExprKind::Call && kind != ExprKind::MethodCall) {
-            diag_.error(statement.expr->loc, "this expression does nothing: only function calls can be statements");
+            diag_->error(statement.expr->loc, "this expression does nothing: only function calls can be statements");
             return;
         }
         Type ignored = checkExpr(statement.expr, std::nullopt);
@@ -646,7 +1079,7 @@ private:
     void checkCondition(ExprPtr& condition) {
         Type type = checkExpr(condition, Type::boolType());
         if (!type.isBool() && !type.isError()) {
-            diag_.error(condition->loc, "the condition must be a bool, found " + type.name() +
+            diag_->error(condition->loc, "the condition must be a bool, found " + type.name() +
                                             " (D32): compare it explicitly, for example x != 0");
         }
     }
@@ -681,12 +1114,12 @@ private:
         if (type.isError()) return;
         if (type.isVoid()) {
             if (ret.value) {
-                diag_.error(ret.value->loc, "function '" + current_->name + "' is void and does not return a value");
+                diag_->error(ret.value->loc, "function '" + current_->name + "' is void and does not return a value");
             }
             return;
         }
         if (!ret.value) {
-            diag_.error(ret.loc, "missing value after 'ret': function '" + current_->name + "' returns " + type.name());
+            diag_->error(ret.loc, "missing value after 'ret': function '" + current_->name + "' returns " + type.name());
             return;
         }
         if (!coerceValue(ret.value, type)) return;
@@ -705,12 +1138,17 @@ private:
         Type type = checkExpr(expr, target);
         if (type.isError() || target.isError()) return false;
         if (type == target) return true;
+        if (target.isInterface()) {
+            if (satisfies(type, target.interfaceDecl)) return true;  // passed with its method table (D49)
+            diag_->error(expr->loc, type.name() + " does not implement " + target.name() + " (D49)");
+            return false;
+        }
         if (type.isVoid()) {
-            diag_.error(expr->loc, "this call does not return a value");
+            diag_->error(expr->loc, "this call does not return a value");
             return false;
         }
         if (type.isUntyped()) {
-            diag_.error(expr->loc, "this " + type.name() + " cannot be used as " + target.name());
+            diag_->error(expr->loc, "this " + type.name() + " cannot be used as " + target.name());
             return false;
         }
         if (convertsLosslessly(type, target)) {
@@ -720,9 +1158,9 @@ private:
             return true;
         }
         if (type.isStruct() || target.isStruct()) {
-            diag_.error(expr->loc, "a value of type " + type.name() + " cannot be used as " + target.name());
+            diag_->error(expr->loc, "a value of type " + type.name() + " cannot be used as " + target.name());
         } else {
-            diag_.error(expr->loc, "a value of type " + type.name() + " cannot be used as " + target.name() +
+            diag_->error(expr->loc, "a value of type " + type.name() + " cannot be used as " + target.name() +
                                        " without an explicit conversion, for example " + target.name() + "(x) (D33)");
         }
         return false;
@@ -742,24 +1180,24 @@ private:
         case ExprKind::FloatLiteral: return checkFloatLiteral(static_cast<FloatLiteralExpr&>(*expr), expected);
         case ExprKind::BoolLiteral: return Type::boolType();
         case ExprKind::StringLiteral:
-            diag_.error(expr->loc, "strings arrive in milestone M5: for now a string literal can only be printed (D65)");
+            diag_->error(expr->loc, "strings arrive in milestone M5: for now a string literal can only be printed (D65)");
             return Type::error();
         case ExprKind::Name: return checkName(expr);
         case ExprKind::Unary: return checkUnary(expr, expected);
         case ExprKind::Binary: return checkBinary(static_cast<BinaryExpr&>(*expr), expected);
         case ExprKind::Call: return checkCall(expr);
         case ExprKind::Field: return checkField(static_cast<FieldExpr&>(*expr));
-        case ExprKind::MethodCall: return checkMethodCall(static_cast<MethodCallExpr&>(*expr));
+        case ExprKind::MethodCall: return checkMethodCall(expr);
         case ExprKind::Self: return Type::structType(current_->owner);
         case ExprKind::Move:
             if (!moveAllowed) {
-                diag_.error(expr->loc, "'move' is written only in an initialization, an assignment, the argument of a "
+                diag_->error(expr->loc, "'move' is written only in an initialization, an assignment, the argument of a "
                                        "'move' parameter or after 'ret' (D82)");
                 return Type::error();
             }
             return checkMove(static_cast<MoveExpr&>(*expr));
         case ExprKind::Ref:
-            diag_.error(expr->loc, "'ref' is written only in the argument of a 'ref' parameter (D22)");
+            diag_->error(expr->loc, "'ref' is written only in the argument of a 'ref' parameter (D22)");
             return Type::error();
         case ExprKind::Conversion:
         case ExprKind::Print:
@@ -774,7 +1212,7 @@ private:
         if (expected && expected->isInt()) {
             if (!fits(literal.magnitude, literal.negative, *expected)) {
                 std::string value = (literal.negative && literal.magnitude ? "-" : "") + std::to_string(literal.magnitude);
-                diag_.error(literal.loc, "value " + value + " is out of range for " + expected->name() + " (" +
+                diag_->error(literal.loc, "value " + value + " is out of range for " + expected->name() + " (" +
                                              rangeOf(*expected) + ")");
                 return Type::error();
             }
@@ -816,9 +1254,9 @@ private:
         }
         if (functions_.count(name.name) || isPrintFunction(name.name) ||
             (current_->owner && current_->owner->methods.count(name.name))) {
-            diag_.error(name.loc, "'" + name.name + "' is a function: call it with '()'");
+            diag_->error(name.loc, "'" + name.name + "' is a function: call it with '()'");
         } else {
-            diag_.error(name.loc, "unknown name '" + name.name + "'");
+            diag_->error(name.loc, "unknown name '" + name.name + "'");
         }
         return Type::error();
     }
@@ -827,7 +1265,7 @@ private:
         Type object = checkExpr(field.object, std::nullopt);
         if (object.isError()) return object;
         if (!object.isStruct()) {
-            diag_.error(field.loc, "a " + object.name() + " has no fields");
+            diag_->error(field.loc, "a " + object.name() + " has no fields");
             return Type::error();
         }
         const auto& fields = object.structDecl->fields;
@@ -837,7 +1275,7 @@ private:
                 return fields[i].resolved;
             }
         }
-        diag_.error(field.loc, object.name() + " has no field named '" + field.field + "'");
+        diag_->error(field.loc, object.name() + " has no field named '" + field.field + "'");
         return Type::error();
     }
 
@@ -847,29 +1285,29 @@ private:
         switch (param.mode) {
         case ParamMode::Read:
             if (arg->kind == ExprKind::Ref || arg->kind == ExprKind::Move) {
-                diag_.error(arg->loc, name + " is read-only: remove '" + (arg->kind == ExprKind::Ref ? "ref" : "move") + "' (D22)");
+                diag_->error(arg->loc, name + " is read-only: remove '" + (arg->kind == ExprKind::Ref ? "ref" : "move") + "' (D22)");
                 return false;
             }
             return coerce(arg, type);
         case ParamMode::Ref: {
             if (arg->kind != ExprKind::Ref) {
-                diag_.error(arg->loc, name + " is 'ref': write 'ref' before the argument (D22)");
+                diag_->error(arg->loc, name + " is 'ref': write 'ref' before the argument (D22)");
                 return false;
             }
             auto& ref = static_cast<RefExpr&>(*arg);
             Type found = checkExpr(ref.operand, std::nullopt);
             if (found.isError()) return false;
             if (!isPlace(*ref.operand)) {
-                diag_.error(ref.loc, "only a variable or a field can be passed with 'ref' (D82)");
+                diag_->error(ref.loc, "only a variable or a field can be passed with 'ref' (D82)");
                 return false;
             }
             std::string reason = readOnlyReason(*ref.operand);
             if (!reason.empty()) {
-                diag_.error(ref.loc, "cannot pass '" + placeText(*ref.operand) + "' with 'ref': " + reason);
+                diag_->error(ref.loc, "cannot pass '" + placeText(*ref.operand) + "' with 'ref': " + reason);
                 return false;
             }
-            if (found != type) {
-                diag_.error(ref.loc, name + " is 'ref " + type.name() + "': the argument must have exactly that type, found " +
+            if (found != type && !(type.isInterface() && satisfies(found, type.interfaceDecl))) {
+                diag_->error(ref.loc, name + " is 'ref " + type.name() + "': the argument must have exactly that type, found " +
                                          found.name() + " (D82)");
                 return false;
             }
@@ -878,7 +1316,7 @@ private:
         }
         case ParamMode::Move: {
             if (arg->kind == ExprKind::Ref) {
-                diag_.error(arg->loc, name + " is 'move', not 'ref' (D22)");
+                diag_->error(arg->loc, name + " is 'move', not 'ref' (D22)");
                 return false;
             }
             if (!coerceValue(arg, type)) return false;
@@ -886,7 +1324,7 @@ private:
             const Expr* value = arg.get();
             if (value->kind == ExprKind::Conversion) value = static_cast<const ConversionExpr&>(*value).operand.get();
             if (isPlace(*value)) {
-                diag_.error(value->loc, name + " is 'move': write 'move " + placeText(*value) + "' (D22)");
+                diag_->error(value->loc, name + " is 'move': write 'move " + placeText(*value) + "' (D22)");
                 return false;
             }
             return true;
@@ -898,17 +1336,17 @@ private:
     // Checks the arguments of a call against the parameters of `function`, then
     // exclusivity (D22, D79). `object` is the object of a method call, if any.
     bool checkArgs(std::vector<ExprPtr>& args, const FunctionDecl& function, const std::string& what, SourceLocation loc,
-                   const Expr* object = nullptr) {
+                   const Expr* object = nullptr, Type self = Type::error()) {
         size_t expected = function.params.size();
         if (args.size() != expected) {
-            diag_.error(loc, what + " takes " + std::to_string(expected) + (expected == 1 ? " argument, but " : " arguments, but ") +
+            diag_->error(loc, what + " takes " + std::to_string(expected) + (expected == 1 ? " argument, but " : " arguments, but ") +
                                  std::to_string(args.size()) + " were given");
             return false;
         }
         bool ok = true;
         for (size_t i = 0; i < args.size(); ++i) {
             if (function.paramTypes[i].isError()) continue;
-            ok = checkArg(args[i], function.params[i], function.paramTypes[i]) && ok;
+            ok = checkArg(args[i], function.params[i], withSelf(function.paramTypes[i], self)) && ok;
         }
         return ok && checkExclusivity(args, function, object);
     }
@@ -963,7 +1401,7 @@ private:
                 } else {
                     message += "which the call can modify, and values of type " + read.expr->type.name() + " are not copied implicitly (D79)";
                 }
-                diag_.error(second.expr->loc, message);
+                diag_->error(second.expr->loc, message);
                 ok = false;
             }
         }
@@ -975,11 +1413,24 @@ private:
         return ok;
     }
 
-    Type checkMethodCall(MethodCallExpr& call) {
+    Type checkMethodCall(ExprPtr& expr) {
+        auto& call = static_cast<MethodCallExpr&>(*expr);
         Type object = checkExpr(call.object, std::nullopt);
         if (object.isError()) return object;
+        // `x.copy()` of a number or a bool is the value itself, so that generics can copy any T (D89).
+        if (call.method == "copy" && (object.isNumeric() || object.isBool())) {
+            if (!call.args.empty()) {
+                diag_->error(call.loc, "copy() takes no arguments");
+                return Type::error();
+            }
+            SourceLocation loc = call.loc;
+            ExprPtr operand = std::move(call.object);
+            expr = std::make_unique<CopyExpr>(loc, std::move(operand));
+            return object;
+        }
+        if (object.isParam() || object.isInterface()) return checkInterfaceCall(call, object);
         if (!object.isStruct()) {
-            diag_.error(call.loc, "a " + object.name() + " has no methods");
+            diag_->error(call.loc, "a " + object.name() + " has no methods");
             return Type::error();
         }
         FunctionDecl* method = nullptr;
@@ -989,18 +1440,18 @@ private:
         } else if (call.method == "copy") {
             method = copyFunction(*object.structDecl);
             if (!method) {
-                diag_.error(call.loc, object.name() + " cannot be copied: it has a destructor, or a field that cannot be "
+                diag_->error(call.loc, object.name() + " cannot be copied: it has a destructor, or a field that cannot be "
                                                       "copied, and it does not define copy() (D35)");
                 return Type::error();
             }
         } else {
-            diag_.error(call.loc, object.name() + " has no method named '" + call.method + "'");
+            diag_->error(call.loc, object.name() + " has no method named '" + call.method + "'");
             return Type::error();
         }
         if (!method->isConst) {
             std::string reason = readOnlyReason(*call.object);
             if (!reason.empty()) {
-                diag_.error(call.loc, "cannot call '" + call.method + "', which is not const (D24): " +
+                diag_->error(call.loc, "cannot call '" + call.method + "', which is not const (D24): " +
                                           reason);
                 return Type::error();
             }
@@ -1010,12 +1461,43 @@ private:
         return method->resolvedReturn;
     }
 
+    // A method of an interface: through a constraint of T (D52), or on a parameter
+    // of interface type, with a dynamic call (D49).
+    Type checkInterfaceCall(MethodCallExpr& call, Type object) {
+        std::vector<const InterfaceDecl*> candidates;
+        if (object.isParam()) candidates = object.param->interfaces;
+        else candidates.push_back(object.interfaceDecl);
+        FunctionDecl* method = nullptr;
+        for (const InterfaceDecl* iface : candidates) {
+            for (const FunctionDecl& candidate : iface->methods) {
+                if (candidate.name == call.method && !method) method = const_cast<FunctionDecl*>(&candidate);
+            }
+        }
+        if (!method) {
+            // D85: whether T can be copied is checked in each instance.
+            if (object.isParam() && call.method == "copy" && call.args.empty()) return object;
+            std::string hint = object.isParam() ? ": only the methods of its constraints can be called (D52)" : "";
+            diag_->error(call.loc, object.name() + " has no method named '" + call.method + "'" + hint);
+            return Type::error();
+        }
+        if (!method->isConst) {
+            std::string reason = readOnlyReason(*call.object);
+            if (!reason.empty()) {
+                diag_->error(call.loc, "cannot call '" + call.method + "', which is not const (D24): " + reason);
+                return Type::error();
+            }
+        }
+        call.function = method;
+        if (!checkArgs(call.args, *method, "'" + call.method + "'", call.loc, call.object.get(), object)) return Type::error();
+        return withSelf(method->resolvedReturn, object);
+    }
+
     Type checkUnary(ExprPtr& expr, std::optional<Type> expected) {
         auto& unary = static_cast<UnaryExpr&>(*expr);
         if (unary.op == UnaryOp::Not) {
             Type type = checkExpr(unary.operand, Type::boolType());
             if (!type.isBool()) {
-                if (!type.isError()) diag_.error(unary.loc, "'!' needs a bool, found " + type.name());
+                if (!type.isError()) diag_->error(unary.loc, "'!' needs a bool, found " + type.name());
                 return Type::error();
             }
             return Type::boolType();
@@ -1043,11 +1525,11 @@ private:
         Type type = checkExpr(unary.operand, expected && expected->isNumeric() ? expected : std::nullopt);
         if (type.isError()) return type;
         if (type.isInt() && !type.isSigned) {
-            diag_.error(unary.loc, "cannot negate an unsigned value (" + type.name() + ") (D59)");
+            diag_->error(unary.loc, "cannot negate an unsigned value (" + type.name() + ") (D59)");
             return Type::error();
         }
         if (!type.isNumeric()) {
-            diag_.error(unary.loc, "'-' needs a number, found " + type.name());
+            diag_->error(unary.loc, "'-' needs a number, found " + type.name());
             return Type::error();
         }
         return type;
@@ -1059,7 +1541,7 @@ private:
                 Type type = checkExpr(*side, Type::boolType());
                 if (!type.isBool()) {
                     if (!type.isError()) {
-                        diag_.error((*side)->loc, std::string("'") + spelling(binary.op) + "' needs bool values, found " +
+                        diag_->error((*side)->loc, std::string("'") + spelling(binary.op) + "' needs bool values, found " +
                                                       type.name());
                     }
                     return Type::error();
@@ -1076,24 +1558,29 @@ private:
         if (operand.isError()) return operand;
         binary.operandType = operand;
 
+        if (operand.isParam() || operand.isInterface()) {
+            diag_->error(binary.loc, std::string("'") + spelling(binary.op) + "' does not work on values of type " +
+                                         operand.name() + ": no interface provides it yet (D87)");
+            return Type::error();
+        }
         if (operand.isStruct()) {
-            diag_.error(binary.loc, std::string("'") + spelling(binary.op) + "' does not work on structs yet (D76)");
+            diag_->error(binary.loc, std::string("'") + spelling(binary.op) + "' does not work on structs yet (D76)");
             return Type::error();
         }
         if (arithmetic) {
             if (!operand.isNumeric()) {
-                diag_.error(binary.loc, std::string("'") + spelling(binary.op) + "' needs numbers, found " + operand.name());
+                diag_->error(binary.loc, std::string("'") + spelling(binary.op) + "' needs numbers, found " + operand.name());
                 return Type::error();
             }
             if (binary.op == BinaryOp::Rem && !operand.isInt()) {
-                diag_.error(binary.loc, "'%' only works on integers (D59)");
+                diag_->error(binary.loc, "'%' only works on integers (D59)");
                 return Type::error();
             }
             return operand;
         }
         bool equality = binary.op == BinaryOp::Eq || binary.op == BinaryOp::Ne;
         if (!operand.isNumeric() && !(equality && operand.isBool())) {
-            diag_.error(binary.loc, std::string("'") + spelling(binary.op) + "' cannot compare " + operand.name() + " values");
+            diag_->error(binary.loc, std::string("'") + spelling(binary.op) + "' cannot compare " + operand.name() + " values");
             return Type::error();
         }
         return Type::boolType();
@@ -1106,7 +1593,7 @@ private:
         bool rightLiteral = isUntypedLiteral(*binary.rhs);
         if (leftLiteral && rightLiteral) {
             if (!hint) {
-                diag_.error(binary.loc, "the type of this expression cannot be deduced: write the type of one of the values, "
+                diag_->error(binary.loc, "the type of this expression cannot be deduced: write the type of one of the values, "
                                         "for example i32(5) (D55)");
                 return Type::error();
             }
@@ -1120,7 +1607,7 @@ private:
             Type type = checkExpr(typed, hint);
             if (type.isError()) return type;
             if (!type.isNumeric()) {
-                diag_.error(literal->loc, "a number cannot be combined with a value of type " + type.name());
+                diag_->error(literal->loc, "a number cannot be combined with a value of type " + type.name());
                 return Type::error();
             }
             return coerce(literal, type) ? type : Type::error();
@@ -1139,10 +1626,10 @@ private:
             return left;
         }
         if (left.isInt() && right.isInt() && left.isSigned != right.isSigned) {
-            diag_.error(binary.loc, "cannot mix " + left.name() + " and " + right.name() +
+            diag_->error(binary.loc, "cannot mix " + left.name() + " and " + right.name() +
                                         ": convert one of them explicitly, for example i64(x) (D56)");
         } else {
-            diag_.error(binary.loc, "mismatched types " + left.name() + " and " + right.name() +
+            diag_->error(binary.loc, "mismatched types " + left.name() + " and " + right.name() +
                                         ": convert one of them explicitly (D33)");
         }
         return Type::error();
@@ -1150,43 +1637,154 @@ private:
 
     Type checkCall(ExprPtr& expr) {
         auto& call = static_cast<CallExpr&>(*expr);
+        bool typed = !call.typeArgs.empty();
 
-        if (std::optional<Type> target = findBuiltinType(call.callee)) return checkConversion(expr, *target);
-        if (isPrintFunction(call.callee)) return checkPrint(expr);
+        if (!typed) {
+            if (std::optional<Type> target = findBuiltinType(call.callee)) return checkConversion(expr, *target);
+            if (isPrintFunction(call.callee)) return checkPrint(expr);
+        }
 
         auto structFound = structs_.find(call.callee);
-        if (structFound != structs_.end()) return checkConstruct(expr, structFound->second);
+        if (structFound != structs_.end()) {
+            StructDecl* decl = structFound->second;
+            if (!decl->typeParams.empty() && !typed) {
+                diag_->error(call.loc, decl->name + " is generic: write its type arguments, " + decl->name + "<...>(...) (D92)");
+                checkIgnored(call.args);
+                return Type::error();
+            }
+            if (typed) {
+                std::optional<Type> type = resolveType(TypeName{call.callee, call.loc, call.typeArgs});
+                if (!type) {
+                    checkIgnored(call.args);
+                    return Type::error();
+                }
+                decl = const_cast<StructDecl*>(type->structDecl);
+            }
+            return checkConstruct(expr, decl);
+        }
 
         // D72: inside a method, a call refers first to a method of the same struct.
-        if (current_->owner) {
+        if (current_->owner && !typed) {
             auto method = current_->owner->methods.find(call.callee);
             if (method != current_->owner->methods.end()) {
                 SourceLocation loc = call.loc;
                 auto methodCall = std::make_unique<MethodCallExpr>(loc, std::make_unique<SelfExpr>(loc), call.callee);
                 methodCall->args = std::move(call.args);
                 expr = std::move(methodCall);
-                return checkMethodCall(static_cast<MethodCallExpr&>(*expr));
+                return checkMethodCall(expr);
             }
         }
 
         auto found = functions_.find(call.callee);
         if (found == functions_.end()) {
             if (lookup(call.callee) || ownFieldIndex(call.callee) >= 0) {
-                diag_.error(call.loc, "'" + call.callee + "' is a variable, not a function");
+                diag_->error(call.loc, "'" + call.callee + "' is a variable, not a function");
+            } else if (typed && (findBuiltinType(call.callee) || isPrintFunction(call.callee))) {
+                diag_->error(call.loc, "'" + call.callee + "' has no type arguments");
             } else {
-                diag_.error(call.loc, "unknown function '" + call.callee + "'");
+                diag_->error(call.loc, "unknown function '" + call.callee + "'");
             }
-            for (ExprPtr& arg : call.args) {
-                Type ignored = checkExpr(arg, std::nullopt);
-                (void)ignored;
-            }
+            checkIgnored(call.args);
             return Type::error();
         }
 
         FunctionDecl* function = found->second;
+        if (!function->typeParams.empty()) {
+            function = instanceFor(*function, call);
+        } else if (typed) {
+            diag_->error(call.loc, "'" + call.callee + "' is not generic: it has no type arguments");
+            function = nullptr;
+        }
+        if (!function) {
+            checkIgnored(call.args);
+            return Type::error();
+        }
         call.function = function;
         if (!checkArgs(call.args, *function, "'" + call.callee + "'", call.loc)) return Type::error();
         return function->resolvedReturn;
+    }
+
+    // The arguments of a call that cannot be checked against a function: only
+    // their own errors are reported.
+    void checkIgnored(std::vector<ExprPtr>& args) {
+        for (ExprPtr& arg : args) {
+            ExprPtr* value = &arg;
+            if (arg->kind == ExprKind::Ref) value = &static_cast<RefExpr&>(*arg).operand;
+            if (arg->kind == ExprKind::Move) value = &static_cast<MoveExpr&>(*arg).operand;
+            Type ignored = checkExpr(*value, std::nullopt);
+            (void)ignored;
+        }
+    }
+
+    // The instance of a generic function for a call, with the type arguments
+    // written or deduced from the arguments (D86).
+    FunctionDecl* instanceFor(FunctionDecl& generic, CallExpr& call) {
+        std::vector<Type> args;
+        std::string what = "'" + generic.name + "'";
+        if (!call.typeArgs.empty()) {
+            if (!resolveTypeArgs(call.typeArgs, generic.typeParams.size(), what, call.loc, args)) return nullptr;
+            return instantiateFunction(generic, args, call.loc);
+        }
+        if (failed_.count(&generic)) return nullptr;
+        size_t expected = generic.params.size();
+        if (call.args.size() != expected) {
+            diag_->error(call.loc, what + " takes " + std::to_string(expected) + (expected == 1 ? " argument, but " : " arguments, but ") +
+                                       std::to_string(call.args.size()) + " were given");
+            return nullptr;
+        }
+        std::vector<std::optional<Type>> deduced(generic.typeParams.size());
+        for (size_t i = 0; i < call.args.size(); ++i) {
+            std::optional<Type> type = argumentType(*call.args[i]);
+            if (type && !deduce(generic.params[i].type, *type, generic, deduced, call.args[i]->loc)) return nullptr;
+        }
+        for (size_t i = 0; i < deduced.size(); ++i) {
+            if (!deduced[i]) {
+                diag_->error(call.loc, "cannot deduce " + generic.typeParams[i].name + " in this call of " + what +
+                                           ": write the type arguments, " + generic.name + "<...>(...) (D86)");
+                return nullptr;
+            }
+            args.push_back(*deduced[i]);
+        }
+        return instantiateFunction(generic, args, call.loc);
+    }
+
+    // The type of an argument, checked on a copy without reporting errors: it
+    // serves only to deduce the type arguments (D86).
+    std::optional<Type> argumentType(const Expr& arg) {
+        const Expr* value = &arg;
+        if (arg.kind == ExprKind::Ref) value = static_cast<const RefExpr&>(arg).operand.get();
+        if (arg.kind == ExprKind::Move) value = static_cast<const MoveExpr&>(arg).operand.get();
+        ExprPtr copy = clone(*value);
+        bool muted = diag_->muted();
+        diag_->setMuted(true);
+        Type type = checkExpr(copy, std::nullopt);
+        diag_->setMuted(muted);
+        if (type.isError() || type.isUntyped() || type.isVoid()) return std::nullopt;
+        return type;
+    }
+
+    // Matches the type of a parameter, as written, with the type of its argument.
+    bool deduce(const TypeName& pattern, Type actual, const FunctionDecl& generic, std::vector<std::optional<Type>>& deduced,
+                SourceLocation loc) {
+        for (size_t i = 0; i < generic.typeParams.size(); ++i) {
+            if (generic.typeParams[i].name != pattern.name || !pattern.args.empty()) continue;
+            if (!deduced[i]) {
+                deduced[i] = actual;
+                return true;
+            }
+            if (*deduced[i] == actual) return true;
+            diag_->error(loc, generic.typeParams[i].name + " is " + deduced[i]->name() + " for a previous argument, but " +
+                                  actual.name() + " here: write the type arguments, " + generic.name + "<...>(...) (D86)");
+            return false;
+        }
+        if (!pattern.args.empty() && actual.isStruct() && actual.structDecl->generic &&
+            actual.structDecl->generic->name == pattern.name) {
+            const std::vector<Type>& args = actual.structDecl->typeArgs;
+            for (size_t i = 0; i < pattern.args.size() && i < args.size(); ++i) {
+                if (!deduce(pattern.args[i], args[i], generic, deduced, loc)) return false;
+            }
+        }
+        return true;
     }
 
     // `Student("Anna")`: calls the constructor; without one, `Point()` is the default value (D71).
@@ -1201,7 +1799,7 @@ private:
         if (decl->constructor) {
             if (!checkArgs(node.args, *decl->constructor, "the constructor of " + decl->name, node.loc)) return Type::error();
         } else if (!node.args.empty()) {
-            diag_.error(node.loc, decl->name + " has no constructor: " + decl->name + "() gives its default value (D71)");
+            diag_->error(node.loc, decl->name + " has no constructor: " + decl->name + "() gives its default value (D71)");
             return Type::error();
         }
         return type;
@@ -1211,7 +1809,7 @@ private:
     Type checkConversion(ExprPtr& expr, Type target) {
         auto& call = static_cast<CallExpr&>(*expr);
         if (call.args.size() != 1) {
-            diag_.error(call.loc, "a conversion to " + target.name() + " takes exactly one value");
+            diag_->error(call.loc, "a conversion to " + target.name() + " takes exactly one value");
             return Type::error();
         }
         ExprPtr operand = std::move(call.args[0]);
@@ -1225,12 +1823,13 @@ private:
             type = checkExpr(operand, std::nullopt);
         }
         if (type.isError()) return type;
-        if (type.isUntyped() || type.isVoid() || type.kind == TypeKind::String || type.isStruct()) {
-            diag_.error(operand->loc, "cannot convert this value to " + target.name());
+        if (type.isUntyped() || type.isVoid() || type.kind == TypeKind::String || type.isStruct() ||
+            type.isParam() || type.isInterface()) {
+            diag_->error(operand->loc, "cannot convert this value to " + target.name());
             return Type::error();
         }
         if (type.isBool() != target.isBool()) {
-            diag_.error(call.loc, "cannot convert " + type.name() + " to " + target.name() + " (D61)");
+            diag_->error(call.loc, "cannot convert " + type.name() + " to " + target.name() + " (D61)");
             return Type::error();
         }
         SourceLocation loc = call.loc;
@@ -1250,7 +1849,7 @@ private:
         bool newline = call.callee.size() >= 2 && call.callee.compare(call.callee.size() - 2, 2, "ln") == 0;
 
         if (call.args.empty() || call.args[0]->kind != ExprKind::StringLiteral) {
-            diag_.error(call.loc, "the first argument of " + call.callee + " must be a string literal with the format (D38)");
+            diag_->error(call.loc, "the first argument of " + call.callee + " must be a string literal with the format (D38)");
             return Type::error();
         }
         auto print = std::make_unique<PrintExpr>(call.loc, stream, newline);
@@ -1265,13 +1864,13 @@ private:
             } else {
                 Type type = checkExpr(arg, std::nullopt);
                 if (type.isUntyped()) {
-                    diag_.error(arg->loc, "the type of this literal cannot be deduced: write it explicitly, for example i32(5) (D64)");
+                    diag_->error(arg->loc, "the type of this literal cannot be deduced: write it explicitly, for example i32(5) (D64)");
                     ok = false;
                 } else if (type.isVoid()) {
-                    diag_.error(arg->loc, "this call does not return a value");
+                    diag_->error(arg->loc, "this call does not return a value");
                     ok = false;
-                } else if (type.isStruct()) {
-                    diag_.error(arg->loc, "a " + type.name() + " cannot be printed yet (D76)");
+                } else if (type.isStruct() || type.isParam() || type.isInterface()) {
+                    diag_->error(arg->loc, "a " + type.name() + " cannot be printed yet (D76)");
                     ok = false;
                 } else if (type.isError()) {
                     ok = false;
@@ -1300,7 +1899,7 @@ private:
                     ++i;
                     continue;
                 }
-                diag_.error(loc, "single '}' in the format string: write '}}' for a brace");
+                diag_->error(loc, "single '}' in the format string: write '}}' for a brace");
                 return;
             }
             if (c != '{') {
@@ -1314,7 +1913,7 @@ private:
             }
             size_t close = format.find('}', i);
             if (close == std::string::npos) {
-                diag_.error(loc, "'{' without a matching '}' in the format string: write '{{' for a brace");
+                diag_->error(loc, "'{' without a matching '}' in the format string: write '{{' for a brace");
                 return;
             }
             std::string inside = format.substr(i + 1, close - i - 1);
@@ -1334,7 +1933,7 @@ private:
             } else {
                 for (char d : id) {
                     if (d < '0' || d > '9') {
-                        diag_.error(loc, "invalid placeholder '{" + inside + "}'");
+                        diag_->error(loc, "invalid placeholder '{" + inside + "}'");
                         return;
                     }
                 }
@@ -1342,11 +1941,11 @@ private:
                 piece.arg = std::stoi(id);
             }
             if (usedAuto && usedManual) {
-                diag_.error(loc, "cannot mix automatic '{}' and numbered '{0}' placeholders");
+                diag_->error(loc, "cannot mix automatic '{}' and numbered '{0}' placeholders");
                 return;
             }
             if (piece.arg >= static_cast<int>(print.args.size())) {
-                diag_.error(loc, "the format string needs at least " + std::to_string(piece.arg + 1) + " arguments, but " +
+                diag_->error(loc, "the format string needs at least " + std::to_string(piece.arg + 1) + " arguments, but " +
                                      std::to_string(print.args.size()) + " were given");
                 return;
             }
@@ -1354,7 +1953,7 @@ private:
                 piece.hasSpec = true;
                 std::string spec = inside.substr(colon + 1);
                 if (!parseSpec(spec, piece.spec)) {
-                    diag_.error(loc, "invalid format specification '" + spec + "'");
+                    diag_->error(loc, "invalid format specification '" + spec + "'");
                     return;
                 }
                 if (!validateSpec(piece.spec, print.args[piece.arg]->type, loc)) return;
@@ -1366,7 +1965,7 @@ private:
 
         for (size_t i = 0; i < used.size(); ++i) {
             if (!used[i]) {
-                diag_.error(print.args[i]->loc, "this argument is not used by the format string");
+                diag_->error(print.args[i]->loc, "this argument is not used by the format string");
             }
         }
     }
@@ -1414,7 +2013,7 @@ private:
 
     bool validateSpec(const FormatSpec& spec, Type type, SourceLocation loc) {
         auto fail = [&](const std::string& message) {
-            diag_.error(loc, message);
+            diag_->error(loc, message);
             return false;
         };
         bool numberFlags = spec.sign || spec.alternate || spec.zeroPad;
@@ -1439,10 +2038,25 @@ private:
         return true;
     }
 
+    static constexpr int kMaxNesting = 16;
+
     Module& module_;
-    Diagnostics& diag_;
+    Diagnostics* diag_;
     std::map<std::string, FunctionDecl*> functions_;
     std::map<std::string, StructDecl*> structs_;
+    std::map<std::string, InterfaceDecl*> interfaces_;
+
+    // Generics (D39): instances by key, structs already completed, the bodies to
+    // check, and the generics whose definition has errors.
+    std::map<std::string, StructDecl*> structInstances_;
+    std::map<std::string, FunctionDecl*> functionInstances_;
+    std::set<const StructDecl*> completed_;
+    std::set<const StructDecl*> implementsDone_;
+    std::vector<PendingBody> definitions_;
+    std::vector<PendingBody> instances_;
+    std::set<const void*> failed_;
+    const TypeBindings* bindings_ = nullptr;  // the type parameters visible now
+    bool selfAllowed_ = false;                // while resolving the methods of interfaces
     std::map<const StructDecl*, int> layoutState_;  // 0 to do, 1 in progress, 2 done
     FunctionDecl* current_ = nullptr;
     std::vector<std::map<std::string, Variable*>> scopes_;

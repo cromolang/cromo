@@ -1,0 +1,100 @@
+// expect-output: 6 8
+// expect-output: 3.00
+// expect-output: 4.00
+// expect-output: 12.00
+// expect-output: 16.00
+// expect-output: 12.00
+// expect-output: 4
+// Interfaces: static calls through generics, dynamic calls through parameters (D49).
+interface Shape {
+    f64 area() const
+    void scale(f64 factor)
+}
+
+interface Comparable {
+    i32 compare(Self other) const
+}
+
+struct Circle : Shape {
+    f64 r
+
+    Circle(f64 radius) {
+        r = radius
+    }
+
+    f64 area() const {
+        ret 3.0 * r * r
+    }
+
+    void scale(f64 factor) {
+        r *= factor
+    }
+}
+
+struct Square : Shape, Comparable {
+    f64 side
+
+    Square(f64 s) {
+        side = s
+    }
+
+    f64 area() const {
+        ret side * side
+    }
+
+    void scale(f64 factor) {
+        side *= factor
+    }
+
+    i32 compare(Square other) const {
+        if (side < other.side) {
+            ret -1
+        }
+        if (side > other.side) {
+            ret 1
+        }
+        ret 0
+    }
+}
+
+// One version for each type, without cost (D39).
+f64 doubleArea<T : Shape>(T shape) {
+    ret 2.0 * shape.area()
+}
+
+// Through the method table: only const methods on a read parameter (D24).
+void printArea(Shape shape) {
+    println("{:.2f}", shape.area())
+}
+
+void grow(ref Shape shape) {
+    shape.scale(2.0)
+}
+
+void describe(Shape shape) {
+    printArea(shape)
+}
+
+// The example of D52.
+T max<T : Comparable>(T a, T b) {
+    if (a.compare(b) >= 0) {
+        ret a
+    }
+    ret b
+}
+
+i32 main() {
+    Circle c = Circle(1.0)
+    Square s = Square(2.0)
+    println("{} {}", doubleArea(c), doubleArea(s))
+    printArea(c)
+    printArea(s)
+    grow(ref c)
+    grow(ref s)
+    printArea(c)
+    printArea(s)
+    describe(c)
+    Square big = max(s, Square(1.0))
+    println("{}", big.side)
+    ret 0
+}

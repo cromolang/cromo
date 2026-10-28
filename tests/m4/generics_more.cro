@@ -1,0 +1,127 @@
+// expect-output: 4.5
+// expect-output: 9
+// expect-output: 21
+// expect-output: 5
+// expect-output: 7 4
+// expect-output: 1 2.5
+// expect-output: 1 2.5
+// expect-output: 2
+interface Named {
+    i32 id() const
+}
+
+interface Shape {
+    f64 area() const
+}
+
+struct Item : Named, Shape {
+    i32 number
+    f64 size
+
+    Item(i32 n, f64 s) {
+        number = n
+        size = s
+    }
+
+    i32 id() const {
+        ret number
+    }
+
+    f64 area() const {
+        ret size
+    }
+}
+
+// 24 bytes: returned through a hidden pointer, also by a dynamic call.
+struct Stats {
+    i64 count
+    f64 total
+    i64 extra
+}
+
+interface Measure {
+    Stats measure(ref i64 calls) const
+}
+
+struct Ruler : Measure {
+    f64 length
+
+    Stats measure(ref i64 calls) const {
+        calls++
+        Stats s
+        s.count = 1
+        s.total = length
+        ret s
+    }
+}
+
+// Several constraints (D88).
+f64 weighted<T : Named + Shape>(T x) {
+    ret f64(x.id()) * x.area()
+}
+
+struct Pair<A, B> {
+    A first
+    B second
+}
+
+// T is deduced through Pair<T, T> (D86).
+T firstOf<T>(Pair<T, T> p) {
+    ret p.first
+}
+
+// A generic that uses another generic with its own T.
+T twice<T>(T a) {
+    ret pickFirst(a, a)
+}
+
+T pickFirst<T>(T a, T b) {
+    ret a.copy()  // copy() works on numbers too (D89)
+}
+
+// A struct that is not generic, with an instance as a field.
+struct Holder {
+    Pair<i32, i64> pair
+}
+
+struct Counter<T : Named> {
+    T last
+    i32 total
+
+    void add(T x) {
+        total += x.id()
+        last = x
+    }
+}
+
+void record(Measure m, ref i64 calls) {
+    Stats s = m.measure(ref calls)
+    println("{} {}", s.count, s.total)
+}
+
+i32 main() {
+    Item it = Item(3, 1.5)
+    println("{}", weighted(it))
+
+    Pair<i32, i32> p
+    p.first = 9
+    println("{}", firstOf(p))
+    println("{}", twice(i64(21)))
+
+    Holder h
+    h.pair.second = 5
+    println("{}", h.pair.second)
+
+    Counter<Item> counter
+    counter.add(it)
+    counter.add(Item(4, 2.0))
+    println("{} {}", counter.total, counter.last.number)
+
+    Ruler r
+    r.length = 2.5
+    i64 calls = 0
+    record(r, ref calls)
+    record(r, ref calls)
+    println("{}", calls)
+    ret 0
+}

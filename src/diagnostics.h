@@ -25,12 +25,24 @@ public:
     void warning(SourceLocation loc, const std::string& message);
 
     bool hasErrors() const { return errorCount_ > 0; }
+    int errorCount() const { return errorCount_; }
+
+    // While muted nothing is reported or counted: sema uses it to check an
+    // expression only to learn its type.
+    bool muted() const { return muted_; }
+    void setMuted(bool muted) { muted_ = muted; }
+
+    // Text added to every message, for example the generic being instantiated.
+    const std::string& context() const { return context_; }
+    void setContext(std::string context) { context_ = std::move(context); }
 
 private:
     void report(const char* kind, SourceLocation loc, const std::string& message);
 
     const SourceFile& file_;
     int errorCount_ = 0;
+    bool muted_ = false;
+    std::string context_;
 };
 
 }  // namespace cromo
