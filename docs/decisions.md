@@ -663,16 +663,92 @@ students.add(move anna)    // ok
 *2026-10-28.*
 For an instance with real types, a method is checked (and emitted) only if it is used. This extends D85: `list<File>` can be used even if `File` cannot be copied, as long as `copy()` of the list is not called. The definition of the generic is still checked whole, once (D52).
 
+### D104. Declaration of enums
+*2026-10-28.* One case per line, as the members of a struct (D17). The data of a case are written like parameters, type before name (D20), and read like the constructor of the case.
+
+```cromo
+enum Shape {
+    Circle(f64 radius)
+    Rect(f64 width, f64 height)
+    Empty
+}
+
+enum Color {
+    Red
+    Green
+    Blue
+}
+```
+
+### D105. Values are created with the name of the enum
+*2026-10-28.* `Shape.Circle(1.0)`, `Color.Red`, as in C#, Java and Swift. Two enums can have cases with the same name, and a case is never confused with a struct.
+
+### D106. `case X { ... }`
+*2026-10-28.* In a `switch` a case is written like `if` and `for`: braces are mandatory (D32) and there is no colon. Inside the `switch` the type is known, so the cases are written without the name of the enum; `default` is written the same way.
+
+```cromo
+switch (shape) {
+    case Circle(f64 r) {
+        ret 3.14 * r * r
+    }
+    case Rect(f64 w, f64 h) {
+        ret w * h
+    }
+    default {
+        ret 0.0
+    }
+}
+```
+
+### D107. The data of a case in a `switch`
+*2026-10-28.* They are given a name, with the type written (D54), as the element of a `for` (D101): read-only and without a copy; with `ref` they can be modified, when the value of the `switch` can. Without the parentheses, the data are ignored.
+
+```cromo
+case Circle(f64 r) {            // r is read-only
+    println("{}", r)
+}
+case Rect(ref f64 w, ref f64 h) {
+    w *= 2.0                    // modifies the data of the case
+}
+case Empty {
+}
+```
+
+### D108. No fall-through, several cases in one branch
+*2026-10-28.*
+- At the end of a branch the `switch` ends: there is no fall-through and no `break` to write. There is no `goto`.
+- Several cases without data can share a branch: `case Red, Green { ... }`.
+
+### D109. `switch` on numbers and strings
+*2026-10-28.*
+- Besides enums, `switch` works on integers (`char` included) and on `string`, with literals as cases: `case 1, 2 { ... }`, `case "yes" { ... }`. The same value cannot appear twice.
+- Only on enums the cases must all be covered (D34): on numbers and strings `default` is optional, and without it a value that matches no case does nothing, as in C.
+- A `switch` ends the paths of a function (D67) when it covers all the cases, or has `default`, and all its branches end them.
+
+### D110. Enums like structs
+*2026-10-28.*
+- After the cases an enum can have methods, also `const`, and it can implement interfaces (D40). It has no constructor or destructor written by hand.
+- An enum can be generic, with the rules of the generic structs (D92): `enum Result<T, E> { Ok(T value) Err(E error) }` and `Result<i32, string>.Ok(5)`.
+
+### D111. Ownership and copies of enums
+*2026-10-28.*
+- An enum needs destruction when the data of one of its cases do (D23): it is not copied implicitly, and destroying it destroys the data of its current case. Its `copy()` is generated as for structs (D35).
+- The default value is the first case (D51), with the default values of its data.
+
+### D112. Comparing and printing enums
+*2026-10-28.*
+- `==` and `!=` work on enums whose cases have no data, as `color == Color.Red`. With data, the case is told by a `switch` (D76).
+- Explicit numeric values of the cases (`Red = 1`) and conversions to numbers come with `extern` (M7, D42); printing with `{}` comes with the interface for printing (D38).
+
+---
 ---
 
 ## Open
 
 There are currently no open questions. Still to be defined later, when needed:
 - bitwise operators (D59);
-- the enum syntax (D34), before milestone M6;
 - the `extern` syntax (D42), before milestone M7;
 - the symbol naming scheme for modules and generics (D39, D50);
 - the interface for making user-defined types printable (D38);
 - fixed-size arrays (`i32[4]`);
-- the proposals still in [language.md](language.md): `switch` without fall-through and no `goto` (§9);
 - the content of the standard library.

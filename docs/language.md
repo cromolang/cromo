@@ -30,7 +30,7 @@
   - `struct`, `void`, `break`, `continue`, `throw` (D20);
   - `ref`, `move` (D22, D23);
   - `const` for methods and variables (D24, D26), `in` (D25);
-  - `switch`, `case`, `default` (D34);
+  - `switch`, `case`, `default` (D34), `enum` (D104);
   - `unsafe` (D37), `interface` (D40), `import` (D41), `extern` (D42), `public` (D50).
 - `print` and `println` are not keywords but special compiler functions (D21, D38).
 
@@ -48,7 +48,7 @@
 | Dynamic container | `list<T>`, the only one in the first version | D11, D13 |
 | Interfaces | `interface Shape { ... }` | D40, D49, §12 |
 | Generics | `T max<T : Comparable>(T a, T b)` | D39, D52 |
-| Enums with data | syntax to be defined | D34 |
+| Enums with data | `enum Shape { Circle(f64 radius) ... }` | D34, D104, §9 |
 | Fixed-size arrays | `i32[4]`: to be decided | |
 
 - **There are no pointer types** (D4) **and no types whose size depends on the platform** such as `usize` (D9): every type has the same size on all platforms. Indices and lengths are `i64` (D12).
@@ -306,19 +306,38 @@ for (ref Student s in students) {        // over the elements, modifiable
 - `break` and `continue` exist, without labels. `i++` and `i--` are used only as a statement on their own, never inside expressions (D32).
 - While a `for` over the elements is running, the list cannot change length (D22): in the body it can be read, but not modified, except its elements through the variable of the loop (D101).
 
-### Switch (D34)
+### Enums and switch (D34, D104–D112)
 
 ```cromo
-switch (color) {
-    case Red:   { ... }
-    case Green: { ... }
-    default:    { ... }    // executed for the cases not listed
+enum Shape {
+    Circle(f64 radius)          // a case with its data, written like parameters
+    Rect(f64 width, f64 height)
+    Empty
 }
+
+f64 area(Shape shape) {
+    switch (shape) {
+        case Circle(f64 r) {    // the data, read-only and without a copy
+            ret 3.14 * r * r
+        }
+        case Rect(f64 w, f64 h) {
+            ret w * h
+        }
+        case Empty {
+            ret 0.0
+        }
+    }
+}
+
+Shape s = Shape.Circle(1.0)     // a value is created with the name of the enum
 ```
 
-- On an enum the `switch` must cover all the cases, or have `default`.
-- No fall-through from one case to the next (proposal).
-- There is no `goto` (proposal).
+- On an enum the `switch` must cover all the cases, or have `default` (D34), which is written `default { ... }`.
+- The data of a case get a name with their type; with `ref` they can be modified (D107). Without the parentheses the data are ignored.
+- The default value of an enum is its first case (D51).
+- No fall-through from one case to the next, and several cases without data in one branch: `case Red, Green { ... }`. There is no `goto` (D108).
+- `switch` also works on integers and strings, with literals as cases; there `default` is optional (D109).
+- Enums can have methods, implement interfaces and be generic, like structs (D110). An enum whose cases have no data can be compared with `==` (D112).
 
 ## 10. Errors and exceptions (D16, D36)
 
@@ -429,6 +448,5 @@ C functions are declared with `extern` and are called only from the `unsafe` dia
 
 ## 15. Still to be written
 
-- Enum syntax (D34).
 - Contents of the standard library, written in Cromo without libc (D19, D37).
 - Concurrency: postponed until after the first version (D43).
