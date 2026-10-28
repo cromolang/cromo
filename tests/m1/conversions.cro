@@ -1,0 +1,32 @@
+// expect-output: 3 -3 255 2.5 1e+10
+// expect-output: 300 2.5 1000000 1000300
+// expect-output: 44 -1
+i32 main() {
+    // explicit conversions (D20, D61)
+    f64 a = 3.99
+    f64 b = -3.99
+    f64 c = 255.0
+    i32 x = i32(a)
+    i32 y = i32(b)
+    u8 z = u8(c)
+    f32 h = f32(2.5)
+    f64 big = f64(10000000000)
+    println("{} {} {} {} {}", x, y, z, h, big)
+
+    // implicit conversions only when nothing is lost (D33)
+    u8 small = 200
+    i32 wide = small
+    i32 sum = wide + 100
+    f64 half = f64(5) / 2.0
+    i32 k = 1000
+    i64 million = k * 1000
+    i64 total = million + sum
+    println("{} {} {} {}", sum, half, million, total)
+
+    // between integers, an explicit conversion keeps the low bits (D61)
+    i32 many = 300
+    u8 low = u8(many)
+    i8 minus = i8(u8(255))
+    println("{} {}", low, minus)
+    ret 0
+}

@@ -1,0 +1,9 @@
+// expect-error: parameter 'x' cannot be modified
+void f(i32 x) {
+    x = 1
+}
+
+i32 main() {
+    f(0)
+    ret 0
+}

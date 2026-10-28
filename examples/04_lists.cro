@@ -4,7 +4,8 @@
 //          i64 indexes and lengths (D12), memory freed at end of scope (D5, D11),
 //          add / len, v[i], f64(...) conversion (D20),
 //          ref and move in the signature and at the call (D22, D23),
-//          const methods (D24), for over elements (D25), const variables (D26)
+//          const methods (D24), for over elements (D25), const variables (D26),
+//          the type is always written (D54)
 
 struct Student {
     string name
@@ -20,7 +21,7 @@ struct Student {
             ret 0.0
         }
         f64 sum = 0.0
-        for (g in grades) {              // g is read-only
+        for (f64 g in grades) {          // g is read-only
             sum += g
         }
         ret sum / f64(grades.len())      // explicit conversion from i64 to f64
@@ -37,23 +38,23 @@ void addGrade(ref Student s, f64 grade) {    // ref: the function modifies s
 
 i32 main() {
     const f64 CONDUCT_GRADE = 9.0        // immutable
-    var students = list<Student>()
+    list<Student> students = list<Student>()
 
-    var anna = Student("Anna")           // "Anna" is a temporary: no move
+    Student anna = Student("Anna")       // "Anna" is a temporary: no move
     addGrade(ref anna, 8.5)
     addGrade(ref anna, 7.0)
     students.add(move anna)              // anna moves into the list:
                                          // from here on it can no longer be used
 
-    var marco = Student("Marco")
+    Student marco = Student("Marco")
     marco.addGrade(6.0)                  // non-const method on an owned variable
     students.add(move marco)
 
-    for (ref s in students) {            // s can be modified
+    for (ref Student s in students) {    // s can be modified
         s.addGrade(CONDUCT_GRADE)
     }
 
-    for (s in students) {                // s is read-only: only const methods
+    for (Student s in students) {        // s is read-only: only const methods
         println("{:<10} average {:.2f}", s.name, s.average())
     }
 

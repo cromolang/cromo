@@ -98,7 +98,7 @@
         },
         {
           "name": "storage.modifier.cromo",
-          "match": "\\b(?:var|const|ref|move|extern|unsafe|public)\\b"
+          "match": "\\b(?:const|ref|move|extern|unsafe|public)\\b"
         },
         {
           "name": "constant.language.boolean.cromo",

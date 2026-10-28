@@ -1,0 +1,15 @@
+// expect-exit: 7
+// an endless loop without break counts as the end of the function (D67)
+i32 firstSquareAbove(i32 limit) {
+    i32 i = 0
+    for {
+        i++
+        if (i * i > limit) {
+            ret i
+        }
+    }
+}
+
+i32 main() {
+    ret firstSquareAbove(40)
+}

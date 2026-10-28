@@ -23,11 +23,11 @@
   - characters: `'a'`, one byte of type `char`, ASCII only; escapes `'\n'`, `'\t'`, `'\\'`, `'\''`, `'\x41'` (D46)
   - strings: `"text\n"`
   - booleans: `true`, `false`
-- **Provisional** keywords: `struct interface enum import extern unsafe var const void if else for in break continue ret switch case default try catch finally throw ref move public true false`. Among these, the following are decided:
+- **Provisional** keywords: `struct interface enum import extern unsafe const void if else for in break continue ret switch case default try catch finally throw ref move public true false`. Among these, the following are decided:
   - `if`, `else`, `for` (D15);
   - `try`, `catch`, `finally` (D16);
   - `ret` (D18);
-  - `struct`, `var`, `void`, `break`, `continue`, `throw` (D20);
+  - `struct`, `void`, `break`, `continue`, `throw` (D20);
   - `ref`, `move` (D22, D23);
   - `const` for methods and variables (D24, D26), `in` (D25);
   - `switch`, `case`, `default` (D34);
@@ -59,15 +59,16 @@
 
 ```cromo
 i32 x = 5
-var y = x + 1           // inferred type: i32
-const f64 PI = 3.14159  // immutable: with const the type is always written
+i64 y = x + 1           // the type is always written (D54)
+const f64 PI = 3.14159  // immutable
 
 i32 n                   // 0
 string name             // empty string
 list<f64> grades        // empty list
 ```
 
-- The type is written before the name; with `var` it is inferred (D20).
+- The type is written before the name, always: there is no type inference (D20, D54).
+- A literal takes the type of its context (D55): in `i64 y = x + 1`, `1` has the type of `x`; the result is an `i32`, converted to `i64` without loss (D33).
 - **Without a value, a variable takes the default** (D31): `0` for numbers, `false` for `bool`, empty string and empty list. For a struct, every field takes its default, and no constructor is called (D48). A field can declare its initial value (`i32 fd = -1`), and an enum starts from the first case (D51). There are no uninitialized values.
 - A `const` variable must always have a value (D51).
 - Variables are mutable by default; `const` makes them immutable (D26).
@@ -116,7 +117,7 @@ void addGrade(ref Student s, f64 grade) {
     s.grades.add(grade)
 }
 
-var anna = Student("Anna")
+Student anna = Student("Anna")
 addGrade(ref anna, 8.5)            // you can see that anna may change
 addGrade(ref students[0], 9.0)     // an element is passed with ref too (D35)
 students.add(move anna)            // you can see that anna passes to the list
@@ -174,7 +175,7 @@ The shape of the struct (fields, constructor `Name(...)`, destructor `~Name()`, 
 9. A struct with its own destructor is never a simple type: it is moved with `move` and copied only if it defines `copy()` (D23, D35).
 
 **`const` methods (D24).** A method can modify the fields, unless it is marked `const` after the parameters, as in C++.
-- On a read-only object (a parameter without `ref`, the element of a `for (x in items)`, a `const` variable) only `const` methods can be called.
+- On a read-only object (a parameter without `ref`, the element of a `for (T x in items)`, a `const` variable) only `const` methods can be called.
 - Without pointers, `const` is deep: a `const` method cannot modify even the strings and lists contained in the object.
 
 A constructor that fails, for example because the file does not open, throws an exception (D16). The fields already constructed are destroyed and the object does not exist.
@@ -211,7 +212,7 @@ struct Student {
 }
 
 void example() {
-    var students = list<Student>()
+    list<Student> students = list<Student>()
     students.add(Student("Anna"))
     students.add(Student("Marco"))
     // ...
@@ -268,11 +269,11 @@ for (i64 i = 0; i < n; i++) {            // classic for
     ...
 }
 
-for (s in students) {                    // over the elements, read-only (D25)
+for (Student s in students) {            // over the elements, read-only (D25)
     println("{}", s.name)
 }
 
-for (ref s in students) {                // over the elements, modifiable
+for (ref Student s in students) {        // over the elements, modifiable
     s.addGrade(1.0)
 }
 ```
@@ -300,7 +301,7 @@ switch (color) {
 
 ```cromo
 string firstLine(string path) {
-    var f = File(path)        // if the file does not open, the constructor throws
+    File f = File(path)       // if the file does not open, the constructor throws
     ret f.readLine()
 }                             // f is closed here, even if readLine throws
 
@@ -372,7 +373,7 @@ void printArea(Shape f) {
     println("{:.2f}", f.area())
 }
 
-var shapes = list<Shape>()       // objects of different types in the same list
+list<Shape> shapes = list<Shape>()   // objects of different types in the same list
 shapes.add(Circle(1.0))
 shapes.add(Square(2.0))
 ```

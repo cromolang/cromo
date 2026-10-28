@@ -135,8 +135,32 @@ What the runtime must provide:
 
 Exceptions require nothing from the runtime (D36).
 
+### The temporary runtime of M1–M4 (D58)
+Until the `unsafe` dialect exists (M5), the runtime is the freestanding C code in `runtime/`:
+- `cromo_rt.c`: buffered output on stdout and stderr (UTF-8, converted to UTF-16 when writing to a console), the formatting functions called by `print`/`println`, `cromo_exit` and `cromo_panic`;
+- `mem_x64.S`: `memcpy`, `memset`, `memmove`, `memcmp` and `__chkstk`.
+
+CMake compiles them with the clang of the LLVM archive (`-ffreestanding -fno-builtin -nostdlib`), archives them with `llvm-lib` and embeds the library in `cromo.exe` as a byte array (`cmake/embed.cmake`). At link time `cromo` writes it next to the object file and passes it to LLD.
+
+Floating-point numbers are formatted with big integers, so the digits are always exact: the shortest form uses the algorithm of Steele & White and Burger & Dybvig, and the forms with a precision round the exact value half to even. It was checked against Python on 500 values (random bit patterns, subnormals, extremes, exact ties) in five formats, with no differences.
+
+The generated code calls these functions (all `nounwind`):
+
+| Function | Use |
+|---|---|
+| `cromo_write(stream, ptr, len)` | literal text of a format string |
+| `cromo_fmt_int(stream, value, signed, spec)` | integers, extended to 64 bits |
+| `cromo_fmt_f64` / `cromo_fmt_f32(stream, value, spec)` | floating-point numbers |
+| `cromo_fmt_bool(stream, value, spec)` | `true` / `false` |
+| `cromo_fmt_str(stream, ptr, len, spec)` | string literals (D65) |
+| `cromo_print_end(stream, newline)` | end of a print: newline and flush |
+| `cromo_exit(code)` | end of the program, called by `cromo_start` |
+| `cromo_panic(message, len)` | panic (D62), exit code 101 |
+
+`spec` points to a constant `FmtSpec` built by the compiler from the format specification, or is null for `{}`.
+
 ### `memcpy` and `memset` in assembly (D19)
-Implementation proposal for x86-64:
+Implementation for x86-64:
 - **Instructions:** `rep movsb` for `memcpy` and `rep stosb` for `memset`. They are short and, on modern processors (ERMSB), as fast as hand-optimized versions for most sizes.
 - **Calling conventions:** they change between systems, so two variants or some macros are needed. On Windows the arguments arrive in `rcx`, `rdx`, `r8`, on Linux in `rdi`, `rsi`, `rdx`.
 - **Assembler:** the one integrated in LLVM, with Intel syntax (`.intel_syntax noprefix`). NASM or MASM are not needed.
@@ -145,11 +169,14 @@ Implementation proposal for x86-64:
 
 - **Behavior tests:** in `tests/`, `.cro` files with the expected result written in the comments:
   ```cromo
+  // cromo-flags: --release
   // expect-exit: 42
   // expect-output: hello
+  // expect-stderr: panic: integer overflow
   // expect-error: 's' has been moved
+  // expect-warning: unreachable code
   ```
-  A small program compiles and runs each file and compares the result with the expected one.
+  `tests/run-tests.ps1` compiles and runs each file and compares the result with the expected one; `-Flags -O0` passes extra options to every compilation.
 - **IR tests:** a few checks that verify the attributes that matter for the optimizer, for example that a `ref` parameter is really `noalias`.
 - **Later:** differential tests with generated programs.
 
@@ -157,7 +184,9 @@ Implementation proposal for x86-64:
 
 Each milestone lists the decisions still open that are needed **before** writing its code.
 
-**Status:** M0 completed on 2026-10-28. `cromo.exe` compiles `i32 main() { ret 42 }` into a 2 KB executable that imports only `ExitProcess` from `kernel32.dll`. The tests are in `tests/m0/`.
+**Status:**
+- **M0** completed on 2026-10-28: `cromo.exe` compiles `i32 main() { ret 42 }` into a 2 KB executable that imports only `ExitProcess` from `kernel32.dll`. Tests in `tests/m0/`.
+- **M1** completed on 2026-10-28: integer, floating-point and `bool` types, `char` literals, arithmetic with the overflow and division checks, conversions, variables with default values and `const`, `if`/`else`, the three forms of `for` with `break`/`continue`, functions with parameters and recursion, `print`/`println`/`eprint`/`eprintln` with formatting, debug and `--release` modes, and the temporary runtime (D58). Tests in `tests/m1/`; the choices made for M1 are decisions D54–D67 in [decisions.md](decisions.md).
 
 | Milestone | Content | Open decisions |
 |---|---|---|

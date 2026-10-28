@@ -26,17 +26,53 @@ message(STATUS "LLD: ${LLD_DIR}")
 # With the static runtime cromo.exe does not need the Visual C++ Redistributable.
 set(CMAKE_MSVC_RUNTIME_LIBRARY MultiThreaded)
 
+# ---- Temporary runtime in freestanding C (D58) ----
+# Compiled with the clang of the LLVM archive, without the C library, and embedded
+# in cromo.exe as a byte array.
+set(CROMO_CLANG "${CROMO_LLVM_ROOT}/bin/clang.exe")
+set(CROMO_LLVM_LIB "${CROMO_LLVM_ROOT}/bin/llvm-lib.exe")
+set(CROMO_RT_DIR "${CMAKE_BINARY_DIR}/runtime")
+set(CROMO_RT_FLAGS --target=x86_64-pc-windows-msvc -ffreestanding -fno-builtin -nostdlib -O2
+    -fno-stack-protector -mno-stack-arg-probe -Wall -Wextra)
+file(MAKE_DIRECTORY "${CROMO_RT_DIR}")
+
+add_custom_command(
+  OUTPUT "${CROMO_RT_DIR}/cromo_rt.obj"
+  COMMAND "${CROMO_CLANG}" ${CROMO_RT_FLAGS} -c "${CMAKE_SOURCE_DIR}/runtime/cromo_rt.c" -o "${CROMO_RT_DIR}/cromo_rt.obj"
+  DEPENDS runtime/cromo_rt.c
+  COMMENT "Compiling the Cromo runtime")
+add_custom_command(
+  OUTPUT "${CROMO_RT_DIR}/mem_x64.obj"
+  COMMAND "${CROMO_CLANG}" --target=x86_64-pc-windows-msvc -c "${CMAKE_SOURCE_DIR}/runtime/mem_x64.S" -o "${CROMO_RT_DIR}/mem_x64.obj"
+  DEPENDS runtime/mem_x64.S
+  COMMENT "Assembling the Cromo runtime")
+add_custom_command(
+  OUTPUT "${CROMO_RT_DIR}/cromo_rt.lib"
+  COMMAND "${CROMO_LLVM_LIB}" /nologo "/out:${CROMO_RT_DIR}/cromo_rt.lib" "${CROMO_RT_DIR}/cromo_rt.obj" "${CROMO_RT_DIR}/mem_x64.obj"
+  DEPENDS "${CROMO_RT_DIR}/cromo_rt.obj" "${CROMO_RT_DIR}/mem_x64.obj"
+  COMMENT "Archiving the Cromo runtime")
+add_custom_command(
+  OUTPUT "${CROMO_RT_DIR}/runtime_blob.inc"
+  COMMAND "${CMAKE_COMMAND}" "-DINPUT=${CROMO_RT_DIR}/cromo_rt.lib" "-DOUTPUT=${CROMO_RT_DIR}/runtime_blob.inc"
+          -P "${CMAKE_SOURCE_DIR}/cmake/embed.cmake"
+  DEPENDS "${CROMO_RT_DIR}/cromo_rt.lib" cmake/embed.cmake
+  COMMENT "Embedding the Cromo runtime")
+
 add_executable(cromo
   src/main.cpp
   src/diagnostics.cpp
   src/lexer.cpp
   src/parser.cpp
+  src/types.cpp
   src/sema.cpp
   src/codegen.cpp
   src/backend.cpp
   src/windows_sdk.cpp
+  src/runtime_blob.cpp
+  "${CROMO_RT_DIR}/runtime_blob.inc"
 )
 
+target_include_directories(cromo PRIVATE "${CROMO_RT_DIR}")
 target_include_directories(cromo SYSTEM PRIVATE ${LLVM_INCLUDE_DIRS} ${LLD_INCLUDE_DIRS})
 separate_arguments(CROMO_LLVM_DEFINITIONS NATIVE_COMMAND "${LLVM_DEFINITIONS}")
 target_compile_definitions(cromo PRIVATE ${CROMO_LLVM_DEFINITIONS})

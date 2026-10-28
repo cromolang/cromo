@@ -1,0 +1,8 @@
+// expect-error: the condition must be a bool, found i32
+i32 main() {
+    i32 n = 1
+    if (n) {
+        ret 1
+    }
+    ret 0
+}

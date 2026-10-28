@@ -1,0 +1,11 @@
+// expect-output: 0 0 false 0 0
+i32 main() {
+    // without a value, a variable takes its default (D31)
+    i32 n
+    f64 x
+    bool b
+    char c
+    u64 big
+    println("{} {} {} {} {}", n, x, b, c, big)
+    ret 0
+}

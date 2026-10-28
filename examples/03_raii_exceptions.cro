@@ -28,7 +28,7 @@ struct File {
 }
 
 string firstLine(string path) {
-    var f = File(path)
+    File f = File(path)
     ret f.readLine()
 }                                        // f is closed here, even if readLine throws
 

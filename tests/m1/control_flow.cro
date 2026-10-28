@@ -1,0 +1,57 @@
+// expect-output: negative zero positive
+// expect-output: 1 2 3
+// expect-output: 64
+// expect-output: 0:0 1:0 1:1 2:0 2:1 2:2
+void classify(i32 x) {
+    if (x < 0) {
+        print("negative")
+    }
+    else if (x == 0)
+    {
+        print("zero")
+    } else {
+        print("positive")
+    }
+}
+
+i32 main() {
+    classify(-5)
+    print(" ")
+    classify(0)
+    print(" ")
+    classify(7)
+    println("")
+
+    // infinite loop, left with break
+    i32 count = 0
+    for {
+        count++
+        if (count > 3) {
+            break
+        }
+        print("{}", count)
+        if (count < 3) {
+            print(" ")
+        }
+    }
+    println("")
+
+    // condition only, instead of while
+    i32 n = 1
+    for (n < 50) {
+        n *= 2
+    }
+    println("{}", n)
+
+    // nested classic loops
+    for (i32 i = 0; i < 3; i++) {
+        for (i32 j = 0; j <= i; j++) {
+            print("{}:{}", i, j)
+            if (i != 2 || j != 2) {
+                print(" ")
+            }
+        }
+    }
+    println("")
+    ret 0
+}

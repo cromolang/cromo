@@ -1,0 +1,7 @@
+// expect-error: cannot mix i32 and u32
+i32 main() {
+    i32 a = 1
+    u32 b = 2
+    i64 c = a + b
+    ret 0
+}

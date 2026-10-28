@@ -1,6 +1,7 @@
 #include "backend.h"
 
 #include "codegen.h"
+#include "runtime_blob.h"
 #include "windows_sdk.h"
 
 #include <llvm/IR/LLVMContext.h>
@@ -80,7 +81,19 @@ bool emitObject(llvm::Module& module, llvm::TargetMachine& machine, const std::s
     return true;
 }
 
-bool link(const std::string& objectPath, const std::string& outputPath, std::string& error) {
+bool writeFile(const std::string& path, std::string_view data, std::string& error) {
+    std::error_code ec;
+    llvm::raw_fd_ostream out(path, ec, llvm::sys::fs::OF_None);
+    if (ec) {
+        error = "cannot write " + path + ": " + ec.message();
+        return false;
+    }
+    out.write(data.data(), data.size());
+    return true;
+}
+
+bool link(const std::string& objectPath, const std::string& runtimePath, const std::string& outputPath,
+          std::string& error) {
     std::string sdkLibDir = findWindowsSdkLibDir();
     if (sdkLibDir.empty()) {
         error = "Windows SDK not found: kernel32.lib is needed to link the executable";
@@ -98,6 +111,7 @@ bool link(const std::string& objectPath, const std::string& outputPath, std::str
         "/nodefaultlib",
         "/libpath:" + sdkLibDir,
         objectPath,
+        runtimePath,
         "kernel32.lib",
     };
     std::vector<const char*> argv;
@@ -165,9 +179,12 @@ bool buildExecutable(const std::string& irText, const std::string& moduleName, c
     optimize(*module, *machine, options.optLevel);
 
     std::string objectPath = options.outputPath + ".obj";
+    std::string runtimePath = options.outputPath + ".rt.lib";
     if (!emitObject(*module, *machine, objectPath, error)) return false;
+    if (!writeFile(runtimePath, runtimeLibrary(), error)) return false;
 
-    bool linked = link(objectPath, options.outputPath, error);
+    bool linked = link(objectPath, runtimePath, options.outputPath, error);
+    llvm::sys::fs::remove(runtimePath);
     if (!options.keepObject) llvm::sys::fs::remove(objectPath);
     return linked;
 }

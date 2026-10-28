@@ -22,7 +22,7 @@ const std::unordered_map<std::string, TokenKind>& keywords() {
         {"struct", TokenKind::KwStruct},     {"switch", TokenKind::KwSwitch},
         {"throw", TokenKind::KwThrow},       {"true", TokenKind::KwTrue},
         {"try", TokenKind::KwTry},           {"unsafe", TokenKind::KwUnsafe},
-        {"var", TokenKind::KwVar},           {"void", TokenKind::KwVoid},
+        {"void", TokenKind::KwVoid},
     };
     return table;
 }

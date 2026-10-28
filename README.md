@@ -12,7 +12,7 @@ The name comes from chromium (*cromo* in Italian), the element that makes steel 
 
 ## Status
 
-**Milestone M0 completed.** The bootstrap compiler in C++ (`src/`) compiles minimal programs such as `i32 main() { ret 42 }` into Windows executables with no C runtime. The design choices are in the documents under `docs/` and in the examples under `examples/`, which the compiler cannot compile yet.
+**Milestones M0 and M1 completed.** The bootstrap compiler in C++ (`src/`) compiles programs with numbers, `bool`, variables, `if`/`for`, functions and `println` into Windows executables with no C runtime. Structs, ownership, lists and strings come with the next milestones (see [docs/compiler.md](docs/compiler.md)). The design choices are in the documents under `docs/`; of the examples under `examples/`, only `02_loops.cro` can be compiled for now.
 
 ## Building and trying it
 
@@ -23,11 +23,12 @@ Requirements, on Windows x64:
 ```powershell
 powershell -ExecutionPolicy Bypass -File build.ps1               # builds build\cromo.exe
 powershell -ExecutionPolicy Bypass -File tests\run-tests.ps1     # runs the tests
-build\cromo.exe tests\m0\ret42.cro -o ret42.exe                  # compiles a program
-build\cromo.exe tests\m0\ret42.cro --emit-ir                     # shows the LLVM IR
+build\cromo.exe examples\02_loops.cro -o loops.exe               # compiles a program (debug, with checks)
+build\cromo.exe examples\02_loops.cro --release -o loops.exe     # release: integers wrap around
+build\cromo.exe examples\02_loops.cro --emit-ir                  # shows the LLVM IR
 ```
 
-On the first build vcpkg downloads and builds zlib, zstd and libxml2, which the static LLVM libraries need.
+On the first build vcpkg downloads and builds zlib, zstd and libxml2, which the static LLVM libraries need. The runtime in `runtime/` is compiled with the clang of the LLVM archive and embedded in `cromo.exe`.
 
 ## Documents
 
@@ -60,7 +61,7 @@ struct File {
 }
 
 i32 main() {
-    var f = File("data.txt")
+    File f = File("data.txt")
     // ... use the file ...
     ret 0
 }                              // f goes out of scope: the file is closed

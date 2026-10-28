@@ -1,0 +1,7 @@
+// expect-exit: 101
+// expect-stderr: panic: integer overflow at
+i32 main() {
+    i32 m = -2147483648
+    i32 d = -1
+    ret m / d
+}

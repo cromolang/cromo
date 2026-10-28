@@ -1,0 +1,5 @@
+// expect-error: 'break' can only be used inside a 'for'
+i32 main() {
+    break
+    ret 0
+}

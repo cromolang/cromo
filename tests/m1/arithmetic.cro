@@ -1,0 +1,21 @@
+// expect-output: 14 20 2 1 -2 -1
+// expect-output: 3 -3 -3 3
+// expect-output: 2.5 -1.5 0.1
+i32 main() {
+    i32 a = 2 + 3 * 4
+    i32 b = (2 + 3) * 4
+    i32 c = 7 / 3
+    i32 d = 7 % 3
+    i32 e = -7 / 3            // division truncates toward zero (D60)
+    i32 f = -7 % 3            // the remainder has the sign of the dividend
+    println("{} {} {} {} {} {}", a, b, c, d, e, f)
+
+    i32 x = 7
+    println("{} {} {} {}", x / 2, -x / 2, x / -2, -x / -2)
+
+    f64 g = 5.0 / 2.0
+    f64 h = 1.5 - 3.0
+    f32 i = 0.1
+    println("{} {} {}", g, h, i)
+    ret 0
+}

@@ -1,0 +1,12 @@
+// expect-exit: 101
+// expect-output: before
+// expect-stderr: panic: integer overflow at
+// expect-stderr: overflow_debug.cro:9:5
+i32 main() {
+    i8 x = 127
+    println("before")
+    // in debug the overflow stops the program (D30, D57)
+    x++
+    println("after {}", x)
+    ret 0
+}

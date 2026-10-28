@@ -1,0 +1,8 @@
+// expect-error: 'x' is const and cannot be modified
+// expect-error: a const variable must have a value
+i32 main() {
+    const i32 x = 1
+    x = 2
+    const i32 y
+    ret 0
+}

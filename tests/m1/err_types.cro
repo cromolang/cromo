@@ -1,0 +1,24 @@
+// expect-error: cannot negate an unsigned value (u32)
+// expect-error: '%' only works on integers
+// expect-error: a value of type i64 cannot be used as i32 without an explicit conversion
+// expect-error: value 200 is out of range for i8
+// expect-error: this decimal literal cannot be used as i32
+// expect-error: 'twice' takes 1 argument, but 2 were given
+// expect-error: cannot convert bool to i32
+i32 twice(i32 x) {
+    ret x * 2
+}
+
+i32 main() {
+    u32 a = 1
+    u32 b = -a
+    f64 c = 5.0 % 2.0
+    i64 big = 1
+    i32 small = big
+    i8 d = 200
+    i32 e = 1.5
+    i32 f = twice(1, 2)
+    bool yes = true
+    i32 g = i32(yes)
+    ret 0
+}

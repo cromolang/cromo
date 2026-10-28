@@ -1,0 +1,6 @@
+// expect-exit: 101
+// expect-stderr: panic: floating-point value out of range for i32 at
+i32 main() {
+    f64 huge = 3e10
+    ret i32(huge)
+}

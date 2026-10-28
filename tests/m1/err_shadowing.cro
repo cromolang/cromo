@@ -1,0 +1,7 @@
+// expect-error: a variable named 'x' is already visible here
+i32 main() {
+    i32 x = 1
+    for (i32 x = 0; x < 3; x++) {
+    }
+    ret x
+}

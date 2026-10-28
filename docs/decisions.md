@@ -123,10 +123,10 @@ Consequences:
 
 ### D20. Syntax confirmed by the examples
 *2026-10-28.* The examples in `examples/` confirmed:
-- **Declarations with the type before the name**, as in C/C++/C#: `i64 a = 0`. With `var` the type is inferred: `var students = list<Student>()`.
+- **Declarations with the type before the name**, as in C/C++/C#: `i64 a = 0`. (`var`, which inferred the type, was removed by D54.)
   - Without pointers, C's complicated declarators do not exist.
   - The ambiguity of `<` in generics (`a < b > c`) is resolved as in C#.
-  - There is no C++ *most vexing parse*: `File f("x")` is not valid, you write `var f = File("x")`.
+  - There is no C++ *most vexing parse*: `File f("x")` is not valid, you write `File f = File("x")`.
 - **Structs as in C++:** fields, constructor `Name(...)`, destructor `~Name()` and methods inside the struct.
 - **Exceptions:** `throw` to throw and `catch (Type name)` to catch.
 - **`break` and `continue`**, without labels.
@@ -192,7 +192,7 @@ struct Student {
 
 Rules:
 - **Independent of parameter passing:** `const` concerns the object on which the method is called, not its parameters.
-- **What can be called:** on a read-only object (a parameter passed without `ref`, the element of a `for (x in items)`, a `const` variable) only `const` methods can be called. On one's own variable or on a `ref` parameter, all methods.
+- **What can be called:** on a read-only object (a parameter passed without `ref`, the element of a `for (T x in items)`, a `const` variable) only `const` methods can be called. On one's own variable or on a `ref` parameter, all methods.
 - **The call does not change:** calling a method that modifies does not require `ref`, as in `students.add(x)`.
 - **`const` is deep:** without pointers, everything the object contains belongs to it. A `const` method cannot modify even the strings and lists in the fields. In C++, by contrast, constness does not propagate through pointers.
 
@@ -200,8 +200,8 @@ Rules:
 *2026-10-28.* Besides the three forms of D15, `for` can iterate over the elements of a list:
 
 ```cromo
-for (s in students) { ... }        // s is read-only
-for (ref s in students) { ... }    // s is modifiable: the changes remain in the list
+for (Student s in students) { ... }        // s is read-only
+for (ref Student s in students) { ... }    // s is modifiable: the changes remain in the list
 ```
 
 - While the loop is running the list cannot change length (exclusivity, D22).
@@ -211,7 +211,7 @@ for (ref s in students) { ... }    // s is modifiable: the changes remain in the
 *2026-10-28.* Variables are modifiable by default, as in C/C++. `const` makes them immutable: the value is given at initialization and can no longer change.
 
 ```cromo
-var count = 0                // modifiable
+i32 count = 0                // modifiable
 const f64 PI = 3.14159       // immutable
 ```
 
@@ -232,7 +232,7 @@ Consequences:
 - To link against `kernel32.dll` without the Windows SDK, `cromo` generates the import libraries itself from the list of functions used, as Zig does.
 - The compiler is written in C++ and uses LLVM and LLD directly (D44).
 
-Replaces the old proposal P2 ("textual IR and Clang as driver").
+Replaces an earlier proposal: textual IR with Clang as the driver.
 
 ### D29. Source file extension: `.cro`
 *2026-10-28.* Files containing Cromo code have the `.cro` extension.
@@ -344,7 +344,7 @@ i64 total = price * quantity +
 To say "not found" you use the tools that already exist: a conventional value (for example `-1` as an index), an exception, or a `bool` return value with the result in a `ref` parameter, like C#'s `TryParse`.
 
 ### D48. Default value of structs
-*2026-10-28.* The default value of a struct is made of the default values of all its fields. A declaration without a value (`Student s`) does not call any constructor: to call one you write `var s = Student("Anna")`.
+*2026-10-28.* The default value of a struct is made of the default values of all its fields. A declaration without a value (`Student s`) does not call any constructor: to call one you write `Student s = Student("Anna")`.
 
 Consequence: as in Go, a type must be designed so that its default value is also sensible, and the destructor must be able to handle it. For example, the destructor of `File` must not close a descriptor that was never opened: this is why a field can declare its initial value (D51).
 
@@ -409,11 +409,86 @@ T max<T : Comparable>(T a, T b) {
 - **LLVM and LLD** with static libraries and headers: from the official prebuilt archive for Windows if it contains them for the chosen version, otherwise built from source. The version is the latest stable one at the time of starting, and then it stays pinned.
 - **The IR is generated as text**, which LLVM then parses in memory. When the compiler is written in Cromo, the generator will be translated almost line by line, and at that point a few functions of the LLVM C API will be enough (D42). The time to parse the text is negligible, and the IR can always be inspected.
 
+### D54. No type inference: the type is always written
+*2026-10-28.* `var` is removed (revises D20). Every declaration writes its type, including the variable of a `for` over elements:
+
+```cromo
+i32 n = 5
+Student anna = Student("Anna")
+for (Student s in students) { ... }
+for (ref Student s in students) { ... }
+```
+
+### D55. Literals take the type from their context
+*2026-10-28.* A literal has no type of its own: it takes the type required by its context (the declared type, the parameter, the other operand). An integer literal must fit in that type; an integer literal can also be used where a floating-point type is required.
+
+```cromo
+i64 big = 5          // 5 is an i64
+f32 x = 1.5          // 1.5 is an f32
+if (n > 0) { ... }   // 0 takes the type of n
+```
+
+### D56. Mixing signed and unsigned integers is an error
+*2026-10-28.* An operation between a signed and an unsigned integer (`i32 + u32`) is a compile error: one of the two operands must be converted explicitly, for example `i64(a) + i64(b)`. Neither type contains the other without loss (D33).
+
+### D57. Debug by default, `--release` on request
+*2026-10-28.* `cromo prog.cro` compiles in debug mode, with the overflow checks of D30. `--release` removes them, and integers wrap around. The optimization level (`-O0` … `-O3`) is independent of the mode.
+
+### D58. Temporary runtime in C until M5
+*2026-10-28.* Printing and panics need a runtime, but the `unsafe` dialect of D37 only arrives in M5. Until then the runtime is written in **freestanding C**, without the C library, and compiled with the clang of the LLVM archive. `memcpy`, `memset`, `memmove`, `memcmp` and `__chkstk` are written in assembly (D19). The runtime is embedded inside `cromo.exe`, which stays a single file (D28). In M5 it is rewritten in Cromo `unsafe`.
+
+### D59. Operators of M1
+*2026-10-28.*
+- Arithmetic: `+ - * / %`; comparisons: `== != < <= > >=`; logic: `&& || !`, evaluated left to right with short-circuit; unary minus.
+- Assignment `=` and compound assignments `+= -= *= /= %=`.
+- **Assignment is a statement, not an expression**, as in Go: `if (x = 5)` and `a = b = c` are not valid.
+- `-x` on an unsigned integer is a compile error.
+- `%` only works on integers: on floating-point numbers it would need `fmod` from the C library.
+- Bitwise operators (`& | ^ ~ << >>`) are still to be decided.
+
+### D60. Integer division
+*2026-10-28.*
+It truncates toward zero, and `%` has the sign of the dividend, as in C. Dividing by zero terminates the program (D36). `MIN / -1` is an overflow (D30): a panic in debug, `MIN` in release.
+
+### D61. Floating-point numbers and explicit conversions
+*2026-10-28.*
+- Floating-point numbers follow IEEE 754: dividing by zero gives `inf` or `nan`, without a panic.
+- **Explicit conversions between integers** (`i8(x)`) keep the low bits when the value does not fit, as in C, Go and Rust: the programmer asked for it explicitly.
+- **From floating-point to integer** (`i32(x)`) the value is truncated toward zero. If it does not fit, or it is `nan`: a panic in debug, the nearest value in release.
+- `bool` cannot be converted to or from numbers.
+
+### D62. Panic
+*2026-10-28.*
+A panic writes `panic: <reason> at <file>:<line>:<column>` on stderr and terminates the program with exit code 101, as in Rust.
+
+### D63. Printing numbers
+*2026-10-28.*
+- `{}` on an integer prints it in decimal. Since `char` is a synonym of `u8` (D46), `{}` on a `char` prints the number, and `{:c}` prints the character.
+- `{}` on a floating-point number prints the shortest representation that reads back to the same value, as `std::format` does (`0.1`, `100`, `1e+20`).
+- `{}` on a `bool` prints `true` or `false`.
+
+### D64. Literals without a context
+*2026-10-28.*
+A literal whose type cannot be deduced from the context, for example `println("{}", 5)`, is a compile error (D54, D55): you write `println("{}", i32(5))`.
+
+### D65. Strings in M1
+*2026-10-28.*
+Strings arrive in M5. In M1 a string literal can only be used as an argument of `print`, `println`, `eprint` and `eprintln`.
+
+### D66. No shadowing of local variables
+*2026-10-28.*
+A local variable cannot have the same name as another local variable or parameter that is still visible, as in C#.
+
+### D67. Terminating statements (D47)
+*2026-10-28.*
+A non-`void` function must end with a terminating statement: a `ret`, an `if` with an `else` whose branches all terminate, or an infinite `for` without a `break`, as in Go. Code after `ret`, `break` or `continue` gets a warning, because it is unreachable.
+
 ---
 
 ## Open
 
 There are currently no open questions. Still to be defined later, when needed:
+- bitwise operators (D59);
 - the enum syntax (D34), before milestone M6;
 - the `extern` syntax (D42), before milestone M7;
 - the symbol naming scheme for modules and generics (D39, D50);

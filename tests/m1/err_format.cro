@@ -1,0 +1,14 @@
+// expect-error: the format string needs at least 2 arguments, but 1 were given
+// expect-error: this argument is not used by the format string
+// expect-error: a precision is not allowed for integers
+// expect-error: 'f' is not a format for integers
+// expect-error: single '}' in the format string
+i32 main() {
+    i32 n = 1
+    println("{} {}", n)
+    println("{}", n, n)
+    println("{:.2}", n)
+    println("{:f}", n)
+    println("}", n)
+    ret 0
+}

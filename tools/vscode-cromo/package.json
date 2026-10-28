@@ -2,7 +2,7 @@
   "name": "cromo-lang",
   "displayName": "Cromo",
   "description": "Syntax highlighting for the Cromo language",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "publisher": "cromo",
   "license": "UNLICENSED",
   "engines": {

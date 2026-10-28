@@ -1,0 +1,6 @@
+// expect-warning: unreachable code
+// expect-exit: 3
+i32 main() {
+    ret 3
+    println("never")
+}

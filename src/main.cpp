@@ -22,9 +22,10 @@ namespace {
 
 void printUsage() {
     std::fputs(
-        "usage: cromo <source.cro> [-o <executable>] [-O0|-O1|-O2|-O3] [--emit-ir]\n"
+        "usage: cromo <source.cro> [-o <executable>] [--release] [-O0|-O1|-O2|-O3] [--emit-ir]\n"
         "\n"
         "  -o <file>    name of the executable (default: the source name with .exe)\n"
+        "  --release    no overflow checks: integers wrap around (default: debug, with checks)\n"
         "  -O<n>        optimization level (default: -O2)\n"
         "  --emit-ir    print the generated LLVM IR instead of producing the executable\n",
         stderr);
@@ -47,12 +48,15 @@ int main(int argc, char** argv) {
 
     std::string inputPath;
     cromo::BackendOptions options;
+    cromo::CodegenOptions codegen;
     bool emitIr = false;
 
     for (int i = 1; i < argc; ++i) {
         const char* arg = argv[i];
         if (std::strcmp(arg, "-o") == 0 && i + 1 < argc) {
             options.outputPath = argv[++i];
+        } else if (std::strcmp(arg, "--release") == 0) {
+            codegen.release = true;  // D57
         } else if (std::strcmp(arg, "--emit-ir") == 0) {
             emitIr = true;
         } else if (std::strlen(arg) == 3 && arg[0] == '-' && arg[1] == 'O' && arg[2] >= '0' && arg[2] <= '3') {
@@ -88,7 +92,8 @@ int main(int argc, char** argv) {
     if (diag.hasErrors() || !cromo::check(module, diag)) return 1;
 
     std::string sourceName = std::filesystem::path(inputPath).filename().string();
-    std::string ir = cromo::generateIR(module, sourceName);
+    codegen.sourcePath = inputPath;
+    std::string ir = cromo::generateIR(module, codegen);
     if (emitIr) {
         std::fwrite(ir.data(), 1, ir.size(), stdout);
         return 0;
