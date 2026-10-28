@@ -1,0 +1,95 @@
+// expect-output: found at 2
+// expect-output: 5 7
+// expect-output: 7 5
+// expect-output: 15
+// expect-output: 2 10
+// expect-output: create 1
+// expect-output: create 9
+// expect-output: destroy 1
+// expect-output: 9
+// expect-output: destroy 9
+// A ref parameter modifies the caller's object; the word is repeated in the call (D22).
+struct Noisy {
+    i32 id
+
+    Noisy(i32 n) {
+        id = n
+        println("create {}", id)
+    }
+
+    ~Noisy() {
+        println("destroy {}", id)
+    }
+}
+
+bool find(i64 target, ref i64 pos) {
+    for (i64 i = 0; i < 5; i++) {
+        if (i * 2 == target) {
+            pos = i
+            ret true
+        }
+    }
+    ret false
+}
+
+void swap(ref i32 a, ref i32 b) {
+    i32 t = a
+    a = b
+    b = t
+}
+
+struct Point {
+    i32 x
+    i32 y
+}
+
+void grow(ref Point p, i32 by) {
+    p.x += by
+    p.y += by
+}
+
+struct Counter {
+    i32 count
+
+    void add(i32 n) {
+        count += n
+    }
+}
+
+// All the methods can be called on a ref parameter (D24).
+void addTwice(ref Counter c) {
+    c.add(5)
+    c.add(5)
+}
+
+void replace(ref Noisy n) {
+    n = Noisy(9)  // the old value is destroyed
+}
+
+i32 main() {
+    i64 pos
+    if (find(4, ref pos)) {
+        println("found at {}", pos)
+    }
+    i32 a = 5
+    i32 b = 7
+    println("{} {}", a, b)
+    swap(ref a, ref b)
+    println("{} {}", a, b)
+
+    Counter c
+    c.count = 5
+    addTwice(ref c)
+    println("{}", c.count)
+
+    Point p
+    grow(ref p, 2)
+    p.x = 10
+    swap(ref p.x, ref p.y)  // two different fields: no overlap
+    println("{} {}", p.x, p.y)
+
+    Noisy n = Noisy(1)
+    replace(ref n)
+    println("{}", n.id)
+    ret 0
+}

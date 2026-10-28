@@ -1,0 +1,58 @@
+// expect-error: parameter 'p' is read-only: it belongs to the caller and cannot be moved (D82)
+// expect-error: cannot move 'h.f': parameter 'h' cannot be modified
+// expect-error: 'move' is not needed before a new object: it is moved anyway (D23)
+// expect-error: parameter 'f' is 'move': write 'move d' (D22)
+// expect-error: values of type File are not copied implicitly (D23): write 'move d'
+// expect-error: 'move' is written only in an initialization, an assignment, the argument of a 'move' parameter or after 'ret' (D82)
+// expect-error: parameter 'n' is 'ref': write 'ref' before the argument (D22)
+// expect-error: parameter 'n' is read-only: remove 'ref' (D22)
+// expect-error: cannot pass 'k' with 'ref': 'k' is const and cannot be modified (D26)
+// expect-error: parameter 'n' is 'ref i64': the argument must have exactly that type, found i32 (D82)
+// expect-error: only a variable or a field can be passed with 'ref' (D82)
+// expect-error: 'ref' is written only in the argument of a 'ref' parameter (D22)
+struct File {
+    i32 fd
+
+    ~File() {
+    }
+}
+
+struct Holder {
+    File f
+}
+
+void consume(move File f) {
+}
+
+void bad(File p) {
+    File q = move p
+}
+
+void takeField(Holder h) {
+    File g = move h.f
+}
+
+void touch(ref i64 n) {
+}
+
+void look(i64 n) {
+}
+
+i32 main() {
+    File e = move File()
+    File d = File()
+    consume(d)
+    File g = d
+    i32 x = 1
+    println("{}", move x)
+    i64 y = 2
+    touch(y)
+    look(ref y)
+    const i64 k = 3
+    touch(ref k)
+    i32 small = 4
+    touch(ref small)
+    touch(ref i64(5))
+    i64 z = ref y
+    ret 0
+}

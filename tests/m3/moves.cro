@@ -1,0 +1,75 @@
+// expect-output: create 1
+// expect-output: b 1
+// expect-output: create 2
+// expect-output: a 2
+// expect-output: create 3
+// expect-output: destroy 0
+// expect-output: took 3 left 0
+// expect-output: create 4
+// expect-output: stole 4
+// expect-output: destroy 4
+// expect-output: s 0
+// expect-output: create 10
+// expect-output: destroy 1
+// expect-output: create 11
+// expect-output: destroy 11
+// expect-output: b 10
+// expect-output: destroy 0
+// expect-output: destroy 3
+// expect-output: destroy 0
+// expect-output: destroy 10
+// expect-output: destroy 2
+struct Noisy {
+    i32 id
+
+    Noisy(i32 n) {
+        id = n
+        println("create {}", id)
+    }
+
+    ~Noisy() {
+        println("destroy {}", id)
+    }
+}
+
+struct Holder {
+    Noisy item
+
+    // The field keeps the default value (D78).
+    Noisy take() {
+        ret move item
+    }
+}
+
+// The caller finds the default value in its object (D78).
+void steal(ref Noisy n) {
+    Noisy mine = move n
+    println("stole {}", mine.id)
+}
+
+i32 main() {
+    Noisy a = Noisy(1)
+    Noisy b = move a
+    println("b {}", b.id)
+    a = Noisy(2)  // usable again (D81); there is no old value to destroy
+    println("a {}", a.id)
+
+    Holder h
+    h.item = Noisy(3)
+    Noisy t = h.take()
+    println("took {} left {}", t.id, h.item.id)
+
+    Noisy s = Noisy(4)
+    steal(ref s)
+    println("s {}", s.id)
+
+    // x is destroyed at the end of the iteration only when it was not moved (D77).
+    for (i32 i = 0; i < 2; i++) {
+        Noisy x = Noisy(10 + i)
+        if (i == 0) {
+            b = move x
+        }
+    }
+    println("b {}", b.id)
+    ret 0
+}

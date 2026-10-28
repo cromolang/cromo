@@ -1,0 +1,45 @@
+// expect-error: 'a' overlaps 'a' in the same call, and the call can modify both (D22)
+// expect-error: 'h.file' overlaps 'h' in the same call, which the call can modify, and values of type File are not copied implicitly (D79)
+// expect-error: 'p.x' overlaps 'p' in the same call, and the call can modify both (D22)
+// expect-error: 'p.x' overlaps 'p' in the same call, which is the object of the method (D22)
+struct File {
+    i32 fd
+
+    ~File() {
+    }
+}
+
+struct Holder {
+    File file
+
+    void use(File f) {
+    }
+}
+
+struct Point {
+    i32 x
+    i32 y
+
+    i32 peek(ref i32 v) const {
+        v++
+        ret x
+    }
+}
+
+void swap(ref i32 a, ref i32 b) {
+}
+
+void both(ref Point p, ref i32 v) {
+}
+
+i32 main() {
+    i32 a = 1
+    swap(ref a, ref a)
+    Holder h
+    h.use(h.file)
+    Point p
+    both(ref p, ref p.x)
+    i32 r = p.peek(ref p.x)
+    swap(ref p.x, ref p.y)
+    ret 0
+}

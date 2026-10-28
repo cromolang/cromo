@@ -2,6 +2,7 @@
 #include "codegen.h"
 #include "diagnostics.h"
 #include "lexer.h"
+#include "ownership.h"
 #include "parser.h"
 #include "sema.h"
 
@@ -89,7 +90,7 @@ int main(int argc, char** argv) {
     cromo::Diagnostics diag(file);
     std::vector<cromo::Token> tokens = cromo::tokenize(file, diag);
     cromo::Module module = cromo::parse(tokens, diag);
-    if (diag.hasErrors() || !cromo::check(module, diag)) return 1;
+    if (diag.hasErrors() || !cromo::check(module, diag) || !cromo::checkMoves(module, diag)) return 1;
 
     std::string sourceName = std::filesystem::path(inputPath).filename().string();
     codegen.sourcePath = inputPath;

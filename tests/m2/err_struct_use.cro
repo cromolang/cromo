@@ -1,5 +1,5 @@
 // expect-error: Point has no constructor: Point() gives its default value (D71)
-// expect-error: a File cannot be copied, because it needs destruction (D75)
+// expect-error: values of type File are not copied implicitly (D23)
 // expect-error: a Point cannot be printed yet (D76)
 // expect-error: '==' does not work on structs yet (D76)
 // expect-error: 'x' is a field of Point: choose another name (D70)

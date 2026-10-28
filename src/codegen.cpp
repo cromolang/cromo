@@ -57,6 +57,9 @@ std::string floatConstant(double value, int bits) {
 // Structs larger than 16 bytes are passed and returned through a pointer.
 bool byPointer(Type type) { return type.isStruct() && sizeOf(type) > 16; }
 
+// A `ref` parameter is always an address; the others are when they are large (D22).
+bool byAddress(const Param& param, Type type) { return param.mode == ParamMode::Ref || byPointer(type); }
+
 std::string structName(const StructDecl& decl) { return "%struct." + decl.name; }
 
 // Symbols of the members of a struct. The double dot cannot clash with a method.
@@ -130,6 +133,7 @@ public:
             for (const FunctionDecl& member : decl.members) out << generateFunction(member);
             // Without a destructor of its own, a struct still destroys its fields.
             if (decl.needsDestruction && !decl.destructor) out << generateFieldsDrop(decl);
+            if (decl.generatedCopy) out << generateCopy(decl);
         }
         const FunctionDecl* mainFunction = nullptr;
         for (const FunctionDecl& function : module.functions) {
@@ -262,7 +266,7 @@ private:
 
     // ---- Functions ----
 
-    std::string generateFunction(const FunctionDecl& function) {
+    void startFunction(const FunctionDecl* function) {
         body_.str("");
         body_.clear();
         allocas_.str("");
@@ -272,38 +276,73 @@ private:
         nextSlot_ = 0;
         terminated_ = false;
         current_ = "entry";
-        function_ = &function;
+        function_ = function;
         scopes_.clear();
         temporaries_.clear();
         loops_.clear();
-        addresses_.assign(function.variables.size(), "");
+        addresses_.assign(function ? function->variables.size() : 0, "");
+        flags_.assign(addresses_.size(), "");
         dropFields_.clear();
+    }
 
+    std::string finishFunction(const std::string& returnType, const std::string& symbol, const std::vector<std::string>& params) {
+        std::ostringstream out;
+        out << "define " << returnType << " " << symbol << "(";
+        for (size_t i = 0; i < params.size(); ++i) out << (i ? ", " : "") << params[i];
+        out << ") nounwind {\nentry:\n" << allocas_.str() << body_.str() << "}\n\n";
+        return out.str();
+    }
+
+    std::string generateFunction(const FunctionDecl& function) {
+        startFunction(&function);
+
+        // The exclusivity rules (D22, D79) make every address parameter `noalias`.
         Type ret = function.resolvedReturn;
         std::vector<std::string> params;
         if (byPointer(ret)) params.push_back("ptr noalias sret(" + llvmType(ret) + ") %ret");
-        if (function.owner) params.push_back(std::string("ptr ") + (function.isConst ? "readonly " : "") + "%self");
+        if (function.owner) params.push_back(std::string("ptr noalias ") + (function.isConst ? "readonly " : "") + "%self");
         for (size_t i = 0; i < function.paramTypes.size(); ++i) {
+            const Param& param = function.params[i];
             Type type = function.paramTypes[i];
             std::string arg = "%arg." + std::to_string(i);
-            params.push_back(byPointer(type) ? "ptr readonly " + arg : llvmType(type) + " " + arg);
+            if (byAddress(param, type)) {
+                params.push_back(std::string("ptr noalias ") + (param.mode == ParamMode::Read ? "readonly " : "") + arg);
+            } else {
+                params.push_back(llvmType(type) + " " + arg);
+            }
         }
 
         // Every variable gets a stack slot; mem2reg turns them into registers.
-        // A large struct parameter is used through the pointer it arrives with.
+        // A parameter passed by address is used through the pointer it arrives with.
         for (size_t i = 0; i < function.variables.size(); ++i) {
             const Variable& variable = *function.variables[i];
-            if (i < function.paramTypes.size() && byPointer(variable.type)) {
+            std::string name = "%v" + std::to_string(variable.id) + "." + variable.name;
+            if (variable.needsDropFlag) {
+                flags_[variable.id] = name + ".alive";
+                allocas_ << "  " << flags_[variable.id] << " = alloca i1\n";
+                inst("store i1 " + std::string(variable.kind == VariableKind::MoveParam ? "true" : "false") + ", ptr " +
+                     flags_[variable.id]);
+            }
+            if (i < function.paramTypes.size() && byAddress(function.params[i], variable.type)) {
                 addresses_[variable.id] = "%arg." + std::to_string(i);
                 continue;
             }
-            addresses_[variable.id] = "%v" + std::to_string(variable.id) + "." + variable.name;
-            allocas_ << "  " << addresses_[variable.id] << " = alloca " << llvmType(variable.type) << "\n";
+            addresses_[variable.id] = name;
+            allocas_ << "  " << name << " = alloca " << llvmType(variable.type) << "\n";
         }
         for (size_t i = 0; i < function.paramTypes.size(); ++i) {
-            if (byPointer(function.paramTypes[i])) continue;
+            if (byAddress(function.params[i], function.paramTypes[i])) continue;
             inst("store " + llvmType(function.paramTypes[i]) + " %arg." + std::to_string(i) + ", ptr " +
                  addresses_[function.variables[i]->id]);
+        }
+
+        // The function owns its `move` parameters and destroys them (D22).
+        scopes_.emplace_back();
+        for (size_t i = 0; i < function.paramTypes.size(); ++i) {
+            const Variable& variable = *function.variables[i];
+            if (variable.kind == VariableKind::MoveParam && needsDestruction(variable.type)) {
+                scopes_.back().push_back(LiveObject{addresses_[variable.id], variable.type, &variable});
+            }
         }
 
         if (function.kind == FunctionKind::Constructor) {
@@ -314,6 +353,7 @@ private:
         if (function.kind == FunctionKind::Destructor) dropFields_ = label("drop.fields");
 
         generateBlock(function.body);
+        if (!terminated_) dropScope(scopes_.back());
 
         if (!dropFields_.empty()) {
             // D68: after the body of the destructor, the fields are destroyed.
@@ -323,13 +363,7 @@ private:
         } else if (!terminated_) {
             term(ret.isVoid() || byPointer(ret) ? "ret void" : "unreachable");
         }
-
-        std::string returnType = byPointer(ret) ? "void" : llvmType(ret);
-        std::ostringstream out;
-        out << "define " << returnType << " " << symbolOf(function) << "(";
-        for (size_t i = 0; i < params.size(); ++i) out << (i ? ", " : "") << params[i];
-        out << ") nounwind {\nentry:\n" << allocas_.str() << body_.str() << "}\n\n";
-        return out.str();
+        return finishFunction(byPointer(ret) ? "void" : llvmType(ret), symbolOf(function), params);
     }
 
     void dropFieldsOf(const StructDecl& decl) {
@@ -341,13 +375,38 @@ private:
 
     // `T..drop` of a struct with no destructor whose fields need destruction.
     std::string generateFieldsDrop(const StructDecl& decl) {
-        body_.str("");
-        body_.clear();
-        nextTemp_ = 0;
-        terminated_ = false;
+        startFunction(nullptr);
         dropFieldsOf(decl);
         term("ret void");
-        return "define void " + dropSymbol(decl) + "(ptr %self) nounwind {\nentry:\n" + body_.str() + "}\n\n";
+        return finishFunction("void", dropSymbol(decl), {"ptr noalias %self"});
+    }
+
+    // `copy()` generated by the compiler (D35): the simple fields are copied, the
+    // others with their own copy().
+    std::string generateCopy(const StructDecl& decl) {
+        startFunction(nullptr);
+        Type type = Type::structType(&decl);
+        std::string dest = byPointer(type) ? "%ret" : slot(type);
+        for (size_t i = 0; i < decl.fields.size(); ++i) {
+            Type field = decl.fields[i].resolved;
+            std::string source = fieldAddress("%self", decl, static_cast<int>(i));
+            std::string target = fieldAddress(dest, decl, static_cast<int>(i));
+            if (needsDestruction(field)) {
+                emitCall(*field.structDecl->methods.at("copy"), source, {}, target);
+            } else if (field.isStruct()) {
+                copyStruct(target, source, field);
+            } else {
+                inst("store " + llvmType(field) + " " + load(source, field).ref + ", ptr " + target);
+            }
+        }
+        std::vector<std::string> params = {"ptr noalias readonly %self"};
+        if (byPointer(type)) {
+            params.insert(params.begin(), "ptr noalias sret(" + llvmType(type) + ") %ret");
+            term("ret void");
+            return finishFunction("void", methodSymbol(decl, "copy"), params);
+        }
+        term("ret " + llvmType(type) + " " + load(dest, type).ref);
+        return finishFunction(llvmType(type), methodSymbol(decl, "copy"), params);
     }
 
     std::string entryPoint(const FunctionDecl& mainFunction) {
@@ -372,11 +431,31 @@ private:
         inst("call void " + dropSymbol(*type.structDecl) + "(ptr " + address + ")");
     }
 
+    // Destroys a variable, checking its drop flag if it may have been moved (D77).
+    void dropVariable(const std::string& address, Type type, const Variable* variable) {
+        if (!variable || !variable->needsDropFlag) {
+            drop(address, type);
+            return;
+        }
+        std::string alive = temp();
+        std::string yes = label("drop");
+        std::string done = label("dropped");
+        inst(alive + " = load i1, ptr " + flags_[variable->id]);
+        term("br i1 " + alive + ", label %" + yes + ", label %" + done);
+        block(yes);
+        drop(address, type);
+        block(done);
+    }
+
+    void setAlive(const Variable& variable, bool alive) {
+        if (variable.needsDropFlag) inst(std::string("store i1 ") + (alive ? "true" : "false") + ", ptr " + flags_[variable.id]);
+    }
+
     // Destroys the objects of a scope in reverse order, except `kept` (moved by `ret`).
     void dropScope(const std::vector<LiveObject>& scope, const Variable* kept = nullptr) {
         for (auto object = scope.rbegin(); object != scope.rend(); ++object) {
             if (object->variable && object->variable == kept) continue;
-            drop(object->address, object->type);
+            dropVariable(object->address, object->type, object->variable);
         }
     }
 
@@ -446,6 +525,7 @@ private:
                 inst("store " + llvmType(type) + " " + defaultConstant(type) + ", ptr " + address);
             }
             if (needsDestruction(type)) scopes_.back().push_back(LiveObject{address, type, &variable});
+            setAlive(variable, true);
             return;
         }
         std::string value = decl.init ? generateExpr(*decl.init).ref : defaultConstant(type);
@@ -455,12 +535,16 @@ private:
     void generateAssign(const AssignStmt& assign) {
         Type type = assign.target->type;
         if (type.isStruct()) {
-            // The new value is built apart: it may read the old one (D75).
+            // The new value is built apart: it may read the old one (D75). A moved
+            // variable has no old value to destroy (D81).
             std::string fresh = slot(type);
             generateStructInto(*assign.value, fresh);
             std::string address = addressOf(*assign.target);
-            if (needsDestruction(type)) drop(address, type);
+            const Variable* variable =
+                assign.target->kind == ExprKind::Name ? static_cast<const NameExpr&>(*assign.target).variable : nullptr;
+            if (needsDestruction(type)) dropVariable(address, type, variable);
             copyStruct(address, fresh, type);
+            if (variable) setAlive(*variable, true);
             return;
         }
         Value value = generateExpr(*assign.value);
@@ -598,10 +682,30 @@ private:
             emitCall(*call.function, self, call.args, dest);
             return;
         }
+        case ExprKind::Move: {
+            const auto& move = static_cast<const MoveExpr&>(expr);
+            std::string source = addressOf(*move.operand);
+            copyStruct(dest, source, expr.type);
+            finishMove(move, source);
+            return;
+        }
+        case ExprKind::Copy:
+            copyStruct(dest, addressOf(*static_cast<const CopyExpr&>(expr).operand), expr.type);
+            return;
         default:
-            // A copy of a place: sema allows it only for structs without destruction (D75).
+            // A copy of a place: sema allows it only for simple structs (D23).
             copyStruct(dest, addressOf(expr), expr.type);
             return;
+        }
+    }
+
+    // After its value has been taken, a moved variable is no longer alive (D23),
+    // and a field or a `ref` parameter gets the default value (D78).
+    void finishMove(const MoveExpr& move, const std::string& source) {
+        if (move.moveKind == MoveKind::Variable) {
+            setAlive(*static_cast<const NameExpr&>(*move.operand).variable, false);
+        } else if (move.moveKind == MoveKind::Take) {
+            inst("store " + llvmType(move.type) + " " + defaultConstant(move.type) + ", ptr " + source);
         }
     }
 
@@ -613,7 +717,7 @@ private:
         std::vector<std::string> list;
         if (byPointer(ret)) list.push_back("ptr " + dest);
         if (!self.empty()) list.push_back("ptr " + self);
-        for (size_t i = 0; i < args.size(); ++i) list.push_back(argument(*args[i], function.paramTypes[i]));
+        for (size_t i = 0; i < args.size(); ++i) list.push_back(argument(*args[i], function.params[i], function.paramTypes[i]));
         std::string joined;
         for (size_t i = 0; i < list.size(); ++i) joined += (i ? ", " : "") + list[i];
 
@@ -627,8 +731,25 @@ private:
         return {result, ret};
     }
 
-    // An argument as the callee expects it: large structs by pointer, the rest by value.
-    std::string argument(const Expr& expr, Type type) {
+    // An argument as the callee expects it (D22): `ref` and large structs by
+    // address, the rest by value.
+    std::string argument(const Expr& expr, const Param& param, Type type) {
+        if (param.mode == ParamMode::Ref) return "ptr " + addressOf(*static_cast<const RefExpr&>(expr).operand);
+        if (param.mode == ParamMode::Move && type.isStruct()) {
+            // The callee becomes the owner. A whole variable is handed over where it
+            // is; anything else is built in a slot that nobody else destroys.
+            if (byPointer(type) && expr.kind == ExprKind::Move &&
+                static_cast<const MoveExpr&>(expr).moveKind == MoveKind::Variable) {
+                const auto& move = static_cast<const MoveExpr&>(expr);
+                std::string address = addressOf(*move.operand);
+                finishMove(move, address);
+                return "ptr " + address;
+            }
+            std::string owned = slot(type);
+            generateStructInto(expr, owned);
+            if (byPointer(type)) return "ptr " + owned;
+            return llvmType(type) + " " + load(owned, type).ref;
+        }
         if (byPointer(type)) return "ptr " + addressOf(expr);
         if (type.isStruct()) return llvmType(type) + " " + load(addressOf(expr), type).ref;
         Value value = generateExpr(expr);
@@ -678,6 +799,14 @@ private:
         case ExprKind::Print:
             generatePrint(static_cast<const PrintExpr&>(expr));
             return {"", Type::voidType()};
+        case ExprKind::Move:
+        case ExprKind::Copy:
+            if (expr.type.isStruct()) return load(addressOf(expr), expr.type);
+            // A simple value: moving or copying it is reading it (D80).
+            return generateExpr(expr.kind == ExprKind::Move ? *static_cast<const MoveExpr&>(expr).operand
+                                                            : *static_cast<const CopyExpr&>(expr).operand);
+        case ExprKind::Ref:
+            return generateExpr(*static_cast<const RefExpr&>(expr).operand);
         }
         return {"", Type::error()};
     }
@@ -933,6 +1062,7 @@ private:
     std::set<std::string> intrinsics_;
     const FunctionDecl* function_ = nullptr;
     std::vector<std::string> addresses_;            // by Variable::id
+    std::vector<std::string> flags_;                // drop flags (D77), by Variable::id
     std::vector<std::vector<LiveObject>> scopes_;   // variables to destroy, one list per open block
     std::vector<LiveObject> temporaries_;           // to destroy at the end of the statement
     std::vector<Loop> loops_;

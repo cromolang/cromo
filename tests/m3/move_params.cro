@@ -1,0 +1,81 @@
+// expect-output: create 1
+// expect-output: consume 1
+// expect-output: destroy 1
+// expect-output: create 2
+// expect-output: consume 2
+// expect-output: destroy 2
+// expect-output: create 3
+// expect-output: destroy 0
+// expect-output: consume big 13
+// expect-output: destroy 3
+// expect-output: create 4
+// expect-output: const 4
+// expect-output: destroy 4
+// expect-output: 42 21
+// expect-output: create 5
+// expect-output: got 5
+// expect-output: end
+// expect-output: destroy 5
+// A move parameter belongs to the function, which destroys it (D22).
+struct Noisy {
+    i32 id
+
+    Noisy(i32 n) {
+        id = n
+        println("create {}", id)
+    }
+
+    ~Noisy() {
+        println("destroy {}", id)
+    }
+}
+
+// 24 bytes: passed by address, and the callee takes over the caller's memory.
+struct Big {
+    Noisy n
+    i64 a
+    i64 b
+}
+
+void consume(move Noisy n) {
+    println("consume {}", n.id)
+}
+
+void consumeBig(move Big b) {
+    println("consume big {}", b.n.id + i32(b.a))
+}
+
+void keepConst(move const Noisy n) {
+    println("const {}", n.id)
+}
+
+// A simple type is copied, and the caller can still use it (D80).
+i32 twice(move i32 x) {
+    x *= 2
+    ret x
+}
+
+Noisy pass(move Noisy n) {
+    ret n
+}
+
+i32 main() {
+    Noisy a = Noisy(1)
+    consume(move a)
+    consume(Noisy(2))  // a temporary does not need move
+
+    Big big
+    big.n = Noisy(3)
+    big.a = 10
+    consumeBig(move big)
+
+    keepConst(Noisy(4))
+
+    i32 n = 21
+    println("{} {}", twice(move n), n)
+
+    Noisy c = pass(Noisy(5))
+    println("got {}", c.id)
+    println("end")
+    ret 0
+}

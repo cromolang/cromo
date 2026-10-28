@@ -65,6 +65,7 @@ add_executable(cromo
   src/parser.cpp
   src/types.cpp
   src/sema.cpp
+  src/ownership.cpp
   src/codegen.cpp
   src/backend.cpp
   src/windows_sdk.cpp

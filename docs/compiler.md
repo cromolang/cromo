@@ -20,7 +20,8 @@ The final product is a single executable, `cromo`, which does everything (D28):
 ```
 
 - **Parser** written by hand, recursive descent. Parser generators are not used: the error messages are better and the grammar stays under control.
-- **Cromo intermediate IR.** It is possible to start by going directly from the AST to LLVM IR. From milestone M3 on, it is worth introducing a dedicated control-flow-graph IR (like Rust's MIR): the analysis of moves inside branches and loops is much simpler on a graph than on a tree.
+- **Cromo intermediate IR.** The compiler goes directly from the AST to LLVM IR. A dedicated control-flow-graph IR (like Rust's MIR) will be introduced when a feature needs it: since the control flow of Cromo is structured, the analysis of moves is done on the AST (D77).
+- **Ownership analysis** (`src/ownership.cpp`, D77). It runs after type checking and follows the state of every variable (alive, moved, maybe moved) through branches and loops, as the definite assignment of Java and C# does. A loop is visited until the state at its start no longer changes, then once more to report the errors. Exclusivity (D22, D79) is checked by sema, call by call.
 ## 2. Bootstrap: from C++ to Cromo (D44)
 
 The first compiler is written in C++ and uses LLVM and LLD directly, statically linked into `cromo.exe`. The goal is a compiler written in Cromo that compiles itself. The classic path has three stages:
@@ -63,7 +64,8 @@ How M2 implements the rules of D68:
 
 Container destructors first destroy the elements and then free their own memory. This way, when a variable goes out of scope, everything it contains is freed, at any depth (D11).
 
-- **Conditional moves (D23).** When an object is moved only in one branch, the compiler uses a local boolean flag (*drop flag*) to decide whether to call the destructor. In simple cases the optimizer removes it.
+- **Conditional moves (D23).** When an object is moved only in one branch, the compiler uses a local boolean flag (*drop flag*) to decide whether to call the destructor. In simple cases the optimizer removes it. In M3 every variable that is moved somewhere gets a flag `%vN.name.alive`: true after the initialization and after an assignment, false after the `move`; the destructor is called only when it is true.
+- **Moving a field or a `ref` parameter (D78)** copies the value and then writes the default value of the type in its place.
 
 ### Exceptions (D36)
 Hidden error return, as in Swift. Every function that can throw returns, in addition to the value, an error indicator. After every call the compiler emits a check that jumps to the cleanup block (destructors, `finally`) or to the `catch`.
@@ -88,14 +90,14 @@ A comparison, then a branch to a block that calls `@cromo_panic`. LLVM removes t
 
 ### Read parameters (D22)
 - **Up to 16 bytes:** by copy, in registers.
-- **Beyond 16 bytes:** by address, marked `readonly`, `noalias` and `dereferenceable(n)`. `noalias` is correct because during the call nobody can modify the object: there are no pointers, and an object passed for reading cannot also be passed with `ref` in the same call.
+- **Beyond 16 bytes:** by address, marked `readonly`, `noalias` and `dereferenceable(n)`. `noalias` is correct because during the call nobody can modify the object: there are no pointers, and an object passed for reading cannot also be passed with `ref` in the same call. When it would overlap with something the call modifies, a simple type is passed as a copy (D79).
 - **`extern` functions to C:** they follow the platform ABI, not this rule.
 
 **Return values.** A struct of up to 16 bytes is returned by value; a larger one is written through a hidden `sret` pointer, which points to the variable being initialized or to a temporary.
 
 **Watch out for the `x = f(x)` case.** The result of `f` would be constructed directly in `x` while `f` is still reading `x` by address. The compiler must treat the destination of the assignment as a modification of `x`. In M2 every assignment of a struct builds the new value in a temporary and copies it into `x` at the end; LLVM removes the copy when it can.
 
-**State in M2.** Large read parameters are `readonly`, but not yet `noalias`: the object of a method that is not `const` can be modified during the call, for example in `box.update(box.content)`, and the exclusivity check (D22) arrives together with `ref` in M3.
+**`ref` and `move` parameters.** A `ref` parameter is always an address marked `noalias`. A `move` parameter up to 16 bytes is passed by value; beyond, by address: when the argument is a whole variable (`f(move big)`) the caller hands over the memory of the variable, otherwise it builds the value in a slot of its own frame. In both cases the callee owns the object and destroys it. The object of a method is `noalias` too, and `readonly` for `const` methods. `dereferenceable(n)` is not emitted yet.
 
 Zig had a similar rule, with the compiler free to pass "by value" parameters by reference, and removed it in version 0.10 precisely because of aliasing problems. There, however, the main cause was pointers, which do not exist in Cromo.
 
@@ -115,7 +117,7 @@ No string is parsed at runtime.
 ### Symbol names
 A naming scheme is needed for functions, methods and instances of generics, for example `@module.Type.method`. It must be defined taking modules (D50) and generics (D39) into account.
 
-Provisional names since M2: the type of struct `T` is `%struct.T`, its methods are `@T.method`, the constructor `@T..new` and the destructor `@T..drop`. The double dot cannot clash with the name of a method. A method receives the object as its first parameter, `ptr %self` (`readonly` for `const` methods), after the `sret` pointer if there is one.
+Provisional names since M2: the type of struct `T` is `%struct.T`, its methods are `@T.method`, the constructor `@T..new` and the destructor `@T..drop`. The `copy()` generated by the compiler (D35) is `@T.copy`, like one written by hand. The double dot cannot clash with the name of a method. A method receives the object as its first parameter, `ptr %self` (`readonly` for `const` methods), after the `sret` pointer if there is one.
 
 ## 4. Toolchain (D28)
 
@@ -201,13 +203,14 @@ Each milestone lists the decisions still open that are needed **before** writing
 - **M0** completed on 2026-10-28: `cromo.exe` compiles `i32 main() { ret 42 }` into a 2 KB executable that imports only `ExitProcess` from `kernel32.dll`. Tests in `tests/m0/`.
 - **M1** completed on 2026-10-28: integer, floating-point and `bool` types, `char` literals, arithmetic with the overflow and division checks, conversions, variables with default values and `const`, `if`/`else`, the three forms of `for` with `break`/`continue`, functions with parameters and recursion, `print`/`println`/`eprint`/`eprintln` with formatting, debug and `--release` modes, and the temporary runtime (D58). Tests in `tests/m1/`; the choices made for M1 are decisions D54–D67 in [decisions.md](decisions.md).
 - **M2** completed on 2026-10-28: structs with initial values of the fields, nested structs, methods and `const` methods, one constructor, destructors, destruction at the end of the scope and on `ret`/`break`/`continue`, temporaries destroyed at the end of the statement, structs passed and returned by value or by address depending on the size. Tests in `tests/m2/`; the choices made for M2 are decisions D68–D76 in [decisions.md](decisions.md).
+- **M3** completed on 2026-10-28: `ref` and `move` parameters, `move` in initializations, assignments and `ret`, the error on the use of a moved variable along every path, drop flags, moving fields and `ref` parameters with the default value left in place, `copy()` written by hand or generated, exclusivity with the copy of simple read arguments. Tests in `tests/m3/`; the choices made for M3 are decisions D77–D83 in [decisions.md](decisions.md).
 
 | Milestone | Content | Open decisions |
 |---|---|---|
 | **M0** | `i32 main() { ret 42 }` becomes an executable that returns 42 as its exit code. Lexer, parser, IR emission, `cromo.exe` in C++ with LLVM and LLD inside, test runner, entry point without the C runtime | none |
 | **M1** | Integers, floating-point numbers and booleans, `char` and character literals, arithmetic, variables with default values, `if`/`else`, `for` in the forms without lists, functions and recursion with the `ret` check, `print`/`println` with formatting | none |
 | **M2** | Structs with default values, `const` methods, constructors, destructors and cleanup on all exits from the scope (RAII) | none |
-| **M3** | Ownership: `move`, `copy()`, `ref`/`move` parameters, exclusivity. The intermediate IR is introduced | none |
+| **M3** | Ownership: `move`, `copy()`, `ref`/`move` parameters, exclusivity, analysis of moves on the AST (D77) | none |
 | **M4** | Generics and interfaces | none |
 | **M5** | Containers and minimal library written in `unsafe` Cromo: `list<T>`, `string`, `for` over the elements, `panic`, bounds checking | none |
 | **M6** | Exceptions (`try`/`catch`/`finally`) and enums | enum syntax |

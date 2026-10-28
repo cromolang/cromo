@@ -1,0 +1,49 @@
+// expect-error: 'a' has been moved and can no longer be used (D23)
+// expect-error: 'b' may have been moved, on another path or in a previous iteration of a loop (D81)
+// expect-error: 'c' may have been moved, on another path or in a previous iteration of a loop (D81)
+// expect-error: 'h' has been moved and can no longer be used (D23)
+struct File {
+    i32 fd
+
+    ~File() {
+    }
+}
+
+struct Holder {
+    File f
+}
+
+void consume(move File f) {
+}
+
+void consumeHolder(move Holder h) {
+}
+
+i32 main() {
+    File a = File()
+    consume(move a)
+    i32 x = a.fd
+
+    File b = File()
+    if (x > 0) {
+        consume(move b)
+    }
+    consume(move b)
+
+    File c = File()
+    for (i32 i = 0; i < 3; i++) {
+        consume(move c)
+    }
+
+    // A new value before the next iteration: allowed (D81).
+    File ok = File()
+    for (i32 j = 0; j < 3; j++) {
+        consume(move ok)
+        ok = File()
+    }
+
+    Holder h
+    consumeHolder(move h)
+    h.f.fd = 1
+    ret 0
+}

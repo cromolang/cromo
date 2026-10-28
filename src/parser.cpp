@@ -110,15 +110,24 @@ private:
     }
 
     // params := '(' [param {',' param}] ')'
+    // param  := ['ref' | 'move' ['const']] type name   (D22)
     bool parseParams(FunctionDecl& function) {
         if (!expect(TokenKind::LParen, "after the function name")) return false;
         if (!check(TokenKind::RParen)) {
             do {
-                if (check(TokenKind::KwRef) || check(TokenKind::KwMove)) {
-                    diag_.error(peek().loc, "'ref' and 'move' parameters arrive in milestone M3");
+                Param param;
+                if (match(TokenKind::KwRef)) {
+                    param.mode = ParamMode::Ref;
+                } else if (match(TokenKind::KwMove)) {
+                    param.mode = ParamMode::Move;
+                    param.isConst = match(TokenKind::KwConst);
+                }
+                if (check(TokenKind::KwConst)) {
+                    diag_.error(peek().loc, param.mode == ParamMode::Ref
+                                                ? "'ref const' does not exist: a read parameter is already read-only (D22)"
+                                                : "only a 'move' parameter can be const, written 'move const' (D22)");
                     return false;
                 }
-                Param param;
                 if (!parseType(param.type)) return false;
                 if (!check(TokenKind::Identifier)) {
                     errorAtCurrent("the parameter name");
@@ -553,6 +562,15 @@ private:
     }
 
     ExprPtr parseUnary() {
+        // `ref x` and `move x`: sema checks where they can be written (D22, D23).
+        if (check(TokenKind::KwRef) || check(TokenKind::KwMove)) {
+            bool isRef = check(TokenKind::KwRef);
+            SourceLocation loc = advance().loc;
+            ExprPtr operand = parsePostfix();
+            if (!operand) return nullptr;
+            if (isRef) return std::make_unique<RefExpr>(loc, std::move(operand));
+            return std::make_unique<MoveExpr>(loc, std::move(operand));
+        }
         if (check(TokenKind::Minus) || check(TokenKind::Not)) {
             UnaryOp op = check(TokenKind::Minus) ? UnaryOp::Negate : UnaryOp::Not;
             SourceLocation loc = advance().loc;

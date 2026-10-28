@@ -1,0 +1,86 @@
+// expect-output: create 1
+// expect-output: destroy 0
+// expect-output: consumed 1
+// expect-output: destroy 1
+// expect-output: after give
+// expect-output: create 2
+// expect-output: destroy 0
+// expect-output: after give
+// expect-output: destroy 2
+// expect-output: create 3
+// expect-output: destroy 0
+// expect-output: holder 3
+// expect-output: create 4
+// expect-output: destroy 0
+// expect-output: destroy 0
+// expect-output: out 4 left 0
+// expect-output: destroy 4
+// expect-output: destroy 0
+// expect-output: destroy 3
+struct Noisy {
+    i32 id
+
+    Noisy(i32 n) {
+        id = n
+        println("create {}", id)
+    }
+
+    ~Noisy() {
+        println("destroy {}", id)
+    }
+}
+
+// 24 bytes: passed and returned by address.
+struct Big {
+    Noisy n
+    i64 a
+    i64 b
+}
+
+void consumeBig(move Big b) {
+    println("consumed {}", b.n.id)
+}
+
+// b is destroyed at the end only if it was not given away (D77).
+void maybeGive(move Big b, bool give) {
+    if (give) {
+        consumeBig(move b)
+    }
+    println("after give")
+}
+
+struct Holder {
+    Noisy item
+
+    Holder(move Noisy n) {
+        item = move n
+    }
+}
+
+struct Bag {
+    Big content
+
+    Big takeContent() {
+        ret move content
+    }
+}
+
+Big makeBig(i32 id) {
+    Big b
+    b.n = Noisy(id)
+    ret b
+}
+
+i32 main() {
+    maybeGive(makeBig(1), true)
+    maybeGive(makeBig(2), false)
+
+    Holder h = Holder(Noisy(3))
+    println("holder {}", h.item.id)
+
+    Bag bag
+    bag.content = makeBig(4)
+    Big out = bag.takeContent()
+    println("out {} left {}", out.n.id, bag.content.n.id)
+    ret 0
+}

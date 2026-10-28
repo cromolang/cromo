@@ -1,0 +1,41 @@
+// expect-output: 101
+// expect-output: 3 0
+// A read argument of a simple type that the call also modifies is passed as a
+// copy: the method sees the value at the time of the call (D79).
+struct Large {
+    i64 a
+    i64 b
+    i64 c
+}
+
+struct Box {
+    Large content
+    i64 total
+
+    void update(Large extra) {
+        content.a = 100
+        total = extra.a + content.a
+    }
+}
+
+struct Counter {
+    i32 count
+    i32 step = 3
+
+    void add(i32 n) {
+        step = 0
+        count += n
+    }
+}
+
+i32 main() {
+    Box box
+    box.content.a = 1
+    box.update(box.content)
+    println("{}", box.total)
+
+    Counter c
+    c.add(c.step)
+    println("{} {}", c.count, c.step)
+    ret 0
+}
