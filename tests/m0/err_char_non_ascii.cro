@@ -1,0 +1,4 @@
+// expect-error: does not fit in one byte
+i32 main() {
+    ret 'à'
+}

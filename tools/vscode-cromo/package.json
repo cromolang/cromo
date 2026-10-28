@@ -1,0 +1,36 @@
+{
+  "name": "cromo-lang",
+  "displayName": "Cromo",
+  "description": "Syntax highlighting for the Cromo language",
+  "version": "0.1.4",
+  "publisher": "cromo",
+  "license": "UNLICENSED",
+  "engines": {
+    "vscode": "^1.60.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "cromo",
+        "aliases": [
+          "Cromo",
+          "cromo"
+        ],
+        "extensions": [
+          ".cro"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "cromo",
+        "scopeName": "source.cromo",
+        "path": "./syntaxes/cromo.tmLanguage.json"
+      }
+    ]
+  }
+}

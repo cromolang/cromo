@@ -1,0 +1,4 @@
+// expect-error: value 3000000000 is out of range for i32
+i32 main() {
+    ret 3000000000
+}

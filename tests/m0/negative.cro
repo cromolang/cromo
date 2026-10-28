@@ -1,0 +1,5 @@
+// expect-exit: -1
+i32 main()
+{
+    ret -(1)    // the brace may also be on the next line (D32)
+}

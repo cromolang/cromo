@@ -1,0 +1,149 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Cromo",
+  "scopeName": "source.cromo",
+  "fileTypes": ["cro"],
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#characters" },
+    { "include": "#numbers" },
+    { "include": "#keywords" },
+    { "include": "#types" },
+    { "include": "#functions" },
+    { "include": "#operators" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.block.cromo",
+          "begin": "/\\*",
+          "end": "\\*/"
+        },
+        {
+          "name": "comment.line.double-slash.cromo",
+          "match": "//.*$"
+        }
+      ]
+    },
+    "escapes": {
+      "name": "constant.character.escape.cromo",
+      "match": "\\\\(?:[nrt0\\\\\"']|x[0-9A-Fa-f]{2}|u\\{[0-9A-Fa-f]{1,6}\\})"
+    },
+    "strings": {
+      "name": "string.quoted.double.cromo",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        { "include": "#escapes" },
+        {
+          "name": "constant.character.escape.cromo",
+          "match": "\\{\\{|\\}\\}"
+        },
+        {
+          "name": "constant.other.placeholder.cromo",
+          "match": "\\{[0-9]*(?::[^{}\"]*)?\\}"
+        }
+      ]
+    },
+    "characters": {
+      "name": "constant.character.cromo",
+      "match": "'(?:\\\\(?:[nrt0\\\\\"']|x[0-9A-Fa-f]{2}|u\\{[0-9A-Fa-f]{1,6}\\})|[^'\\\\])'"
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.hex.cromo",
+          "match": "\\b0x[0-9A-Fa-f][0-9A-Fa-f_]*\\b"
+        },
+        {
+          "name": "constant.numeric.binary.cromo",
+          "match": "\\b0b[01][01_]*\\b"
+        },
+        {
+          "name": "constant.numeric.float.cromo",
+          "match": "\\b[0-9][0-9_]*\\.[0-9][0-9_]*(?:[eE][+-]?[0-9]+)?\\b"
+        },
+        {
+          "name": "constant.numeric.float.cromo",
+          "match": "\\b[0-9][0-9_]*[eE][+-]?[0-9]+\\b"
+        },
+        {
+          "name": "constant.numeric.integer.cromo",
+          "match": "\\b[0-9][0-9_]*\\b"
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "match": "\\b(struct|interface|enum)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "storage.type.cromo" },
+            "2": { "name": "entity.name.type.cromo" }
+          }
+        },
+        {
+          "name": "keyword.control.cromo",
+          "match": "\\b(?:if|else|for|in|break|continue|ret|switch|case|default|try|catch|finally|throw)\\b"
+        },
+        {
+          "name": "keyword.control.import.cromo",
+          "match": "\\bimport\\b"
+        },
+        {
+          "name": "storage.type.cromo",
+          "match": "\\b(?:struct|interface|enum)\\b"
+        },
+        {
+          "name": "storage.modifier.cromo",
+          "match": "\\b(?:var|const|ref|move|extern|unsafe|public)\\b"
+        },
+        {
+          "name": "constant.language.boolean.cromo",
+          "match": "\\b(?:true|false)\\b"
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "name": "storage.type.primitive.cromo",
+          "match": "\\b(?:i8|i16|i32|i64|u8|u16|u32|u64|f32|f64|bool|char|void|string|list)\\b"
+        },
+        {
+          "name": "variable.other.constant.cromo",
+          "match": "\\b[A-Z][A-Z0-9_]+\\b"
+        },
+        {
+          "name": "entity.name.type.cromo",
+          "match": "\\b(?:[A-Z][a-z0-9][A-Za-z0-9_]*|[A-Z])\\b"
+        }
+      ]
+    },
+    "functions": {
+      "patterns": [
+        {
+          "match": "(~)([A-Za-z_][A-Za-z0-9_]*)(?=\\s*\\()",
+          "captures": {
+            "1": { "name": "keyword.operator.destructor.cromo" },
+            "2": { "name": "entity.name.function.destructor.cromo" }
+          }
+        },
+        {
+          "name": "support.function.builtin.cromo",
+          "match": "\\b(?:print|println|eprint|eprintln|format)\\b(?=\\s*\\()"
+        },
+        {
+          "name": "entity.name.function.cromo",
+          "match": "\\b[a-z_][A-Za-z0-9_]*(?=\\s*\\()"
+        }
+      ]
+    },
+    "operators": {
+      "name": "keyword.operator.cromo",
+      "match": "\\+\\+|--|==|!=|<=|>=|&&|\\|\\||[-+*/%]=?|=|<|>|!"
+    }
+  }
+}

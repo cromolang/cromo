@@ -1,0 +1,39 @@
+// Example 1: functions, conditions and loops.
+//
+// Decided: ret (D18), no ; (D17), if / else if / else and for (D15), types (D9),
+//          type before the name, i++ (D20), println in std::format style (D21)
+
+i64 factorial(i64 n) {
+    if (n <= 1) {
+        ret 1
+    }
+    ret n * factorial(n - 1)
+}
+
+i64 fibonacci(i64 n) {
+    i64 a = 0
+    i64 b = 1
+    for (i64 i = 0; i < n; i++) {
+        i64 t = a + b
+        a = b
+        b = t
+    }
+    ret a
+}
+
+string sign(i32 x) {
+    if (x > 0) {
+        ret "positive"
+    } else if (x < 0) {
+        ret "negative"
+    } else {
+        ret "zero"
+    }
+}
+
+i32 main() {
+    println("10! = {}", factorial(10))
+    println("fibonacci(20) = {}", fibonacci(20))
+    println("-5 is {}", sign(-5))
+    ret 0
+}

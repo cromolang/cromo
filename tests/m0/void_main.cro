@@ -1,0 +1,3 @@
+// expect-exit: 0
+void main() {
+}

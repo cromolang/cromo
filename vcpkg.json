@@ -1,0 +1,15 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "cromo",
+  "version-string": "0.0.0",
+  "description": "Native libraries required by the static LLVM and LLD libraries (D53)",
+  "dependencies": [
+    "zlib",
+    "zstd",
+    {
+      "name": "libxml2",
+      "default-features": false
+    }
+  ],
+  "builtin-baseline": "15b12b99a227d51e21c86dffd40385439eac87a0"
+}

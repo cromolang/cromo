@@ -1,0 +1,4 @@
+// expect-exit: 65
+i32 main() {
+    ret 'A'
+}

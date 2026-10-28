@@ -1,0 +1,405 @@
+# Cromo: draft specification
+
+> **Status: draft.** The final choices are only those marked *Decided* in [decisions.md](decisions.md). Next to each part is the decision it comes from (D1, D2, …); the parts marked as a proposal are not decided yet.
+
+## 1. Principles
+
+1. **Simplicity above all** (D8): a rule that a C/C++ programmer understands immediately is worth more than a more powerful rule.
+2. **Every value has a single owner** and its lifetime follows the scopes (D6).
+3. **No pointers, no `null`, no garbage collector** (D4, D5, D47).
+4. **No undefined behavior** in normal code (D45), and no uninitialized values (D31).
+5. **Visible costs:** no hidden copies (D23) and no hidden allocations. What happens to a variable can be read in the call (`ref`, `move`, D22).
+6. **Performance from guarantees:** every rule of the language (no aliasing, no null, no undefined overflow) becomes information for the LLVM optimizer.
+
+## 2. Lexical structure
+
+- Sources in UTF-8, with the `.cro` extension (D29).
+- **A statement ends at the end of the line**, no `;` (D17). A statement continues on the next line if the line ends with a binary operator, a comma or an open parenthesis, or if there are round or square brackets still open. Only one statement per line (D32).
+- Comments: `// line` and `/* block */`.
+- Identifiers: letters, digits and `_`, not starting with a digit.
+- Literals:
+  - integers: `42`, `0xFF`, `0b1010`, `1_000_000`
+  - floating-point: `3.14`, `1e-9`
+  - characters: `'a'`, one byte of type `char`, ASCII only; escapes `'\n'`, `'\t'`, `'\\'`, `'\''`, `'\x41'` (D46)
+  - strings: `"text\n"`
+  - booleans: `true`, `false`
+- **Provisional** keywords: `struct interface enum import extern unsafe var const void if else for in break continue ret switch case default try catch finally throw ref move public true false`. Among these, the following are decided:
+  - `if`, `else`, `for` (D15);
+  - `try`, `catch`, `finally` (D16);
+  - `ret` (D18);
+  - `struct`, `var`, `void`, `break`, `continue`, `throw` (D20);
+  - `ref`, `move` (D22, D23);
+  - `const` for methods and variables (D24, D26), `in` (D25);
+  - `switch`, `case`, `default` (D34);
+  - `unsafe` (D37), `interface` (D40), `import` (D41), `extern` (D42), `public` (D50).
+- `print` and `println` are not keywords but special compiler functions (D21, D38).
+
+## 3. Types
+
+| Category | Examples (draft) | Reference |
+|---|---|---|
+| Integers | `i8 i16 i32 i64 u8 u16 u32 u64` | D9 |
+| Floating-point | `f32 f64` | D9 |
+| Booleans | `bool` | D9 |
+| Characters | `char`, a synonym of `u8`: one byte | D14, D46 |
+| 128-bit integers | postponed until after the first version | D14 |
+| Strings | `string`, UTF-8 text | D10 |
+| Structs | `struct Point` with the fields `f64 x` and `f64 y` | D11, §6 |
+| Dynamic container | `list<T>`, the only one in the first version | D11, D13 |
+| Interfaces | `interface Shape { ... }` | D40, D49, §12 |
+| Generics | `T max<T : Comparable>(T a, T b)` | D39, D52 |
+| Enums with data | syntax to be defined | D34 |
+| Fixed-size arrays | `i32[4]`: to be decided | |
+
+- **There are no pointer types** (D4) **and no types whose size depends on the platform** such as `usize` (D9): every type has the same size on all platforms. Indices and lengths are `i64` (D12).
+- **Numeric conversions** (D33): implicit only when no information is lost (`i32` → `i64`, `i32` → `f64`), otherwise explicit: `i32(x)`, `f64(n)`.
+- **Overflow** (D30): in debug it stops the program, in release the value wraps around from the other end of the range.
+
+## 4. Variables
+
+```cromo
+i32 x = 5
+var y = x + 1           // inferred type: i32
+const f64 PI = 3.14159  // immutable: with const the type is always written
+
+i32 n                   // 0
+string name             // empty string
+list<f64> grades        // empty list
+```
+
+- The type is written before the name; with `var` it is inferred (D20).
+- **Without a value, a variable takes the default** (D31): `0` for numbers, `false` for `bool`, empty string and empty list. For a struct, every field takes its default, and no constructor is called (D48). A field can declare its initial value (`i32 fd = -1`), and an enum starts from the first case (D51). There are no uninitialized values.
+- A `const` variable must always have a value (D51).
+- Variables are mutable by default; `const` makes them immutable (D26).
+- `const` is deep: on a `const` `string` or `list` only `const` methods can be called, and it cannot be passed with `ref`.
+- A `const` variable can be moved with `move`: the value does not change, it only passes to another owner (D26).
+
+## 5. Functions and parameter passing (D22)
+
+```cromo
+i32 add(i32 a, i32 b) {
+    ret a + b
+}
+```
+
+A function is exited with `ret` (D18). Every path of a non-`void` function must end with a `ret` of a value of the declared type, otherwise it is a compile error; in a `void` function the final `ret` is optional (D47).
+
+There are no optional types (D47). When a function may have no result, you use a conventional value, an exception, or a `bool` with the result in a `ref` parameter:
+
+```cromo
+bool find(list<Student> students, string name, ref i64 pos) {
+    for (i64 i = 0; i < students.len(); i++) {
+        if (students[i].name == name) {
+            pos = i
+            ret true
+        }
+    }
+    ret false
+}
+
+i64 pos
+if (find(students, "Anna", ref pos)) {
+    println("found at position {}", pos)
+}
+```
+
+A parameter is passed in one of three ways, and **the word that appears in the signature is repeated in the call**:
+
+| Mode | In the signature | In the call | Meaning | How the compiler implements it |
+|---|---|---|---|---|
+| Read (default) | `Student s` | `f(anna)` | the function only reads, the caller remains the owner | up to 16 bytes by copy, beyond that by reference |
+| Modify | `ref Student s` | `f(ref anna)` | the function modifies the caller's object | reference marked `noalias` |
+| Ownership transfer | `move string n` | `f(move name)` | the function becomes the owner, and the variable is no longer usable | by value |
+
+```cromo
+void addGrade(ref Student s, f64 grade) {
+    s.grades.add(grade)
+}
+
+var anna = Student("Anna")
+addGrade(ref anna, 8.5)            // you can see that anna may change
+addGrade(ref students[0], 9.0)     // an element is passed with ref too (D35)
+students.add(move anna)            // you can see that anna passes to the list
+students.add(Student("Marco"))     // a temporary does not need move
+```
+
+**The keywords state the intent, not the mechanism.** In C++ `&` means "by reference" and `const` means "not modifiable", and they combine into `const T&`. In Cromo the mode says what the function does: it reads, modifies (`ref`) or takes ownership (`move`). How to pass the value is decided by the compiler:
+- the read parameter **is already C++'s `const T&`**: beyond 16 bytes it is **always** passed by reference, without a copy (D22);
+- up to 16 bytes (an `i32`, a struct of two `f64`) it is passed by copy, because that costs less than following an address;
+- during the call the object cannot change: references do not outlive the call and exclusivity holds. This is why the compiler can safely pass it by reference.
+
+This is why `ref const` does not exist: it would be a second way of writing the read parameter.
+
+**Rules:**
+- **`ref` exists only for parameters:** no `ref` local variables, fields or return values. This way a reference never outlives the object, without the need for a borrow checker.
+- **Exclusivity:** an argument passed with `ref` cannot refer to the same object as another argument of the same call. With variable indices (`swap(ref v[i], ref v[j])`) the check is done at runtime (D35).
+- **`move const`:** a `move` parameter can also be `const` (`move const string n`): the function becomes its owner but cannot modify it.
+- **Return values:** they are always returned by value, that is, moved. The compiler avoids the copy by constructing the result directly in the destination.
+
+## 6. Structs, constructors and destructors (RAII)
+
+```cromo
+struct File {
+    i32 fd = -1             // initial value: the default of File is "no open file" (D51)
+
+    File(string path) {     // constructor
+        fd = os.open(path)
+    }
+
+    ~File() {               // destructor
+        if (fd >= 0) {
+            os.close(fd)
+        }
+    }
+
+    string readLine() { ... }
+
+    bool isOpen() const {   // const: does not modify the fields
+        ret fd >= 0
+    }
+}
+```
+
+The shape of the struct (fields, constructor `Name(...)`, destructor `~Name()`, methods) is decided (D20).
+
+**Lifetime rules (proposal, modeled on C++):**
+1. An object is destroyed at the end of the scope in which it is declared. Objects of the same scope are destroyed in reverse order of declaration.
+2. Temporary objects are destroyed at the end of the statement that contains them.
+3. After the destructor body, the fields are destroyed, in reverse order of declaration.
+4. Early exits (`ret`, `break`, `continue`) and the propagation of an exception destroy everything that is alive in the scopes being left.
+5. An object moved with `move` is not destroyed by the old owner (D23).
+6. The fields that the constructor does not assign take their default value (D31).
+7. Destructors must not throw exceptions (D36).
+8. If a struct does not define a destructor, the compiler generates one that destroys the fields.
+9. A struct with its own destructor is never a simple type: it is moved with `move` and copied only if it defines `copy()` (D23, D35).
+
+**`const` methods (D24).** A method can modify the fields, unless it is marked `const` after the parameters, as in C++.
+- On a read-only object (a parameter without `ref`, the element of a `for (x in items)`, a `const` variable) only `const` methods can be called.
+- Without pointers, `const` is deep: a `const` method cannot modify even the strings and lists contained in the object.
+
+A constructor that fails, for example because the file does not open, throws an exception (D16). The fields already constructed are destroyed and the object does not exist.
+
+## 7. Moving and copying (D23)
+
+```cromo
+string s = "hello"
+string t = move s       // move: t is now the owner
+println("{}", s)        // compile ERROR: 's' has been moved
+string u = t.copy()     // explicit copy
+string v = t            // ERROR: a string needs move or copy()
+
+i32 a = 5
+i32 b = a               // simple types are always copied
+```
+
+- **Simple types** (numbers, `bool`, structs made only of simple types and without their own destructor): they are copied implicitly.
+- **Resource-owning types** (`string`, `list`, structs that contain them or that have their own destructor): no implicit copy. You write `move x` or `x.copy()`, both in calls and in assignments.
+- **Temporaries:** they are moved without `move`.
+- **`ret x`** of a local variable moves it without `move`.
+- **After a `move`**, using the variable is a compile error.
+- **`copy()` for structs** is generated by the compiler if all the fields can be copied and the struct does not have its own destructor (D35).
+
+## 8. Dynamic memory (D11)
+
+Heap memory is obtained **only** through the dynamic containers and `string`. They are implemented in the standard library, in the `unsafe` dialect that user code does not see (D37). There is no garbage collector: when a variable goes out of scope, everything it contains is freed, at any depth.
+
+```cromo
+struct Student {
+    string name        // text on the heap
+    list<f64> grades   // elements on the heap
+    u8 year
+}
+
+void example() {
+    var students = list<Student>()
+    students.add(Student("Anna"))
+    students.add(Student("Marco"))
+    // ...
+}   // students goes out of scope: the names and the grade lists are freed,
+    // and finally the list itself
+```
+
+Recursive structures go through a container:
+
+```cromo
+struct Node {
+    i32 value
+    list<Node> children   // allowed: the children are on the heap
+}
+
+struct Wrong {
+    Wrong other    // ERROR: infinite size
+}
+```
+
+Graphs are modeled with indices into a list. Out-of-bounds accesses terminate the program (D30).
+
+## 9. Control flow (D15, D32)
+
+### Conditions
+
+```cromo
+if (x > 0) {
+    ...
+} else if (x < 0) {
+    ...
+} else {
+    ...
+}
+```
+
+- Braces are **mandatory**. The `{` can be on the same line or on the next line.
+- Conditions must be `bool`: `if (n)` is an error, you write `if (n != 0)`.
+
+### Loops
+
+There is only one loop, `for`, in four forms. `while` and `do … while` do not exist.
+
+```cromo
+for {                                    // infinite loop
+    ...
+}
+
+for (active) {                           // condition only, instead of while
+    ...
+}
+
+for (i64 i = 0; i < n; i++) {            // classic for
+    ...
+}
+
+for (s in students) {                    // over the elements, read-only (D25)
+    println("{}", s.name)
+}
+
+for (ref s in students) {                // over the elements, modifiable
+    s.addGrade(1.0)
+}
+```
+
+- The variable declared in the first part of the classic `for` lives only inside the loop.
+- In the header of the classic `for` the three parts are separated by `;`: this is the only place where it appears (D20).
+- `break` and `continue` exist, without labels. `i++` and `i--` are used only as a statement on their own, never inside expressions (D32).
+- While a `for` over the elements is running, the list cannot change length (D22).
+
+### Switch (D34)
+
+```cromo
+switch (color) {
+    case Red:   { ... }
+    case Green: { ... }
+    default:    { ... }    // executed for the cases not listed
+}
+```
+
+- On an enum the `switch` must cover all the cases, or have `default`.
+- No fall-through from one case to the next (proposal).
+- There is no `goto` (proposal).
+
+## 10. Errors and exceptions (D16, D36)
+
+```cromo
+string firstLine(string path) {
+    var f = File(path)        // if the file does not open, the constructor throws
+    ret f.readLine()
+}                             // f is closed here, even if readLine throws
+
+i32 main() {
+    try {
+        println("{}", firstLine("data.txt"))
+    } catch (IoError e) {
+        println("error: {}", e.message)
+        ret 1
+    } finally {
+        println("done")
+    }
+    ret 0
+}
+```
+
+- The types that are thrown implement the `Exception` interface. Until interfaces are ready, there is a predefined `Exception` type with a message and a code.
+- Exceptions are not declared in the signature.
+- While an exception propagates, all the live objects in the scopes it leaves are destroyed (RAII).
+- `finally` is executed on every exit from the `try` block: normal, `ret`, `break`, `continue` or exception.
+- Programming errors (index out of bounds, overflow, division by zero) are not exceptions: they terminate the program.
+- A destructor that throws while an exception is already propagating terminates the program.
+
+## 11. Printing and formatting (D21, D38)
+
+```cromo
+print("no newline")
+println("Hello {}, you are {} years old", name, age)
+println("average: {:.2f}", average)          // two decimal places
+println("[{:>8}] [{:<8}] [{:^8}]", a, b, c)  // right-aligned, left-aligned, centered
+println("{0} and again {0}", x)              // argument by position
+println("hex {:x}, binary {:b}", n, n)
+println("braces: {{ and }}")                 // literal braces
+string s = format("{} + {} = {}", 2, 3, 5)   // returns the string
+eprintln("error: {}", message)               // to stderr
+```
+
+- `print` does not add a newline, `println` does.
+- The placeholder syntax is that of C++'s `std::format` / `{fmt}`. Specifiers: fill and alignment (`<`, `>`, `^`), sign, `#`, `0`, width, `.precision` and type (`d`, `x`, `X`, `b`, `o`, `e`, `f`, `g`, `s`).
+- The format string is a literal: the compiler checks the number and the types of the arguments.
+- How to make user-defined types printable will be decided together with the standard library, with a dedicated interface (D49).
+
+## 12. Interfaces and generics (D39, D40)
+
+There is no inheritance: polymorphism goes through interfaces. The syntax of interfaces (D49) and of generic constraints (D52) is decided.
+
+```cromo
+interface Shape {
+    f64 area() const
+}
+
+struct Circle : Shape {
+    f64 r
+    f64 area() const { ret 3.14159 * r * r }
+}
+
+struct Square : Shape {
+    f64 side
+    f64 area() const { ret side * side }
+}
+
+// generic with a constraint: one version for each type, no runtime cost
+f64 doubleArea<T : Shape>(T f) {
+    ret 2.0 * f.area()
+}
+
+// interface-typed parameter: dynamic call
+void printArea(Shape f) {
+    println("{:.2f}", f.area())
+}
+
+var shapes = list<Shape>()       // objects of different types in the same list
+shapes.add(Circle(1.0))
+shapes.add(Square(2.0))
+```
+
+- Interface-typed parameters are always allowed: they are passed by reference, without allocating anything.
+- Objects of different types can be together only in a `list` of interfaces, where each element is allocated on the heap with its method table.
+- Variables and fields of interface type are not allowed in the first version: a generic is used instead.
+
+## 13. Modules (D41, D50)
+
+```cromo
+import std.io
+
+public f64 average(list<f64> values) { ... }   // visible to whoever imports the module
+f64 sum(list<f64> values) { ... }              // private to the module
+```
+
+- There is no preprocessor and there are no header files.
+- A file is a module; a folder is a module that contains the modules of its files. `import std.io` corresponds to `std/io.cro`.
+- Everything is private to the module, except what is marked `public`.
+
+## 14. Interoperability with C (D42)
+
+C functions are declared with `extern` and are called only from the `unsafe` dialect (D37). Normal code uses safe wrappers, and C resources are wrapped in structs with a destructor. The syntax is to be defined.
+
+## 15. Still to be written
+
+- Enum syntax (D34).
+- Contents of the standard library, written in Cromo without libc (D19, D37).
+- Concurrency: postponed until after the first version (D43).

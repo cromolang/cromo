@@ -1,0 +1,32 @@
+// Example 2: the forms of the for loop.
+//
+// Decided: a single for loop, no while (D15),
+//          break, continue, i++ and the ; in the for header (D20)
+
+i32 main() {
+    // infinite loop: leave it with break
+    i32 attempts = 0
+    for {
+        attempts++
+        if (attempts == 3) {
+            break
+        }
+    }
+
+    // condition only: instead of while
+    i64 n = 1000
+    for (n > 1) {
+        n = n / 2
+    }
+
+    // classic for, with continue: prints the odd numbers
+    for (i32 i = 0; i < 10; i++) {
+        if (i % 2 == 0) {
+            continue
+        }
+        print("{} ", i)
+    }
+    println("")
+
+    ret 0
+}

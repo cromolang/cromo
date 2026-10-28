@@ -1,0 +1,11 @@
+# Build
+build/
+out/
+.vs/
+CMakeUserPresets.json
+
+# Test output
+tests/out/
+
+# Packaged VS Code extension
+tools/vscode-cromo/dist/
