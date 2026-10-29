@@ -1,0 +1,13 @@
+// Benchmark fib: recursive calls.
+// The 42nd Fibonacci number with the naive recursion: about 870 million calls.
+i64 fib(i64 n) {
+    if (n < 2) {
+        ret n
+    }
+    ret fib(n - 1) + fib(n - 2)
+}
+
+i32 main() {
+    println("fib(42) = {}", fib(42))
+    ret 0
+}

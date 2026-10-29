@@ -1,0 +1,60 @@
+// Benchmark bits: shifts, masks and the bitwise operators.
+// 100,000,000 random u64, each counted (population count with SWAR), reversed,
+// rotated, and with its trailing zeros found with a De Bruijn table in a
+// fixed-size array.
+struct Random {
+    u64 state
+
+    u64 next() {
+        state += 0x9E3779B97F4A7C15
+        u64 z = state
+        z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9
+        z = (z ^ (z >> 27)) * 0x94D049BB133111EB
+        ret z ^ (z >> 31)
+    }
+}
+
+u64 popCount(u64 value) {
+    u64 x = value - ((value >> 1) & 0x5555555555555555)
+    x = (x & 0x3333333333333333) + ((x >> 2) & 0x3333333333333333)
+    x = (x + (x >> 4)) & 0x0F0F0F0F0F0F0F0F
+    ret (x * 0x0101010101010101) >> 56
+}
+
+u64 reverse(u64 value) {
+    u64 x = ((value >> 1) & 0x5555555555555555) | ((value & 0x5555555555555555) << 1)
+    x = ((x >> 2) & 0x3333333333333333) | ((x & 0x3333333333333333) << 2)
+    x = ((x >> 4) & 0x0F0F0F0F0F0F0F0F) | ((x & 0x0F0F0F0F0F0F0F0F) << 4)
+    x = ((x >> 8) & 0x00FF00FF00FF00FF) | ((x & 0x00FF00FF00FF00FF) << 8)
+    x = ((x >> 16) & 0x0000FFFF0000FFFF) | ((x & 0x0000FFFF0000FFFF) << 16)
+    ret (x >> 32) | (x << 32)
+}
+
+u64 rotateLeft(u64 x, u64 count) {
+    ret (x << count) | (x >> (64 - count))
+}
+
+i32 main() {
+    u64 deBruijn = 0x03F79D71B4CB0A89
+    i64[64] table
+    for (u64 i = 0; i < 64; i++) {
+        table[i64((deBruijn << i) >> 58)] = i64(i)
+    }
+    Random random
+    random.state = 1
+    u64 ones = 0
+    u64 zeros = 0
+    u64 mixed = 0
+    for (i64 i = 0; i < 100_000_000; i++) {
+        u64 x = random.next()
+        ones += popCount(x)
+        if (x != 0) {
+            u64 lowest = x & (!x + 1)
+            zeros += u64(table[i64((lowest * deBruijn) >> 58)])
+        }
+        mixed ^= rotateLeft(reverse(x), 1 + x % 63)
+        mixed += x ^ (x >> 1)
+    }
+    println("ones {} zeros {} mixed {:x}", ones, zeros, mixed)
+    ret 0
+}

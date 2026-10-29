@@ -1,0 +1,50 @@
+// Benchmark wordcount: a hash map with string keys.
+// A vocabulary of 100,000 words (random numbers written in hexadecimal), then
+// 5,000,000 words drawn from it and counted in a map. The order of a map is not
+// defined, so it prints what does not depend on it: the distinct words, the sum
+// of the squares of the counts, and the sum of the FNV-1a hashes of the words
+// times their counts.
+
+// The generator SplitMix64.
+struct Random {
+    u64 state
+
+    u64 next() {
+        state += 0x9E3779B97F4A7C15
+        u64 z = state
+        z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9
+        z = (z ^ (z >> 27)) * 0x94D049BB133111EB
+        ret z ^ (z >> 31)
+    }
+}
+
+u64 fnv(string text) {
+    u64 hash = 14695981039346656037
+    for (i64 i = 0; i < text.len(); i++) {
+        hash ^= text[i]
+        hash *= 1099511628211
+    }
+    ret hash
+}
+
+i32 main() {
+    Random random
+    random.state = 42
+    list<string> vocabulary
+    for (i64 i = 0; i < 100_000; i++) {
+        vocabulary.add(format("{:x}", random.next()))
+    }
+    map<string, i64> counts
+    u64 size = u64(vocabulary.len())
+    for (i64 i = 0; i < 5_000_000; i++) {
+        counts[vocabulary[i64(random.next() % size)]] += 1
+    }
+    i64 squares = 0
+    u64 hashes = 0
+    for (string word, i64 count in counts) {
+        squares += count * count
+        hashes += fnv(word) * u64(count)
+    }
+    println("distinct {} squares {} hashes {:x}", counts.len(), squares, hashes)
+    ret 0
+}

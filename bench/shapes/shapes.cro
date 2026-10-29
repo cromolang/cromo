@@ -1,0 +1,91 @@
+// Benchmark shapes: an enum with data, its methods, an interface and a generic.
+// 1,000,000 random shapes in a list, and 100 passes over it with a generic
+// function, whose calls to area() and perimeter() are a switch on the case.
+// Cromo has no lists of interfaces yet (D91), so the shapes are the cases of an
+// enum, as a variant in C++, an enum in Rust and a struct with a kind in Go.
+interface Measured {
+    f64 area() const
+    f64 perimeter() const
+}
+
+enum Shape : Measured {
+    Circle(f64 radius)
+    Rectangle(f64 width, f64 height)
+    Square(f64 side)
+
+    f64 area() const {
+        switch {
+            case Circle(f64 r) {
+                ret 3.141592653589793 * r * r
+            }
+            case Rectangle(f64 w, f64 h) {
+                ret w * h
+            }
+            case Square(f64 s) {
+                ret s * s
+            }
+        }
+    }
+
+    f64 perimeter() const {
+        switch {
+            case Circle(f64 r) {
+                ret 2.0 * 3.141592653589793 * r
+            }
+            case Rectangle(f64 w, f64 h) {
+                ret 2.0 * (w + h)
+            }
+            case Square(f64 s) {
+                ret 4.0 * s
+            }
+        }
+    }
+}
+
+struct Random {
+    u64 state
+
+    u64 next() {
+        state += 0x9E3779B97F4A7C15
+        u64 z = state
+        z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9
+        z = (z ^ (z >> 27)) * 0x94D049BB133111EB
+        ret z ^ (z >> 31)
+    }
+
+    // A number from 1.0 to 100.0.
+    f64 size() {
+        ret 1.0 + f64(next() % 1000) / 10.0
+    }
+}
+
+f64 total<T : Measured>(list<T> items) {
+    f64 sum = 0.0
+    for (T item in items) {
+        sum += item.area() + item.perimeter()
+    }
+    ret sum
+}
+
+i32 main() {
+    Random random
+    random.state = 3
+    list<Shape> shapes
+    for (i64 i = 0; i < 1_000_000; i++) {
+        u64 kind = random.next() % 3
+        if (kind == 0) {
+            shapes.add(Shape.Circle(random.size()))
+        } else if (kind == 1) {
+            f64 width = random.size()
+            shapes.add(Shape.Rectangle(width, random.size()))
+        } else {
+            shapes.add(Shape.Square(random.size()))
+        }
+    }
+    f64 sum = 0.0
+    for (i64 pass = 0; pass < 100; pass++) {
+        sum += total(shapes)
+    }
+    println("total {:.3f}", sum)
+    ret 0
+}

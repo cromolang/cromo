@@ -35,6 +35,18 @@ build\cromo.exe version
 
 On the first build vcpkg downloads and builds zlib, zstd and libxml2, which the static LLVM libraries need. The runtime in `runtime/` is compiled with the clang of the LLVM archive and embedded in `cromo.exe`. To compile programs, `cromo.exe` needs neither Visual Studio nor the Windows SDK. The tests also build a few C libraries with the clang of the archive. With `-Flags '--target linux'` they run in WSL.
 
+## Benchmarks
+
+`bench/` has small programs, each written in Cromo, C++, Go and Rust, that do the same work and print the same checksum: integer arithmetic (`collatz`), recursion (`fib`), floating point (`mandelbrot`, `spectralnorm`), allocation (`binarytrees`), strings and `format` (`strings`), a `map` (`wordcount`), sorting (`sort`), bitwise operators (`bits`), an enum with an interface and a generic (`shapes`), and threads (`threads`).
+
+```powershell
+powershell -ExecutionPolicy Bypass -File bench\run-bench.ps1                       # build\cromo.exe against g++, clang++, Go and rustc
+powershell -ExecutionPolicy Bypass -File bench\run-bench.ps1 -Cromo 'old=C:\old\cromo.exe,build\cromo.exe'  # two builds of cromo side by side
+powershell -ExecutionPolicy Bypass -File bench\run-bench.ps1 -Filter fib -Runs 3  # one benchmark, three runs
+```
+
+The programs run on Linux, in WSL, where the reference compilers are: `cromo` compiles them on Windows with `--release --target linux`, and g++ and clang++ (`-O2`), Go (`go build`) and rustc (`-C opt-level=3`, as `cargo --release`) compile them in WSL. The script checks that every version prints the same, and writes to `bench/results` a table in Markdown and in CSV with the version of each compiler, the compile time and the run time, the median of several runs. A new benchmark is a folder `bench/name` with `name.cro`, `name.cpp`, `name.go` and `name.rs`, whose first line says what it measures.
+
 ## Documents
 
 | File | Content |
@@ -43,6 +55,7 @@ On the first build vcpkg downloads and builds zlib, zstd and libxml2, which the 
 | [docs/language.md](docs/language.md) | Draft of the language specification |
 | [docs/compiler.md](docs/compiler.md) | Compiler architecture, runtime and development milestones |
 | [examples/](examples/) | Example programs, as drafts, to discuss the syntax |
+| [bench/](bench/) | Benchmarks against C++, Go and Rust, and between versions of `cromo` |
 | [tools/vscode-cromo/](tools/vscode-cromo/) | VS Code extension for syntax highlighting of `.cro` files |
 | [site/](site/) | Mockup of the site [cromolang.org](https://cromolang.org), with the logo (D213) |
 | [CLAUDE.md](CLAUDE.md) | Instructions for the AI assistants working on the project |

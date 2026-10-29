@@ -298,6 +298,7 @@ Implementation for x86-64:
   The files in a folder named `lsp` are opened in `cromo lsp`, and checked with `lsp-hover`, `lsp-definition`, `lsp-error`, `lsp-symbols` and `lsp-completion` (positions as line:column); no error is allowed besides the expected ones. The files in a folder named `formatting` are cases of `cromo fmt`: `x.cro` must become `x.formatted.cro`, which must not change when formatted again; without `x.formatted.cro`, `cromo fmt` must refuse `x.cro`. `tests/run-tests.ps1` compiles each file with `cromo build`, runs it with the arguments of `program-arg` and compares the result with the expected one; with `cromo-command: run` it uses `cromo run` instead (D156); `-Flags -O0` passes extra options to every compilation. With `-Flags --release` the three tests that check the panics of debug mode fail, as expected. The files in a folder named `modules` are imported by the tests, and are not tests themselves. Before the tests the runner builds the C libraries of `tests/m8/native` with the clang of LLVM, next to the modules of `tests/m8`: a DLL, a static library and a DLL for 32 bits. It also sets the error mode of Windows, so that a program that cannot find a DLL ends with an error code instead of opening a window.
 - **Linux:** `-Flags '--target linux'` compiles the tests for Linux and runs them in WSL, in the default distribution or in the one given with `-Distro`; the expected exit code keeps only its lowest byte (D145). `// target: windows` marks the tests that use the DLLs of Windows; the runner also builds `libscale.a` for the static library of `tests/m8`.
 - **IR tests:** a few checks that verify the attributes that matter for the optimizer, for example that a `ref` parameter is really `noalias`.
+- **Benchmarks:** in `bench/`, apart from the tests. Each folder has the same program in Cromo, C++, Go and Rust, which prints a checksum of its work: integer arithmetic, recursion, floating point, allocation, strings and `format`, `map`, sorting, bitwise operators, an enum with an interface and a generic, threads. `bench/run-bench.ps1` compiles each program with one or more `cromo.exe`, on Windows with `--release --target linux`, and with g++, clang++, Go and rustc in WSL; it runs all the programs in WSL, where `bench/linux.sh` takes the times, checks that they print the same, and writes the compile and run times, the median of several runs, with the version of each compiler, in `bench/results` as Markdown and CSV. Two versions of cromo are compared by giving both to `-Cromo`.
 - **Later:** differential tests with generated programs.
 
 ## 7. Development milestones
@@ -365,6 +366,7 @@ cromo/
   runtime/              entry point and low-level primitives (LLVM IR, assembly)
   library/              standard library in Cromo: core.cro and the modules of std/ (D201)
   tests/                behavior and IR tests
+  bench/                benchmarks in Cromo, C++, Go and Rust, and their runner
   examples/             example programs
   tools/
     vscode-cromo/       VS Code extension for syntax highlighting

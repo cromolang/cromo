@@ -1,0 +1,31 @@
+// Benchmark strings: format, appending and the bytes of a string.
+// 2,000,000 lines written with format, each with an integer, a hexadecimal number
+// and a number with three decimals, appended to a text; every 4 KB the text is
+// hashed with FNV-1a and emptied. It prints the bytes and the hash.
+u64 fnv(u64 seed, string text) {
+    u64 hash = seed
+    for (i64 i = 0; i < text.len(); i++) {
+        hash ^= text[i]
+        hash *= 1099511628211
+    }
+    ret hash
+}
+
+i32 main() {
+    u64 hash = 14695981039346656037
+    i64 bytes = 0
+    string text
+    for (i64 i = 0; i < 2_000_000; i++) {
+        string line = format("{}:{:x}:{:.3f};", i, i * 7919, f64(i) / 7.0)
+        text += line
+        if (text.len() >= 4096) {
+            hash = fnv(hash, text)
+            bytes += text.len()
+            text = ""
+        }
+    }
+    hash = fnv(hash, text)
+    bytes += text.len()
+    println("bytes {} hash {:x}", bytes, hash)
+    ret 0
+}

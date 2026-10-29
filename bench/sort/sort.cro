@@ -1,0 +1,110 @@
+// Benchmark sort: indexing of lists and fixed-size arrays.
+// 5,000,000 random u64 sorted twice, by hand in every language: a quicksort with
+// an insertion sort for the short ranges, and a radix sort on the bytes with an
+// array of 256 counters. It checks that the two results are the same and prints
+// a hash of the sorted list.
+struct Random {
+    u64 state
+
+    u64 next() {
+        state += 0x9E3779B97F4A7C15
+        u64 z = state
+        z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9
+        z = (z ^ (z >> 27)) * 0x94D049BB133111EB
+        ret z ^ (z >> 31)
+    }
+}
+
+void insertionSort(ref list<u64> v, i64 low, i64 high) {
+    for (i64 i = low + 1; i <= high; i++) {
+        u64 x = v[i]
+        i64 j = i - 1
+        for (j >= low && v[j] > x) {
+            v[j + 1] = v[j]
+            j--
+        }
+        v[j + 1] = x
+    }
+}
+
+// Sorts v[low..high], high included: the shorter part recursively, the longer
+// one in the loop.
+void quickSort(ref list<u64> v, i64 low, i64 high) {
+    i64 lo = low
+    i64 hi = high
+    for (hi - lo > 16) {
+        u64 pivot = v[lo + (hi - lo) / 2]
+        i64 i = lo
+        i64 j = hi
+        for (i <= j) {
+            for (v[i] < pivot) {
+                i++
+            }
+            for (v[j] > pivot) {
+                j--
+            }
+            if (i <= j) {
+                u64 kept = v[i]
+                v[i] = v[j]
+                v[j] = kept
+                i++
+                j--
+            }
+        }
+        if (j - lo < hi - i) {
+            quickSort(ref v, lo, j)
+            lo = i
+        } else {
+            quickSort(ref v, i, hi)
+            hi = j
+        }
+    }
+    insertionSort(ref v, lo, hi)
+}
+
+// The least significant byte first, eight passes between v and a second list.
+void radixSort(ref list<u64> v) {
+    list<u64> other = v.copy()
+    for (u64 shift = 0; shift < 64; shift += 8) {
+        i64[256] count
+        for (u64 x in v) {
+            count[i64((x >> shift) & 0xFF)] += 1
+        }
+        i64 position = 0
+        for (ref i64 c in count) {
+            i64 next = position + c
+            c = position
+            position = next
+        }
+        for (u64 x in v) {
+            i64 digit = i64((x >> shift) & 0xFF)
+            other[count[digit]] = x
+            count[digit] += 1
+        }
+        list<u64> swapped = move v
+        v = move other
+        other = move swapped
+    }
+}
+
+i32 main() {
+    Random random
+    random.state = 7
+    list<u64> values
+    for (i64 i = 0; i < 5_000_000; i++) {
+        values.add(random.next())
+    }
+    list<u64> quick = values.copy()
+    quickSort(ref quick, 0, quick.len() - 1)
+    list<u64> radix = values.copy()
+    radixSort(ref radix)
+    u64 hash = 14695981039346656037
+    for (i64 i = 0; i < quick.len(); i++) {
+        if (quick[i] != radix[i] || (i > 0 && quick[i - 1] > quick[i])) {
+            panic("the two sorts differ")
+        }
+        hash = (hash ^ quick[i]) * 1099511628211
+    }
+    println("first {:x} last {:x} hash {:x}", quick[0], quick[quick.len() - 1], hash)
+    ret 0
+}

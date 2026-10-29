@@ -1,0 +1,64 @@
+// Benchmark threads: the work of mandelbrot split among 8 threads.
+// Thread k computes the rows k, k + 8, k + 16, ... and adds its totals to the
+// ones in a mutex. The result is the one of mandelbrot.
+import std.thread
+
+struct Totals {
+    i64 inside
+    i64 iterations
+}
+
+Totals rows(i64 size, i64 first, i64 step) {
+    Totals totals
+    for (i64 y = first; y < size; y += step) {
+        f64 ci = 2.0 * f64(y) / f64(size) - 1.0
+        for (i64 x = 0; x < size; x++) {
+            f64 cr = 2.0 * f64(x) / f64(size) - 1.5
+            f64 zr = 0.0
+            f64 zi = 0.0
+            f64 tr = 0.0
+            f64 ti = 0.0
+            i64 i = 0
+            for (i < 50 && tr + ti <= 4.0) {
+                zi = 2.0 * zr * zi + ci
+                zr = tr - ti + cr
+                tr = zr * zr
+                ti = zi * zi
+                i++
+            }
+            if (tr + ti <= 4.0) {
+                totals.inside++
+            }
+            totals.iterations += i
+        }
+    }
+    ret totals
+}
+
+// Starts the threads from k to count - 1, one for each call. A thread that reads
+// the mutex belongs to its block (D215), so the threads are not kept in a list:
+// each call keeps its own while the next calls start the others.
+void spawn(i64 size, i64 k, i64 count, thread.Mutex<Totals> all) {
+    if (k == count) {
+        ret
+    }
+    thread.Thread worker = thread.Thread([size, k, count, all]() {
+        Totals mine = rows(size, k, count)
+        all.lock([mine](ref Totals totals) {
+            totals.inside += mine.inside
+            totals.iterations += mine.iterations
+        })
+    })
+    worker.start()
+    spawn(size, k + 1, count, all)
+    worker.join()
+}
+
+i32 main() {
+    thread.Mutex<Totals> all
+    spawn(4000, 0, 8, all)
+    all.lock([](ref Totals totals) {
+        println("inside {} iterations {}", totals.inside, totals.iterations)
+    })
+    ret 0
+}
