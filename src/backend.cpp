@@ -22,6 +22,7 @@
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Target/TargetMachine.h>
 #include <llvm/Target/TargetOptions.h>
+#include <llvm/Transforms/IPO/GlobalDCE.h>
 #include <llvm/TargetParser/Triple.h>
 
 #include <lld/Common/Driver.h>
@@ -72,7 +73,10 @@ void optimize(llvm::Module& module, llvm::TargetMachine& machine, int level) {
 
     llvm::ModulePassManager passes;
     switch (level) {
-    case 0: passes = builder.buildO0DefaultPipeline(llvm::OptimizationLevel::O0); break;
+    case 0:  // without optimizations too, the functions that nothing calls go away (D241)
+        passes = builder.buildO0DefaultPipeline(llvm::OptimizationLevel::O0);
+        passes.addPass(llvm::GlobalDCEPass());
+        break;
     case 1: passes = builder.buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O1); break;
     case 3: passes = builder.buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O3); break;
     default: passes = builder.buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O2); break;

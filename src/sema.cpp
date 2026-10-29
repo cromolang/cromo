@@ -365,7 +365,9 @@ private:
             function.symbol = function.isExtern ? function.name : symbolFor(function.loc, function.name);
             if (scope.functions.count(function.name)) {
                 diag_->error(function.loc, "function '" + function.name + "' is already defined");
-            } else if (function.isExtern && function.name.rfind("cromo_", 0) == 0) {
+            } else if (function.isExtern && function.library == "cromo" && !fileOf(function.loc.file).isLibrary) {
+                diag_->error(function.loc, "the library \"cromo\" is the runtime: only the standard library declares its functions (D240)");
+            } else if (function.isExtern && function.library != "cromo" && function.name.rfind("cromo_", 0) == 0) {
                 diag_->error(function.loc, "the name '" + function.name + "' is reserved for the runtime");
             } else if (isBuiltinFunction(function.name) || findBuiltinType(function.name)) {
                 diag_->error(function.loc, "'" + function.name + "' is a built-in name");

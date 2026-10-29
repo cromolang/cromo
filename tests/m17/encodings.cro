@@ -1,0 +1,66 @@
+// Hex and base64 of std.crypto (D236), with the vectors of RFC 4648.
+// expect-output: [] [Zg==] [Zm8=] [Zm9v] [Zm9vYg==] [Zm9vYmE=] [Zm9vYmFy]
+// expect-output: foobar foobar
+// expect-output: [] [Zg] [Zm8] [Zm9v] [Zm9vYg] [Zm9vYmE] [Zm9vYmFy]
+// expect-output: 00ff7f80 00ff7f80 true
+// expect-output: -_8 +/8=
+// expect-output: fo fo
+// expect-output: cannot read the base64: its length is not valid
+// expect-output: cannot read the base64: a character that is not of base64 at 2
+// expect-output: cannot read the hex: its digits are odd in number
+// expect-output: cannot read the hex: a character that is not a digit at 3
+import std.crypto
+
+void tryBase64(string text) {
+    try {
+        crypto.fromBase64(text)
+    } catch (Exception e) {
+        println("{}", e.message())
+    }
+}
+
+void tryHex(string text) {
+    try {
+        crypto.fromHex(text)
+    } catch (Exception e) {
+        println("{}", e.message())
+    }
+}
+
+i32 main() {
+    string foobar = "foobar"
+    string standard
+    string url
+    for (i64 n = 0; n <= 6; n++) {
+        list<u8> part = foobar.slice(0, n).bytes()
+        if (n > 0) {
+            standard += " "
+            url += " "
+        }
+        standard += format("[{}]", crypto.base64(part))
+        url += format("[{}]", crypto.base64Url(part))
+    }
+    println("{}", standard)
+    println("{} {}", string(crypto.fromBase64("Zm9vYmFy")), string(crypto.fromBase64Url("Zm9vYmFy")))
+    println("{}", url)
+
+    list<u8> bytes
+    bytes.add(0x00)
+    bytes.add(0xFF)
+    bytes.add(0x7F)
+    bytes.add(0x80)
+    list<u8> back = crypto.fromHex("00FF7f80")
+    println("{} {} {}", crypto.hex(bytes), crypto.hex(back), crypto.hex(crypto.fromBase64(crypto.base64(bytes))) == "00ff7f80")
+
+    list<u8> high
+    high.add(0xFB)
+    high.add(0xFF)
+    println("{} {}", crypto.base64Url(high), crypto.base64(high))
+    println("{} {}", string(crypto.fromBase64Url("Zm8")), string(crypto.fromBase64Url("Zm8=")))  // with or without padding
+
+    tryBase64("Zm9")
+    tryBase64("Zm*v")
+    tryHex("abc")
+    tryHex("abcz")
+    ret 0
+}

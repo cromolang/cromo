@@ -1,0 +1,51 @@
+// Ed25519 with the vectors of RFC 8032 §7.1 (tests 1 and 2), and X25519 with
+// those of RFC 7748 §6.1 (D236).
+// expect-output: d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a
+// expect-output: e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b
+// expect-output: true false false false
+// expect-output: 92a009a9f0d4cab8720e820b5f642540a2b27b5416503f8fb3762223ebdb69da085ac1e43e15996e458f3613d0f11d8c387b2eaeb4302aeeb00d291612bb0c00
+// expect-output: 8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a
+// expect-output: de9edb7d7b7dc1b4d35b61c2ece435373f8343c85b78674dadfc7e146f882b4f
+// expect-output: 4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742
+// expect-output: 4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742
+// expect-output: the private key of Ed25519 has 32 bytes, not 31
+// expect-output: cannot exchange the keys: the public key of X25519 is not valid
+import std.crypto
+
+i32 main() {
+    list<u8> secret = crypto.fromHex("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60")
+    list<u8> pub = crypto.ed25519PublicKey(secret)
+    println("{}", crypto.hex(pub))
+    list<u8> signature = crypto.ed25519Sign(secret, list<u8>())
+    println("{}", crypto.hex(signature))
+    list<u8> other = crypto.fromHex("72")
+    println("{} {} {} {}", crypto.ed25519Verify(pub, list<u8>(), signature), crypto.ed25519Verify(pub, other, signature),
+            crypto.ed25519Verify(pub, list<u8>(), crypto.random(64)), crypto.ed25519Verify(other, list<u8>(), signature))
+    list<u8> secret2 = crypto.fromHex("4ccd089b28ff96da9db6c346ec114e0f5b8a319f35aba624da8cf6ed4fb8a6fb")
+    println("{}", crypto.hex(crypto.ed25519Sign(secret2, other)))
+
+    list<u8> alice = crypto.fromHex("77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a")
+    list<u8> bob = crypto.fromHex("5dab087e624a8a4b79e17f8b83800ee66f3bb1292618b6fd1c2f8b27ff88e0eb")
+    list<u8> alicePublic = crypto.x25519PublicKey(alice)
+    list<u8> bobPublic = crypto.x25519PublicKey(bob)
+    println("{}", crypto.hex(alicePublic))
+    println("{}", crypto.hex(bobPublic))
+    println("{}", crypto.hex(crypto.x25519(alice, bobPublic)))
+    println("{}", crypto.hex(crypto.x25519(bob, alicePublic)))
+
+    try {
+        crypto.ed25519Sign(crypto.random(31), other)
+    } catch (Exception e) {
+        println("{}", e.message())
+    }
+    try {
+        list<u8> zero
+        for (i64 i = 0; i < 32; i++) {
+            zero.add(0)
+        }
+        crypto.x25519(alice, zero)
+    } catch (Exception e) {
+        println("{}", e.message())
+    }
+    ret 0
+}

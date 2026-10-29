@@ -88,6 +88,7 @@ private:
         module.files.resize(index + 1);
         module.files[index].name = names_[index];
         module.files[index].part = part;
+        module.files[index].isLibrary = isEmbedded(sources_[index].path);
         program_.append(std::move(module));
     }
 
@@ -169,7 +170,7 @@ private:
         if (found != loaded_.end()) return {found->second};
         std::optional<std::string_view> text = libraryModule(base + ".cro");
         if (import.path.size() != 2 || !text || (hidden && !fromLibrary)) {
-            diag_.error(import.loc, "the standard library has no module " + dotted + ": it has std.fs, std.time, std.os, std.thread and std.net, "
+            diag_.error(import.loc, "the standard library has no module " + dotted + ": it has std.fs, std.time, std.os, std.thread, std.net and std.crypto, "
                                     "and its core is visible without import (D201)");
             return {};
         }

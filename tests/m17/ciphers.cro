@@ -1,0 +1,59 @@
+// The ciphers of std.crypto (D236): AES-GCM with the test case 4 of the paper of
+// GCM (McGrew and Viega), ChaCha20-Poly1305 with the vector of RFC 8439 §2.8.2.
+// expect-output: 42831ec2217774244b7221b784d0d49ce3aa212f2c02a4e035c17e2329aca12e21d514b25466931c7d8f6a5aac84aa051ba30b396a0aac973d58e0915bc94fbc3221a5db94fae95ae7121a47
+// expect-output: true
+// expect-output: d31a8d34648e60db7b86afbc53ef7ec2a4aded51296e08fea9e2b5a736ee62d63dbea45e8ca9671282fafb69da92728b1a71de0a9e060b2905d6a5b67ecd3b3692ddbd7f2d778b8c9803aee328091b58fab324e4fad675945585808b4831d7bc3ff4def08e4b7a9de576d26586cec64b61161ae10b594f09e26a7e902ecbd0600691
+// expect-output: Ladies and Gentlemen of the class of '99: If I could offer you only one tip for the future, sunscreen would be it.
+// expect-output: cannot decrypt: the data are not authentic, or the key, the nonce or the extra data are wrong
+// expect-output: cannot decrypt: the data are not authentic, or the key, the nonce or the extra data are wrong
+// expect-output: cannot encrypt: a key of AES-GCM has 16, 24 or 32 bytes, not 15
+// expect-output: cannot encrypt: a key of ChaCha20-Poly1305 has 32 bytes, not 16
+// expect-output: cannot decrypt: the nonce has 12 bytes, not 8
+// expect-output: 16
+import std.crypto
+
+void attempt(func() body) {
+    try {
+        body()
+    } catch (Exception e) {
+        println("{}", e.message())
+    }
+}
+
+i32 main() {
+    list<u8> key = crypto.fromHex("feffe9928665731c6d6a8f9467308308")
+    list<u8> nonce = crypto.fromHex("cafebabefacedbaddecaf888")
+    list<u8> plain = crypto.fromHex(
+        "d9313225f88406e5a55909c5aff5269a86a7a9531534f7da2e4c303d8a318a721c3c0c95956809532fcf0e2449a6b525b16aedf5aa0de657ba637b39")
+    list<u8> extra = crypto.fromHex("feedfacedeadbeeffeedfacedeadbeefabaddad2")
+    list<u8> sealed = crypto.encrypt(crypto.Cipher.AesGcm, key, nonce, plain, extra)
+    println("{}", crypto.hex(sealed))
+    println("{}", crypto.hex(crypto.decrypt(crypto.Cipher.AesGcm, key, nonce, sealed, extra)) == crypto.hex(plain))
+
+    list<u8> chachaKey = crypto.fromHex("808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f")
+    list<u8> chachaNonce = crypto.fromHex("070000004041424344454647")
+    list<u8> chachaExtra = crypto.fromHex("50515253c0c1c2c3c4c5c6c7")
+    string text = "Ladies and Gentlemen of the class of '99: If I could offer you only one tip for the future, sunscreen would be it."
+    list<u8> box = crypto.encrypt(crypto.Cipher.ChaCha20Poly1305, chachaKey, chachaNonce, text.bytes(), chachaExtra)
+    println("{}", crypto.hex(box))
+    println("{}", string(crypto.decrypt(crypto.Cipher.ChaCha20Poly1305, chachaKey, chachaNonce, box, chachaExtra)))
+
+    box[0] ^= 1  // one bit changed
+    attempt([ref box, ref chachaKey, ref chachaNonce, ref chachaExtra]() {
+        crypto.decrypt(crypto.Cipher.ChaCha20Poly1305, chachaKey, chachaNonce, box, chachaExtra)
+    })
+    attempt([ref sealed, ref key, ref nonce]() {
+        crypto.decrypt(crypto.Cipher.AesGcm, key, nonce, sealed, list<u8>())  // other extra data
+    })
+    attempt([]() {
+        crypto.encrypt(crypto.Cipher.AesGcm, crypto.random(15), crypto.random(12), list<u8>(), list<u8>())
+    })
+    attempt([]() {
+        crypto.encrypt(crypto.Cipher.ChaCha20Poly1305, crypto.random(16), crypto.random(12), list<u8>(), list<u8>())
+    })
+    attempt([]() {
+        crypto.decrypt(crypto.Cipher.AesGcm, crypto.random(32), crypto.random(8), crypto.random(20), list<u8>())
+    })
+    println("{}", crypto.encrypt(crypto.Cipher.AesGcm, crypto.random(32), crypto.random(12), list<u8>(), list<u8>()).len())
+    ret 0
+}

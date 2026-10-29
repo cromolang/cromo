@@ -598,7 +598,7 @@ i32 main() {
 }
 ```
 
-- The core (`list`, `string`, `map`, `format`, the numbers from text) is visible everywhere; `std.fs`, `std.time` and `std.os` are imported (D201). Their functions are in D211.
+- The core (`list`, `string`, `map`, `format`, the numbers from text) is visible everywhere; `std.fs`, `std.time`, `std.os`, `std.thread`, `std.net` and `std.crypto` are imported (D201). The functions of the first three are in D211.
 - Next to `fs.cro` a module can have `fs_windows.cro` and `fs_linux.cro`: only the file of the system the program is compiled for is used, and it shares the names of the module, also the private ones (D202). It holds for the library and for the programs.
 - In the modules with `import unsafe`, `s.cstring()` gives the address of a copy of the string ending with a zero, for the C functions, until the end of the statement (D204).
 
@@ -656,6 +656,47 @@ i32 main() {
 - `net.listen` gives a `Listener`, `accept()` and `net.connect(host, port)` give a `Connection`; the destructor closes the socket (D224). UDP has `net.udp(host, port)`.
 - Errors and timeouts are exceptions (D225). Names and addresses of IPv4 and IPv6 work on Windows and on Linux, without the C library (D226).
 
-## 20. Still to be written
+### TLS (D233–D235, D243–D247)
 
-- The rest of the standard library: TLS, HTTP and JSON (M17–M18).
+```cromo
+net.Connection site = net.connectTls("example.com", 443)
+site.writeText("GET / HTTP/1.1\r\nHost: example.com\r\nConnection: close\r\n\r\n")
+println("{}", string(site.read(4096)))
+
+net.Listener server = net.listenTls("0.0.0.0", 8443, fs.readText("cert.pem"), fs.readText("key.pem"))
+net.Connection client = server.accept()   // encrypted, as the connections of connectTls
+```
+
+- `net.connectTls` gives a `Connection` that encrypts, with the same `read`, `write` and timeouts. The certificate of the server must come from an authority of the system, and name the host: otherwise it is an exception, as `cannot connect to example.com:443 with TLS: the certificate has expired` (D234, D235).
+- `net.listenTls` takes the certificate, followed by its chain, and the private key, as texts in PEM. A connection that it accepts makes its handshake with its first `read` or `write` (D244).
+- `SSL_CERT_FILE` can name a file in PEM with the authorities to trust instead of those of the system (D247).
+- TLS 1.2 and 1.3 come from mbedTLS, compiled into the runtime: the programs stay without dependencies (D233).
+
+## 20. Cryptography (D236, D249)
+
+```cromo
+import std.crypto
+
+list<u8> data = "hello".bytes()
+println("{}", crypto.hex(crypto.sha256(data)))       // 2cf24dba5fb0a30e...
+list<u8> key = crypto.random(32)
+list<u8> mac = crypto.hmac(crypto.Hash.Sha256, key, data)
+
+list<u8> nonce = crypto.random(12)                    // never twice with the same key
+list<u8> sealed = crypto.encrypt(crypto.Cipher.AesGcm, key, nonce, data, list<u8>())
+list<u8> plain = crypto.decrypt(crypto.Cipher.AesGcm, key, nonce, sealed, list<u8>())
+
+list<u8> secret = crypto.random(32)
+list<u8> signature = crypto.ed25519Sign(secret, data)
+bool valid = crypto.ed25519Verify(crypto.ed25519PublicKey(secret), data, signature)
+```
+
+- Hashes: `md5`, `sha1`, `sha256`, `sha512`; `hmac` with the enum `Hash`; `Hasher` for data in parts.
+- `random(n)`: bytes from the generator of the system. `hex`, `base64` and `base64Url`, with `fromHex`, `fromBase64` and `fromBase64Url`.
+- `encrypt` and `decrypt` with AES-GCM or ChaCha20-Poly1305: the result has the tag of 16 bytes at the end, and `decrypt` throws if the data, or the extra data, are not those that were encrypted.
+- Ed25519 signs (`ed25519PublicKey`, `ed25519Sign`, `ed25519Verify`) and X25519 exchanges keys (`x25519PublicKey`, `x25519`); the private keys are 32 random bytes.
+- A key of the wrong size is an exception.
+
+## 21. Still to be written
+
+- The rest of the standard library: HTTP and JSON (M18).

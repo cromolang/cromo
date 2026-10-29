@@ -72,7 +72,7 @@ struct Use {
 Libraries findLibraries(const Module& module, const std::deque<SourceFile>& sources, Target target, Diagnostics& diag) {
     std::vector<Use> uses;
     for (const FunctionDecl& function : module.functions) {
-        if (!function.isExtern) continue;
+        if (!function.isExtern || function.library == "cromo") continue;  // the runtime, always linked (D240)
         auto use = std::find_if(uses.begin(), uses.end(), [&](const Use& u) { return u.name == function.library; });
         if (use == uses.end()) use = uses.insert(uses.end(), Use{function.library, {}, {}});
         use->functions.push_back(&function);

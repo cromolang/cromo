@@ -592,6 +592,7 @@ struct ModuleFile {
     std::string name;  // "geometry.shapes": the path of the module, in front of its symbols
     std::vector<ImportDecl> imports;
     bool isUnsafe = false;  // `import unsafe` (D127)
+    bool isLibrary = false;  // a file of the standard library, embedded in cromo (D201)
     // `fs_windows.cro` next to `fs.cro` (D202): the file of the same module whose
     // names it shares; -1 for a file that is a module by itself.
     int part = -1;

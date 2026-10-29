@@ -1,0 +1,115 @@
+// The errors of TLS (D235): a name that the certificate does not have, a server
+// that does not speak TLS, a key that is not the one of the certificate, texts
+// that are not PEM. The server sees the clients that gave up as an error or as
+// the end of the connection.
+// program-env: SSL_CERT_FILE={dir}/certificates/ca.pem
+// program-env: CERTIFICATES={dir}/certificates/
+// expect-output: cannot connect to 127.0.0.1:PORT with TLS: the certificate is not for 127.0.0.1
+// expect-output: cannot connect to localhost:PORT with TLS: what arrives is not TLS
+// expect-output: cannot listen with TLS: the key is not the one of the certificate
+// expect-output: cannot listen with TLS: the certificate is not valid PEM
+// expect-output: cannot listen with TLS: the key is not a valid private key in PEM
+// expect-output: the server is still there
+import std.fs
+import std.net
+import std.os
+import std.thread
+
+void show(string message, i32 port) {
+    string text = format("{}", port)
+    string shown
+    i64 i = 0
+    for (i < message.len()) {
+        if (i + text.len() <= message.len() && message.slice(i, i + text.len()) == text) {
+            shown += "PORT"
+            i += text.len()
+        } else {
+            shown += message.slice(i, i + 1)
+            i++
+        }
+    }
+    println("{}", shown)
+}
+
+// The part of the message up to the first ':' after "TLS: ".
+void showStart(string message) {
+    i64 end = message.len()
+    for (i64 i = 24; i < message.len(); i++) {
+        if (message[i] == ':') {
+            end = i
+            break
+        }
+    }
+    println("{}", message.slice(0, end))
+}
+
+i32 main() {
+    string folder = os.env("CERTIFICATES")
+    string certificate = fs.readText(format("{}localhost.pem", folder))
+    string key = fs.readText(format("{}localhost.key", folder))
+    net.Listener server = net.listenTls("127.0.0.1", 0, certificate, key)
+    server.timeout(10000)
+    i32 port = server.port()
+    thread.Thread serving = thread.Thread([ref server]() {
+        for (i64 i = 0; i < 2; i++) {
+            net.Connection client = server.accept()
+            client.timeout(10000)
+            try {
+                list<u8> data = client.read(100)
+                if (data.len() > 0) {
+                    client.writeText("?")
+                }
+            } catch (Exception e) {
+            }
+        }
+    })
+    serving.start()
+
+    try {
+        net.connectTls("127.0.0.1", port)
+    } catch (Exception e) {
+        show(e.message(), port)
+    }
+
+    // A server of plain TCP, which answers as HTTP would.
+    net.Listener plain = net.listen("localhost", 0)
+    i32 plainPort = plain.port()
+    thread.Thread answering = thread.Thread([ref plain]() {
+        net.Connection client = plain.accept()
+        client.read(1000)
+        client.writeText("HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n")
+    })
+    answering.start()
+    try {
+        net.connectTls("localhost", plainPort)
+    } catch (Exception e) {
+        show(e.message(), plainPort)
+    }
+    answering.join()
+
+    try {
+        net.listenTls("localhost", 0, certificate, fs.readText(format("{}other.key", folder)))
+    } catch (Exception e) {
+        println("{}", e.message())
+    }
+    try {
+        net.listenTls("localhost", 0, "not a certificate", key)
+    } catch (Exception e) {
+        showStart(e.message())
+    }
+    try {
+        net.listenTls("localhost", 0, certificate, certificate)
+    } catch (Exception e) {
+        showStart(e.message())
+    }
+
+    // The server goes on after the client that gave up.
+    net.Connection good = net.connectTls("localhost", port)
+    good.writeText("hi")
+    if (string(good.read(10)) == "?") {
+        println("the server is still there")
+    }
+    good.close()
+    serving.join()
+    ret 0
+}

@@ -18,6 +18,8 @@
 #   // expect-warning: text         text that must appear among the compiler warnings
 #   // target: windows              the test is only for that system (windows or linux)
 #   // program-arg: text           an argument of the program (repeatable, exact)
+#   // program-env: NAME=value     a variable of the environment of the program
+#                                  (repeatable); {dir} is the folder of the test
 #   // cromo-command: run          compiles and runs with cromo run, instead of build
 # Usage: powershell -ExecutionPolicy Bypass -File tests\run-tests.ps1 [-Cromo <path>] [-Filter <text>] [-Flags <options>]
 #   -Flags passes extra options to every compilation, for example -Flags -O0
@@ -73,12 +75,21 @@ function Get-Target([string[]]$Options) {
     $target
 }
 
-# A program for Linux runs in WSL, from the same folder seen as /mnt/c/...
-function Invoke-Linux([string]$Path, [string[]]$Arguments) {
-    $linuxPath = '/mnt/' + $Path.Substring(0, 1).ToLower() + ($Path.Substring(2) -replace '\\', '/')
+# A path of Windows as WSL sees it: /mnt/c/...
+function ConvertTo-LinuxPath([string]$Path) {
+    '/mnt/' + $Path.Substring(0, 1).ToLower() + ($Path.Substring(2) -replace '\\', '/')
+}
+
+# A program for Linux runs in WSL, from the same folder; its variables go
+# through env, because WSL does not pass those of Windows.
+function Invoke-Linux([string]$Path, [string[]]$Arguments, [hashtable]$Environment = @{}) {
     $options = @()
     if ($Distro) { $options += @('-d', $Distro) }
-    Invoke-Program 'wsl.exe' ($options + @('-e', $linuxPath) + $Arguments)
+    $variables = @()
+    if ($Environment.Count -gt 0) {
+        $variables = @('env') + ($Environment.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" })
+    }
+    Invoke-Program 'wsl.exe' ($options + @('-e') + $variables + @((ConvertTo-LinuxPath $Path)) + $Arguments)
 }
 
 # Writes an argument in a command line so that the program reads it back as it
@@ -101,10 +112,11 @@ function ConvertTo-Argument([string]$Text) {
 
 # Runs a program and returns its exit code, standard output and standard error,
 # read separately and decoded as UTF-8. $StandardInput, if given, are the bytes of
-# its standard input.
-function Invoke-Program([string]$Path, [string[]]$Arguments, [byte[]]$StandardInput = $null) {
+# its standard input. $Environment adds variables to its environment.
+function Invoke-Program([string]$Path, [string[]]$Arguments, [byte[]]$StandardInput = $null, [hashtable]$Environment = @{}) {
     $info = New-Object System.Diagnostics.ProcessStartInfo
     $info.FileName = $Path
+    foreach ($variable in $Environment.GetEnumerator()) { $info.EnvironmentVariables[$variable.Key] = $variable.Value }
     $info.Arguments = ($Arguments | ForEach-Object { ConvertTo-Argument $_ }) -join ' '
     $info.UseShellExecute = $false
     $info.CreateNoWindow = $true
@@ -147,6 +159,7 @@ foreach ($test in Get-ChildItem $PSScriptRoot -Recurse -Filter *.cro | Sort-Obje
     $expectWarning = @()
     $only = ''
     $programArgs = @()
+    $programEnv = @{}
     $command = 'build'
     foreach ($line in Get-Content $test.FullName -Encoding UTF8) {
         if ($line -match '^\s*//\s*cromo-flags:\s*(.+?)\s*$') { $compileFlags += ($matches[1] -split '\s+') }
@@ -157,6 +170,7 @@ foreach ($test in Get-ChildItem $PSScriptRoot -Recurse -Filter *.cro | Sort-Obje
         elseif ($line -match '^\s*//\s*expect-warning:\s*(.+?)\s*$') { $expectWarning += $matches[1] }
         elseif ($line -match '^\s*//\s*target:\s*(\w+)\s*$') { $only = $matches[1] }
         elseif ($line -match '^\s*//\s*program-arg:\s?(.*)$') { $programArgs += $matches[1] }
+        elseif ($line -match '^\s*//\s*program-env:\s*([^=\s]+)=(.*?)\s*$') { $programEnv[$matches[1]] = $matches[2] }
         elseif ($line -match '^\s*//\s*cromo-command:\s*(\w+)\s*$') { $command = $matches[1] }
     }
     $target = Get-Target $compileFlags
@@ -164,6 +178,9 @@ foreach ($test in Get-ChildItem $PSScriptRoot -Recurse -Filter *.cro | Sort-Obje
         $skipped++
         continue
     }
+    $folder = $test.DirectoryName
+    if ($target -eq 'linux') { $folder = ConvertTo-LinuxPath $folder }
+    foreach ($key in @($programEnv.Keys)) { $programEnv[$key] = $programEnv[$key].Replace('{dir}', $folder) }
 
     $exe = Join-Path $out ($test.BaseName + $(if ($target -eq 'linux') { '' } else { '.exe' }))
     if ($command -eq 'run') {
@@ -189,11 +206,11 @@ foreach ($test in Get-ChildItem $PSScriptRoot -Recurse -Filter *.cro | Sort-Obje
         if ($command -eq 'run') {
             $run = $compile
         } elseif ($target -eq 'linux') {
-            $run = Invoke-Linux $exe $programArgs
+            $run = Invoke-Linux $exe $programArgs $programEnv
             # Linux keeps only the lowest byte of the exit code (D145).
             if ($null -ne $expectExit) { $expectExit = $expectExit -band 0xFF }
         } else {
-            $run = Invoke-Program $exe $programArgs
+            $run = Invoke-Program $exe $programArgs $null $programEnv
         }
         if ($null -ne $expectExit -and $run.Code -ne $expectExit) {
             $problems += "exit code $($run.Code), expected $expectExit"

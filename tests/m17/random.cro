@@ -1,0 +1,15 @@
+// The random bytes of the system (D236): as many as asked, different each time.
+// expect-output: 0 32 1000
+// expect-output: different
+import std.crypto
+
+i32 main() {
+    list<u8> none = crypto.random(0)
+    list<u8> key = crypto.random(32)
+    list<u8> many = crypto.random(1000)
+    println("{} {} {}", none.len(), key.len(), many.len())
+    if (crypto.hex(key) != crypto.hex(crypto.random(32))) {
+        println("different")
+    }
+    ret 0
+}

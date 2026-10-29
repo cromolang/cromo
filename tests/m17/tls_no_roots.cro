@@ -1,0 +1,16 @@
+// SSL_CERT_FILE replaces the roots of the system (D234): a file without
+// certificates leaves none, and the client says which file it read.
+// program-env: SSL_CERT_FILE={dir}/certificates/missing.pem
+// expect-output: missing.pem, the file of SSL_CERT_FILE
+import std.net
+
+i32 main() {
+    net.Listener server = net.listen("localhost", 0)
+    try {
+        net.connectTls("localhost", server.port())
+    } catch (Exception e) {
+        string message = e.message()
+        println("{}", message.slice(message.len() - 38, message.len()))
+    }
+    ret 0
+}

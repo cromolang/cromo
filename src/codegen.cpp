@@ -529,7 +529,9 @@ private:
 
     std::string finishFunction(const std::string& returnType, const std::string& symbol, const std::vector<std::string>& params) {
         std::ostringstream out;
-        out << "define " << returnType << " " << symbol << "(";
+        // Internal: a function that nothing calls is removed (backend.cpp), with
+        // the C code that only it uses, as mbedTLS for connectTls (D241).
+        out << "define internal " << returnType << " " << symbol << "(";
         for (size_t i = 0; i < params.size(); ++i) out << (i ? ", " : "") << params[i];
         out << ") nounwind {\nentry:\n" << allocas_.str() << body_.str() << "}\n\n";
         return out.str();

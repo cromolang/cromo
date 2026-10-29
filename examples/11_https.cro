@@ -1,0 +1,40 @@
+// Example 11: a page over HTTPS, with the hash of what arrives.
+//
+// Decided: TLS with mbedTLS (D233), the root certificates of the system (D234),
+//          connectTls with the same Connection (D235), the module std.crypto
+//          (D236)
+// The client of HTTP comes with M18: here the request is written by hand.
+import std.crypto
+import std.net
+
+i32 main(list<string> args) {
+    string host = "example.com"
+    if (args.len() > 1) {
+        host = args[1].copy()
+    }
+    try {
+        net.Connection site = net.connectTls(host, 443)  // the certificate is verified
+        site.timeout(10000)
+        site.writeText(format("GET / HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n", host))
+        list<u8> answer
+        for {
+            list<u8> part = site.read(16384)
+            if (part.len() == 0) {
+                break
+            }
+            for (u8 b in part) {
+                answer.add(b)
+            }
+        }
+        list<u8> status  // the first line: HTTP/1.1 200 OK
+        for (i64 i = 0; i < answer.len() && answer[i] != '\r'; i++) {
+            status.add(answer[i])
+        }
+        println("{}: {}, {} bytes", host, string(status), answer.len())
+        println("SHA-256: {}", crypto.hex(crypto.sha256(answer)))
+    } catch (Exception e) {
+        println("{}", e.message())  // as: cannot connect to expired.badssl.com:443 with TLS: the certificate has expired
+        ret 1
+    }
+    ret 0
+}

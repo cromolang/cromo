@@ -1,0 +1,466 @@
+// The module std.crypto (D236, D249): hashes and HMAC, random bytes, hex and base64,
+// ciphers with authentication, signatures with Ed25519 and the exchange of keys
+// with X25519. The algorithms are those of mbedTLS and Monocypher, in the runtime
+// (runtime/tls); the bytes are lists of u8, and a key of the wrong size is an
+// exception.
+import unsafe
+
+extern "cromo" {
+    i32 cromo_crypto_random(addr out, i64 size)
+    void cromo_crypto_hash(i32 kind, addr data, i64 size, addr out)
+    void cromo_crypto_hmac(i32 kind, addr key, i64 keySize, addr data, i64 size, addr out)
+    addr cromo_crypto_hasher(i32 kind)
+    void cromo_crypto_hasher_add(addr hasher, addr data, i64 size)
+    void cromo_crypto_hasher_finish(addr hasher, addr out)
+    void cromo_crypto_hasher_end(addr hasher)
+    void cromo_crypto_seal(i32 cipher, addr key, i64 keySize, addr nonce, addr extra, i64 extraSize, addr data, i64 size,
+        addr out)
+    i32 cromo_crypto_open(i32 cipher, addr key, i64 keySize, addr nonce, addr extra, i64 extraSize, addr data, i64 size,
+        addr out)
+    void cromo_crypto_ed25519_public(addr privateKey, addr publicKey)
+    void cromo_crypto_ed25519_sign(addr privateKey, addr message, i64 size, addr signature)
+    i32 cromo_crypto_ed25519_verify(addr publicKey, addr message, i64 size, addr signature)
+    void cromo_crypto_x25519_public(addr privateKey, addr publicKey)
+    i32 cromo_crypto_x25519(addr privateKey, addr peerKey, addr shared)
+}
+
+// ---- Hashes ----
+
+// MD5 and SHA-1 are broken: they are here for the formats that still use them.
+public enum Hash {
+    Md5
+    Sha1
+    Sha256
+    Sha512
+}
+
+public list<u8> md5(list<u8> data) {
+    ret digest(Hash.Md5, data)
+}
+
+public list<u8> sha1(list<u8> data) {
+    ret digest(Hash.Sha1, data)
+}
+
+public list<u8> sha256(list<u8> data) {
+    ret digest(Hash.Sha256, data)
+}
+
+public list<u8> sha512(list<u8> data) {
+    ret digest(Hash.Sha512, data)
+}
+
+// The HMAC of the data with a key of any size (RFC 2104).
+public list<u8> hmac(Hash kind, list<u8> key, list<u8> data) {
+    addr secret = raw(key)
+    addr input = raw(data)
+    addr out = alloc(64)
+    cromo_crypto_hmac(i32(kind), secret, key.len(), input, data.len(), out)
+    list<u8> result = fromRaw(out, digestSize(kind))
+    forget(secret, key.len())
+    free(input)
+    free(out)
+    ret result
+}
+
+// A hash computed in parts, for data that arrive in pieces.
+public struct Hasher {
+    addr state
+    Hash kind
+
+    public Hasher(Hash algorithm) {
+        kind = algorithm
+        state = cromo_crypto_hasher(i32(algorithm))
+    }
+
+    ~Hasher() {
+        cromo_crypto_hasher_end(state)
+    }
+
+    public void add(list<u8> data) {
+        addr input = raw(data)
+        cromo_crypto_hasher_add(state, input, data.len())
+        free(input)
+    }
+
+    // The hash of what was added; then the hasher starts again, empty.
+    public list<u8> finish() {
+        addr out = alloc(64)
+        cromo_crypto_hasher_finish(state, out)
+        list<u8> result = fromRaw(out, digestSize(kind))
+        free(out)
+        ret result
+    }
+}
+
+// ---- Random bytes ----
+
+// Bytes from the generator of the system, good for keys and nonces.
+public list<u8> random(i64 count) {
+    if (count < 0) {
+        panic(format("cannot generate {} random bytes", count))
+    }
+    addr out = alloc(count)
+    if (cromo_crypto_random(out, count) != 0) {
+        free(out)
+        throw Error("cannot generate random bytes: the system gives none")
+    }
+    list<u8> result = fromRaw(out, count)
+    forget(out, count)
+    ret result
+}
+
+// ---- Hex and base64 ----
+
+// Two lowercase hex digits for each byte.
+public string hex(list<u8> bytes) {
+    string digits = "0123456789abcdef"
+    list<u8> text
+    text.reserve(bytes.len() * 2)
+    for (u8 b in bytes) {
+        text.add(digits[i64(b >> 4)])
+        text.add(digits[i64(b & 0x0F)])
+    }
+    ret string(text)
+}
+
+// The bytes of hex digits, uppercase or lowercase.
+public list<u8> fromHex(string text) {
+    if (text.len() % 2 != 0) {
+        throw Error("cannot read the hex: its digits are odd in number")
+    }
+    list<u8> bytes
+    bytes.reserve(text.len() / 2)
+    for (i64 i = 0; i < text.len(); i += 2) {
+        i64 high = hexValue(text[i])
+        if (high < 0) {
+            throw Error(format("cannot read the hex: a character that is not a digit at {}", i))
+        }
+        i64 low = hexValue(text[i + 1])
+        if (low < 0) {
+            throw Error(format("cannot read the hex: a character that is not a digit at {}", i + 1))
+        }
+        bytes.add(u8(high * 16 + low))
+    }
+    ret bytes
+}
+
+// Base64 (RFC 4648), with the padding `=`.
+public string base64(list<u8> bytes) {
+    ret encode64(bytes, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/", true)
+}
+
+public list<u8> fromBase64(string text) {
+    ret decode64(text, false)
+}
+
+// Base64 for URLs and names of files (RFC 4648 §5): '-' and '_' instead of '+'
+// and '/', and no padding.
+public string base64Url(list<u8> bytes) {
+    ret encode64(bytes, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_", false)
+}
+
+// It also reads the padding, if it is there.
+public list<u8> fromBase64Url(string text) {
+    ret decode64(text, true)
+}
+
+// ---- Ciphers with authentication ----
+
+// AES-GCM takes a key of 16, 24 or 32 bytes, ChaCha20-Poly1305 one of 32; both a
+// nonce of 12 bytes, never used twice with the same key.
+public enum Cipher {
+    AesGcm
+    ChaCha20Poly1305
+}
+
+// The data encrypted, followed by a tag of 16 bytes that authenticates them and
+// the extra data, which are not encrypted.
+public list<u8> encrypt(Cipher cipher, list<u8> key, list<u8> nonce, list<u8> data, list<u8> extra) {
+    checkCipher(cipher, key, nonce, "encrypt")
+    addr secret = raw(key)
+    addr once = raw(nonce)
+    addr more = raw(extra)
+    addr input = raw(data)
+    addr out = alloc(data.len() + 16)
+    cromo_crypto_seal(i32(cipher), secret, key.len(), once, more, extra.len(), input, data.len(), out)
+    list<u8> result = fromRaw(out, data.len() + 16)
+    forget(secret, key.len())
+    forget(input, data.len())
+    free(once)
+    free(more)
+    free(out)
+    ret result
+}
+
+// The data of encrypt(), if they and the extra data are the same that were
+// encrypted with the key and the nonce; otherwise an exception.
+public list<u8> decrypt(Cipher cipher, list<u8> key, list<u8> nonce, list<u8> data, list<u8> extra) {
+    checkCipher(cipher, key, nonce, "decrypt")
+    if (data.len() < 16) {
+        throw Error("cannot decrypt: the data are shorter than their tag")
+    }
+    addr secret = raw(key)
+    addr once = raw(nonce)
+    addr more = raw(extra)
+    addr input = raw(data)
+    addr out = alloc(data.len() - 16)
+    i32 authentic = cromo_crypto_open(i32(cipher), secret, key.len(), once, more, extra.len(), input, data.len(), out)
+    list<u8> result
+    if (authentic != 0) {
+        result = fromRaw(out, data.len() - 16)
+    }
+    forget(secret, key.len())
+    forget(out, data.len() - 16)
+    free(once)
+    free(more)
+    free(input)
+    if (authentic == 0) {
+        throw Error("cannot decrypt: the data are not authentic, or the key, the nonce or the extra data are wrong")
+    }
+    ret result
+}
+
+// ---- Signatures and exchange of keys ----
+
+// The public key of a private key of Ed25519, which is 32 random bytes (RFC 8032).
+public list<u8> ed25519PublicKey(list<u8> privateKey) {
+    checkKey(privateKey, "the private key of Ed25519")
+    addr secret = raw(privateKey)
+    addr out = alloc(32)
+    cromo_crypto_ed25519_public(secret, out)
+    list<u8> result = fromRaw(out, 32)
+    forget(secret, 32)
+    free(out)
+    ret result
+}
+
+// The signature of the message, of 64 bytes.
+public list<u8> ed25519Sign(list<u8> privateKey, list<u8> message) {
+    checkKey(privateKey, "the private key of Ed25519")
+    addr secret = raw(privateKey)
+    addr input = raw(message)
+    addr out = alloc(64)
+    cromo_crypto_ed25519_sign(secret, input, message.len(), out)
+    list<u8> result = fromRaw(out, 64)
+    forget(secret, 32)
+    free(input)
+    free(out)
+    ret result
+}
+
+// Whether the signature is of the message, made with the private key of the
+// public key; false also when a size is wrong.
+public bool ed25519Verify(list<u8> publicKey, list<u8> message, list<u8> signature) {
+    if (publicKey.len() != 32 || signature.len() != 64) {
+        ret false
+    }
+    addr key = raw(publicKey)
+    addr input = raw(message)
+    addr check = raw(signature)
+    i32 valid = cromo_crypto_ed25519_verify(key, input, message.len(), check)
+    free(key)
+    free(input)
+    free(check)
+    ret valid != 0
+}
+
+// The public key of a private key of X25519, which is 32 random bytes (RFC 7748).
+public list<u8> x25519PublicKey(list<u8> privateKey) {
+    checkKey(privateKey, "the private key of X25519")
+    addr secret = raw(privateKey)
+    addr out = alloc(32)
+    cromo_crypto_x25519_public(secret, out)
+    list<u8> result = fromRaw(out, 32)
+    forget(secret, 32)
+    free(out)
+    ret result
+}
+
+// The secret shared with the other side, from our private key and its public
+// key: the other side computes the same from its private key and our public key.
+public list<u8> x25519(list<u8> privateKey, list<u8> publicKey) {
+    checkKey(privateKey, "the private key of X25519")
+    checkKey(publicKey, "the public key of X25519")
+    addr secret = raw(privateKey)
+    addr peer = raw(publicKey)
+    addr out = alloc(32)
+    i32 valid = cromo_crypto_x25519(secret, peer, out)
+    list<u8> result = fromRaw(out, 32)
+    forget(secret, 32)
+    forget(out, 32)
+    free(peer)
+    if (valid == 0) {
+        throw Error("cannot exchange the keys: the public key of X25519 is not valid")
+    }
+    ret result
+}
+
+// ---- Helpers ----
+
+i64 digestSize(Hash kind) {
+    i32 index = i32(kind)
+    if (index == 0) {
+        ret 16
+    }
+    if (index == 1) {
+        ret 20
+    }
+    if (index == 2) {
+        ret 32
+    }
+    ret 64
+}
+
+list<u8> digest(Hash kind, list<u8> data) {
+    addr input = raw(data)
+    addr out = alloc(64)
+    cromo_crypto_hash(i32(kind), input, data.len(), out)
+    list<u8> result = fromRaw(out, digestSize(kind))
+    free(input)
+    free(out)
+    ret result
+}
+
+void checkCipher(Cipher cipher, list<u8> key, list<u8> nonce, string action) {
+    i64 size = key.len()
+    if (i32(cipher) == 0 && size != 16 && size != 24 && size != 32) {
+        throw Error(format("cannot {}: a key of AES-GCM has 16, 24 or 32 bytes, not {}", action, size))
+    }
+    if (i32(cipher) == 1 && size != 32) {
+        throw Error(format("cannot {}: a key of ChaCha20-Poly1305 has 32 bytes, not {}", action, size))
+    }
+    if (nonce.len() != 12) {
+        throw Error(format("cannot {}: the nonce has 12 bytes, not {}", action, nonce.len()))
+    }
+}
+
+void checkKey(list<u8> key, string what) {
+    if (key.len() != 32) {
+        throw Error(format("{} has 32 bytes, not {}", what, key.len()))
+    }
+}
+
+i64 hexValue(u8 c) {
+    if (c >= '0' && c <= '9') {
+        ret i64(c - '0')
+    }
+    u8 lower = c | 0x20
+    if (lower >= 'a' && lower <= 'f') {
+        ret i64(lower - 'a') + 10
+    }
+    ret -1
+}
+
+string encode64(list<u8> bytes, string alphabet, bool padding) {
+    list<u8> text
+    text.reserve((bytes.len() + 2) / 3 * 4)
+    i64 i = 0
+    for (i + 3 <= bytes.len()) {
+        u32 group = u32(bytes[i]) << 16 | u32(bytes[i + 1]) << 8 | u32(bytes[i + 2])
+        for (i64 shift = 18; shift >= 0; shift -= 6) {
+            text.add(alphabet[i64(group >> shift & 0x3F)])
+        }
+        i += 3
+    }
+    i64 left = bytes.len() - i
+    if (left > 0) {
+        u32 group = u32(bytes[i]) << 16
+        if (left == 2) {
+            group |= u32(bytes[i + 1]) << 8
+        }
+        for (i64 k = 0; k <= left; k++) {
+            text.add(alphabet[i64(group >> (18 - 6 * k) & 0x3F)])
+        }
+        if (padding) {
+            for (i64 k = left; k < 3; k++) {
+                text.add('=')
+            }
+        }
+    }
+    ret string(text)
+}
+
+// The value of a character of base64, or -1.
+i64 value64(u8 c, bool url) {
+    if (c >= 'A' && c <= 'Z') {
+        ret i64(c - 'A')
+    }
+    if (c >= 'a' && c <= 'z') {
+        ret i64(c - 'a') + 26
+    }
+    if (c >= '0' && c <= '9') {
+        ret i64(c - '0') + 52
+    }
+    if ((url && c == '-') || (!url && c == '+')) {
+        ret 62
+    }
+    if ((url && c == '_') || (!url && c == '/')) {
+        ret 63
+    }
+    ret -1
+}
+
+// The padding is required in standard base64, and optional for URLs.
+list<u8> decode64(string text, bool url) {
+    i64 end = text.len()
+    for (end > 0 && text[end - 1] == '=') {
+        end--
+    }
+    if (text.len() - end > 2 || (!url && text.len() % 4 != 0) || (url && end % 4 == 1) ||
+        (url && end < text.len() && text.len() % 4 != 0)) {
+        throw Error("cannot read the base64: its length is not valid")
+    }
+    list<u8> bytes
+    bytes.reserve(end / 4 * 3 + 2)
+    u32 group = 0
+    i64 count = 0
+    for (i64 i = 0; i < end; i++) {
+        i64 value = value64(text[i], url)
+        if (value < 0) {
+            throw Error(format("cannot read the base64: a character that is not of base64 at {}", i))
+        }
+        group = group << 6 | u32(value)
+        count++
+        if (count == 4) {
+            bytes.add(u8(group >> 16 & 0xFF))
+            bytes.add(u8(group >> 8 & 0xFF))
+            bytes.add(u8(group & 0xFF))
+            group = 0
+            count = 0
+        }
+    }
+    if (count == 2) {
+        bytes.add(u8(group >> 4 & 0xFF))
+    } else if (count == 3) {
+        bytes.add(u8(group >> 10 & 0xFF))
+        bytes.add(u8(group >> 2 & 0xFF))
+    }
+    ret bytes
+}
+
+// A copy of the bytes in memory, for the runtime: free it.
+addr raw(list<u8> bytes) {
+    addr data = alloc(bytes.len())
+    for (i64 i = 0; i < bytes.len(); i++) {
+        put<u8>(offset(data, i), bytes[i])
+    }
+    ret data
+}
+
+list<u8> fromRaw(addr data, i64 size) {
+    list<u8> bytes
+    bytes.reserve(size)
+    for (i64 i = 0; i < size; i++) {
+        bytes.add(copyAt<u8>(offset(data, i)))
+    }
+    ret bytes
+}
+
+// Frees memory that held a secret, after writing zeros on it.
+void forget(addr data, i64 size) {
+    for (i64 i = 0; i < size; i++) {
+        put<u8>(offset(data, i), 0)
+    }
+    free(data)
+}

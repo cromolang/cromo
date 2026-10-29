@@ -1,5 +1,5 @@
 // expect-error: cannot find the module modules.missing
-// expect-error: the standard library has no module std.io: it has std.fs, std.time, std.os, std.thread and std.net, and its core is visible without import (D201)
+// expect-error: the standard library has no module std.io: it has std.fs, std.time, std.os, std.thread, std.net and std.crypto, and its core is visible without import (D201)
 // expect-error: another import is also called geometry (D131)
 // expect-error: both modules/both.cro and the folder modules/both exist: rename one of them (D130)
 // expect-error: the imports come before the declarations of the module (D131)

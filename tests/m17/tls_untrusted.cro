@@ -1,0 +1,34 @@
+// Without SSL_CERT_FILE the roots are those of the system (D234), which do not
+// trust the authority of the tests: the client refuses the server (D235).
+// program-env: CERTIFICATES={dir}/certificates/
+// expect-output: the certificate is not signed by an authority that the system trusts
+import std.fs
+import std.net
+import std.os
+import std.thread
+
+i32 main() {
+    string folder = os.env("CERTIFICATES")
+    net.Listener server = net.listenTls("localhost", 0, fs.readText(format("{}localhost.pem", folder)),
+                                        fs.readText(format("{}localhost.key", folder)))
+    server.timeout(10000)
+    i32 port = server.port()
+    thread.Thread serving = thread.Thread([ref server]() {
+        net.Connection client = server.accept()
+        client.timeout(10000)
+        try {
+            client.read(100)
+        } catch (Exception e) {
+        }
+    })
+    serving.start()
+    try {
+        net.connectTls("localhost", port)
+    } catch (Exception e) {
+        string message = e.message()
+        string prefix = format("cannot connect to localhost:{} with TLS: ", port)
+        println("{}", message.slice(prefix.len(), message.len()))
+    }
+    serving.join()
+    ret 0
+}

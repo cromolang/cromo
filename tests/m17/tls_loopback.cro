@@ -1,0 +1,75 @@
+// TLS on the loopback (D233-D235): a server with a certificate for localhost,
+// signed by an authority for the tests that SSL_CERT_FILE makes trusted. The
+// records go both ways, also larger than one record of 16 KB, and the end of the
+// connection arrives with close_notify.
+// program-env: SSL_CERT_FILE={dir}/certificates/ca.pem
+// program-env: CERTIFICATES={dir}/certificates/
+// expect-output: hello -> 5 bytes
+// expect-output: 120000 bytes back, the same
+// expect-output: the server read the end
+import std.fs
+import std.net
+import std.os
+import std.thread
+
+i32 main() {
+    string folder = os.env("CERTIFICATES")
+    string certificate = fs.readText(format("{}localhost.pem", folder))
+    string key = fs.readText(format("{}localhost.key", folder))
+    net.Listener server = net.listenTls("localhost", 0, certificate, key)
+    i32 port = server.port()
+
+    // It answers the first message with its length, then sends back what it reads.
+    thread.Thread serving = thread.Thread([ref server]() {
+        net.Connection client = server.accept()
+        client.timeout(10000)
+        list<u8> first = client.read(1024)
+        client.writeText(format("{} bytes", first.len()))
+        for {
+            list<u8> part = client.read(65536)
+            if (part.len() == 0) {
+                break
+            }
+            client.write(part)
+        }
+        println("the server read the end")
+    })
+    serving.start()
+
+    net.Connection connection = net.connectTls("localhost", port)
+    connection.timeout(10000)
+    connection.writeText("hello")
+    println("hello -> {}", string(connection.read(1024)))
+
+    // Three rounds of 40000 bytes: each is three records of TLS.
+    i64 received = 0
+    bool same = true
+    for (i64 round = 0; round < 3; round++) {
+        list<u8> data
+        for (i64 i = 0; i < 40000; i++) {
+            data.add(u8((round * 40000 + i) % 251))
+        }
+        connection.write(data)
+        i64 end = (round + 1) * 40000
+        for (received < end) {
+            list<u8> part = connection.read(65536)
+            if (part.len() == 0) {
+                break
+            }
+            for (u8 b in part) {
+                if (b != u8(received % 251)) {
+                    same = false
+                }
+                received++
+            }
+        }
+    }
+    if (same) {
+        println("{} bytes back, the same", received)
+    } else {
+        println("{} bytes back, different", received)
+    }
+    connection.close()
+    serving.join()
+    ret 0
+}

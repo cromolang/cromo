@@ -855,7 +855,7 @@ extern "kernel32" {
 ### D133. The details of `extern`
 *2026-10-29.*
 - The C functions are private to their module, which offers safe functions instead (D42), and they keep their C name. An `extern` block is not public.
-- The library is a name without extension: `"kernel32"` is `kernel32.lib`, looked for in the folders of the modules that use it, then in the Windows SDK, until M8 (amended by D136). The names that start with `cromo_` are reserved for the runtime.
+- The library is a name without extension: `"kernel32"` is `kernel32.lib`, looked for in the folders of the modules that use it, then in the Windows SDK, until M8 (amended by D136). The names that start with `cromo_` are reserved for the runtime, whose functions the library declares with `extern "cromo"` (D240).
 - The same C function can be declared by several modules, with the same signature.
 
 ### D134. The names of the symbols (D39, D50)
@@ -1284,7 +1284,57 @@ They say what could not be done and why: `cannot connect to example.com:80: conn
 *2026-10-29.*
 `std.winsock` declares `connect` and `listen` of ws2_32 with other names, apart from those of `std.net`; the programs cannot import it.
 
----
+### D233. TLS with mbedTLS
+*2026-10-29.* It resolves the point of the TLS library (D150). mbedTLS, a C library made for systems without the C library, is compiled with the clang of LLVM and included in `cromo` like the runtime (D58): the executables stay without dependencies (D19, D28). It has TLS 1.2 and 1.3, as client and as server, and X.509; the runtime gives it memory, random numbers and the time. The same code serves Windows and Linux.
+
+### D234. The root certificates of the system
+*2026-10-29.* A server is verified with the certificates of the system: on Windows the store ROOT, through crypt32, and Windows itself for the roots it has not downloaded yet (D246); on Linux the file of the distribution, as `/etc/ssl/certs/ca-certificates.crt`. They are updated with the system and include the authorities added by a company.
+
+### D235. TLS in the API of the network
+*2026-10-29.* `net.connectTls(host, port)` gives a `Connection` (D224) that encrypts: `read`, `write` and the timeouts stay the same. The certificate of the server and its name are always verified. A server writes `net.listenTls(host, port, certificate, key)`, with the texts in PEM, and its `accept()` gives connections that are already encrypted, whose handshake comes with their first read or write (D244). The client of HTTP comes with M18.
+
+### D236. The module std.crypto
+*2026-10-29.* The hashes SHA-256, SHA-512, and SHA-1 and MD5 for compatibility, with HMAC; secure random bytes from the system; base64, also for URLs, and hex; the ciphers AES-GCM and ChaCha20-Poly1305, and Ed25519 and X25519.
+
+### D240. The functions of the runtime: `extern "cromo"`
+*2026-10-29.* It amends D133. The standard library declares the C functions of the runtime, as those of TLS and of `std.crypto`, in a block `extern "cromo" { ... }`, as the functions of a DLL. Only the files of the library can write it: in a program it is an error. In the other blocks the names that start with `cromo_` stay reserved.
+
+### D241. What a program does not use is not in the executable
+*2026-10-29.* Every function of a program has internal linkage, and LLVM removes those that nothing calls, also at `-O0`. A `Connection` reaches mbedTLS only through its session, which `connectTls` and `listenTls` create: a program of `std.net` without TLS stays at about 44 KB, one with TLS is about 500 KB.
+
+### D242. mbedTLS without what is not needed
+*2026-10-29.* TLS 1.2 and 1.3 over TCP, without DTLS, renegotiation, DES, ARIA and Camellia, and without files, sockets or timers of its own. It is compiled from `third_party/` without the C library and without the Windows SDK: the few functions of C that it calls are in `runtime/tls/libc.c`.
+
+### D243. TLS through memory, with the timeouts of the connection
+*2026-10-29.* mbedTLS reads and writes its records in memory, and `std.net` moves them to and from the socket. `timeout()` works as with TCP, for each wait for the socket, also in the handshake. Like `connect`, `connectTls` has no timeout of its own.
+
+### D244. The handshake of a server comes with the first read or write
+*2026-10-29.* It specifies D235. `accept()` gives at once a `Connection` that encrypts; its handshake happens at its first `read()` or `write()`, in the thread that serves it, as in Go: a slow or hostile client does not keep `accept()` waiting. An error of the handshake is then the exception of that `read()` or `write()`.
+
+### D245. The end of a connection with TLS
+*2026-10-29.* `read()` gives an empty list when the other side sends close_notify, and also when the socket ends without it, as in Go: the protocols, as HTTP, know their lengths. `close()` and the destructor send close_notify after a handshake that went well, ignoring the errors.
+
+### D246. On Windows, the roots that Windows downloads
+*2026-10-29.* It specifies D234. Windows keeps only some roots on the disk (78 on the PC of the tests) and downloads the others when a chain needs them: `example.com` needs one that was not there. A chain that mbedTLS does not accept with the store ROOT is checked again by Windows, with `CertGetCertificateChain` and the rules of HTTPS for the host, as Go does. `bcrypt.dll` and `crypt32.dll` are loaded only by the programs that use them, from System32.
+
+### D247. `SSL_CERT_FILE`
+*2026-10-29.* When it is set, the file in PEM that it names replaces the roots of the system, on Windows and on Linux, as for OpenSSL, curl and Go; the tests use it to trust an authority of their own. On Linux, without it, the roots are in the first of the files of the distributions that Go knows, from `/etc/ssl/certs/ca-certificates.crt`.
+
+### D248. No revocation
+*2026-10-29.* OCSP and the lists of revoked certificates are not checked, as in Go: they need further connections, and the certificates of the web last a few months.
+
+### D249. The interface of `std.crypto`
+*2026-10-29.* It details D236. The bytes are `list<u8>`.
+- `md5`, `sha1`, `sha256` and `sha512` of the data; `hmac(Hash, key, data)` with `enum Hash { Md5, Sha1, Sha256, Sha512 }`; `Hasher(Hash)` with `add()` and `finish()`, after which it starts again.
+- `random(count)`, an exception if the system gives no random bytes.
+- `hex()` in lowercase, `fromHex()` in any case; `base64()` with the padding, which `fromBase64()` requires; `base64Url()` without the padding, which `fromBase64Url()` accepts or not.
+- `encrypt(Cipher, key, nonce, data, extra)` with `enum Cipher { AesGcm, ChaCha20Poly1305 }` gives the data encrypted followed by the tag of 16 bytes; `decrypt` with the same arguments gives the data back, or throws if they are not authentic. The nonce has 12 bytes and is chosen by the caller, as in the RFCs and in Go; the key has 16, 24 or 32 bytes for AES-GCM and 32 for ChaCha20-Poly1305.
+- `ed25519PublicKey`, `ed25519Sign` and `ed25519Verify`: the private key is the seed of 32 bytes of RFC 8032, and `ed25519Verify` gives false also for sizes that are wrong. `x25519PublicKey` and `x25519`, which gives the shared secret and throws for a public key that makes it zero.
+- A key of the wrong size, and a text that is not hex or base64, are exceptions, as the errors of the data (D225), not panics.
+
+### D250. The messages of TLS
+*2026-10-29.* As D230: `cannot connect to example.com:443 with TLS: the certificate is not for example.com`, `... has expired`, `... is not valid yet`, `... is not signed by an authority that the system trusts`; `cannot listen with TLS: the key is not the one of the certificate`.
+
 ---
 
 ## Open
@@ -1292,7 +1342,6 @@ They say what could not be done and why: `cannot connect to example.com:80: conn
 The points still to be defined, each when its milestone needs it (D152):
 - the interface for making user-defined types printable (D38);
 - the content of the standard library;
-- the TLS library (D150). Recommended: mbedTLS, compiled without libc and included in `cromo` like the runtime, with the root certificates of the system. The alternatives are OpenSSL, which needs libc, SChannel on Windows with another library on Linux, or TLS written in Cromo;
 - `cromo update` (D153): where the new versions are published, and how a download is checked before `cromo` replaces itself. Recommended: a signature of each version, checked with a public key contained in `cromo`, and on Windows the running `cromo.exe` renamed before the new one is written;
 - where the completion of the other names goes among the milestones (D171, D179);
 - converting structs to JSON and back: fcl does it with a macro that lists the fields; Cromo needs either reflection at compile time or methods generated by the compiler, as `copy()` (D35) (M18);
