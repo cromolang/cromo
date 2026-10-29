@@ -1395,17 +1395,19 @@ private:
         block(endLabel);
     }
 
-    // `for (K k, V v in m)` (D197): the slots that are full, in their order.
+    // `for (K k, V v in m)` (D197): the slots that are full, in their order. A slot
+    // of the map of the library is its hash, the key at 8 and the value after it,
+    // each at a multiple of 8 bytes.
     void generateForMap(const ForStmt& statement) {
         Type i64 = Type::intType(64, true);
         std::string map = addressOf(*statement.list);
         const StructDecl& decl = *statement.list->type.structDecl;
         Type keyType = decl.typeArgs[0];
         Type valueType = decl.typeArgs[1];
+        int valueOffset = 8 + (sizeOf(keyType) + 7) / 8 * 8;
+        int slotSize = valueOffset + (sizeOf(valueType) + 7) / 8 * 8;
         Value capacity = load(listField(map, decl, "capacity"), i64);
-        Value keys = load(listField(map, decl, "keys"), Type::addrType());
-        Value values = load(listField(map, decl, "values"), Type::addrType());
-        Value states = load(listField(map, decl, "states"), Type::addrType());
+        Value slots = load(listField(map, decl, "slots"), Type::addrType());
         std::string counter = slot(i64);
         inst("store i64 0, ptr " + counter);
         std::string condLabel = label("map.cond");
@@ -1420,18 +1422,20 @@ private:
         inst(more + " = icmp slt i64 " + index.ref + ", " + capacity.ref);
         term("br i1 " + more + ", label %" + testLabel + ", label %" + endLabel);
         block(testLabel);
-        std::string stateAddress = temp();
-        std::string state = temp();
+        std::string start = temp();
+        std::string slotAddress = temp();
+        std::string hash = temp();
         std::string full = temp();
-        inst(stateAddress + " = getelementptr inbounds i8, ptr " + states.ref + ", i64 " + index.ref);
-        inst(state + " = load i8, ptr " + stateAddress);
-        inst(full + " = icmp eq i8 " + state + ", 1");
+        inst(start + " = mul i64 " + index.ref + ", " + std::to_string(slotSize));
+        inst(slotAddress + " = getelementptr inbounds i8, ptr " + slots.ref + ", i64 " + start);
+        inst(hash + " = load i64, ptr " + slotAddress);
+        inst(full + " = icmp slt i64 " + hash + ", 0");  // a full slot has the highest bit
         term("br i1 " + full + ", label %" + bodyLabel + ", label %" + stepLabel);
         block(bodyLabel);
         std::string key = temp();
         std::string value = temp();
-        inst(key + " = getelementptr inbounds " + llvmType(keyType) + ", ptr " + keys.ref + ", i64 " + index.ref);
-        inst(value + " = getelementptr inbounds " + llvmType(valueType) + ", ptr " + values.ref + ", i64 " + index.ref);
+        inst(key + " = getelementptr inbounds i8, ptr " + slotAddress + ", i64 8");
+        inst(value + " = getelementptr inbounds i8, ptr " + slotAddress + ", i64 " + std::to_string(valueOffset));
         addresses_[statement.element->id] = key;
         addresses_[statement.value->id] = value;
         loops_.push_back(Loop{stepLabel, endLabel, scopes_.size()});
@@ -1986,6 +1990,23 @@ private:
         }
         case Intrinsic::SelfAddress:
             return {"%self", addr};
+        case Intrinsic::EqualAt: {  // D198: equals() with the key where it is, without moving it
+            std::string place = arg(0);
+            if (!element.isStruct()) {
+                Value stored = load(place, element);
+                Value other = generateExpr(*call.args[1]);
+                std::string compare = element.isFloat() ? "fcmp oeq " : "icmp eq ";
+                inst(result + " = " + compare + llvmType(element) + " " + stored.ref + ", " + other.ref);
+                return {result, Type::boolType()};
+            }
+            const FunctionDecl& equals = *element.structDecl->methods.at("equals");
+            std::string args = "ptr " + place + ", " + argument(*call.args[1], equals.params[0], equals.paramTypes[0]);
+            if (tracksCaller(equals)) args += ", ptr " + where(call.loc);
+            if (equals.canThrow) args += ", ptr " + raisedSlot();
+            inst(result + " = call i1 " + symbolOf(equals) + "(" + args + ")");
+            if (equals.canThrow) checkRaised();
+            return {result, Type::boolType()};
+        }
         case Intrinsic::SystemCall: {  // Linux (D202): an address is passed as an integer
             std::string args;
             for (size_t i = 0; i < 7; ++i) {

@@ -130,7 +130,20 @@ void cromo_mutex_unlock(void* state) { lockRelease((Lock*)state); }
 // takes it for good. A format writes into its own string, without it.
 static Lock printLock;
 
-void cromo_print_begin(void) { lockAcquire(&printLock); }
+// Until the first thread starts, the program has nobody to wait for: the locks of
+// printing and of the heap are skipped, as glibc does. It changes only from the
+// thread that starts that thread, never inside a print or an allocation.
+static i32 threaded;
+
+static void sharedAcquire(Lock* lock) {
+    if (threaded) lockAcquire(lock);
+}
+
+static void sharedRelease(Lock* lock) {
+    if (threaded) lockRelease(lock);
+}
+
+void cromo_print_begin(void) { sharedAcquire(&printLock); }
 
 // ---- Buffered output ----
 
@@ -809,13 +822,20 @@ u64 cromo_hash_bits(u64 x) {
     return x ^ (x >> 31);
 }
 
-// FNV-1a over the bytes, then mixed, so that the low bits depend on all of them.
+// Eight bytes at a time, each word multiplied in, and the length; then mixed by
+// cromo_hash_bits, so that the low bits depend on all of them.
+typedef u64 __attribute__((aligned(1), may_alias)) Word;
+
 u64 cromo_hash_bytes(const u8* data, i64 size) {
-    u64 hash = 0xCBF29CE484222325ull;
-    for (i64 i = 0; i < size; ++i) {
-        hash ^= data[i];
-        hash *= 0x100000001B3ull;
+    u64 hash = 0xCBF29CE484222325ull ^ (u64)size;
+    i64 i = 0;
+    for (; i + 8 <= size; i += 8) {
+        hash = (hash ^ *(const Word*)(data + i)) * 0x9E3779B97F4A7C15ull;
+        hash ^= hash >> 29;
     }
+    u64 rest = 0;
+    for (i64 k = 0; i + k < size; ++k) rest |= (u64)data[i + k] << (8 * k);
+    hash = (hash ^ rest) * 0x9E3779B97F4A7C15ull;
     return cromo_hash_bits(hash);
 }
 
@@ -949,11 +969,11 @@ double cromo_parse_float(const u8* text, u64 size, i64 bits) {
 void cromo_print_end(i64 stream, i32 newline) {
     if (newline) put(stream, (const u8*)"\n", 1);
     flush(stream);
-    lockRelease(&printLock);
+    sharedRelease(&printLock);
 }
 
 NORETURN void cromo_exit(i32 code) {
-    lockAcquire(&printLock);
+    sharedAcquire(&printLock);
     flush(1);
     flush(2);
     exitProcess(code);
@@ -966,7 +986,7 @@ typedef struct {
 } Where;
 
 static void panicStart(void) {
-    lockAcquire(&printLock);
+    sharedAcquire(&printLock);
     flush(1);
     put(2, (const u8*)"panic: ", 7);
 }
@@ -999,7 +1019,7 @@ NORETURN void cromo_panic_index(i64 index, i64 length, const Where* where) {
 }
 
 static NORETURN void uncaught(const char* prefix, u32 prefixSize, const u8* message, u64 size) {
-    lockAcquire(&printLock);
+    sharedAcquire(&printLock);
     flush(1);
     put(2, (const u8*)prefix, prefixSize);
     put(2, message, size);
@@ -1131,8 +1151,8 @@ static void heapLockAcquire(void) {}
 static void heapLockRelease(void) {}
 #else
 static Lock heapLock;
-static void heapLockAcquire(void) { lockAcquire(&heapLock); }
-static void heapLockRelease(void) { lockRelease(&heapLock); }
+static void heapLockAcquire(void) { sharedAcquire(&heapLock); }
+static void heapLockRelease(void) { sharedRelease(&heapLock); }
 #endif
 
 void* cromo_alloc(i64 size) {
@@ -1255,6 +1275,7 @@ static void freeSystemThread(ThreadRecord* thread) { systemCall(SYS_munmap, (i64
 
 void* cromo_thread_start(void* code, void* env) {
     ThreadRecord* thread = cromo_alloc(sizeof(ThreadRecord));
+    threaded = 1;  // from now on the locks are taken
     u8* bytes = (u8*)thread;
     for (u64 i = 0; i < sizeof(ThreadRecord); ++i) bytes[i] = 0;
     thread->code = (void (*)(void*, void*))code;

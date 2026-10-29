@@ -43,7 +43,7 @@ std::optional<Intrinsic> findIntrinsic(const std::string& name) {
         {"threadWait", Intrinsic::ThreadWait}, {"threadRethrow", Intrinsic::ThreadRethrow},
         {"threadUncaught", Intrinsic::ThreadUncaught}, {"threadFree", Intrinsic::ThreadFree},
         {"mutexLock", Intrinsic::MutexLock}, {"mutexUnlock", Intrinsic::MutexUnlock},
-        {"selfAddress", Intrinsic::SelfAddress},
+        {"selfAddress", Intrinsic::SelfAddress}, {"equalAt", Intrinsic::EqualAt},
     };
     auto found = intrinsics.find(name);
     if (found == intrinsics.end()) return std::nullopt;
@@ -3140,7 +3140,7 @@ private:
     Type checkIntrinsic(CallExpr& call, Intrinsic kind) {
         call.intrinsic = kind;
         bool generic = kind == Intrinsic::SizeOf || kind == Intrinsic::Take || kind == Intrinsic::Put ||
-                       kind == Intrinsic::Destroy || kind == Intrinsic::CopyAt;
+                       kind == Intrinsic::Destroy || kind == Intrinsic::CopyAt || kind == Intrinsic::EqualAt;
         std::string what = "'" + call.callee + "'";
         if (generic) {
             std::vector<Type> args;
@@ -3216,6 +3216,10 @@ private:
         case Intrinsic::ThreadFree:
         case Intrinsic::MutexLock:
         case Intrinsic::MutexUnlock: params = {{ParamMode::Read, "address", addr}}; break;
+        case Intrinsic::EqualAt:  // the key in a slot of a map, compared where it is (D198)
+            params = {{ParamMode::Read, "place", addr}, {ParamMode::Read, "value", element}};
+            result = Type::boolType();
+            break;
         case Intrinsic::SelfAddress:  // D216: the object of the method, written by other threads too
             if (!current_->owner) {
                 diag_->error(call.loc, "selfAddress() is used in a method");
@@ -3235,6 +3239,16 @@ private:
                 return Type::error();
             }
             if (element.isStruct()) copyFunction(*element.structDecl, call.loc);
+        }
+        if (kind == Intrinsic::EqualAt && element.isStruct()) {  // the equals() of Key (D198)
+            auto found = element.structDecl->methods.find("equals");
+            if (found == element.structDecl->methods.end()) {
+                diag_->error(call.loc, element.name() + " has no method equals() (D198)");
+                checkIgnored(call.args);
+                return Type::error();
+            }
+            use(found->second, call.loc);
+            noteCall(found->second, call.loc);
         }
 
         if (kind == Intrinsic::SystemCall) {  // an argument is an integer or an address (D202)

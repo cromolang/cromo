@@ -3,12 +3,13 @@
 // `unsafe` dialect (D37, D98, D127): the type `addr` and the built-in functions
 // alloc, resize, free, sizeOf, offset, take, put, destroy, copyAt, copyMemory,
 // compareMemory, checkIndex, argumentCount, argumentLength, argumentData,
-// decimalToFloat and hashBytes.
+// decimalToFloat, hashBytes and equalAt.
 //
 // The compiler relies on the fields `data` and `length` of list and string, for
-// `v[i]`, `for` over the elements, string literals and printing; on the fields of
-// map and its methods valueOf and place, for `m[k]` and `for` (D197); and on
-// the functions that read numbers and bytes (D199, D200).
+// `v[i]`, `for` over the elements, string literals and printing; on the fields
+// `slots` and `capacity` of map, the layout of its slots and its methods valueOf
+// and place, for `m[k]` and `for` (D197); and on the functions that read numbers
+// and bytes (D199, D200).
 
 import unsafe
 
@@ -257,27 +258,26 @@ public interface Key {
     bool equals(Self other) const
 }
 
-// A hash table (D197, D198) with open addressing: the keys, the values and a byte
-// for each slot, 0 empty, 1 full, 2 removed. The capacity is a power of two, and
-// at most three quarters of the slots are full or removed.
+// A hash table (D197, D198) with open addressing. A slot keeps together its
+// hash, the key at 8 bytes and the value after it, so that a lookup reads one
+// place of memory. The hash says what the slot holds: 0 empty, 1 removed, the
+// hash of the key with its highest bit set when full; a key is compared only
+// where the hashes are equal. The capacity is a power of two, and at most three
+// quarters of the slots are full or removed.
 public struct map<K : Key, V> {
-    addr keys
-    addr values
-    addr states
+    addr slots
     i64 length
     i64 taken  // full or removed
     i64 capacity
 
     ~map() {
         for (i64 i = 0; i < capacity; i++) {
-            if (stateAt(i) == 1) {
+            if (full(i)) {
                 destroy<K>(keyAt(i))
                 destroy<V>(valueAt(i))
             }
         }
-        free(keys)
-        free(values)
-        free(states)
+        free(slots)
     }
 
     public i64 len() const {
@@ -285,18 +285,18 @@ public struct map<K : Key, V> {
     }
 
     public bool contains(K key) const {
-        ret find(key) >= 0
+        ret find(key, key.hash()) >= 0
     }
 
     // Removes the key with its value; false if the key was not there.
     public bool remove(K key) {
-        i64 slot = find(key)
+        i64 slot = find(key, key.hash())
         if (slot < 0) {
             ret false
         }
         destroy<K>(keyAt(slot))
         destroy<V>(valueAt(slot))
-        setState(slot, 2)
+        setHash(slot, 1)
         length--
         ret true
     }
@@ -308,13 +308,12 @@ public struct map<K : Key, V> {
         }
         result.allocate(capacity)
         for (i64 i = 0; i < capacity; i++) {
-            u8 state = stateAt(i)
-            if (state == 1) {
+            if (full(i)) {
                 put<K>(result.keyAt(i), copyAt<K>(keyAt(i)))
                 put<V>(result.valueAt(i), copyAt<V>(valueAt(i)))
                 result.length++
             }
-            result.setState(i, state)
+            result.setHash(i, hashAt(i))
         }
         result.taken = taken
         ret result
@@ -322,7 +321,7 @@ public struct map<K : Key, V> {
 
     // m[k], read: the value of a key that must be there (D197).
     addr valueOf(K key) const {
-        i64 slot = find(key)
+        i64 slot = find(key, key.hash())
         if (slot < 0) {
             panic("the key is not in the map (D197)")
         }
@@ -332,42 +331,39 @@ public struct map<K : Key, V> {
     // m[k] = v, m[k] += v, m[k]++: the value of the key, added with the default
     // value when it is missing.
     addr place(K key) {
-        i64 slot = find(key)
+        u64 hash = key.hash()
+        i64 slot = find(key, hash)
         if (slot >= 0) {
             ret valueAt(slot)
         }
         if ((taken + 1) * 4 > capacity * 3) {
             rehash()
         }
-        slot = freeSlot(key.hash())
-        if (stateAt(slot) == 0) {
+        slot = freeSlot(hash)
+        if (hashAt(slot) == 0) {
             taken++
         }
         put<K>(keyAt(slot), key.copy())
         V fresh
         put<V>(valueAt(slot), move fresh)
-        setState(slot, 1)
+        setHash(slot, mark(hash))
         length++
         ret valueAt(slot)
     }
 
-    i64 find(K key) const {
+    i64 find(K key, u64 hash) const {
         if (capacity == 0) {
             ret -1
         }
-        i64 slot = i64(key.hash() & u64(capacity - 1))
+        u64 wanted = mark(hash)
+        i64 slot = i64(hash & u64(capacity - 1))
         for {
-            u8 state = stateAt(slot)
-            if (state == 0) {
+            u64 seen = hashAt(slot)
+            if (seen == 0) {
                 ret -1
             }
-            if (state == 1) {
-                K stored = take<K>(keyAt(slot))  // looked at in place: put back below
-                bool same = stored.equals(key)
-                put<K>(keyAt(slot), move stored)
-                if (same) {
-                    ret slot
-                }
+            if (seen == wanted && equalAt<K>(keyAt(slot), key)) {
+                ret slot
             }
             slot = (slot + 1) & (capacity - 1)
         }
@@ -376,18 +372,17 @@ public struct map<K : Key, V> {
     // The first slot that is not full, from the place of the hash on.
     i64 freeSlot(u64 hash) const {
         i64 slot = i64(hash & u64(capacity - 1))
-        for (stateAt(slot) == 1) {
+        for (full(slot)) {
             slot = (slot + 1) & (capacity - 1)
         }
         ret slot
     }
 
-    // A larger table, or one of the same size without the removed slots.
+    // A larger table, or one of the same size without the removed slots. The
+    // hashes kept in the slots place the keys again without computing them.
     void rehash() {
         i64 old = capacity
-        addr oldKeys = keys
-        addr oldValues = values
-        addr oldStates = states
+        addr oldSlots = slots
         i64 grown = capacity
         if (grown == 0) {
             grown = 8
@@ -396,45 +391,61 @@ public struct map<K : Key, V> {
         }
         allocate(grown)
         taken = length
+        i64 size = slotSize()
         for (i64 i = 0; i < old; i++) {
-            if (copyAt<u8>(offset(oldStates, i)) == 1) {
-                K key = take<K>(offset(oldKeys, i * sizeOf<K>()))
-                i64 slot = freeSlot(key.hash())
-                put<K>(keyAt(slot), move key)
-                put<V>(valueAt(slot), take<V>(offset(oldValues, i * sizeOf<V>())))
-                setState(slot, 1)
+            addr from = offset(oldSlots, i * size)
+            u64 seen = copyAt<u64>(from)
+            if (seen >= 0x8000000000000000) {
+                i64 slot = freeSlot(seen)
+                put<K>(keyAt(slot), take<K>(offset(from, 8)))
+                put<V>(valueAt(slot), take<V>(offset(from, valueOffset())))
+                setHash(slot, seen)
             }
         }
-        free(oldKeys)
-        free(oldValues)
-        free(oldStates)
+        free(oldSlots)
     }
 
     // Empty slots for `count` keys, without freeing the old ones.
     void allocate(i64 count) {
         capacity = count
-        keys = alloc(count * sizeOf<K>())
-        values = alloc(count * sizeOf<V>())
-        states = alloc(count)
+        slots = alloc(count * slotSize())
         for (i64 i = 0; i < count; i++) {
-            setState(i, 0)
+            setHash(i, 0)
         }
     }
 
-    u8 stateAt(i64 slot) const {
-        ret copyAt<u8>(offset(states, slot))
+    // A full slot keeps the hash with its highest bit set, never 0 or 1.
+    u64 mark(u64 hash) const {
+        ret hash | 0x8000000000000000
     }
 
-    void setState(i64 slot, u8 state) {
-        put<u8>(offset(states, slot), state)
+    bool full(i64 slot) const {
+        ret hashAt(slot) >= 0x8000000000000000
+    }
+
+    // The value after the key, at a multiple of 8: no type needs more.
+    i64 valueOffset() const {
+        ret 8 + (sizeOf<K>() + 7) / 8 * 8
+    }
+
+    i64 slotSize() const {
+        ret valueOffset() + (sizeOf<V>() + 7) / 8 * 8
+    }
+
+    u64 hashAt(i64 slot) const {
+        ret copyAt<u64>(offset(slots, slot * slotSize()))
+    }
+
+    void setHash(i64 slot, u64 hash) {
+        put<u64>(offset(slots, slot * slotSize()), hash)
     }
 
     addr keyAt(i64 slot) const {
-        ret offset(keys, slot * sizeOf<K>())
+        ret offset(slots, slot * slotSize() + 8)
     }
 
     addr valueAt(i64 slot) const {
-        ret offset(values, slot * sizeOf<V>())
+        ret offset(slots, slot * slotSize() + valueOffset())
     }
 }
 

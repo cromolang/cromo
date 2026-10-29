@@ -70,26 +70,44 @@ memmove:
     mov rsi, r10
     ret
 
-# int memcmp(const void* a, const void* b, size_t count)
+# int memcmp(const void* a, const void* b, size_t count): 8 bytes at a time; at
+# the first word that differs, the words with their bytes swapped compare as the
+# bytes in order, which gives the sign.
     .globl memcmp
     .p2align 4
 memcmp:
     xor eax, eax
+.Lcompare_words:
+    cmp r8, 8
+    jb .Lcompare_bytes
+    mov r9, qword ptr [rcx]
+    mov r10, qword ptr [rdx]
+    cmp r9, r10
+    jne .Lcompare_word_differs
+    add rcx, 8
+    add rdx, 8
+    sub r8, 8
+    jmp .Lcompare_words
+.Lcompare_word_differs:
+    bswap r9
+    bswap r10
+    cmp r9, r10
+    sbb eax, eax
+    or eax, 1
+    ret
+.Lcompare_bytes:
     test r8, r8
     jz .Lcompare_done
-    mov r9, rdi
-    mov r10, rsi
-    mov rsi, rcx
-    mov rdi, rdx
-    mov rcx, r8
-    repe cmpsb
-    je .Lcompare_restore
-    movzx eax, byte ptr [rsi - 1]
-    movzx edx, byte ptr [rdi - 1]
-    sub eax, edx
-.Lcompare_restore:
-    mov rdi, r9
-    mov rsi, r10
+    movzx r9d, byte ptr [rcx]
+    movzx r10d, byte ptr [rdx]
+    sub r9d, r10d
+    jnz .Lcompare_byte_differs
+    inc rcx
+    inc rdx
+    dec r8
+    jmp .Lcompare_bytes
+.Lcompare_byte_differs:
+    mov eax, r9d
 .Lcompare_done:
     ret
 
@@ -163,20 +181,44 @@ memmove:
 
 # int memcmp(const void* a, const void* b, size_t count). On Linux LLVM calls
 # bcmp when it only needs to know whether the bytes are equal.
+# Also 8 bytes at a time, as on Windows.
     .globl memcmp
     .globl bcmp
     .p2align 4
 memcmp:
 bcmp:
     xor eax, eax
-    mov rcx, rdx
-    test rcx, rcx
+.Lcompare_words:
+    cmp rdx, 8
+    jb .Lcompare_bytes
+    mov rcx, qword ptr [rdi]
+    mov r8, qword ptr [rsi]
+    cmp rcx, r8
+    jne .Lcompare_word_differs
+    add rdi, 8
+    add rsi, 8
+    sub rdx, 8
+    jmp .Lcompare_words
+.Lcompare_word_differs:
+    bswap rcx
+    bswap r8
+    cmp rcx, r8
+    sbb eax, eax
+    or eax, 1
+    ret
+.Lcompare_bytes:
+    test rdx, rdx
     jz .Lcompare_done
-    repe cmpsb
-    je .Lcompare_done
-    movzx eax, byte ptr [rdi - 1]
-    movzx edx, byte ptr [rsi - 1]
-    sub eax, edx
+    movzx ecx, byte ptr [rdi]
+    movzx r8d, byte ptr [rsi]
+    sub ecx, r8d
+    jnz .Lcompare_byte_differs
+    inc rdi
+    inc rsi
+    dec rdx
+    jmp .Lcompare_bytes
+.Lcompare_byte_differs:
+    mov eax, ecx
 .Lcompare_done:
     ret
 
