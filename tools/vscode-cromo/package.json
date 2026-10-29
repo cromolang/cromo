@@ -2,7 +2,7 @@
   "name": "cromo-lang",
   "displayName": "Cromo",
   "description": "Syntax highlighting, errors, hover, definitions and formatting for the Cromo language, with cromo lsp",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "publisher": "cromo",
   "license": "UNLICENSED",
   "engines": {
@@ -40,10 +40,15 @@
     "configuration": {
       "title": "Cromo",
       "properties": {
+        "cromo.trace": {
+          "type": "boolean",
+          "default": false,
+          "description": "Writes every message between VS Code and cromo lsp in the Cromo output panel."
+        },
         "cromo.path": {
           "type": "string",
-          "default": "cromo",
-          "description": "The cromo executable that runs the language server, for example C:\\dati\\projects\\cromo\\build\\cromo.exe. Without a path it is looked for in PATH."
+          "default": "",
+          "description": "The cromo executable that runs the language server, for example C:\\dati\\projects\\cromo\\build\\cromo.exe. Empty: build\\cromo.exe in a folder of the workspace, if there is one, else cromo from PATH."
         }
       }
     },

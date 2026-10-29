@@ -205,6 +205,36 @@ Json range(const std::string& text, SourceLocation loc, int length) {
     return out;
 }
 
+bool isIdentChar(char c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
+}
+
+// The byte of a text at an LSP position.
+size_t offsetAt(const std::string& text, const Json& position) {
+    size_t pos = lineStart(text, position["line"].asInt() + 1);
+    int units = position["character"].asInt();
+    while (units > 0 && pos < text.size() && text[pos] != '\n') {
+        size_t size = utf8Length(static_cast<unsigned char>(text[pos]));
+        units -= size == 4 ? 2 : 1;
+        pos += size;
+    }
+    return pos;
+}
+
+// The line and the column, from 1, of a byte of a text.
+SourceLocation locationOf(const std::string& text, size_t offset, int file) {
+    SourceLocation loc{1, 1, file};
+    for (size_t i = 0; i < offset && i < text.size(); i += utf8Length(static_cast<unsigned char>(text[i]))) {
+        if (text[i] == '\n') {
+            ++loc.line;
+            loc.column = 1;
+        } else {
+            ++loc.column;
+        }
+    }
+    return loc;
+}
+
 // The length of the name at `loc`, or 1 for anything else.
 int tokenLength(const std::string& text, SourceLocation loc) {
     size_t pos = lineStart(text, loc.line);
@@ -301,6 +331,8 @@ public:
                 send(response(id, symbols(params)));
             } else if (method == "textDocument/formatting") {
                 send(response(id, formatting(params)));
+            } else if (method == "textDocument/completion") {
+                send(response(id, completion(params)));
             } else {
                 Json error = Json::object();
                 error.set("code", -32601);
@@ -331,6 +363,11 @@ private:
         capabilities.set("definitionProvider", true);
         capabilities.set("documentSymbolProvider", true);
         capabilities.set("documentFormattingProvider", true);
+        Json completion = Json::object();
+        Json triggers = Json::array();
+        triggers.push(".");
+        completion.set("triggerCharacters", std::move(triggers));
+        capabilities.set("completionProvider", std::move(completion));  // D179
         Json info = Json::object();
         info.set("name", "cromo");
         info.set("version", CROMO_VERSION);
@@ -411,12 +448,16 @@ private:
         return document.path;
     }
 
-    std::shared_ptr<Analysis> analyze(const std::string& rootPath, bool requireMain) {
+    // `replaced`, if given, is a document with another text: the completion analyzes
+    // a text that is not in the editor (D179).
+    std::shared_ptr<Analysis> analyze(const std::string& rootPath, bool requireMain,
+                                      const std::pair<std::string, std::string>* replaced = nullptr) {
         auto analysis = std::make_shared<Analysis>();
         analysis->rootPath = rootPath;
         analysis->requireMain = requireMain;
         std::map<std::string, std::string> overlay;
         for (const auto& [key, document] : documents_) overlay[key] = document.text;
+        if (replaced) overlay[replaced->first] = replaced->second;
 
         analysis->sources.push_back({rootPath, {}});
         auto found = overlay.find(sourceKey(rootPath));
@@ -566,6 +607,85 @@ private:
         location.set("uri", uriOf(analysis->keys[target], *analysis));
         location.set("range", range(text, reference->target, tokenLength(text, reference->target)));
         return location;
+    }
+
+    // D179: the members of the type of the name before the dot. The text with the
+    // dot is not complete: it is analyzed with a call to a method that does not
+    // exist in place of the member being written (D180).
+    Json completion(const Json& params) {
+        Json items = Json::array();
+        std::string key = sourceKey(pathFromUri(params["textDocument"]["uri"].asString()));
+        auto document = documents_.find(key);
+        if (document == documents_.end()) return items;
+        const std::string& text = document->second.text;
+        size_t cursor = offsetAt(text, params["position"]);
+        size_t start = cursor;
+        while (start > 0 && isIdentChar(text[start - 1])) --start;
+        if (start == 0 || text[start - 1] != '.') return items;  // D182: only after a dot, for now
+        size_t dot = start - 1;
+        size_t begin = dot;
+        while (begin > 0 && isIdentChar(text[begin - 1])) --begin;
+        if (begin == dot) return items;  // D180: not after a call or an index
+        size_t end = cursor;
+        while (end < text.size() && isIdentChar(text[end])) ++end;
+        std::string name = text.substr(begin, dot - begin);
+        std::string repaired = text.substr(0, dot) + ".cromo_complete" + (end < text.size() && text[end] == '(' ? "" : "()") +
+                               text.substr(end);
+
+        Document copy = document->second;
+        copy.text = repaired;
+        bool requireMain = true;
+        std::string root = findRoot(copy, requireMain);
+        std::pair<std::string, std::string> replaced{key, repaired};
+        std::shared_ptr<Analysis> analysis = analyze(root, requireMain, &replaced);
+        int file = analysis->fileOf(key);
+        if (file < 0) analysis = analyze(document->second.path, false, &replaced);  // a module that main.cro does not import
+        file = analysis->fileOf(key);
+        if (file < 0) return items;
+
+        SourceLocation at = locationOf(repaired, begin, file);
+        for (const Reference& reference : analysis->references) {
+            if (reference.loc.file != file || reference.loc.line != at.line || reference.loc.column != at.column) continue;
+            Type type = reference.type;
+            if (type.isStruct()) members(*type.structDecl, file, items);
+            if (type.isInterface()) {
+                for (const FunctionDecl& method : type.interfaceDecl->methods) items.push(item(method.name, 2, signatureOf(method)));
+            }
+            return items;
+        }
+        // D181: after the name of an enum, its cases.
+        for (const StructDecl& decl : analysis->module.structs) {
+            if (decl.name != name || !decl.isEnum || (decl.loc.file != file && !decl.isPublic)) continue;
+            for (const EnumCase& entry : decl.cases) items.push(item(entry.name, 20, decl.name + "." + entry.name));
+            break;
+        }
+        return items;
+    }
+
+    static Json item(const std::string& label, int kind, const std::string& detail) {
+        Json out = Json::object();
+        out.set("label", label);
+        out.set("kind", kind);  // LSP kinds: 2 method, 5 field, 20 enum member
+        out.set("detail", detail);
+        return out;
+    }
+
+    // D181: what the module of `file` can use: the public members, or all of them in
+    // the module of the type (D132); a method that implements an interface too.
+    static void members(const StructDecl& decl, int file, Json& items) {
+        bool own = decl.loc.file == file;
+        for (const FieldDecl& field : decl.fields) {
+            if (own || field.isPublic) items.push(item(field.name, 5, fieldTypeOf(field, decl) + " " + decl.name + "." + field.name));
+        }
+        std::set<std::string> fromInterfaces;
+        for (const TypeName& name : decl.interfaces) {
+            if (!name.resolved.isInterface()) continue;
+            for (const FunctionDecl& method : name.resolved.interfaceDecl->methods) fromInterfaces.insert(method.name);
+        }
+        for (const FunctionDecl& member : decl.members) {
+            if (member.kind != FunctionKind::Method) continue;
+            if (own || member.isPublic || fromInterfaces.count(member.name)) items.push(item(member.name, 2, signatureOf(member, &decl)));
+        }
     }
 
     static Json symbol(const std::string& text, const std::string& name, int kind, SourceLocation loc,

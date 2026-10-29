@@ -1,0 +1,13 @@
+// A struct with a public field, a private one and a public method (D132).
+public struct Square {
+    public f64 side
+    i32 secret
+
+    public Square(f64 s) {
+        side = s
+    }
+
+    public f64 area() const {
+        ret side * side
+    }
+}

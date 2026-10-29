@@ -9,6 +9,7 @@
 #   // lsp-definition: 9:5 3:9       the definition is there, or in another file: x.cro:3:9
 #   // lsp-error: 4:13 text          an error there, with the text; no other error is allowed
 #   // lsp-symbols: Point, Point.x   symbols of the file, the members after their type
+#   // lsp-completion: 9:7 len, !data  proposed there, and not proposed with a '!'
 #   // cromo-flags: --release       extra options for cromo
 #   // expect-exit: 42              exit code of the program
 #   // expect-output: text          one line of standard output (repeatable, exact match)
@@ -328,6 +329,8 @@ foreach ($case in Get-ChildItem $PSScriptRoot -Recurse -Filter *.cro | Sort-Obje
     foreach ($line in Get-Content $case.FullName -Encoding UTF8) {
         if ($line -match '^\s*//\s*lsp-(hover|definition|error):\s*(\d+):(\d+)\s+(.+?)\s*$') {
             $checks += [pscustomobject]@{ Kind = $matches[1]; Line = [int]$matches[2]; Column = [int]$matches[3]; Value = $matches[4] }
+        } elseif ($line -match '^\s*//\s*lsp-completion:\s*(\d+):(\d+)\s+(.+?)\s*$') {
+            $checks += [pscustomobject]@{ Kind = 'completion'; Line = [int]$matches[1]; Column = [int]$matches[2]; Value = $matches[3] }
         } elseif ($line -match '^\s*//\s*lsp-symbols:\s*(.+?)\s*$') {
             $checks += [pscustomobject]@{ Kind = 'symbols'; Value = $matches[1] }
         }
@@ -338,7 +341,7 @@ foreach ($case in Get-ChildItem $PSScriptRoot -Recurse -Filter *.cro | Sort-Obje
     $requests = @()
     foreach ($check in $checks) {
         if ($check.Kind -eq 'error') { continue }
-        $method = @{ hover = 'textDocument/hover'; definition = 'textDocument/definition'; symbols = 'textDocument/documentSymbol' }[$check.Kind]
+        $method = @{ hover = 'textDocument/hover'; definition = 'textDocument/definition'; symbols = 'textDocument/documentSymbol'; completion = 'textDocument/completion' }[$check.Kind]
         $params = @{ textDocument = @{ uri = $uri } }
         if ($check.Kind -ne 'symbols') { $params.position = @{ line = $check.Line - 1; character = $check.Column - 1 } }
         $requests += @{ method = $method; params = $params }
@@ -367,6 +370,15 @@ foreach ($case in Get-ChildItem $PSScriptRoot -Recurse -Filter *.cro | Sort-Obje
                 $target = "$($parts[-2]):$($parts[-1])"
                 $actual = if ($result) { "$($result.uri.Split('/')[-1]) $($result.range.start.line + 1):$($result.range.start.character + 1)" } else { 'none' }
                 if ($actual -ne "$file $target") { $problems += "definition at ${at}: $actual, expected $file $target" }
+            } elseif ($check.Kind -eq 'completion') {
+                $labels = @($result | ForEach-Object { $_.label })
+                foreach ($expected in ($check.Value -split ',\s*')) {
+                    if ($expected.StartsWith('!')) {
+                        if ($labels -contains $expected.Substring(1)) { $problems += "completion at ${at} proposes $($expected.Substring(1))" }
+                    } elseif ($labels -notcontains $expected) {
+                        $problems += "completion at ${at} misses $expected (found: $($labels -join ', '))"
+                    }
+                }
             } else {
                 $names = @()
                 foreach ($symbol in $result) {

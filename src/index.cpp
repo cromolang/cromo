@@ -11,18 +11,26 @@ bool isIdentChar(char c) {
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
 }
 
-// A type as it is written, for the declarations that sema has not checked.
-std::string writtenType(const TypeName& name) {
+// A type as it is written, for the declarations that sema has not checked; the
+// type parameters of an instance become its type arguments.
+std::string writtenType(const TypeName& name, const TypeBindings* bindings = nullptr) {
+    if (bindings && name.module.empty() && name.args.empty()) {
+        for (const auto& [param, type] : *bindings) {
+            if (param == name.name) return type.name();
+        }
+    }
     std::string text = (name.module.empty() ? "" : name.module + ".") + name.name;
     if (!name.args.empty()) {
         text += "<";
-        for (size_t i = 0; i < name.args.size(); ++i) text += (i ? ", " : "") + writtenType(name.args[i]);
+        for (size_t i = 0; i < name.args.size(); ++i) text += (i ? ", " : "") + writtenType(name.args[i], bindings);
         text += ">";
     }
     return text;
 }
 
-std::string typeText(Type type, const TypeName& written) { return type.isError() ? writtenType(written) : type.name(); }
+std::string typeText(Type type, const TypeName& written, const TypeBindings* bindings = nullptr) {
+    return type.isError() ? writtenType(written, bindings) : type.name();
+}
 
 std::string modePrefix(ParamMode mode, bool isConst) {
     if (mode == ParamMode::Ref) return "ref ";
@@ -83,15 +91,16 @@ private:
     // Only where the source really has the name: sema also makes nodes that are
     // not written, as the `append` of `s += t`.
     void add(SourceLocation loc, const std::string& name, const std::string& hover, SourceLocation target,
-             bool hasTarget = true) {
+             Type type = Type::error()) {
         if (name.empty() || identifierAt(loc) != name) return;
         if (!seen_.insert(std::make_tuple(loc.file, loc.line, loc.column)).second) return;  // the instances of a generic
         Reference reference;
         reference.loc = loc;
         reference.length = static_cast<int>(name.size());
         reference.hover = hover;
-        reference.hasTarget = hasTarget;
+        reference.hasTarget = true;
         reference.target = target;
+        reference.type = type;
         references_.push_back(std::move(reference));
     }
 
@@ -107,8 +116,8 @@ private:
         std::string mode = prefix;
         if (mode.empty() && variable->kind == VariableKind::RefParam) mode = "ref ";
         if (mode.empty() && variable->kind == VariableKind::MoveParam) mode = "move ";
-        std::string hover = mode +(variable->isConst ? "const " : "") + variable->type.name() + " " + variable->name;
-        add(loc, variable->name, hover, variable->loc);
+        std::string hover = mode + (variable->isConst ? "const " : "") + variable->type.name() + " " + variable->name;
+        add(loc, variable->name, hover, variable->loc, variable->type);
     }
 
     void caseOf(const StructDecl& decl, int index, SourceLocation loc) {
@@ -130,7 +139,8 @@ private:
         for (const TypeName& name : decl.interfaces) typeName(name);
         for (const FieldDecl& field : decl.fields) {
             typeName(field.type);
-            add(field.loc, field.name, typeText(field.resolved, field.type) + " " + decl.name + "." + field.name, field.loc);
+            add(field.loc, field.name, typeText(field.resolved, field.type) + " " + decl.name + "." + field.name, field.loc,
+                field.resolved);
         }
         for (size_t i = 0; i < decl.cases.size(); ++i) {
             caseOf(decl, static_cast<int>(i), decl.cases[i].loc);
@@ -268,7 +278,7 @@ private:
             if (owner.isStruct() && field.index >= 0 && static_cast<size_t>(field.index) < owner.structDecl->fields.size()) {
                 const FieldDecl& decl = owner.structDecl->fields[field.index];
                 add(field.loc, field.field, typeText(decl.resolved, decl.type) + " " + owner.structDecl->name + "." + decl.name,
-                    decl.loc);
+                    decl.loc, decl.resolved);
             }
             break;
         }
@@ -323,24 +333,31 @@ private:
 
 }  // namespace
 
-std::string signatureOf(const FunctionDecl& function) {
+std::string signatureOf(const FunctionDecl& function, const StructDecl* ownerDecl) {
+    if (!ownerDecl) ownerDecl = function.owner;
+    const TypeBindings* bindings = ownerDecl && ownerDecl->generic ? &ownerDecl->typeBindings : nullptr;
     std::string params;
     for (size_t i = 0; i < function.params.size(); ++i) {
         const Param& param = function.params[i];
-        std::string type = i < function.paramTypes.size() ? typeText(function.paramTypes[i], param.type) : writtenType(param.type);
+        std::string type = i < function.paramTypes.size() ? typeText(function.paramTypes[i], param.type, bindings)
+                                                          : writtenType(param.type, bindings);
         params += (i ? ", " : "") + modePrefix(param.mode, param.isConst) + type + " " + param.name;
     }
-    std::string owner = function.owner ? function.owner->name : std::string();
+    std::string owner = ownerDecl ? ownerDecl->name : std::string();
     switch (function.kind) {
     case FunctionKind::Constructor: return owner + "(" + params + ")";
     case FunctionKind::Destructor: return "~" + owner + "()";
     default: break;
     }
-    std::string text = typeText(function.resolvedReturn, function.returnType) + " " + (owner.empty() ? "" : owner + ".") +
+    std::string text = typeText(function.resolvedReturn, function.returnType, bindings) + " " + (owner.empty() ? "" : owner + ".") +
                        function.name + "(" + params + ")";
     if (function.isConst) text += " const";
     if (function.isExtern) text = "extern \"" + function.library + "\" " + text;
     return text;
+}
+
+std::string fieldTypeOf(const FieldDecl& field, const StructDecl& owner) {
+    return typeText(field.resolved, field.type, owner.generic ? &owner.typeBindings : nullptr);
 }
 
 std::vector<Reference> indexProgram(const Module& module, const std::deque<SourceFile>& sources) {

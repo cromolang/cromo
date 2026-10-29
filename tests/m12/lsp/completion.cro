@@ -1,0 +1,23 @@
+// lsp-completion: 16:12 len, add, insert, remove, !data, !length
+// lsp-completion: 18:18 len, append, concat, !capacity
+// lsp-completion: 20:20 side, area, !secret
+// lsp-completion: 21:21 Red, Green
+// The members after a dot (D179): those of the type of the name before it,
+// the private ones only in their module, and the cases after an enum.
+import modules.shapes
+
+enum Color {
+    Red
+    Green
+}
+
+i32 main() {
+    list<i64> values
+    values.add(1)
+    string name = "Anna"
+    i64 n = name.len()
+    Square square = Square(2.0)
+    f64 a = square.area()
+    Color c = Color.Green
+    ret i32(n)
+}

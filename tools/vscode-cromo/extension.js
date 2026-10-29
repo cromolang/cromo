@@ -1,9 +1,45 @@
 // The client of `cromo lsp` (D170), written without packages from npm so that
 // the extension is built without Node.js (D178). It sends the open .cro documents
 // to the server, shows its diagnostics, and asks it for hover, definition, the
-// symbols of a file and formatting (D171, D164).
+// symbols of a file, the members after a dot and formatting (D171, D179, D164).
 const vscode = require('vscode');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const { spawn } = require('child_process');
+
+// The cromo to run: the setting cromo.path; without it, the one built in a folder
+// of the workspace (build/cromo.exe, while developing cromo), else cromo from PATH.
+function findCromo() {
+    const configured = vscode.workspace.getConfiguration('cromo').get('path');
+    if (configured) return configured;
+    const name = process.platform === 'win32' ? 'cromo.exe' : 'cromo';
+    for (const folder of vscode.workspace.workspaceFolders || []) {
+        const built = path.join(folder.uri.fsPath, 'build', name);
+        if (fs.existsSync(built)) return built;
+    }
+    return 'cromo';
+}
+
+// On Windows a running .exe cannot be replaced, and build.ps1 could not write
+// cromo.exe again while VS Code is open: the server runs from a copy in the
+// temporary folder, named after the size and the date of cromo.exe.
+function runnableCopy(executable) {
+    if (process.platform !== 'win32' || !path.isAbsolute(executable) || !fs.existsSync(executable)) return executable;
+    const stat = fs.statSync(executable);
+    const copy = path.join(os.tmpdir(), `cromo-lsp-${stat.size}-${Math.floor(stat.mtimeMs)}.exe`);
+    try {
+        if (!fs.existsSync(copy)) fs.copyFileSync(executable, copy);
+    } catch (error) {
+        return executable;
+    }
+    // The copies of the cromo.exe of before, if no server uses them any more.
+    for (const name of fs.readdirSync(os.tmpdir())) {
+        const old = path.join(os.tmpdir(), name);
+        if (name.startsWith('cromo-lsp-') && name.endsWith('.exe') && old !== copy) fs.unlink(old, () => {});
+    }
+    return copy;
+}
 
 class Server {
     constructor(output, diagnostics) {
@@ -11,6 +47,7 @@ class Server {
         this.diagnostics = diagnostics;
         this.process = null;
         this.ready = null;
+        this.warned = false;  // the error about a missing cromo is shown once
         this.nextId = 1;
         this.pending = new Map();
         this.buffer = Buffer.alloc(0);
@@ -19,16 +56,29 @@ class Server {
     // Starts cromo lsp the first time it is needed, and again if it stopped.
     start() {
         if (this.ready) return this.ready;
-        const executable = vscode.workspace.getConfiguration('cromo').get('path') || 'cromo';
-        this.process = spawn(executable, ['lsp']);
-        this.process.stdout.on('data', (data) => this.receive(data));
-        this.process.stderr.on('data', (data) => this.output.append(data.toString('utf8')));
-        this.process.on('error', (error) => {
-            this.output.appendLine(`cannot run ${executable}: ${error.message} (see the setting cromo.path)`);
+        const executable = findCromo();
+        this.watch(executable);
+        const child = spawn(runnableCopy(executable), ['lsp']);
+        this.process = child;
+        child.stdout.on('data', (data) => this.receive(data));
+        child.stderr.on('data', (data) => this.output.append(data.toString('utf8')));
+        // The events of a process that has been replaced are ignored.
+        child.on('error', (error) => {
+            if (this.process !== child) return;
+            this.output.appendLine(`cannot run ${executable}: ${error.message}`);
+            if (!this.warned) {
+                this.warned = true;
+                vscode.window
+                    .showErrorMessage(`Cromo: cannot run ${executable}. Set cromo.path to the path of cromo.exe.`, 'Open Settings')
+                    .then((choice) => {
+                        if (choice) vscode.commands.executeCommand('workbench.action.openSettings', 'cromo.path');
+                    });
+            }
             this.stop();
         });
-        this.process.on('exit', (code) => {
-            if (this.process) this.output.appendLine(`cromo lsp stopped with exit code ${code}`);
+        child.on('exit', (code) => {
+            if (this.process !== child) return;
+            this.output.appendLine(`cromo lsp stopped with exit code ${code}`);
             this.stop();
         });
         const folder = vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders[0];
@@ -43,6 +93,29 @@ class Server {
         return this.ready;
     }
 
+    // A new cromo.exe, built again, restarts the server from a new copy.
+    watch(executable) {
+        if (this.watched === executable) return;
+        if (this.watched) fs.unwatchFile(this.watched);
+        this.watched = path.isAbsolute(executable) ? executable : null;
+        if (!this.watched) return;
+        fs.watchFile(this.watched, { interval: 2000 }, (now, before) => {
+            if (now.mtimeMs !== before.mtimeMs && now.size > 0 && this.process) {
+                this.output.appendLine(`${executable} changed: cromo lsp starts again`);
+                this.restart();
+            }
+        });
+    }
+
+    // When cromo.path or cromo.exe change: a new server, with every open document.
+    restart() {
+        const running = this.process;
+        this.stop();
+        this.warned = false;
+        if (running) running.kill();
+        this.start();
+    }
+
     stop() {
         for (const { resolve } of this.pending.values()) resolve(null);
         this.pending.clear();
@@ -51,14 +124,23 @@ class Server {
         this.buffer = Buffer.alloc(0);
     }
 
+    // With the setting cromo.trace, every message goes to the output panel.
+    trace(direction, message) {
+        if (!vscode.workspace.getConfiguration('cromo').get('trace')) return;
+        const text = JSON.stringify(message);
+        this.output.appendLine(`${direction} ${text.length > 400 ? text.slice(0, 400) + '...' : text}`);
+    }
+
     send(message) {
         if (!this.process) return;
+        this.trace('->', message);
         const body = Buffer.from(JSON.stringify(message), 'utf8');
         this.process.stdin.write(`Content-Length: ${body.length}\r\n\r\n`);
         this.process.stdin.write(body);
     }
 
     request(method, params) {
+        if (!this.process) return Promise.resolve(null);  // cromo could not start
         const id = this.nextId++;
         return new Promise((resolve) => {
             this.pending.set(id, { resolve });
@@ -86,6 +168,7 @@ class Server {
     }
 
     handle(message) {
+        this.trace('<-', message);
         if (message.id !== undefined && this.pending.has(message.id)) {
             const { resolve } = this.pending.get(message.id);
             this.pending.delete(message.id);
@@ -131,6 +214,9 @@ function activate(context) {
     context.subscriptions.push(
         output,
         diagnostics,
+        vscode.workspace.onDidChangeConfiguration((event) => {
+            if (event.affectsConfiguration('cromo.path')) server.restart();
+        }),
         vscode.workspace.onDidOpenTextDocument((document) => {
             if (server.ready) server.open(document);
             else if (document.languageId === 'cromo') server.start();
@@ -173,6 +259,16 @@ function activate(context) {
                 return (result || []).map(convert);
             },
         }),
+        vscode.languages.registerCompletionItemProvider(selector, {
+            async provideCompletionItems(document, position) {
+                const result = await ask('textDocument/completion', where(document, position));
+                return (result || []).map((item) => {
+                    const completion = new vscode.CompletionItem(item.label, item.kind - 1);
+                    completion.detail = item.detail;
+                    return completion;
+                });
+            },
+        }, '.'),  // D179: the members after a dot
         vscode.languages.registerDocumentFormattingEditProvider(selector, {
             async provideDocumentFormattingEdits(document) {
                 const result = await ask('textDocument/formatting', { textDocument: { uri: document.uri.toString() } });
@@ -184,6 +280,7 @@ function activate(context) {
                 const running = server.process;
                 server.process = null;  // no message: it is stopped on purpose
                 if (running) running.kill();
+                if (server.watched) fs.unwatchFile(server.watched);
             },
         },
     );
