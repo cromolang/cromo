@@ -1,0 +1,54 @@
+// Example 10: a small server of TCP and its clients.
+//
+// Decided: network I/O that blocks the thread (D223), Listener and Connection
+//          (D224), errors and timeouts (D225), names and addresses (D226), the
+//          lambda of a thread modifies what it takes with move (D227), read()
+//          and write() (D228)
+import std.net
+import std.thread
+
+// Answers a message with its length in bytes.
+void serve(ref net.Connection client) {
+    client.timeout(5000)
+    list<u8> request = client.read(1024)
+    client.writeText(format("{} bytes", request.len()))
+}
+
+i32 main() {
+    net.Listener server = net.listen("127.0.0.1", 0)  // 0: a free port
+    i32 port = server.port()
+
+    // The server: a thread for each connection, which takes it with move.
+    thread.Thread accepting = thread.Thread([ref server]() {
+        list<thread.Thread> workers
+        for (i64 i = 0; i < 3; i++) {
+            net.Connection client = server.accept()
+            thread.Thread worker = thread.Thread([move client]() { serve(ref client) })
+            worker.start()
+            workers.add(move worker)
+        }
+        for (ref thread.Thread worker in workers) {
+            worker.join()
+        }
+    })
+    accepting.start()
+
+    list<string> messages
+    messages.add("hello")
+    messages.add("ciao")
+    messages.add("hello, world")
+    for (string message in messages) {
+        net.Connection connection = net.connect("localhost", port)
+        connection.writeText(message)
+        println("{} -> {}", message, string(connection.read(1024)))
+    }
+    accepting.join()
+
+    try {
+        net.Connection nobody = net.connect("127.0.0.1", 1)
+        nobody.writeText("?")
+    } catch (Exception e) {
+        println("{}", e.message())  // cannot connect to 127.0.0.1:1: connection refused
+    }
+    ret 0
+}

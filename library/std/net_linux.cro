@@ -1,0 +1,468 @@
+// std.net on Linux (D202): the system calls of the sockets, and a resolver of
+// names without the C library: /etc/hosts, then the servers of /etc/resolv.conf
+// asked with UDP (D226).
+import unsafe
+import std.fs
+import std.time
+
+i32 inet6() {
+    ret 10
+}
+
+i64 openSocket(i32 version, bool stream) {
+    i64 family = 2
+    if (version == 6) {
+        family = 10
+    }
+    i64 kind = 2  // SOCK_DGRAM
+    if (stream) {
+        kind = 1  // SOCK_STREAM
+    }
+    i64 handle = systemCall(41, family, kind | 0x80000, 0, 0, 0, 0)  // socket, SOCK_CLOEXEC
+    if (handle < 0) {
+        throw failure("open a socket", errorText(-handle))
+    }
+    ret handle
+}
+
+// A listener started again can use its port at once.
+void reuseAddress(i64 handle) {
+    addr value = alloc(4)
+    put<i32>(value, 1)
+    systemCall(54, handle, 1, 2, value, 4, 0)  // setsockopt SOL_SOCKET SO_REUSEADDR
+    free(value)
+}
+
+i64 connectTo(i64 handle, Address to) {
+    i32 length = 0
+    addr raw = socketAddress(to, ref length)
+    i64 result = systemCall(42, handle, raw, i64(length), 0, 0, 0)  // connect
+    free(raw)
+    if (result < 0) {
+        ret -result
+    }
+    ret 0
+}
+
+void bindTo(i64 handle, Address to) {
+    i32 length = 0
+    addr raw = socketAddress(to, ref length)
+    i64 result = systemCall(49, handle, raw, i64(length), 0, 0, 0)  // bind
+    free(raw)
+    if (result < 0) {
+        throw failure(format("use {} port {}", text(to), to.port), errorText(-result))
+    }
+}
+
+void listenOn(i64 handle) {
+    i64 result = systemCall(50, handle, 128, 0, 0, 0, 0)  // listen
+    if (result < 0) {
+        throw failure("listen", errorText(-result))
+    }
+}
+
+i64 acceptOn(i64 handle) {
+    for {
+        i64 client = systemCall(288, handle, 0, 0, 0x80000, 0, 0)  // accept4, SOCK_CLOEXEC
+        if (client >= 0) {
+            ret client
+        }
+        if (client != -4) {  // EINTR: again
+            throw failure("accept a connection", errorText(-client))
+        }
+    }
+}
+
+i64 receiveSome(i64 handle, addr data, i64 most) {
+    for {
+        i64 count = systemCall(45, handle, data, most, 0, 0, 0)  // recvfrom
+        if (count >= 0) {
+            ret count
+        }
+        if (count != -4) {
+            throw failure("read", errorText(-count))
+        }
+    }
+}
+
+// MSG_NOSIGNAL: a connection closed on the other side is an exception, not
+// the signal SIGPIPE that would end the program.
+i64 sendSome(i64 handle, addr data, i64 size) {
+    for {
+        i64 count = systemCall(44, handle, data, size, 0x4000, 0, 0)  // sendto
+        if (count >= 0) {
+            ret count
+        }
+        if (count != -4) {
+            throw failure("write", errorText(-count))
+        }
+    }
+}
+
+void sendTo(i64 handle, addr data, i64 size, Address to) {
+    i32 length = 0
+    addr raw = socketAddress(to, ref length)
+    i64 count = systemCall(44, handle, data, size, 0x4000, raw, i64(length))
+    free(raw)
+    if (count < 0) {
+        throw failure("send", errorText(-count))
+    }
+}
+
+i64 receiveFrom(i64 handle, addr data, i64 most, ref Address from) {
+    addr raw = alloc(28)
+    addr length = alloc(4)
+    put<i32>(length, 28)
+    i64 count = systemCall(45, handle, data, most, 0, raw, length)
+    free(length)
+    if (count < 0) {
+        free(raw)
+        throw failure("receive", errorText(-count))
+    }
+    from = fromSocketAddress(raw)
+    free(raw)
+    ret count
+}
+
+// pollfd: the descriptor, the events wanted, the events found.
+bool waitFor(i64 handle, bool reading, i64 milliseconds) {
+    addr entry = alloc(8)
+    put<i32>(entry, i32(handle))
+    if (reading) {
+        put<i16>(offset(entry, 4), 1)  // POLLIN
+    } else {
+        put<i16>(offset(entry, 4), 4)  // POLLOUT
+    }
+    put<i16>(offset(entry, 6), 0)
+    i64 result = -4
+    for (result == -4) {
+        result = systemCall(7, entry, 1, milliseconds, 0, 0, 0)  // poll
+    }
+    free(entry)
+    if (result < 0) {
+        throw failure("wait for the network", errorText(-result))
+    }
+    ret result > 0
+}
+
+i32 localPort(i64 handle) {
+    addr raw = alloc(28)
+    addr length = alloc(4)
+    put<i32>(length, 28)
+    systemCall(51, handle, raw, length, 0, 0, 0)  // getsockname
+    i32 port = fromSocketAddress(raw).port
+    free(length)
+    free(raw)
+    ret port
+}
+
+void closeSocket(i64 handle) {
+    systemCall(3, handle, 0, 0, 0, 0, 0)
+}
+
+string errorText(i64 code) {
+    if (code == 111) {
+        ret "connection refused"
+    } else if (code == 110) {
+        ret "timed out"
+    } else if (code == 98) {
+        ret "the address is in use"
+    } else if (code == 99) {
+        ret "the address is not of this computer"
+    } else if (code == 104) {
+        ret "connection reset by the other side"
+    } else if (code == 32) {
+        ret "the connection is closed"
+    } else if (code == 113 || code == 101) {
+        ret "the host cannot be reached"
+    } else if (code == 13) {
+        ret "permission denied"
+    }
+    ret format("error {}", code)
+}
+
+// ---- Names (D226) ----
+
+list<Address> resolveHost(string host, i32 port) {
+    list<Address> addresses
+    Address literal
+    if (parseAddress(host, port, ref literal)) {
+        addresses.add(literal)
+        ret addresses
+    }
+    hostsFile(host, port, ref addresses)
+    if (addresses.len() == 0) {
+        askServers(host, port, ref addresses)
+    }
+    if (addresses.len() == 0) {
+        throw failure(format("find the host '{}'", host), "no such host")
+    }
+    ret addresses
+}
+
+// The lines "address name name..." of /etc/hosts.
+void hostsFile(string host, i32 port, ref list<Address> addresses) {
+    string content
+    try {
+        content = fs.readText("/etc/hosts")
+    } catch (Exception e) {
+        ret
+    }
+    for (string line in lines(content)) {
+        list<string> fields = words(line)
+        Address address
+        if (fields.len() < 2 || !parseAddress(fields[0], port, ref address)) {
+            continue
+        }
+        for (i64 i = 1; i < fields.len(); i++) {
+            if (sameName(fields[i], host)) {
+                addresses.add(address)
+                break
+            }
+        }
+    }
+}
+
+// The servers of /etc/resolv.conf, asked in turn for the addresses of IPv4, then
+// of IPv6; the first one that knows the name answers.
+void askServers(string host, i32 port, ref list<Address> addresses) {
+    for (Address server in nameServers()) {
+        query(server, host, 1, port, ref addresses)   // A
+        query(server, host, 28, port, ref addresses)  // AAAA
+        if (addresses.len() > 0) {
+            ret
+        }
+    }
+}
+
+list<Address> nameServers() {
+    list<Address> servers
+    string content
+    try {
+        content = fs.readText("/etc/resolv.conf")
+    } catch (Exception e) {
+        content = ""
+    }
+    for (string line in lines(content)) {
+        list<string> fields = words(line)
+        Address server
+        if (fields.len() >= 2 && fields[0] == "nameserver" && parseAddress(fields[1], 53, ref server)) {
+            servers.add(server)
+        }
+    }
+    if (servers.len() == 0) {
+        Address local
+        parseAddress("127.0.0.1", 53, ref local)
+        servers.add(local)
+    }
+    ret servers
+}
+
+// One question of DNS with UDP: the answers of the type asked join `addresses`.
+// A server that does not answer in two seconds, or answers wrongly, is skipped.
+void query(Address server, string host, i64 type, i32 port, ref list<Address> addresses) {
+    list<u8> packet = question(host, type)
+    i64 id = i64(packet[0]) << 8 | i64(packet[1])
+    i64 handle = openSocket(server.version, false)
+    addr data = copyBytes(packet)
+    addr buffer = alloc(1500)
+    try {
+        sendTo(handle, data, packet.len(), server)
+        if (!waitFor(handle, true, 2000)) {
+            ret
+        }
+        Address from
+        i64 count = receiveFrom(handle, buffer, 1500, ref from)
+        list<u8> reply
+        for (i64 i = 0; i < count; i++) {
+            reply.add(copyAt<u8>(offset(buffer, i)))
+        }
+        answers(reply, id, type, host, port, ref addresses)
+    } catch (Exception e) {
+        ret
+    } finally {
+        free(buffer)
+        free(data)
+        closeSocket(handle)
+    }
+}
+
+list<u8> question(string host, i64 type) {
+    list<u8> packet
+    i64 id = i64(time.utcNow().nanosecond) & 0xFFFF
+    packet.add(u8(id >> 8))
+    packet.add(u8(id & 0xFF))
+    packet.add(1)  // recursion desired
+    packet.add(0)
+    packet.add(0)  // one question
+    packet.add(1)
+    for (i64 i = 0; i < 6; i++) {  // no answers, authorities or additions
+        packet.add(0)
+    }
+    i64 start = 0
+    for (i64 i = 0; i <= host.len(); i++) {
+        if (i == host.len() || host[i] == '.') {
+            if (i > start) {
+                packet.add(u8(i - start))
+                for (i64 k = start; k < i; k++) {
+                    packet.add(host[k])
+                }
+            }
+            start = i + 1
+        }
+    }
+    packet.add(0)
+    packet.add(u8(type >> 8))
+    packet.add(u8(type & 0xFF))
+    packet.add(0)  // class IN
+    packet.add(1)
+    ret packet
+}
+
+// The records of the answer, read with care: a packet too short is left alone.
+// Only the records of the name asked count, following its aliases (CNAME): some
+// servers, as the one of WSL, add others among the answers.
+void answers(list<u8> reply, i64 id, i64 type, string host, i32 port, ref list<Address> addresses) {
+    if (reply.len() < 12 || number16(reply, 0) != id || reply[3] & 0x0F != 0) {
+        ret
+    }
+    string name = host.copy()
+    if (name.len() > 0 && name[name.len() - 1] == '.') {
+        name = name.slice(0, name.len() - 1)
+    }
+    i64 questions = number16(reply, 4)
+    i64 count = number16(reply, 6)
+    i64 at = 12
+    for (i64 q = 0; q < questions; q++) {
+        at = skipName(reply, at) + 4
+    }
+    for (i64 a = 0; a < count; a++) {
+        string owner = readName(reply, at)
+        at = skipName(reply, at)
+        if (at + 10 > reply.len()) {
+            ret
+        }
+        i64 kind = number16(reply, at)
+        i64 length = number16(reply, at + 8)
+        at += 10
+        if (at + length > reply.len()) {
+            ret
+        }
+        bool ours = sameName(owner, name)
+        if (ours && kind == 5) {  // CNAME: the next records are of its target
+            name = readName(reply, at)
+        } else if (ours && kind == type && (kind == 1 && length == 4 || kind == 28 && length == 16)) {
+            Address address
+            address.version = 4
+            if (kind == 28) {
+                address.version = 6
+            }
+            address.port = port
+            for (i64 k = 0; k < length; k++) {
+                address.ip[k] = reply[at + k]
+            }
+            addresses.add(address)
+        }
+        at += length
+    }
+}
+
+i64 number16(list<u8> bytes, i64 at) {
+    ret i64(bytes[at]) << 8 | i64(bytes[at + 1])
+}
+
+// A name of DNS, following its pointers, with the labels joined by dots; "" when
+// it is not well formed.
+string readName(list<u8> bytes, i64 start) {
+    string name
+    i64 at = start
+    for (i64 hops = 0; hops < 128; hops++) {
+        if (at >= bytes.len()) {
+            ret ""
+        }
+        i64 length = i64(bytes[at])
+        if (length == 0) {
+            ret name
+        }
+        if (length & 0xC0 == 0xC0) {
+            if (at + 1 >= bytes.len()) {
+                ret ""
+            }
+            at = (length & 0x3F) << 8 | i64(bytes[at + 1])
+            continue
+        }
+        if (at + 1 + length > bytes.len()) {
+            ret ""
+        }
+        list<u8> label
+        for (i64 k = at + 1; k <= at + length; k++) {
+            label.add(bytes[k])
+        }
+        if (name.len() > 0) {
+            name += "."
+        }
+        name += string(label)
+        at += length + 1
+    }
+    ret ""
+}
+
+// After a name of DNS: labels, ended by a zero or by a pointer to another name.
+i64 skipName(list<u8> bytes, i64 start) {
+    i64 at = start
+    for (at < bytes.len()) {
+        i64 length = i64(bytes[at])
+        if (length == 0) {
+            ret at + 1
+        }
+        if (length & 0xC0 == 0xC0) {
+            ret at + 2
+        }
+        at += length + 1
+    }
+    ret at
+}
+
+list<string> lines(string content) {
+    list<string> result
+    i64 start = 0
+    for (i64 i = 0; i <= content.len(); i++) {
+        if (i == content.len() || content[i] == '\n') {
+            result.add(content.slice(start, i))
+            start = i + 1
+        }
+    }
+    ret result
+}
+
+// The words of a line, without what follows a #.
+list<string> words(string line) {
+    list<string> result
+    i64 start = -1
+    for (i64 i = 0; i <= line.len(); i++) {
+        bool space = i == line.len() || line[i] == ' ' || line[i] == '\t' || line[i] == '\r' || line[i] == '#'
+        if (!space && start < 0) {
+            start = i
+        }
+        if (space && start >= 0) {
+            result.add(line.slice(start, i))
+            start = -1
+        }
+        if (i < line.len() && line[i] == '#') {
+            break
+        }
+    }
+    ret result
+}
+
+bool sameName(string a, string b) {
+    if (a.len() != b.len()) {
+        ret false
+    }
+    for (i64 i = 0; i < a.len(); i++) {
+        if (a[i] | 0x20 != b[i] | 0x20) {
+            ret false
+        }
+    }
+    ret true
+}

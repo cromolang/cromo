@@ -1,0 +1,36 @@
+// UDP on this computer, and the names of the hosts (D224, D226).
+// expect-output: got ping from 127.0.0.1 same port true
+// expect-output: localhost has 127.0.0.1 true
+// expect-output: 192.168.1.2 ::1 2001:db8::ff00:42:8329 ::
+// expect-output: unknown cannot find the host 'no-such-host.invalid': no such host
+import std.net
+
+bool contains(list<string> items, string wanted) {
+    for (string item in items) {
+        if (item == wanted) {
+            ret true
+        }
+    }
+    ret false
+}
+
+i32 main() {
+    net.Udp a = net.udp("127.0.0.1", 0)
+    net.Udp b = net.udp("127.0.0.1", 0)
+    b.timeout(5000)
+    list<u8> ping = "ping".bytes()
+    a.send("127.0.0.1", b.port(), ping)
+    net.Datagram message = b.receive(100)
+    println("got {} from {} same port {}", string(message.data), message.host, message.port == a.port())
+
+    println("localhost has 127.0.0.1 {}", contains(net.resolve("localhost"), "127.0.0.1"))
+    println("{} {} {} {}", net.resolve("192.168.1.2")[0], net.resolve("::1")[0], net.resolve("2001:DB8:0:0:0:FF00:42:8329")[0],
+            net.resolve("::")[0])
+    try {
+        list<string> none = net.resolve("no-such-host.invalid")
+        println("{}", none.len())
+    } catch (Exception e) {
+        println("unknown {}", e.message())
+    }
+    ret 0
+}

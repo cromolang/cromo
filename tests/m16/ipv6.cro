@@ -1,0 +1,19 @@
+// TCP on the loopback of IPv6 (D226).
+// expect-output: over IPv6: six
+import std.net
+import std.thread
+
+i32 main() {
+    net.Listener server = net.listen("::1", 0)
+    i32 port = server.port()
+    thread.Thread t = thread.Thread([ref server]() {
+        net.Connection client = server.accept()
+        client.write(client.read(100))
+    })
+    t.start()
+    net.Connection c = net.connect("::1", port)
+    c.writeText("six")
+    println("over IPv6: {}", string(c.read(100)))
+    t.join()
+    ret 0
+}

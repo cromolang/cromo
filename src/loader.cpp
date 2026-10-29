@@ -74,7 +74,7 @@ public:
         // The list of files grows while their imports are loaded.
         for (size_t i = 0; i < sources_.size(); ++i) {
             for (size_t k = 0; k < program_.files[i].imports.size(); ++k) {
-                std::vector<int> files = resolve(program_.files[i].imports[k]);
+                std::vector<int> files = resolve(program_.files[i].imports[k], isEmbedded(sources_[i].path));
                 program_.files[i].imports[k].files = std::move(files);
             }
             checkQualifiers(program_.files[i]);
@@ -91,14 +91,14 @@ private:
         program_.append(std::move(module));
     }
 
-    std::vector<int> resolve(const ImportDecl& import) {
+    std::vector<int> resolve(const ImportDecl& import, bool fromLibrary) {
         std::string dotted;
         fs::path relative;
         for (const std::string& part : import.path) {
             dotted += (dotted.empty() ? "" : ".") + part;
             relative /= part;
         }
-        if (import.path[0] == "std") return resolveLibrary(import, dotted);
+        if (import.path[0] == "std") return resolveLibrary(import, dotted, fromLibrary);
         fs::path file = root_ / relative;
         file += ".cro";
         fs::path folder = root_ / relative;
@@ -159,13 +159,17 @@ private:
 
     // `import std.fs` (D201): the module embedded in cromo, with its file for the
     // system (D202).
-    std::vector<int> resolveLibrary(const ImportDecl& import, const std::string& dotted) {
+    // A module whose name is in `internal` serves only the library: as std.winsock,
+    // which declares `connect` and `listen` of C apart from those of std.net.
+    std::vector<int> resolveLibrary(const ImportDecl& import, const std::string& dotted, bool fromLibrary) {
+        static const char* const internal[] = {"std.winsock"};
         std::string base = "std/" + dotted.substr(4);
+        bool hidden = std::find(std::begin(internal), std::end(internal), dotted) != std::end(internal);
         auto found = loaded_.find(fs::path("cromo:" + base));
         if (found != loaded_.end()) return {found->second};
         std::optional<std::string_view> text = libraryModule(base + ".cro");
-        if (import.path.size() != 2 || !text) {
-            diag_.error(import.loc, "the standard library has no module " + dotted + ": it has std.fs, std.time and std.os, "
+        if (import.path.size() != 2 || !text || (hidden && !fromLibrary)) {
+            diag_.error(import.loc, "the standard library has no module " + dotted + ": it has std.fs, std.time, std.os, std.thread and std.net, "
                                     "and its core is visible without import (D201)");
             return {};
         }

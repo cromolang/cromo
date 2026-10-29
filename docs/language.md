@@ -630,6 +630,32 @@ i32 main() {
 - The data of a `thread.Mutex<T>` are reached only inside `lock`, which gives them with `ref` to one thread at a time (D216).
 - `join()` throws again the exception of the thread; an exception that no `join()` takes stops the program (D217).
 
-## 19. Still to be written
+## 19. Network (D223–D226)
 
-- The rest of the standard library: networking, TLS, HTTP and JSON (M16–M18).
+```cromo
+import std.net
+import std.thread
+
+i32 main() {
+    net.Listener server = net.listen("0.0.0.0", 8080)
+    list<thread.Thread> workers
+    for {
+        net.Connection client = server.accept()   // waits for a client
+        thread.Thread t = thread.Thread([move client]() {
+            client.timeout(5000)                   // milliseconds, for each operation
+            list<u8> request = client.read(4096)   // empty when the client has closed
+            client.writeText("HTTP/1.0 200 OK\r\n\r\nhello")
+        })
+        t.start()
+        workers.add(move t)
+    }
+}
+```
+
+- The calls block the thread that makes them, until they are done or their timeout; a server gives each connection to a thread (D223).
+- `net.listen` gives a `Listener`, `accept()` and `net.connect(host, port)` give a `Connection`; the destructor closes the socket (D224). UDP has `net.udp(host, port)`.
+- Errors and timeouts are exceptions (D225). Names and addresses of IPv4 and IPv6 work on Windows and on Linux, without the C library (D226).
+
+## 20. Still to be written
+
+- The rest of the standard library: TLS, HTTP and JSON (M17–M18).

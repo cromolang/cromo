@@ -3453,7 +3453,9 @@ private:
         int index = 0;
         for (Capture& capture : lambda.captures) {
             if (!capture.outer) continue;
-            Variable* inner = declare(capture.name, capture.outer->type, capture.loc, capture.mode != ParamMode::Ref);
+            // The lambda of a thread runs once: what it takes with `move` is its own to modify.
+            bool writable = capture.mode == ParamMode::Ref || (capture.mode == ParamMode::Move && lambda.forThread);
+            Variable* inner = declare(capture.name, capture.outer->type, capture.loc, !writable);
             if (!inner) continue;
             inner->kind = VariableKind::Captured;
             inner->captureIndex = index++;

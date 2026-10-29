@@ -1,0 +1,86 @@
+// TCP on this computer: a listener, connections and threads (D223-D225).
+// expect-output: reply HELLO
+// expect-output: closed 0
+// expect-output: echo 1 ONE
+// expect-output: echo 2 TWO
+// expect-output: echo 3 THREE
+// expect-output: timeout cannot accept a connection: timed out after 100 ms
+// expect-output: refused true
+import std.net
+import std.thread
+
+list<u8> upper(list<u8> bytes) {
+    list<u8> result
+    for (u8 b in bytes) {
+        if (b >= 'a' && b <= 'z') {
+            result.add(b - 32)
+        } else {
+            result.add(b)
+        }
+    }
+    ret result
+}
+
+void serve(ref net.Connection client) {
+    list<u8> data = client.read(100)
+    client.write(upper(data))
+}
+
+i32 main() {
+    net.Listener server = net.listen("127.0.0.1", 0)
+    i32 port = server.port()
+    thread.Thread once = thread.Thread([ref server]() {
+        net.Connection client = server.accept()
+        serve(ref client)
+    })
+    once.start()
+    net.Connection c = net.connect("127.0.0.1", port)
+    c.writeText("hello")
+    println("reply {}", string(c.read(100)))
+    once.join()
+    println("closed {}", c.read(100).len())
+
+    // A thread for each connection, which takes it with move (D223).
+    thread.Thread many = thread.Thread([ref server]() {
+        list<thread.Thread> workers
+        for (i64 i = 0; i < 3; i++) {
+            net.Connection client = server.accept()
+            thread.Thread worker = thread.Thread([move client]() { serve(ref client) })
+            worker.start()
+            workers.add(move worker)
+        }
+        for (ref thread.Thread worker in workers) {
+            worker.join()
+        }
+    })
+    many.start()
+    list<string> words
+    words.add("one")
+    words.add("two")
+    words.add("three")
+    for (i64 i = 0; i < words.len(); i++) {
+        net.Connection d = net.connect("localhost", port)
+        d.timeout(5000)
+        d.writeText(words[i])
+        println("echo {} {}", i + 1, string(d.read(100)))
+    }
+    many.join()
+
+    server.timeout(100)
+    try {
+        net.Connection late = server.accept()
+        println("{}", late.read(1).len())
+    } catch (Exception e) {
+        println("timeout {}", e.message())
+    }
+
+    server.close()
+    try {
+        net.Connection refused = net.connect("127.0.0.1", port)
+        println("{}", refused.read(1).len())
+    } catch (Exception e) {
+        string message = e.message()
+        println("refused {}", message.slice(message.len() - 18, message.len()) == "connection refused")
+    }
+    ret 0
+}

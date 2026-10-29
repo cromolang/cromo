@@ -1233,6 +1233,57 @@ t.join()
 - New built-in functions of the `unsafe` dialect, for `std.thread`: `threadStart`, `threadWait`, `threadRethrow`, `threadUncaught`, `threadFree`, `mutexLock`, `mutexUnlock` and `selfAddress`.
 - A `Mutex`, and every value that holds one, is always passed by address, and the compiler does not tell LLVM that a call leaves it unchanged: other threads write it.
 
+### D223. Network I/O blocks the thread
+*2026-10-29.* It resolves the point of the model of I/O for servers (D150). `accept`, `read` and `write` stop the thread that calls them, until they are done or their timeout. A server gives each connection to a thread (D215), which takes it with `move`. Lightweight tasks will come later under the same API, without changing the code; there is no `async`/`await`, which splits the functions in two kinds.
+
+### D224. Listener and Connection
+*2026-10-29.* The module `std.net` has two types, as Go and Rust: `net.listen(host, port)` gives a `Listener`, and its `accept()` gives a `Connection`, as `net.connect(host, port)` does. One cannot read from a listener nor accept from a connection. A socket is closed by its destructor (RAII).
+```
+net.Connection c = net.connect("example.com", 80)
+c.writeText("GET / HTTP/1.0
+
+")
+list<u8> reply = c.read(4096)
+```
+
+### D225. Network errors and timeouts
+*2026-10-29.* An error of the network is an exception, as for files (D16, D211). A timeout in milliseconds is set once on a connection or on a listener, `c.timeout(5000)`, and holds for each of its operations; passing it throws an exception. Without a timeout an operation waits as long as it takes.
+
+### D226. Names and addresses
+*2026-10-29.* `net.connect` and `net.listen` take a name or an address, IPv4 or IPv6. On Linux, without the C library, a resolver written in Cromo reads `/etc/hosts`, then asks the servers of `/etc/resolv.conf` with UDP; on Windows `GetAddrInfoW` of `ws2_32` asks the resolver of the system, which is part of Windows and not of a C library (D202).
+
+### D227. The lambda of a thread modifies what it takes with `move`
+*2026-10-29.*
+It amends D187 for the threads: the lambda given to `thread.Thread(...)` runs once, so what it captures with `move` is its own and it can modify it, as in `thread.Thread([move client]() { serve(ref client) })` (D223). The other lambdas can run again, and their captures stay read-only.
+
+### D228. Reading and writing on the network
+*2026-10-29.*
+- `c.read(most)` gives up to `most` bytes as soon as some arrive, and an empty list when the other side has closed the connection.
+- `c.write(bytes)` and `c.writeText(text)` write everything before returning.
+- `close()` closes before the destructor; an operation on a closed socket is an exception.
+- `net.listen(host, 0)` asks the system for a free port, which `listener.port()` gives.
+- `net.connect` tries the addresses of the name in turn; it waits for the connection as long as the system does, and the timeout of D225 holds from the connection on.
+
+### D229. UDP, and the addresses of a name
+*2026-10-29.*
+- `net.udp(host, port)` gives a `Udp` bound to that address, with `send(host, port, bytes)`, `receive(most)`, which gives a `Datagram` with `data`, `host` and `port`, `timeout`, `port()` and `close()`.
+- `net.resolve(host)` gives the addresses of a name as text, IPv6 written as in RFC 5952: `2001:db8::ff00:42:8329`.
+
+### D230. The messages of the errors of the network
+*2026-10-29.*
+They say what could not be done and why: `cannot connect to example.com:80: connection refused`, `cannot read: timed out after 5000 ms`, `cannot find the host 'x': no such host`.
+
+### D231. The resolver for Linux: what it reads and in which order
+*2026-10-29.*
+- `/etc/hosts` first; then the servers of `/etc/resolv.conf` in order, asking the addresses of IPv4 and then those of IPv6, two seconds each; `127.0.0.1` when the file names none.
+- Only the records of the name asked count, following its aliases (CNAME): the server of WSL adds others among the answers.
+- Not yet: the `search` domains for short names, and TCP for the answers that do not fit in UDP.
+- A listener uses `SO_REUSEADDR`, so that a server started again can take its port at once.
+
+### D232. Modules of the library that only the library imports
+*2026-10-29.*
+`std.winsock` declares `connect` and `listen` of ws2_32 with other names, apart from those of `std.net`; the programs cannot import it.
+
 ---
 ---
 
@@ -1241,7 +1292,6 @@ t.join()
 The points still to be defined, each when its milestone needs it (D152):
 - the interface for making user-defined types printable (D38);
 - the content of the standard library;
-- the model of I/O for servers (D150). Recommended: blocking calls on threads first, then lightweight tasks under the same API, as the virtual threads of Java; no `async`/`await`, which splits the functions in two kinds;
 - the TLS library (D150). Recommended: mbedTLS, compiled without libc and included in `cromo` like the runtime, with the root certificates of the system. The alternatives are OpenSSL, which needs libc, SChannel on Windows with another library on Linux, or TLS written in Cromo;
 - `cromo update` (D153): where the new versions are published, and how a download is checked before `cromo` replaces itself. Recommended: a signature of each version, checked with a public key contained in `cromo`, and on Windows the running `cromo.exe` renamed before the new one is written;
 - where the completion of the other names goes among the milestones (D171, D179);

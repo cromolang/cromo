@@ -193,6 +193,11 @@ The tag of an enum is the value of its case, which is its position unless it is 
 - **Mutex:** `lock` is a `const` method that writes the mutex through `selfAddress()`. The struct is marked `addressed`, and so is every struct that holds one: it is passed by address and without `noalias readonly`, so that LLVM does not assume that a call leaves it unchanged.
 - **LLVM without the C library:** the analysis of the library functions allows only `memcpy`, `memmove`, `memset`, `memcmp` and, on Linux, `bcmp`, which `runtime/mem_x64.S` defines; otherwise LLVM turned a loop of `std.fs` into a call to `strlen`.
 
+### Network (D223–D226, M16)
+- **`std.net`** is written in Cromo (`library/std/net.cro`): `Listener`, `Connection`, `Udp`, the timeouts with `poll`, and the addresses of IPv4 and IPv6 with their text. The calls of the system are in `net_windows.cro`, with ws2_32, and `net_linux.cro`, with the system calls; `connect` and `listen` of ws2_32 are declared in `std.winsock`, a module that only the library can import, because `std.net` has functions with those names.
+- **The resolver for Linux** reads `/etc/hosts` and `/etc/resolv.conf`, builds the questions of DNS, sends them with UDP and reads the answers, following the pointers of the names and the aliases. On Windows `GetAddrInfoW` does it.
+- **Threads:** the lambda given to `thread.Thread(...)` can modify what it captures with `move`, since it runs once.
+
 ### The formatter (D161–D164, M11)
 `src/format.cpp` works on the tokens, not on the AST: it only changes spaces and line breaks, so literals, comments and the parentheses of the author stay as they are.
 - The lexer, with `keepComments`, also gives the comments as tokens, and every token has the byte offsets of its text. The parser marks the `<` and `>` of type arguments and parameters, which are written without spaces.
@@ -307,6 +312,7 @@ Each milestone lists the decisions still open that are needed **before** writing
 - **M4** completed on 2026-10-28: generic functions and structs with constraints, deduction of the type arguments, interfaces with `Self`, structs that implement them, static calls through generics and dynamic calls through parameters of interface type. Tests in `tests/m4/`; the choices made for M4 are decisions D84–D92 in [decisions.md](decisions.md).
 - **M5** completed on 2026-10-28: the standard library `library/core.cro` with `list<T>` and `string` written in the `unsafe` dialect, indexing with bounds checking, `for` over the elements, the operators of `string`, `panic`, and the runtime checks of exclusivity between elements. The runtime in C stays (D93). Tests in `tests/m5/`, among them the program of `examples/04_lists.cro`; the choices made for M5 are decisions D93–D103 in [decisions.md](decisions.md).
 - **M6** completed on 2026-10-28: enums with data, methods and type parameters, `switch` on enums, integers and strings, and exceptions with `throw`, `try`, `catch` and `finally`, the interface `Exception` and the struct `Error` of the library. Tests in `tests/m6/`; the choices made for M6 are decisions D104–D125 in [decisions.md](decisions.md).
+- **M16** completed on 2026-10-29: TCP listeners and connections, UDP sockets, timeouts, the names of the hosts with a resolver written in Cromo on Linux and the one of the system on Windows, IPv4 and IPv6. Version 0.16.0. Tests in `tests/m16/`, and the example `examples/10_network.cro`; the choices made for M16 are decisions D223–D232 in [decisions.md](decisions.md).
 - **M15** completed on 2026-10-29: threads with `start()` and `join()`, threads of a block that use its variables with the checks of the compiler, free threads, `Mutex`, the exceptions of a thread thrown again by `join()`, and a runtime safe with threads on Windows and Linux. Version 0.15.0. Tests in `tests/m15/`, and the example `examples/09_threads.cro`; the choices made for M15 are decisions D214–D222 in [decisions.md](decisions.md).
 - **M14** completed on 2026-10-29: bitwise operators, fixed-size arrays, `map` with the interface `Key`, the bytes of a string, `slice`, `format`, numbers from text, the modules `std.fs`, `std.time` and `std.os` with their files for Windows and Linux, the files of a system in the programs, and `s.cstring()` for C. Version 0.14.0. Tests in `tests/m14/`, and the examples `examples/07_collections.cro` and `examples/08_system.cro`; the choices made for M14 are decisions D193–D212 in [decisions.md](decisions.md).
 - **M13** completed on 2026-10-29: anonymous functions with their captures, function types, function values kept in variables, fields and lists, calls through them, lambdas with generics and exceptions; `cromo fmt`, the language server and the grammar of VS Code know them. Version 0.13.0. Tests in `tests/m13/`, and the example `examples/06_lambdas.cro`; the choices made for M13 are decisions D183–D192 in [decisions.md](decisions.md).
@@ -335,7 +341,7 @@ Each milestone lists the decisions still open that are needed **before** writing
 | **M13** | Anonymous functions and the type of a function (D148) | none: D183–D186 |
 | **M14** | Basics of the library: bitwise operators, fixed-size arrays, `map`, bytes, files, time, code for each system, strings to C | none: D193–D204 |
 | **M15** | Threads and synchronization, with a runtime safe with threads (D149) | none: D214–D217 |
-| **M16** | Networking: TCP and UDP sockets, DNS without libc (D150) | the model of I/O |
+| **M16** | Networking: TCP and UDP sockets, DNS without libc (D150) | none: D223–D226 |
 | **M17** | TLS, cryptography and the HTTPS client (D150) | the TLS library |
 | **M18** | HTTP server and client, JSON (D150) | |
 | **Later** | Lightweight tasks under the same API as threads | |

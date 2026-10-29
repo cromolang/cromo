@@ -1,0 +1,16 @@
+// The functions of ws2_32 whose names are also functions of std.net: a module of
+// the library that the programs cannot import, used by net_windows.cro (D224).
+import unsafe
+
+extern "ws2_32" {
+    i32 connect(i64 socket, addr name, i32 length)
+    i32 listen(i64 socket, i32 backlog)
+}
+
+public i32 connectSocket(i64 socket, addr name, i32 length) {
+    ret connect(socket, name, length)
+}
+
+public i32 listenSocket(i64 socket, i32 backlog) {
+    ret listen(socket, backlog)
+}

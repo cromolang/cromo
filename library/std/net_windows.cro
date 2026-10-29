@@ -1,0 +1,237 @@
+// std.net on Windows (D202): the sockets of ws2_32, and its resolver of names,
+// which is part of the system (D226). `connect` and `listen` of C are in
+// std.winsock, apart from those of std.net.
+import unsafe
+import std.winsock
+
+extern "ws2_32" {
+    i32 WSAStartup(u16 version, addr data)
+    i32 WSAGetLastError()
+    i64 socket(i32 family, i32 kind, i32 protocol)
+    i32 bind(i64 socket, addr name, i32 length)
+    i64 accept(i64 socket, addr name, addr length)
+    i32 recv(i64 socket, addr data, i32 length, i32 flags)
+    i32 send(i64 socket, addr data, i32 length, i32 flags)
+    i32 sendto(i64 socket, addr data, i32 length, i32 flags, addr to, i32 toLength)
+    i32 recvfrom(i64 socket, addr data, i32 length, i32 flags, addr from, ref i32 fromLength)
+    i32 getsockname(i64 socket, addr name, ref i32 length)
+    i32 closesocket(i64 socket)
+    i32 WSAPoll(addr sockets, u32 count, i32 timeout)
+    i32 GetAddrInfoW(addr name, addr service, addr hints, addr result)
+    void FreeAddrInfoW(addr info)
+}
+
+extern "kernel32" {
+    i32 MultiByteToWideChar(u32 page, u32 flags, addr text, i32 size, addr wide, i32 wideSize)
+}
+
+i32 inet6() {
+    ret 23
+}
+
+// Winsock counts its users: each call adds one, and the program ends with them.
+void startup() {
+    addr data = alloc(512)
+    WSAStartup(514, data)  // version 2.2
+    free(data)
+}
+
+i64 openSocket(i32 version, bool stream) {
+    startup()
+    i32 family = 2
+    if (version == 6) {
+        family = 23
+    }
+    i64 handle = -1
+    if (stream) {
+        handle = socket(family, 1, 6)  // SOCK_STREAM, TCP
+    } else {
+        handle = socket(family, 2, 17)  // SOCK_DGRAM, UDP
+    }
+    if (handle == -1) {
+        throw failure("open a socket", errorText(i64(WSAGetLastError())))
+    }
+    ret handle
+}
+
+void reuseAddress(i64 handle) {
+}
+
+i64 connectTo(i64 handle, Address to) {
+    i32 length = 0
+    addr raw = socketAddress(to, ref length)
+    i32 result = winsock.connectSocket(handle, raw, length)
+    free(raw)
+    if (result != 0) {
+        ret i64(WSAGetLastError())
+    }
+    ret 0
+}
+
+void bindTo(i64 handle, Address to) {
+    i32 length = 0
+    addr raw = socketAddress(to, ref length)
+    i32 result = bind(handle, raw, length)
+    free(raw)
+    if (result != 0) {
+        throw failure(format("use {} port {}", text(to), to.port), errorText(i64(WSAGetLastError())))
+    }
+}
+
+void listenOn(i64 handle) {
+    if (winsock.listenSocket(handle, 128) != 0) {
+        throw failure("listen", errorText(i64(WSAGetLastError())))
+    }
+}
+
+i64 acceptOn(i64 handle) {
+    addr none
+    i64 client = accept(handle, none, none)
+    if (client == -1) {
+        throw failure("accept a connection", errorText(i64(WSAGetLastError())))
+    }
+    ret client
+}
+
+i64 receiveSome(i64 handle, addr data, i64 most) {
+    i32 count = recv(handle, data, i32(chunk(most)), 0)
+    if (count < 0) {
+        throw failure("read", errorText(i64(WSAGetLastError())))
+    }
+    ret i64(count)
+}
+
+i64 sendSome(i64 handle, addr data, i64 size) {
+    i32 count = send(handle, data, i32(chunk(size)), 0)
+    if (count < 0) {
+        throw failure("write", errorText(i64(WSAGetLastError())))
+    }
+    ret i64(count)
+}
+
+void sendTo(i64 handle, addr data, i64 size, Address to) {
+    i32 length = 0
+    addr raw = socketAddress(to, ref length)
+    i32 count = sendto(handle, data, i32(chunk(size)), 0, raw, length)
+    free(raw)
+    if (count < 0) {
+        throw failure("send", errorText(i64(WSAGetLastError())))
+    }
+}
+
+i64 receiveFrom(i64 handle, addr data, i64 most, ref Address from) {
+    addr raw = alloc(28)
+    i32 length = 28
+    i32 count = recvfrom(handle, data, i32(chunk(most)), 0, raw, ref length)
+    if (count < 0) {
+        free(raw)
+        throw failure("receive", errorText(i64(WSAGetLastError())))
+    }
+    from = fromSocketAddress(raw)
+    free(raw)
+    ret i64(count)
+}
+
+// WSAPOLLFD: the socket, the events wanted, the events found.
+bool waitFor(i64 handle, bool reading, i64 milliseconds) {
+    addr entry = alloc(16)
+    put<i64>(entry, handle)
+    if (reading) {
+        put<i16>(offset(entry, 8), 0x0100)  // POLLRDNORM
+    } else {
+        put<i16>(offset(entry, 8), 0x0010)  // POLLWRNORM
+    }
+    put<i16>(offset(entry, 10), 0)
+    i32 result = WSAPoll(entry, 1, i32(milliseconds))
+    free(entry)
+    if (result < 0) {
+        throw failure("wait for the network", errorText(i64(WSAGetLastError())))
+    }
+    ret result > 0
+}
+
+i32 localPort(i64 handle) {
+    addr raw = alloc(28)
+    i32 length = 28
+    getsockname(handle, raw, ref length)
+    i32 port = fromSocketAddress(raw).port
+    free(raw)
+    ret port
+}
+
+void closeSocket(i64 handle) {
+    closesocket(handle)
+}
+
+// The addresses of a name from the resolver of Windows; the numbers are read
+// there too.
+list<Address> resolveHost(string host, i32 port) {
+    startup()
+    addr none
+    addr name = wide(host)
+    addr hints = alloc(48)  // ADDRINFOW
+    for (i64 i = 0; i < 48; i++) {
+        put<u8>(offset(hints, i), 0)
+    }
+    put<i32>(offset(hints, 8), 1)  // SOCK_STREAM: each address once
+    addr cell = alloc(8)
+    i32 code = GetAddrInfoW(name, none, hints, cell)
+    free(name)
+    free(hints)
+    addr first = copyAt<addr>(cell)
+    free(cell)
+    if (code != 0) {
+        throw failure(format("find the host '{}'", host), errorText(i64(code)))
+    }
+    list<Address> addresses
+    addr node = first
+    for (node != none) {
+        Address address = fromSocketAddress(copyAt<addr>(offset(node, 32)))  // ai_addr
+        address.port = port
+        addresses.add(address)
+        node = copyAt<addr>(offset(node, 40))  // ai_next
+    }
+    FreeAddrInfoW(first)
+    ret addresses
+}
+
+string errorText(i64 code) {
+    if (code == 10061) {
+        ret "connection refused"
+    } else if (code == 10060) {
+        ret "timed out"
+    } else if (code == 10048) {
+        ret "the address is in use"
+    } else if (code == 10049) {
+        ret "the address is not of this computer"
+    } else if (code == 10054) {
+        ret "connection reset by the other side"
+    } else if (code == 10053) {
+        ret "connection aborted"
+    } else if (code == 10065 || code == 10051) {
+        ret "the host cannot be reached"
+    } else if (code == 11001) {
+        ret "no such host"
+    } else if (code == 11002) {
+        ret "the name server did not answer, try again"
+    }
+    ret format("error {}", code)
+}
+
+i64 chunk(i64 size) {
+    if (size > 0x40000000) {
+        ret 0x40000000
+    }
+    ret size
+}
+
+// The text in UTF-16 with a zero at the end, for Windows: to be freed.
+addr wide(string text) {
+    addr none
+    i32 n = i32(text.len())
+    i32 size = MultiByteToWideChar(65001, 0, text.cstring(), n, none, 0) + 1
+    addr buffer = alloc(i64(size) * 2)
+    i32 written = MultiByteToWideChar(65001, 0, text.cstring(), n, buffer, size)
+    put<u16>(offset(buffer, i64(written) * 2), 0)
+    ret buffer
+}
