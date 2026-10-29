@@ -1,0 +1,8 @@
+// lsp-error: 5:13 unknown name 'y'
+// lsp-error: 6:16 string
+// The errors of a program, while writing (D171, D173).
+i32 main() {
+    i32 x = y
+    string s = 5
+    ret x
+}

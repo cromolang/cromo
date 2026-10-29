@@ -945,7 +945,7 @@ extern "kernel32" {
 ### D158. The command comes first
 *2026-10-29.*
 - `cromo hello.cro` is an error that shows the right form, `cromo build hello.cro`: there is a single way to write it.
-- `cromo help`, `-h` and `--help` print the commands; `cromo` alone prints them as an error. `update`, `fmt`, `lsp` and `rls` answer with the milestone in which they come (`fmt` exists from M11).
+- `cromo help`, `-h` and `--help` print the commands; `cromo` alone prints them as an error. `update`, `fmt`, `lsp` and `rls` answer with the milestone in which they come (`fmt` exists from M11, `lsp` from M12, and `rls` points to `cromo lsp`).
 
 ### D159. The options of `cromo run`
 *2026-10-29.*
@@ -998,6 +998,43 @@ extern "kernel32" {
 ### D169. A formatting that cannot change the program
 *2026-10-29.* The formatter only changes spaces and line breaks. Before writing, it checks that the tokens of the file are the same, apart from the line breaks before `{`, `else`, `catch` and `finally` that it removes, that the result has no syntax errors, and that formatting it again changes nothing. If one of these checks fails, the file is not changed and `cromo fmt` reports an internal error.
 
+### D170. `cromo lsp`
+*2026-10-29.* The language server is the command `cromo lsp`, after the name of the protocol (Language Server Protocol), as `gopls` and `zls`. The editor starts it and talks to it on the standard input and output. It resolves the open point of D151.
+
+### D171. What the language server does in M12
+*2026-10-29.* The errors while writing, the type and the signature under the mouse, going to the definition, the symbols of the file and the formatting. Completion comes later, because it needs to analyze code that is not complete.
+
+### D172. Which program the language server analyzes
+*2026-10-29.* The file itself if it has `main`; otherwise the nearest `main.cro` in its folder or in the folders above it, as `cromo build` (D155), so that the imports are resolved as when compiling; without one, the file alone, without asking for `main`.
+
+### D173. The analysis while writing
+*2026-10-29.* After a short pause, about 300 ms, the language server analyzes the text of the editor, also when it is not saved. It only checks the program, without generating code, so it is fast.
+
+### D174. The protocol
+*2026-10-29.*
+- LSP 3.17 on the standard input and output, with the whole text of a document at every change. The server offers diagnostics, hover, definition, the symbols of a document and formatting.
+- References, renaming and completion come later.
+
+### D175. The program and its files
+*2026-10-29.*
+- Every file of the analyzed program gets its errors, also the ones that are not open. The open documents are read from the editor, the others from the disk.
+- The search for `main.cro` (D172) stops at the folder of the workspace. A module that its `main.cro` does not import is analyzed alone.
+- The symbols of a file come from parsing it alone, so they are there also when the program has errors.
+
+### D176. When it analyzes
+*2026-10-29.* The analysis starts 300 ms after the last change; opening a document, and every request, analyze at once what has changed.
+
+### D177. Hover and definition
+*2026-10-29.*
+- A variable shows its type and its name, a function or a method its signature with `ref` and `move`, a field its type and its struct, a type whether it is a struct, an enum or an interface, a case its enum.
+- The standard library is inside `cromo`: its names have a hover, but no definition to go to.
+- In a generic, the types are those of its first instance; a generic that is never used has no hover. While a file has syntax errors, hover and definition use the last analysis without them.
+
+### D178. The extension for VS Code
+*2026-10-29.*
+- The extension speaks the protocol by itself, in `extension.js`, without packages from npm, so it is built without Node.js. It starts `cromo lsp` with the path of `cromo.path`.
+- The formatting goes through the language server, as D164 says; `cromo fmt -` stays for the other editors.
+
 ---
 ---
 
@@ -1014,7 +1051,7 @@ The points still to be defined, each when its milestone needs it (D152):
 - the model of I/O for servers (D150). Recommended: blocking calls on threads first, then lightweight tasks under the same API, as the virtual threads of Java; no `async`/`await`, which splits the functions in two kinds;
 - the TLS library (D150). Recommended: mbedTLS, compiled without libc and included in `cromo` like the runtime, with the root certificates of the system. The alternatives are OpenSSL, which needs libc, SChannel on Windows with another library on Linux, or TLS written in Cromo;
 - `cromo update` (D153): where the new versions are published, and how a download is checked before `cromo` replaces itself. Recommended: a signature of each version, checked with a public key contained in `cromo`, and on Windows the running `cromo.exe` renamed before the new one is written;
-- the name of the command of the language server (D151): `cromo lsp`, as `gopls` and `zls` (recommended), or `cromo rls`;
+- where completion goes among the milestones, after the language server of M12 (D171);
 - reading floating-point numbers from text: the runtime only prints them (M14);
 - converting structs to JSON and back: fcl does it with a macro that lists the fields; Cromo needs either reflection at compile time or methods generated by the compiler, as `copy()` (D35) (M18);
 - passing strings to C: a `string` cannot reach C yet, because its bytes are private to the library. The options are a function of the library that makes a copy ending with a zero, for the modules with `import unsafe` (recommended: the C APIs want that zero, and the string does not change), or letting those modules read `data` and `length`.

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(cromo VERSION 0.11.0 LANGUAGES CXX)  # 0.milestone.fix (D157)
+project(cromo VERSION 0.12.0 LANGUAGES CXX)  # 0.milestone.fix (D157)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -105,6 +105,10 @@ add_executable(cromo
   src/format.cpp
   src/backend.cpp
   src/libraries.cpp
+  src/loader.cpp
+  src/json.cpp
+  src/index.cpp
+  src/lsp.cpp
   src/runtime_blob.cpp
   "${CROMO_RT_DIR}/runtime_blob.inc"
   "${CROMO_RT_DIR}/runtime_linux_blob.inc"

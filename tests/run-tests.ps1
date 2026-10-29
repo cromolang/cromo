@@ -3,7 +3,12 @@
 # are imported by the tests, and are not tests themselves (D50). The files in a
 # folder named `formatting` are cases of cromo fmt (D161): x.cro must become
 # x.formatted.cro, which must not change again; without x.formatted.cro, cromo
-# fmt must refuse x.cro.
+# fmt must refuse x.cro. The files in a folder named `lsp` are opened in cromo
+# lsp (D170), and checked with these directives, positions as line:column:
+#   // lsp-hover: 9:5 text           the hover there contains the text
+#   // lsp-definition: 9:5 3:9       the definition is there, or in another file: x.cro:3:9
+#   // lsp-error: 4:13 text          an error there, with the text; no other error is allowed
+#   // lsp-symbols: Point, Point.x   symbols of the file, the members after their type
 #   // cromo-flags: --release       extra options for cromo
 #   // expect-exit: 42              exit code of the program
 #   // expect-output: text          one line of standard output (repeatable, exact match)
@@ -127,7 +132,8 @@ $failed = 0
 $skipped = 0
 foreach ($test in Get-ChildItem $PSScriptRoot -Recurse -Filter *.cro | Sort-Object FullName) {
     $name = $test.FullName.Substring($PSScriptRoot.Length + 1)
-    if ($name -split '\\' -contains 'modules' -or $name -split '\\' -contains 'formatting') { continue }
+    $folders = $name -split '\\'
+    if ($folders -contains 'modules' -or $folders -contains 'formatting' -or $folders -contains 'lsp') { continue }
     if ($Filter -and -not $name.Contains($Filter)) { continue }
 
     # Not $flags: names are case-insensitive, it would overwrite the -Flags parameter.
@@ -237,6 +243,155 @@ foreach ($case in Get-ChildItem $PSScriptRoot -Recurse -Filter *.cro | Sort-Obje
     } else {
         $failed++
         Write-Host "FAIL  $name (fmt)" -ForegroundColor Red
+        foreach ($p in $problems) { Write-Host "      $p" }
+    }
+}
+
+# A session of cromo lsp: it opens one file and asks the requests, each a hashtable
+# with method and params. Returns the responses and the last diagnostics of the file.
+function Invoke-LanguageServer([string]$Path, [object[]]$Requests) {
+    $info = New-Object System.Diagnostics.ProcessStartInfo
+    $info.FileName = $Cromo
+    $info.Arguments = 'lsp'
+    $info.UseShellExecute = $false
+    $info.CreateNoWindow = $true
+    $info.RedirectStandardInput = $true
+    $info.RedirectStandardOutput = $true
+    $info.RedirectStandardError = $true
+    $process = [System.Diagnostics.Process]::Start($info)
+    $stdin = $process.StandardInput.BaseStream
+    $stdout = $process.StandardOutput.BaseStream
+    $uri = ([System.Uri]$Path).AbsoluteUri
+
+    $send = {
+        param($message)
+        $body = [System.Text.Encoding]::UTF8.GetBytes(($message | ConvertTo-Json -Depth 20 -Compress))
+        $header = [System.Text.Encoding]::ASCII.GetBytes("Content-Length: $($body.Length)`r`n`r`n")
+        $stdin.Write($header, 0, $header.Length)
+        $stdin.Write($body, 0, $body.Length)
+        $stdin.Flush()
+    }
+    $readBytes = {
+        param([int]$count)
+        $buffer = New-Object byte[] $count
+        $done = 0
+        while ($done -lt $count) {
+            $task = $stdout.ReadAsync($buffer, $done, $count - $done)
+            if (-not $task.Wait(20000) -or $task.Result -le 0) { throw 'cromo lsp did not answer' }
+            $done += $task.Result
+        }
+        , $buffer
+    }
+    $read = {
+        $header = ''
+        while (-not $header.EndsWith("`r`n`r`n")) { $header += [char](& $readBytes 1)[0] }
+        $length = [int]([regex]::Match($header, 'Content-Length: *(\d+)').Groups[1].Value)
+        [System.Text.Encoding]::UTF8.GetString((& $readBytes $length)) | ConvertFrom-Json
+    }
+
+    $diagnostics = @()
+    $responses = @()
+    $id = 0
+    $all = @(@{ method = 'initialize'; params = @{ processId = $null; rootUri = ([System.Uri](Split-Path $PSScriptRoot)).AbsoluteUri; capabilities = @{} } })
+    $all += $Requests
+    $all += @{ method = 'shutdown'; params = $null }
+    foreach ($request in $all) {
+        $id++
+        & $send @{ jsonrpc = '2.0'; id = $id; method = $request.method; params = $request.params }
+        for (;;) {
+            $message = & $read
+            if ($message.method -eq 'textDocument/publishDiagnostics') {
+                if ($message.params.uri -eq $uri) { $diagnostics = @($message.params.diagnostics) }
+                continue
+            }
+            if ($message.id -eq $id) { break }
+        }
+        if ($id -eq 1) {
+            & $send @{ jsonrpc = '2.0'; method = 'initialized'; params = @{} }
+            $text = [System.IO.File]::ReadAllText($Path, [System.Text.Encoding]::UTF8)
+            & $send @{ jsonrpc = '2.0'; method = 'textDocument/didOpen'; params = @{ textDocument = @{ uri = $uri; languageId = 'cromo'; version = 1; text = $text } } }
+        } elseif ($id -le $Requests.Count + 1) {
+            $responses += , $message.result
+        }
+    }
+    & $send @{ jsonrpc = '2.0'; method = 'exit'; params = $null }
+    if (-not $process.WaitForExit(10000)) { $process.Kill() }
+    [pscustomobject]@{ Responses = $responses; Diagnostics = $diagnostics; Code = $process.ExitCode; Uri = $uri }
+}
+
+# The cases of cromo lsp (D170-D173).
+foreach ($case in Get-ChildItem $PSScriptRoot -Recurse -Filter *.cro | Sort-Object FullName) {
+    $name = $case.FullName.Substring($PSScriptRoot.Length + 1)
+    if (-not ($name -split '\\' -contains 'lsp')) { continue }
+    if ($Filter -and -not $name.Contains($Filter)) { continue }
+    $checks = @()
+    foreach ($line in Get-Content $case.FullName -Encoding UTF8) {
+        if ($line -match '^\s*//\s*lsp-(hover|definition|error):\s*(\d+):(\d+)\s+(.+?)\s*$') {
+            $checks += [pscustomobject]@{ Kind = $matches[1]; Line = [int]$matches[2]; Column = [int]$matches[3]; Value = $matches[4] }
+        } elseif ($line -match '^\s*//\s*lsp-symbols:\s*(.+?)\s*$') {
+            $checks += [pscustomobject]@{ Kind = 'symbols'; Value = $matches[1] }
+        }
+    }
+    if ($checks.Count -eq 0) { continue }  # a file of a program, opened through another one
+
+    $uri = ([System.Uri]$case.FullName).AbsoluteUri
+    $requests = @()
+    foreach ($check in $checks) {
+        if ($check.Kind -eq 'error') { continue }
+        $method = @{ hover = 'textDocument/hover'; definition = 'textDocument/definition'; symbols = 'textDocument/documentSymbol' }[$check.Kind]
+        $params = @{ textDocument = @{ uri = $uri } }
+        if ($check.Kind -ne 'symbols') { $params.position = @{ line = $check.Line - 1; character = $check.Column - 1 } }
+        $requests += @{ method = $method; params = $params }
+    }
+    $problems = @()
+    try {
+        $session = Invoke-LanguageServer $case.FullName $requests
+        $k = 0
+        foreach ($check in $checks) {
+            $at = "$($check.Line):$($check.Column)"
+            if ($check.Kind -eq 'error') {
+                $found = $session.Diagnostics | Where-Object {
+                    $_.range.start.line + 1 -eq $check.Line -and $_.range.start.character + 1 -eq $check.Column -and $_.message.Contains($check.Value)
+                }
+                if (-not $found) { $problems += "missing error at ${at}: $($check.Value)" }
+                continue
+            }
+            $result = $session.Responses[$k++]
+            if ($check.Kind -eq 'hover') {
+                if (-not $result -or -not $result.contents.value.Contains($check.Value)) {
+                    $problems += "hover at ${at}: $(if ($result) { $result.contents.value } else { 'none' }), expected $($check.Value)"
+                }
+            } elseif ($check.Kind -eq 'definition') {
+                $parts = $check.Value -split ':'
+                $file = if ($parts.Count -eq 3) { $parts[0] } else { $case.Name }
+                $target = "$($parts[-2]):$($parts[-1])"
+                $actual = if ($result) { "$($result.uri.Split('/')[-1]) $($result.range.start.line + 1):$($result.range.start.character + 1)" } else { 'none' }
+                if ($actual -ne "$file $target") { $problems += "definition at ${at}: $actual, expected $file $target" }
+            } else {
+                $names = @()
+                foreach ($symbol in $result) {
+                    $names += $symbol.name
+                    foreach ($child in $symbol.children) { $names += "$($symbol.name).$($child.name)" }
+                }
+                foreach ($expected in ($check.Value -split ',\s*')) {
+                    if ($names -notcontains $expected) { $problems += "missing symbol $expected (found: $($names -join ', '))" }
+                }
+            }
+        }
+        $expectedErrors = @($checks | Where-Object { $_.Kind -eq 'error' }).Count
+        if ($session.Diagnostics.Count -ne $expectedErrors) {
+            $problems += "$($session.Diagnostics.Count) errors, expected ${expectedErrors}: $(($session.Diagnostics | ForEach-Object { $_.message }) -join '; ')"
+        }
+        if ($session.Code -ne 0) { $problems += "cromo lsp ended with $($session.Code)" }
+    } catch {
+        $problems += "$_"
+    }
+    if ($problems.Count -eq 0) {
+        $passed++
+        Write-Host "ok    $name (lsp)"
+    } else {
+        $failed++
+        Write-Host "FAIL  $name (lsp)" -ForegroundColor Red
         foreach ($p in $problems) { Write-Host "      $p" }
     }
 }

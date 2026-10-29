@@ -19,6 +19,7 @@ struct TypeName {
     SourceLocation loc;
     std::vector<TypeName> args;  // type arguments: `Pair<i32, f64>`
     std::string module;          // written in front of the name: `geometry.Circle` (D126)
+    mutable Type resolved;       // set by sema, for the language server (D171)
 };
 
 // A type parameter of a generic, with its constraints: `T : Comparable + Named` (D52).

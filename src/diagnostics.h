@@ -19,6 +19,13 @@ struct SourceFile {
     std::string text;  // UTF-8, without BOM
 };
 
+// An error or a warning kept for the language server instead of being printed (D171).
+struct DiagnosticMessage {
+    SourceLocation loc;
+    bool warning = false;
+    std::string text;
+};
+
 // Prints errors and warnings as file:line:column, followed by the source line
 // and a marker under the reported position.
 class Diagnostics {
@@ -47,6 +54,9 @@ public:
     // check its own result.
     void setSilent(bool silent) { silent_ = silent; }
 
+    // The messages go to `messages` instead of the standard error.
+    void collectInto(std::vector<DiagnosticMessage>* messages) { collected_ = messages; }
+
     // Text added to every message, for example the generic being instantiated.
     const std::string& context() const { return context_; }
     void setContext(std::string context) { context_ = std::move(context); }
@@ -58,6 +68,7 @@ private:
     int errorCount_ = 0;
     bool muted_ = false;
     bool silent_ = false;
+    std::vector<DiagnosticMessage>* collected_ = nullptr;
     std::string context_;
 };
 

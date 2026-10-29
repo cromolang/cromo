@@ -242,7 +242,8 @@ struct ModuleScope {
 
 class Checker {
 public:
-    Checker(Module& module, Diagnostics& diag) : module_(module), diag_(&diag) {}
+    Checker(Module& module, Diagnostics& diag, bool requireMain)
+        : module_(module), diag_(&diag), requireMain_(requireMain) {}
 
     void run() {
         declareNames();
@@ -685,7 +686,14 @@ private:
         }
     }
 
+    // A written type; the language server shows what it became (D171).
     std::optional<Type> resolveType(const TypeName& name) {
+        std::optional<Type> type = resolveTypeName(name);
+        if (type) name.resolved = *type;
+        return type;
+    }
+
+    std::optional<Type> resolveTypeName(const TypeName& name) {
         if (bindings_ && name.module.empty()) {
             for (const auto& [param, type] : *bindings_) {
                 if (param != name.name) continue;
@@ -1064,6 +1072,7 @@ private:
         }
 
         auto main = modules_[0].functions.find("main");
+        if (!requireMain_ && main == modules_[0].functions.end()) return;
         if (main == modules_[0].functions.end() || main->second->isExtern) {
             diag_->error("missing function main");
             return;
@@ -3249,6 +3258,7 @@ private:
 
     Module& module_;
     Diagnostics* diag_;
+    bool requireMain_;
 
     std::vector<ModuleScope> modules_;  // by SourceLocation::file
     std::set<std::tuple<int, int, int>> ambiguous_;  // where an ambiguous name was reported
@@ -3314,8 +3324,8 @@ private:
 
 }  // namespace
 
-bool check(Module& module, Diagnostics& diag) {
-    Checker(module, diag).run();
+bool check(Module& module, Diagnostics& diag, bool requireMain) {
+    Checker(module, diag, requireMain).run();
     return !diag.hasErrors();
 }
 

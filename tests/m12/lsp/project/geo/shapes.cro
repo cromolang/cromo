@@ -1,0 +1,9 @@
+// lsp-hover: 8:9 i32 square(i32 x)
+// lsp-definition: 8:9 util.cro:1:12
+// A module without main: the language server analyzes it through main.cro,
+// in the folder above, so that `import geo.util` is found (D172).
+import geo.util
+
+public i32 area(i32 side) {
+    ret square(side)
+}

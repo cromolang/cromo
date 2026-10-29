@@ -1,0 +1,43 @@
+// lsp-hover: 36:5 struct Point
+// lsp-hover: 37:5 Point p
+// lsp-hover: 37:7 f64 Point.x
+// lsp-definition: 37:7 16:9
+// lsp-hover: 42:15 f64 Point.norm2() const
+// lsp-definition: 42:15 19:9
+// lsp-hover: 40:5 void show(Point p, ref list<i64> values)
+// lsp-definition: 40:5 29:6
+// lsp-hover: 39:12 void list<i64>.add(move i64 value)
+// lsp-hover: 41:21 Color.Green
+// lsp-hover: 30:14 i64 v
+// lsp-hover: 30:19 ref list<i64> values
+// lsp-definition: 31:31 30:14
+// Hover and definition (D171, D177).
+struct Point {
+    f64 x
+    f64 y
+
+    f64 norm2() const {
+        ret x * x + y * y
+    }
+}
+
+enum Color {
+    Red
+    Green
+}
+
+void show(Point p, ref list<i64> values) {
+    for (i64 v in values) {
+        println("{} {}", p.x, v)
+    }
+}
+
+i32 main() {
+    Point p
+    p.x = 3.0
+    list<i64> values
+    values.add(1)
+    show(p, ref values)
+    Color c = Color.Green
+    ret i32(p.norm2())
+}

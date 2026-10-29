@@ -1,0 +1,8 @@
+// The main file of a program whose modules the language server analyzes
+// through it (D172).
+import geo.shapes
+
+i32 main() {
+    println("{}", area(3))
+    ret 0
+}

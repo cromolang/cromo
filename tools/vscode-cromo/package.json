@@ -1,8 +1,8 @@
 {
   "name": "cromo-lang",
   "displayName": "Cromo",
-  "description": "Syntax highlighting and formatting for the Cromo language",
-  "version": "0.2.0",
+  "description": "Syntax highlighting, errors, hover, definitions and formatting for the Cromo language, with cromo lsp",
+  "version": "0.3.0",
   "publisher": "cromo",
   "license": "UNLICENSED",
   "engines": {
@@ -43,7 +43,7 @@
         "cromo.path": {
           "type": "string",
           "default": "cromo",
-          "description": "The cromo executable that formats the files, for example C:\\dati\\projects\\cromo\\build\\cromo.exe. Without a path it is looked for in PATH."
+          "description": "The cromo executable that runs the language server, for example C:\\dati\\projects\\cromo\\build\\cromo.exe. Without a path it is looked for in PATH."
         }
       }
     },

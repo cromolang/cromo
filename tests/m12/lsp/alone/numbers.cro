@@ -1,0 +1,10 @@
+// lsp-hover: 9:9 i32 twice(i32 x)
+// A module without main and without a main.cro above it: the language server
+// analyzes it alone, without asking for main (D172).
+public i32 twice(i32 x) {
+    ret x * 2
+}
+
+public i32 four() {
+    ret twice(2)
+}

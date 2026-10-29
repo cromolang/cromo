@@ -1,0 +1,26 @@
+// lsp-symbols: Shape, Shape.area, Square, Square.side, Square.Square, Square.area, Light, Light.On, Light.Off, main
+// The symbols of a file (D171, D175).
+interface Shape {
+    f64 area() const
+}
+
+struct Square : Shape {
+    f64 side
+
+    Square(f64 s) {
+        side = s
+    }
+
+    f64 area() const {
+        ret side * side
+    }
+}
+
+enum Light {
+    On
+    Off
+}
+
+i32 main() {
+    ret 0
+}
