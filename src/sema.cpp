@@ -3549,16 +3549,24 @@ private:
     }
 
     // The type of an argument, checked on a copy without reporting errors: it
-    // serves only to deduce the type arguments (D86).
+    // serves only to deduce the type arguments (D86). A lambda does not help, so
+    // it is not checked; the lambdas inside the copy are taken back, with what
+    // their bodies noted and the escapes the check of the argument will note again.
     std::optional<Type> argumentType(const Expr& arg) {
         const Expr* value = &arg;
         if (arg.kind == ExprKind::Ref) value = static_cast<const RefExpr&>(arg).operand.get();
         if (arg.kind == ExprKind::Move) value = static_cast<const MoveExpr&>(arg).operand.get();
+        if (value->kind == ExprKind::Lambda) return std::nullopt;
         ExprPtr copy = clone(*value);
+        size_t lambdas = module_.lambdas.size();
+        size_t escapes = escapes_.size();
         bool muted = diag_->muted();
         diag_->setMuted(true);
         Type type = checkExpr(copy, std::nullopt);
         diag_->setMuted(muted);
+        for (size_t i = lambdas; i < module_.lambdas.size(); ++i) throwInfo_.erase(module_.lambdas[i]->function.get());
+        module_.lambdas.erase(module_.lambdas.begin() + lambdas, module_.lambdas.end());
+        escapes_.erase(escapes_.begin() + escapes, escapes_.end());
         if (type.isError() || type.isUntyped() || type.isVoid()) return std::nullopt;
         return type;
     }

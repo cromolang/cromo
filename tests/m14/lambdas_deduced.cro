@@ -1,0 +1,93 @@
+// expect-output: 12.57
+// expect-output: 9
+// expect-output: seen 3
+// expect-output: evens 4
+// expect-output: caught: too big
+// Lambdas as arguments of a generic whose type arguments are deduced from the
+// others (D86, D185); a lambda inside an argument used for the deduction.
+interface Shape {
+    f64 area() const
+}
+
+struct Circle : Shape {
+    f64 radius
+
+    f64 area() const {
+        ret 3.14159 * radius * radius
+    }
+}
+
+f64 total<T : Shape>(list<T> shapes, func(f64) bool keep) {
+    f64 sum = 0.0
+    for (T shape in shapes) {
+        if (keep(shape.area())) {
+            sum += shape.area()
+        }
+    }
+    ret sum
+}
+
+T apply<T>(T value, func(T) T f) {
+    ret f(value)
+}
+
+void each<T>(list<T> items, func(T) action) {
+    for (T item in items) {
+        action(item)
+    }
+}
+
+i64 size<T>(list<T> items) {
+    ret items.len()
+}
+
+list<i32> pick(list<i32> values, func(i32) bool keep) {
+    list<i32> kept
+    for (i32 v in values) {
+        if (keep(v)) {
+            kept.add(v)
+        }
+    }
+    ret kept
+}
+
+i32 main() {
+    list<Circle> circles
+    Circle small
+    small.radius = 1.0
+    circles.add(small)
+    Circle big
+    big.radius = 2.0
+    circles.add(big)
+    f64 limit = 5.0
+    println("{:.2f}", total(circles, [limit](f64 a) bool { ret a > limit }))
+
+    i32 four = 4
+    println("{}", apply(four, [](i32 x) i32 { ret x * 2 + 1 }))
+
+    list<i32> values
+    for (i32 i = 0; i < 8; i++) {
+        values.add(i)
+    }
+    i32 seen = 0
+    each(values, [ref seen](i32 v) {
+        if (v % 3 == 0) {
+            seen++
+        }
+    })
+    println("seen {}", seen)
+
+    println("evens {}", size(pick(values, [](i32 x) bool { ret x % 2 == 0 })))
+    values.add(30)
+    try {
+        println("{}", size(pick(values, [](i32 x) bool {
+            if (x > 10) {
+                throw Error("too big")
+            }
+            ret true
+        })))
+    } catch (Error e) {
+        println("caught: {}", e.message())
+    }
+    ret 0
+}
