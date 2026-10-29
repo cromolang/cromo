@@ -507,4 +507,4 @@ public struct Stopwatch {
 ## 15. Still to be written
 
 - Contents of the standard library, written in Cromo without libc (D19, D37).
-- Concurrency: postponed until after the first version (D43).
+- Anonymous functions (D148, milestone M13) and threads with synchronization (D149, milestone M15).

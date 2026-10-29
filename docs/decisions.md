@@ -317,13 +317,14 @@ i64 total = price * quantity +
 *2026-10-28.* C functions are declared with `extern` and called from the `unsafe` dialect (D37). Normal code uses safe wrappers, without seeing the pointers of the C APIs. C resources (handles, descriptors) are encapsulated in structs with a destructor (RAII). Syntax: D128 and D129.
 
 ### D43. Concurrency postponed
-*2026-10-28.* Threads, async and the like come after the first version.
+*2026-10-28.* Threads, async and the like come after the first version. Amended by D149: threads and synchronization come before.
 
 ### D44. Compiler in C++, then in Cromo
 *2026-10-28.* The first compiler, the bootstrap one, is written in **C++**. The goal is to reach a Cromo compiler written in Cromo, which compiles itself.
 - **Access to LLVM and LLD:** they are written in C++, so the compiler uses them directly and `cromo.exe` contains them from the start (D28), as Zig does.
 - **Coverage:** the bootstrap compiler must support all of the language needed to write the compiler in Cromo.
 - **Details** (C++ standard, build system, LLVM version, how to generate the IR): D53.
+- Amended by D147: the compiler in Cromo is the last milestone.
 
 ### D45. No undefined behavior in normal code
 *2026-10-28.* Overflow, out-of-bounds accesses and use of moved objects do not produce undefined behavior: either they are compile errors or they terminate the program in a controlled way (D30, D23). Any exceptions to this rule are confined to the `unsafe` dialect of the standard library (D37) and to interoperability with C (D42).
@@ -908,15 +909,40 @@ extern "kernel32" {
 ### D146. Where `libname.a` is looked for
 *2026-10-29.* In the folders of the modules that declare the library, in the order in which the modules are loaded, as on Windows (D139). `cromo` does not check the names: a missing function is reported by the linker (D140).
 
+### D147. The compiler in Cromo comes last
+*2026-10-29.* It amends D44. The compiler stays in C++ until the language is mature: first the language and its library grow, then the compiler is written in Cromo, as the last milestone. Writing it earlier would mean changing two compilers at every change of the language. The goals stay those of D19 and D28: executables without dependencies, and fast code.
+
+### D148. Anonymous functions
+*2026-10-29.* Cromo will have anonymous functions, as the lambdas of C++. Sorting, threads and the callbacks of the library need them. The syntax, how the variables are captured and the type of a function are still open.
+
+### D149. Threads and synchronization
+*2026-10-29.* It amends D43: threads and the means to synchronize them come before the first version, after the anonymous functions. The model is still open.
+
+### D150. A library ready for backends
+*2026-10-29.* The standard library, included in `cromo`, will have what is needed to write efficient backends: networking, TLS and cryptography, HTTP, JSON. The executables stay without dependencies (D19, D28), so a C library included for TLS or anything else must work without libc. Which TLS library is still open.
+
+### D151. The commands of `cromo`
+*2026-10-29.* The first argument of `cromo` is a command: `build`, `run`, `update`, `version`, `fmt`, which formats the code and is also used by the extension of VS Code, and the language server that VS Code uses for errors, types and definitions (LSP). The name of the last command and the meaning of `update` are still open.
+
+### D152. The milestones after M9
+*2026-10-29.* M10 the commands `build`, `run` and `version`; M11 `fmt`; M12 the language server; M13 anonymous functions; M14 the basics of the library (bitwise operators, arrays, `map`, bytes, files, time, code for each system); M15 threads and synchronization; M16 networking; M17 TLS, cryptography and the HTTPS client; M18 HTTP server and client, JSON. Then lightweight tasks, and last the compiler in Cromo (D147). The tools come first because they help to write the library.
+
 ---
 ---
 
 ## Open
 
-There are currently no open questions. Still to be defined later, when needed:
+The points still to be defined, each when its milestone needs it (D152):
 - bitwise operators (D59);
 - the interface for making user-defined types printable (D38);
 - fixed-size arrays (`i32[4]`);
 - the content of the standard library;
 - code that differs between Windows and Linux: in M9 the differences are only in the runtime in C, which has a version for each system. Files for each system, as in Go, are one option;
+- the syntax of anonymous functions: how the variables are captured, for example `[x, ref y]` as in C++, and the type of a function (D148). Recommended: a lambda that captures with `ref` can only be passed as an argument, as the non-escaping closures of Swift, so that no borrow checker is needed;
+- the model of threads (D149). Recommended: threads that end with the block that starts them, and can therefore use its variables with `ref`, as the scoped threads of Rust; a shared value with an atomic counter for the threads that live long; the data of a mutex reached with an anonymous function;
+- the model of I/O for servers (D150). Recommended: blocking calls on threads first, then lightweight tasks under the same API, as the virtual threads of Java; no `async`/`await`, which splits the functions in two kinds;
+- the TLS library (D150). Recommended: mbedTLS, compiled without libc and included in `cromo` like the runtime, with the root certificates of the system. The alternatives are OpenSSL, which needs libc, SChannel on Windows with another library on Linux, or TLS written in Cromo;
+- `cromo update` (D151): it updates `cromo` itself, or the libraries of a project;
+- the name of the command of the language server (D151): `cromo lsp`, as `gopls` and `zls` (recommended), or `cromo rls`;
+- the arguments of `main`, for example `main(list<string> args)`, and what `cromo build` compiles without a file (M10);
 - passing strings to C: a `string` cannot reach C yet, because its bytes are private to the library. The options are a function of the library that makes a copy ending with a zero, for the modules with `import unsafe` (recommended: the C APIs want that zero, and the string does not change), or letting those modules read `data` and `length`.
