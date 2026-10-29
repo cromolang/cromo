@@ -1,0 +1,21 @@
+// A string for C (D204): a copy that ends with a zero, for the statement.
+// target: windows
+// expect-output: 5 11
+// expect-output: back héllo
+import unsafe
+
+extern "kernel32" {
+    i32 lstrlenA(addr text)
+}
+
+i32 main() {
+    string word = "hello"
+    string other = "hello world"
+    println("{} {}", lstrlenA(word.cstring()), lstrlenA(other.cstring()))
+    string accented = "héllo"
+    addr copy = alloc(accented.len())
+    copyMemory(copy, accented.cstring(), accented.len())
+    println("back {}", string(copy, accented.len()))
+    free(copy)
+    ret 0
+}

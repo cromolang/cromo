@@ -1,0 +1,39 @@
+// Strings and bytes (D200): s[i], bytes(), string(bytes), slice() and format().
+// expect-output: 104 105 2
+// expect-output: bytes 5 99
+// expect-output: back héllo
+// expect-output: slice ell|h|
+// expect-output: [  42] 3.50 true é
+// expect-output: count 5
+// expect-output: nested <x=1> y
+// expect-output: caught the bytes are not valid UTF-8: the character at 1 (D200)
+i32 main() {
+    string s = "hi"
+    println("{} {} {}", s[0], s[1], s.len())
+    string word = "héllo"
+    list<u8> raw = word.bytes()
+    println("bytes {} {}", s.bytes().len() + 3, "abc"[2])
+    println("back {}", string(raw))
+    string hello = "hello"
+    println("slice {}|{}|{}", hello.slice(1, 4), hello.slice(0, 1), hello.slice(5, 5))
+    string text = format("[{:4}] {:.2f} {} {}", i32(42), f64(3.5), true, word.slice(1, 3))
+    println("{}", text)
+    i32 count = 0
+    for (i64 i = 0; i < text.len(); i++) {
+        if (text[i] == ' ') {
+            count++
+        }
+    }
+    println("count {}", count)
+    println("nested {}", format("<{}> {}", format("x={}", i32(1)), "y"))
+    list<u8> broken
+    broken.add('a')
+    broken.add(0xC3)
+    try {
+        string bad = string(broken)
+        println("not here {}", bad)
+    } catch (Exception e) {
+        println("caught {}", e.message())
+    }
+    ret 0
+}

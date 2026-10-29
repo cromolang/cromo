@@ -47,15 +47,17 @@
 | 128-bit integers | postponed until after the first version | D14 |
 | Strings | `string`, UTF-8 text | D10 |
 | Structs | `struct Point` with the fields `f64 x` and `f64 y` | D11, §6 |
-| Dynamic container | `list<T>`, the only one in the first version | D11, D13 |
+| Dynamic containers | `list<T>`, and `map<K, V>` with the keys that implement `Key` | D11, D13, D197, D198 |
 | Interfaces | `interface Shape { ... }` | D40, D49, §12 |
 | Generics | `T max<T : Comparable>(T a, T b)` | D39, D52 |
 | Enums with data | `enum Shape { Circle(f64 radius) ... }` | D34, D104, §9 |
-| Fixed-size arrays | `i32[4]`: to be decided | |
+| Fixed-size arrays | `i32[4]`, `f64[3][3]` | D196, §16 |
 
 - **There are no pointer types** (D4) **and no types whose size depends on the platform** such as `usize` (D9): every type has the same size on all platforms. Indices and lengths are `i64` (D12).
 - **Numeric conversions** (D33): implicit only when no information is lost (`i32` → `i64`, `i32` → `f64`), otherwise explicit: `i32(x)`, `f64(n)`.
 - **Overflow** (D30): in debug it stops the program, in release the value wraps around from the other end of the range.
+- **Operators** (D59, D193–D195): from the strongest, `* / %`, `+ -`, `<< >>`, `&`, `^`, `|`, the comparisons, `&&`, `||`. The bitwise operators bind more than the comparisons, so `flags & MASK == 0` is `(flags & MASK) == 0`. `!` negates a `bool` and inverts the bits of an integer. A shift beyond the width of the type is a panic in debug, and in release its count is taken modulo the width; `>>` keeps the sign of a signed integer.
+- **Numbers from text** (D199): `i64("42")`, `f64("2.5")` read a number, and throw an exception when the text is not a number of the type.
 
 ## 4. Variables
 
@@ -553,7 +555,54 @@ i32 main() {
 - The type of a function is `func(i32, ref T) bool` (D185). A variable or a field of that type is called as a function; the call is indirect (D186).
 - Function values are moved and not copied; an empty one, as a variable without a value, is a panic when called (D189).
 
-## 16. Still to be written
+## 16. Arrays, maps and bytes (D196–D200)
 
-- Contents of the standard library, written in Cromo without libc (D19, D37).
+```cromo
+i32[4] scores                    // four i32, all 0, where the variable is
+scores[0] = 10
+for (i32 s in scores) { ... }
+i64 n = scores.len()             // 4
+
+map<string, i32> ages
+ages["anna"] = 30                // adds or replaces
+ages["anna"] += 1
+i32 a = ages["anna"]             // a panic if the key is missing
+bool known = ages.contains("bruno")
+for (string name, i32 age in ages) { ... }
+
+string word = "città"
+u8 first = word[0]               // a byte: the length is in bytes (D12)
+list<u8> bytes = word.bytes()
+string again = string(bytes)     // throws when the bytes are not UTF-8
+string part = word.slice(0, 3)   // the bytes from 0 to 3, 3 excluded
+string line = format("{} is {}", "anna", a)
+```
+
+- An array is a value, as a struct: it is copied when its elements are simple, otherwise moved; `a[i]` is checked (D30). `i32[3][4]` is three arrays of four (D206).
+- A `map` is a hash table. Its keys are the numbers, `bool`, `string` and the structs that implement `Key` with `u64 hash() const` and `bool equals(Self other) const` (D198).
+- `format` writes into a string as `println` writes on the screen (D200).
+
+## 17. The modules of the library (D201–D203)
+
+```cromo
+import std.fs
+import std.time
+
+i32 main() {
+    time.Instant start = time.now()
+    fs.writeText("notes.txt", "hello\n")
+    string text = fs.readText("notes.txt")   // an exception if it cannot be read
+    time.msleep(10)
+    println("{} in {} ms, {}", text, start.elapsed().milliseconds(), time.localNow().text())
+    ret 0
+}
+```
+
+- The core (`list`, `string`, `map`, `format`, the numbers from text) is visible everywhere; `std.fs`, `std.time` and `std.os` are imported (D201). Their functions are in D211.
+- Next to `fs.cro` a module can have `fs_windows.cro` and `fs_linux.cro`: only the file of the system the program is compiled for is used, and it shares the names of the module, also the private ones (D202). It holds for the library and for the programs.
+- In the modules with `import unsafe`, `s.cstring()` gives the address of a copy of the string ending with a zero, for the C functions, until the end of the statement (D204).
+
+## 18. Still to be written
+
 - Threads with synchronization (D149, milestone M15).
+- The rest of the standard library: networking, TLS, HTTP and JSON (M16–M18).

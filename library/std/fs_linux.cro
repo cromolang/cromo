@@ -1,0 +1,152 @@
+// std.fs on Linux (D202): the system calls open, read, write, close, stat,
+// unlink, rmdir, mkdir and getdents64.
+import unsafe
+
+// The bytes of a file, in memory to be freed, and how many they are.
+addr loadFile(string path, ref i64 size) {
+    i64 file = systemCall(2, path.cstring(), 0x80000, 0, 0, 0, 0)  // O_RDONLY | O_CLOEXEC
+    if (file < 0) {
+        throw failure("read", path, file)
+    }
+    i64 capacity = 4096
+    addr data = alloc(capacity)
+    i64 total = 0
+    for {
+        if (total == capacity) {
+            capacity *= 2
+            data = resize(data, capacity)
+        }
+        i64 count = systemCall(0, file, offset(data, total), capacity - total, 0, 0, 0)
+        if (count == -4) {  // EINTR
+            continue
+        }
+        if (count < 0) {
+            systemCall(3, file, 0, 0, 0, 0, 0)
+            free(data)
+            throw failure("read", path, count)
+        }
+        if (count == 0) {
+            break
+        }
+        total += count
+    }
+    systemCall(3, file, 0, 0, 0, 0, 0)
+    size = total
+    ret data
+}
+
+void storeFile(string path, addr data, i64 size, bool append) {
+    i64 flags = 0x80000 | 0x40 | 1  // O_CLOEXEC | O_CREAT | O_WRONLY
+    if (append) {
+        flags |= 0x400  // O_APPEND
+    } else {
+        flags |= 0x200  // O_TRUNC
+    }
+    i64 file = systemCall(2, path.cstring(), flags, 420, 0, 0, 0)  // 0644
+    if (file < 0) {
+        throw failure("write", path, file)
+    }
+    i64 done = 0
+    for (done < size) {
+        i64 count = systemCall(1, file, offset(data, done), size - done, 0, 0, 0)
+        if (count == -4) {
+            continue
+        }
+        if (count < 0) {
+            systemCall(3, file, 0, 0, 0, 0, 0)
+            throw failure("write", path, count)
+        }
+        done += count
+    }
+    systemCall(3, file, 0, 0, 0, 0, 0)
+}
+
+public bool exists(string path) {
+    ret mode(path) >= 0
+}
+
+public bool isFolder(string path) {
+    i64 bits = mode(path)
+    ret bits >= 0 && bits & 0xF000 == 0x4000  // S_IFDIR
+}
+
+public void remove(string path) {
+    i64 status = systemCall(87, path.cstring(), 0, 0, 0, 0, 0)  // unlink
+    if (status == -21) {                                        // EISDIR
+        status = systemCall(84, path.cstring(), 0, 0, 0, 0, 0)  // rmdir
+    }
+    if (status < 0) {
+        throw failure("remove", path, status)
+    }
+}
+
+public void createFolder(string path) {
+    i64 status = systemCall(83, path.cstring(), 493, 0, 0, 0, 0)  // mkdir, 0755
+    if (status < 0) {
+        throw failure("create", path, status)
+    }
+}
+
+public list<string> listFolder(string path) {
+    i64 folder = systemCall(2, path.cstring(), 0x80000 | 0x10000, 0, 0, 0, 0)  // O_DIRECTORY
+    if (folder < 0) {
+        throw failure("list", path, folder)
+    }
+    list<string> names
+    addr buffer = alloc(4096)
+    for {
+        i64 count = systemCall(217, folder, buffer, 4096, 0, 0, 0)  // getdents64
+        if (count <= 0) {
+            break
+        }
+        i64 at = 0
+        for (at < count) {
+            addr entry = offset(buffer, at)
+            addr name = offset(entry, 19)  // after d_ino, d_off, d_reclen and d_type
+            i64 n = 0
+            for (copyAt<u8>(offset(name, n)) != 0) {
+                n++
+            }
+            string text = string(name, n)
+            if (text != "." && text != "..") {
+                names.add(move text)
+            }
+            at += i64(copyAt<u16>(offset(entry, 16)))
+        }
+    }
+    free(buffer)
+    systemCall(3, folder, 0, 0, 0, 0, 0)
+    ret names
+}
+
+// The st_mode of the file, or -errno.
+i64 mode(string path) {
+    addr info = alloc(144)
+    i64 status = systemCall(4, path.cstring(), info, 0, 0, 0, 0)  // stat
+    i64 bits = i64(copyAt<u32>(offset(info, 24)))
+    free(info)
+    if (status < 0) {
+        ret status
+    }
+    ret bits
+}
+
+Error failure(string action, string path, i64 code) {
+    string reason = format("error {}", -code)
+    if (code == -2) {
+        reason = "no such file or folder"
+    } else if (code == -13) {
+        reason = "permission denied"
+    } else if (code == -17) {
+        reason = "it exists already"
+    } else if (code == -20) {
+        reason = "a part of the path is not a folder"
+    } else if (code == -21) {
+        reason = "it is a folder"
+    } else if (code == -39) {
+        reason = "the folder is not empty"
+    } else if (code == -28) {
+        reason = "no space left"
+    }
+    ret fileError(action, path, reason)
+}

@@ -105,7 +105,7 @@ private:
     }
 
     void typeName(const TypeName& name) {
-        Type type = name.resolved;
+        Type type = baseElement(name.resolved);  // `Point[4]` leads to Point
         if (type.isStruct()) add(name.loc, name.name, declarationOf(type), type.structDecl->loc);
         if (type.isInterface()) add(name.loc, name.name, declarationOf(type), type.interfaceDecl->loc);
         for (const TypeName& arg : name.args) typeName(arg);
@@ -202,6 +202,10 @@ private:
             if (loop.form == ForForm::Each) {
                 typeName(loop.elementType);
                 variable(loop.element, loop.elementLoc, loop.isRef ? "ref " : "");
+                if (loop.hasValue) {  // a map (D197)
+                    typeName(loop.valueType);
+                    variable(loop.value, loop.valueLoc, loop.valueIsRef ? "ref " : "");
+                }
                 expr(loop.list.get());
             }
             block(loop.body);

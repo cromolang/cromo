@@ -70,8 +70,8 @@ std::string floatConstant(double value, int bits) {
     return text;
 }
 
-// Structs larger than 16 bytes are passed and returned through a pointer.
-bool byPointer(Type type) { return type.isStruct() && sizeOf(type) > 16; }
+// Structs and arrays larger than 16 bytes are passed and returned through a pointer.
+bool byPointer(Type type) { return type.isAggregate() && sizeOf(type) > 16; }
 
 // A `ref` parameter is always an address; the others are when they are large (D22).
 // A parameter of interface type is always a pair of pointers passed by value (D49).
@@ -188,8 +188,29 @@ std::string enumDefault(const StructDecl& decl) {
     return out + ", [" + std::to_string(enumTail(decl)) + " x i8] zeroinitializer }";
 }
 
+// True when the default value of the type is all zero bytes: it can be written
+// with memset, and an array of it is a zeroinitializer.
+bool zeroDefault(Type type) {
+    if (type.isArray()) return zeroDefault(type.array->element);
+    if (!type.isStruct()) return true;  // 0, false, null, a function without code
+    const StructDecl& decl = *type.structDecl;
+    if (decl.isEnum && decl.cases[0].value != 0) return false;
+    const std::vector<FieldDecl>& fields = decl.isEnum ? decl.cases[0].fields : decl.fields;
+    for (const FieldDecl& field : fields) {
+        if (field.init || !zeroDefault(field.resolved)) return false;
+    }
+    return true;
+}
+
 std::string defaultConstant(Type type) {
     if (type.isFunction()) return "zeroinitializer";  // no code: calling it is a panic
+    if (type.isArray()) {  // D196: every element has its default value
+        if (zeroDefault(type)) return "zeroinitializer";
+        std::string element = llvmType(type.array->element) + " " + defaultConstant(type.array->element);
+        std::string out = "[";
+        for (int64_t i = 0; i < type.array->count; ++i) out += (i ? ", " : "") + element;
+        return out + "]";
+    }
     if (type.isBool()) return "false";
     if (type.isFloat()) return floatConstant(0, type.bits);
     if (type.kind == TypeKind::Addr) return "null";
@@ -295,6 +316,10 @@ public:
         out << "declare void @cromo_fmt_bool(i32, i32, ptr) nounwind\n";
         out << "declare void @cromo_fmt_str(i32, ptr, i64, ptr) nounwind\n";
         out << "declare void @cromo_print_end(i32, i32) nounwind\n";
+        out << "declare void @cromo_format_end(ptr, ptr, ptr) nounwind\n";
+        out << "declare double @cromo_parse_float(ptr, i64, i64) nounwind\n";
+        out << "declare i64 @cromo_hash_bytes(ptr, i64) nounwind readonly\n";
+        out << "declare i64 @cromo_hash_bits(i64) nounwind readnone\n";
         out << "declare void @cromo_exit(i32) noreturn nounwind\n";
         out << "declare void @cromo_panic(ptr, i64, ptr) noreturn nounwind cold\n";
         out << "declare void @cromo_panic_index(i64, i64, ptr) noreturn nounwind cold\n";
@@ -423,6 +448,42 @@ private:
         block(ok);
     }
 
+    // Writes the default value of a type. A large value is not written as one
+    // constant, which LLVM would split into a store for each element.
+    void storeDefault(const std::string& address, Type type) {
+        if (sizeOf(type) > 64 && zeroDefault(type)) {
+            std::string fn = intrinsic("declare void @llvm.memset.p0.i64(ptr, i8, i64, i1)", "@llvm.memset.p0.i64");
+            inst("call void " + fn + "(ptr " + address + ", i8 0, i64 " + std::to_string(sizeOf(type)) + ", i1 false)");
+        } else if (type.isArray() && sizeOf(type) > 64) {
+            forEachElement(address, type, false, [&](const std::string& element) { storeDefault(element, type.array->element); });
+        } else {
+            inst("store " + llvmType(type) + " " + defaultConstant(type) + ", ptr " + address);
+        }
+    }
+
+    // Runs `body` with the address of each element of the array at `array`, in a loop.
+    template <typename Body>
+    void forEachElement(const std::string& array, Type type, bool reverse, Body body) {
+        Type i64 = Type::intType(64, true);
+        int64_t count = type.array->count;
+        std::string counter = slot(i64);
+        inst("store i64 " + std::to_string(reverse ? count - 1 : 0) + ", ptr " + counter);
+        std::string loop = label("elements");
+        std::string done = label("elements.end");
+        block(loop);
+        Value index = load(counter, i64);
+        std::string address = temp();
+        inst(address + " = getelementptr inbounds " + llvmType(type) + ", ptr " + array + ", i64 0, i64 " + index.ref);
+        body(address);
+        std::string next = temp();
+        std::string more = temp();
+        inst(next + " = " + (reverse ? "sub" : "add") + " i64 " + index.ref + ", 1");
+        inst("store i64 " + next + ", ptr " + counter);
+        inst(more + " = icmp " + (reverse ? "sge i64 " + next + ", 0" : "slt i64 " + next + ", " + std::to_string(count)));
+        term("br i1 " + more + ", label %" + loop + ", label %" + done);
+        block(done);
+    }
+
     void copyStruct(const std::string& dest, const std::string& source, Type type) {
         std::string fn = intrinsic("declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1)", "@llvm.memcpy.p0.p0.i64");
         inst("call void " + fn + "(ptr " + dest + ", ptr " + source + ", i64 " + std::to_string(sizeOf(type)) + ", i1 false)");
@@ -541,8 +602,7 @@ private:
 
         if (function.kind == FunctionKind::Constructor) {
             // The constructor starts from the default value (D48).
-            Type type = Type::structType(function.owner);
-            inst("store " + llvmType(type) + " " + defaultConstant(type) + ", ptr %self");
+            storeDefault("%self", Type::structType(function.owner));
         }
         if (function.kind == FunctionKind::Destructor) dropFields_ = label("drop.fields");
 
@@ -654,7 +714,7 @@ private:
             std::string target = fieldAddress(dest, decl, static_cast<int>(i));
             if (needsDestruction(field)) {
                 emitCall(*field.structDecl->methods.at("copy"), source, field, {}, target, decl.loc);
-            } else if (field.isStruct()) {
+            } else if (field.isAggregate()) {
                 copyStruct(target, source, field);
             } else {
                 inst("store " + llvmType(field) + " " + load(source, field).ref + ", ptr " + target);
@@ -751,6 +811,10 @@ private:
     // ---- Lifetimes (D68) ----
 
     void drop(const std::string& address, Type type) {
+        if (type.isArray()) {  // the elements, the last first (D68, D196)
+            forEachElement(address, type, true, [&](const std::string& element) { drop(element, type.array->element); });
+            return;
+        }
         if (type.isFunction()) {
             // The data of a lambda, if it has any, go with the function that the lambda
             // wrote in them (D184).
@@ -1047,7 +1111,7 @@ private:
         }
         case StmtKind::Expr: {
             const Expr& expr = *static_cast<const ExprStmt&>(statement).expr;
-            if (expr.type.isStruct() || expr.type.isFunction()) {
+            if (expr.type.isAggregate() || expr.type.isFunction()) {
                 addressOf(expr);  // a temporary, destroyed below
             } else {
                 generateExpr(expr);
@@ -1075,11 +1139,11 @@ private:
         const Variable& variable = *decl.variable;
         const std::string& address = addresses_[variable.id];
         Type type = variable.type;
-        if (type.isStruct()) {
+        if (type.isAggregate()) {
             if (decl.init) {
                 generateStructInto(*decl.init, address);
             } else {
-                inst("store " + llvmType(type) + " " + defaultConstant(type) + ", ptr " + address);
+                storeDefault(address, type);
             }
             if (needsDestruction(type)) scopes_.back().objects.push_back(LiveObject{address, type, &variable});
             setAlive(variable, true);
@@ -1099,7 +1163,7 @@ private:
             return;
         }
         Type type = assign.target->type;
-        if (type.isStruct()) {
+        if (type.isAggregate()) {
             // The new value is built apart: it may read the old one (D75). A moved
             // variable has no old value to destroy (D81).
             std::string fresh = slot(type);
@@ -1123,7 +1187,9 @@ private:
             return;
         }
         if (assign.op != AssignOp::Assign) {
-            static const BinaryOp ops[] = {BinaryOp::Add, BinaryOp::Add, BinaryOp::Sub, BinaryOp::Mul, BinaryOp::Div, BinaryOp::Rem};
+            static const BinaryOp ops[] = {BinaryOp::Add,    BinaryOp::Add,   BinaryOp::Sub,    BinaryOp::Mul,
+                                           BinaryOp::Div,    BinaryOp::Rem,   BinaryOp::BitAnd, BinaryOp::BitOr,
+                                           BinaryOp::BitXor, BinaryOp::Shl,   BinaryOp::Shr};
             Value current = load(address, type);
             value = arithmetic(ops[static_cast<int>(assign.op)], current, value, assign.loc);
         }
@@ -1134,7 +1200,7 @@ private:
         Type type = function_->resolvedReturn;
         const Variable* moved = nullptr;
         std::string result;
-        if (ret.value && type.isStruct()) {
+        if (ret.value && type.isAggregate()) {
             // `ret local` moves the variable out (D23): it is not destroyed.
             if (ret.value->kind == ExprKind::Name) moved = static_cast<const NameExpr&>(*ret.value).variable;
             std::string dest = byPointer(type) ? "%ret" : slot(type);
@@ -1152,7 +1218,7 @@ private:
             term("br label %" + dropFields_);
         } else if (!ret.value || byPointer(type)) {
             term("ret void");
-        } else if (type.isStruct()) {
+        } else if (type.isAggregate()) {
             Value value = load(result, type);
             term("ret " + llvmType(type) + " " + value.ref);
         } else {
@@ -1220,7 +1286,10 @@ private:
             const FunctionDecl& equals = *type.structDecl->methods.at("equals");
             for (size_t b = 0; b < statement.branches.size(); ++b) {
                 for (const CasePattern& pattern : statement.branches[b].patterns) {
-                    std::string literal = addressOf(*pattern.literal);
+                    // A literal owns no memory: it is not a temporary to destroy, which
+                    // a `ret` in an earlier case would destroy before it exists.
+                    std::string literal = slot(pattern.literal->type);
+                    generateStructInto(*pattern.literal, literal);
                     std::string same = temp();
                     std::string call = same + " = call i1 " + symbolOf(equals) + "(ptr " + text + ", ptr " + literal;
                     if (tracksCaller(equals)) call += ", ptr " + where(pattern.loc);
@@ -1265,10 +1334,20 @@ private:
     void generateForEach(const ForStmt& statement) {
         Type i64 = Type::intType(64, true);
         std::string list = addressOf(*statement.list);
-        const StructDecl& decl = *statement.list->type.structDecl;
-        Type element = decl.typeArgs[0];
-        Value length = load(listField(list, decl, "length"), i64);
-        Value data = load(listField(list, decl, "data"), Type::addrType());
+        Type type = statement.list->type;
+        Type element;
+        Value length;
+        Value data;
+        if (type.isArray()) {  // D196: the elements start where the array is
+            element = type.array->element;
+            length = {std::to_string(type.array->count), i64};
+            data = {list, Type::addrType()};
+        } else {
+            const StructDecl& decl = *type.structDecl;
+            element = decl.typeArgs[0];
+            length = load(listField(list, decl, "length"), i64);
+            data = load(listField(list, decl, "data"), Type::addrType());
+        }
         std::string counter = slot(i64);
         inst("store i64 0, ptr " + counter);
         std::string condLabel = label("each.cond");
@@ -1298,7 +1377,62 @@ private:
         block(endLabel);
     }
 
+    // `for (K k, V v in m)` (D197): the slots that are full, in their order.
+    void generateForMap(const ForStmt& statement) {
+        Type i64 = Type::intType(64, true);
+        std::string map = addressOf(*statement.list);
+        const StructDecl& decl = *statement.list->type.structDecl;
+        Type keyType = decl.typeArgs[0];
+        Type valueType = decl.typeArgs[1];
+        Value capacity = load(listField(map, decl, "capacity"), i64);
+        Value keys = load(listField(map, decl, "keys"), Type::addrType());
+        Value values = load(listField(map, decl, "values"), Type::addrType());
+        Value states = load(listField(map, decl, "states"), Type::addrType());
+        std::string counter = slot(i64);
+        inst("store i64 0, ptr " + counter);
+        std::string condLabel = label("map.cond");
+        std::string testLabel = label("map.test");
+        std::string bodyLabel = label("map.body");
+        std::string stepLabel = label("map.step");
+        std::string endLabel = label("map.end");
+
+        block(condLabel);
+        Value index = load(counter, i64);
+        std::string more = temp();
+        inst(more + " = icmp slt i64 " + index.ref + ", " + capacity.ref);
+        term("br i1 " + more + ", label %" + testLabel + ", label %" + endLabel);
+        block(testLabel);
+        std::string stateAddress = temp();
+        std::string state = temp();
+        std::string full = temp();
+        inst(stateAddress + " = getelementptr inbounds i8, ptr " + states.ref + ", i64 " + index.ref);
+        inst(state + " = load i8, ptr " + stateAddress);
+        inst(full + " = icmp eq i8 " + state + ", 1");
+        term("br i1 " + full + ", label %" + bodyLabel + ", label %" + stepLabel);
+        block(bodyLabel);
+        std::string key = temp();
+        std::string value = temp();
+        inst(key + " = getelementptr inbounds " + llvmType(keyType) + ", ptr " + keys.ref + ", i64 " + index.ref);
+        inst(value + " = getelementptr inbounds " + llvmType(valueType) + ", ptr " + values.ref + ", i64 " + index.ref);
+        addresses_[statement.element->id] = key;
+        addresses_[statement.value->id] = value;
+        loops_.push_back(Loop{stepLabel, endLabel, scopes_.size()});
+        generateBlock(statement.body);
+        loops_.pop_back();
+        block(stepLabel);
+        Value last = load(counter, i64);
+        std::string next = temp();
+        inst(next + " = add i64 " + last.ref + ", 1");
+        inst("store i64 " + next + ", ptr " + counter);
+        term("br label %" + condLabel);
+        block(endLabel);
+    }
+
     void generateFor(const ForStmt& statement) {
+        if (statement.form == ForForm::Each && statement.hasValue) {
+            generateForMap(statement);
+            return;
+        }
         if (statement.form == ForForm::Each) {
             generateForEach(statement);
             return;
@@ -1343,8 +1477,16 @@ private:
         case ExprKind::Index: {
             const auto& element = static_cast<const IndexExpr&>(expr);
             std::string list = addressOf(*element.object);
-            Value index = generateExpr(*element.index);
-            return elementAddress(list, *element.object->type.structDecl, index.ref, element.loc);
+            Value index = element.access ? Value{} : generateExpr(*element.index);
+            Type type = element.object->type;
+            if (element.access) return mapValue(list, element);
+            if (type.isArray()) {  // D196: the size is in the type
+                if (element.index->kind != ExprKind::IntLiteral) checkIndex(index.ref, std::to_string(type.array->count), element.loc);
+                std::string result = temp();
+                inst(result + " = getelementptr inbounds " + llvmType(type) + ", ptr " + list + ", i64 0, i64 " + index.ref);
+                return result;
+            }
+            return elementAddress(list, *type.structDecl, index.ref, element.loc);
         }
         default: {
             std::string address = slot(expr.type);
@@ -1353,6 +1495,18 @@ private:
             return address;
         }
         }
+    }
+
+    // `m[k]` (D197): the address of the value, from the method of the library.
+    std::string mapValue(const std::string& map, const IndexExpr& element) {
+        const FunctionDecl& access = *element.access;
+        std::string args = "ptr " + map + ", " + argument(*element.index, access.params[0], access.paramTypes[0]);
+        if (tracksCaller(access)) args += ", ptr " + where(element.loc);
+        if (access.canThrow) args += ", ptr " + raisedSlot();
+        std::string result = temp();
+        inst(result + " = call ptr " + symbolOf(access) + "(" + args + ")");
+        if (access.canThrow) checkRaised();
+        return result;
     }
 
     std::string listField(const std::string& list, const StructDecl& decl, const char* name) {
@@ -1373,13 +1527,15 @@ private:
         block(ok);
     }
 
-    // The address of an element of a list, after the bounds check.
+    // The address of an element of a list, or of a byte of a string (D200), after
+    // the bounds check.
     std::string elementAddress(const std::string& list, const StructDecl& decl, const std::string& index, SourceLocation loc) {
         Value length = load(listField(list, decl, "length"), Type::intType(64, true));
         checkIndex(index, length.ref, loc);
         Value data = load(listField(list, decl, "data"), Type::addrType());
         std::string result = temp();
-        inst(result + " = getelementptr inbounds " + llvmType(decl.typeArgs[0]) + ", ptr " + data.ref + ", i64 " + index);
+        std::string element = decl.typeArgs.empty() ? "i8" : llvmType(decl.typeArgs[0]);
+        inst(result + " = getelementptr inbounds " + element + ", ptr " + data.ref + ", i64 " + index);
         return result;
     }
 
@@ -1405,6 +1561,9 @@ private:
         case ExprKind::CallValue:
             callValue(static_cast<const CallValueExpr&>(expr), dest);
             return;
+        case ExprKind::Print:  // format (D200)
+            generatePrint(static_cast<const PrintExpr&>(expr), dest);
+            return;
         case ExprKind::StringLiteral:
             inst("store " + llvmType(expr.type) + " " + stringValue(static_cast<const StringLiteralExpr&>(expr)) + ", ptr " + dest);
             return;
@@ -1417,7 +1576,7 @@ private:
             for (size_t i = 0; i < node.args.size(); ++i) {
                 Type type = item.fields[i].resolved;
                 std::string field = caseField(payload, decl, item, i);
-                if (type.isStruct()) {
+                if (type.isAggregate()) {
                     generateStructInto(*node.args[i], field);
                 } else {
                     inst("store " + llvmType(type) + " " + generateExpr(*node.args[i]).ref + ", ptr " + field);
@@ -1454,7 +1613,7 @@ private:
             const auto& construct = static_cast<const ConstructExpr&>(expr);
             const StructDecl& decl = *construct.decl;
             if (!decl.constructor) {
-                inst("store " + structName(decl) + " " + defaultConstant(expr.type) + ", ptr " + dest);
+                storeDefault(dest, expr.type);
                 return;
             }
             emitCall(*decl.constructor, dest, expr.type, construct.args, "", expr.loc, &construct.overlaps);
@@ -1496,7 +1655,7 @@ private:
         if (move.moveKind == MoveKind::Variable) {
             setAlive(*static_cast<const NameExpr&>(*move.operand).variable, false);
         } else if (move.moveKind == MoveKind::Take) {
-            inst("store " + llvmType(move.type) + " " + defaultConstant(move.type) + ", ptr " + source);
+            storeDefault(source, move.type);
         }
     }
 
@@ -1580,7 +1739,7 @@ private:
         }
         inst(result + " = call " + llvmType(ret) + " " + (callee.empty() ? symbolOf(function) : callee) + "(" + joined + ")");
         if (function.canThrow) checkRaised();
-        if (ret.isStruct()) inst("store " + llvmType(ret) + " " + result + ", ptr " + dest);
+        if (ret.isAggregate()) inst("store " + llvmType(ret) + " " + result + ", ptr " + dest);
         return {result, ret};
     }
 
@@ -1640,7 +1799,7 @@ private:
             return "{ ptr, ptr } " + pair;
         }
         if (param.mode == ParamMode::Ref) return "ptr " + remember(addressOf(*static_cast<const RefExpr&>(expr).operand));
-        if (param.mode == ParamMode::Move && type.isStruct()) {
+        if (param.mode == ParamMode::Move && type.isAggregate()) {
             // The callee becomes the owner. A whole variable is handed over where it
             // is; anything else is built in a slot that nobody else destroys.
             if (byPointer(type) && expr.kind == ExprKind::Move &&
@@ -1664,7 +1823,7 @@ private:
             return llvmType(type) + " " + load(owned, type).ref;
         }
         if (byPointer(type)) return "ptr " + remember(addressOf(expr));
-        if (type.isStruct()) return llvmType(type) + " " + load(remember(addressOf(expr)), type).ref;
+        if (type.isAggregate()) return llvmType(type) + " " + load(remember(addressOf(expr)), type).ref;
         Value value = generateExpr(expr);
         return llvmType(value.type) + " " + value.ref;
     }
@@ -1707,7 +1866,7 @@ private:
         }
         case Intrinsic::Take: {
             std::string place = arg(0);
-            if (element.isStruct()) {
+            if (element.isAggregate()) {
                 copyStruct(dest, place, element);
                 return {"", element};
             }
@@ -1716,7 +1875,7 @@ private:
         case Intrinsic::Put: {
             std::string place = arg(0);
             const Expr& value = *call.args[1];
-            if (element.isStruct()) {
+            if (element.isAggregate()) {
                 generateStructInto(value, place);
             } else {
                 inst("store " + llvmType(element) + " " + generateExpr(value).ref + ", ptr " + place);
@@ -1730,7 +1889,7 @@ private:
         }
         case Intrinsic::CopyAt: {
             std::string place = arg(0);
-            if (!element.isStruct()) return load(place, element);
+            if (!element.isAggregate()) return load(place, element);
             if (needsDestruction(element)) {
                 emitCall(*element.structDecl->methods.at("copy"), place, element, {}, dest, call.loc);
             } else {
@@ -1765,6 +1924,61 @@ private:
         case Intrinsic::ArgumentData:
             inst(result + " = call ptr @cromo_arg_data(i64 " + arg(0) + ")");
             return {result, addr};
+        case Intrinsic::SystemCall: {  // Linux (D202): an address is passed as an integer
+            std::string args;
+            for (size_t i = 0; i < 7; ++i) {
+                Value value = generateExpr(*call.args[i]);
+                std::string number = value.ref;
+                if (value.type.kind == TypeKind::Addr) {
+                    number = temp();
+                    inst(number + " = ptrtoint ptr " + value.ref + " to i64");
+                }
+                args += (i ? ", i64 " : "i64 ") + number;
+            }
+            std::string fn = intrinsic("declare i64 @cromo_system_call(i64, i64, i64, i64, i64, i64, i64) nounwind",
+                                       "@cromo_system_call");
+            inst(result + " = call i64 " + fn + "(" + args + ")");
+            return {result, i64};
+        }
+        case Intrinsic::Environment: {
+            std::string fn = intrinsic("declare ptr @cromo_environment(i64) nounwind", "@cromo_environment");
+            inst(result + " = call ptr " + fn + "(i64 " + arg(0) + ")");
+            return {result, addr};
+        }
+        case Intrinsic::ExitProcess:
+            inst("call void @cromo_exit(i32 " + arg(0) + ")");
+            term("unreachable");
+            return {"", Type::voidType()};
+        case Intrinsic::HashBytes: {  // D198
+            std::string data = arg(0);
+            inst(result + " = call i64 @cromo_hash_bytes(ptr " + data + ", i64 " + arg(1) + ")");
+            return {result, Type::intType(64, false)};
+        }
+        case Intrinsic::HashNumber: {  // the bits of the value; -0.0 is 0.0, as they are equal (D198)
+            Value value = generateExpr(*call.args[0]);
+            Type type = value.type;
+            std::string bits = value.ref;
+            if (type.isFloat()) {
+                std::string positive = temp();
+                inst(positive + " = fadd " + llvmType(type) + " " + value.ref + ", " + floatConstant(0, type.bits));
+                bits = temp();
+                inst(bits + " = bitcast " + llvmType(type) + " " + positive + " to i" + std::to_string(type.bits));
+            }
+            int width = type.isBool() ? 1 : type.bits;
+            if (width < 64) {
+                std::string wide = temp();
+                inst(wide + " = zext i" + std::to_string(width) + " " + bits + " to i64");
+                bits = wide;
+            }
+            inst(result + " = call i64 @cromo_hash_bits(i64 " + bits + ")");
+            return {result, Type::intType(64, false)};
+        }
+        case Intrinsic::DecimalToFloat: {  // D199
+            std::string data = arg(0);
+            std::string length = arg(1);
+            inst(result + " = call double @cromo_parse_float(ptr " + data + ", i64 " + length + ", i64 " + arg(2) + ")");
+            return {result, Type::floatType(64)};
+        }
         case Intrinsic::None: break;
         }
         return {"", Type::error()};
@@ -1908,13 +2122,13 @@ private:
         case ExprKind::Binary:
             return generateBinary(static_cast<const BinaryExpr&>(expr));
         case ExprKind::Call: {
-            if (expr.type.isStruct()) return load(addressOf(expr), expr.type);
+            if (expr.type.isAggregate()) return load(addressOf(expr), expr.type);
             const auto& call = static_cast<const CallExpr&>(expr);
             if (call.intrinsic != Intrinsic::None) return generateIntrinsic(call, "");
             return emitCall(*call.function, "", Type::error(), call.args, "", call.loc, &call.overlaps);
         }
         case ExprKind::MethodCall: {
-            if (expr.type.isStruct()) return load(addressOf(expr), expr.type);
+            if (expr.type.isAggregate()) return load(addressOf(expr), expr.type);
             return emitMethodCall(static_cast<const MethodCallExpr&>(expr), "");
         }
         case ExprKind::Conversion: {
@@ -1929,16 +2143,17 @@ private:
             return convert(generateExpr(*conversion.operand), expr.type, expr.loc);
         }
         case ExprKind::Print:
-            generatePrint(static_cast<const PrintExpr&>(expr));
+            if (expr.type.isAggregate()) return load(addressOf(expr), expr.type);  // format (D200)
+            generatePrint(static_cast<const PrintExpr&>(expr), "");
             return {"", Type::voidType()};
         case ExprKind::Lambda:
             return createLambda(static_cast<const LambdaExpr&>(expr));
         case ExprKind::CallValue:
-            if (expr.type.isStruct()) return load(addressOf(expr), expr.type);
+            if (expr.type.isAggregate()) return load(addressOf(expr), expr.type);
             return callValue(static_cast<const CallValueExpr&>(expr), "");
         case ExprKind::Move:
         case ExprKind::Copy:
-            if (expr.type.isStruct()) return load(addressOf(expr), expr.type);
+            if (expr.type.isAggregate()) return load(addressOf(expr), expr.type);
             if (expr.kind == ExprKind::Move && expr.type.isFunction()) {  // the value changes owner (D184)
                 const auto& move = static_cast<const MoveExpr&>(expr);
                 std::string address = addressOf(*move.operand);
@@ -1960,9 +2175,9 @@ private:
     Value generateUnary(const UnaryExpr& unary) {
         Value operand = generateExpr(*unary.operand);
         std::string result = temp();
-        if (unary.op == UnaryOp::Not) {
-            inst(result + " = xor i1 " + operand.ref + ", true");
-            return {result, Type::boolType()};
+        if (unary.op == UnaryOp::Not) {  // on an integer it inverts the bits (D194)
+            inst(result + " = xor " + llvmType(operand.type) + " " + operand.ref + ", " + (operand.type.isBool() ? "true" : "-1"));
+            return {result, operand.type};
         }
         if (operand.type.isFloat()) {
             inst(result + " = fneg " + llvmType(operand.type) + " " + operand.ref);
@@ -1977,7 +2192,7 @@ private:
         Value lhs = generateExpr(*binary.lhs);
         Value rhs = generateExpr(*binary.rhs);
         if (binary.op == BinaryOp::Add || binary.op == BinaryOp::Sub || binary.op == BinaryOp::Mul ||
-            binary.op == BinaryOp::Div || binary.op == BinaryOp::Rem) {
+            binary.op == BinaryOp::Div || binary.op == BinaryOp::Rem || binary.op >= BinaryOp::BitAnd) {
             return arithmetic(binary.op, lhs, rhs, binary.loc);
         }
 
@@ -2037,6 +2252,39 @@ private:
     }
 
     // + - * / % with the checks of D30, D36 and D60.
+    // D195: a count out of the width is a panic in debug, and taken modulo the
+    // width in release. `>>` keeps the sign of a signed integer.
+    Value shift(BinaryOp op, Value lhs, Value rhs, SourceLocation loc) {
+        Type type = lhs.type;
+        std::string t = llvmType(type);
+        std::string count = rhs.ref;
+        if (!options_.release) {
+            std::string wide = count;
+            if (rhs.type.bits < 64) {
+                wide = temp();
+                inst(wide + " = " + (rhs.type.isSigned ? "sext " : "zext ") + llvmType(rhs.type) + " " + count + " to i64");
+            } else if (rhs.type.bits > 64) {
+                wide = temp();
+                inst(wide + " = trunc " + llvmType(rhs.type) + " " + count + " to i64");
+            }
+            std::string outside = temp();
+            inst(outside + " = icmp uge i64 " + wide + ", " + std::to_string(type.bits));  // a negative count is huge
+            panicIf(outside, "shift count out of the width of " + type.name() + " (D195)", loc);
+        }
+        if (rhs.type.bits != type.bits) {
+            std::string fitted = temp();
+            inst(fitted + " = " + (rhs.type.bits < type.bits ? (rhs.type.isSigned ? "sext " : "zext ") : "trunc ") +
+                 llvmType(rhs.type) + " " + count + " to " + t);
+            count = fitted;
+        }
+        std::string masked = temp();
+        inst(masked + " = and " + t + " " + count + ", " + std::to_string(type.bits - 1));
+        std::string result = temp();
+        const char* name = op == BinaryOp::Shl ? "shl" : type.isSigned ? "ashr" : "lshr";
+        inst(result + " = " + name + " " + t + " " + lhs.ref + ", " + masked);
+        return {result, type};
+    }
+
     Value arithmetic(BinaryOp op, Value lhs, Value rhs, SourceLocation loc) {
         Type type = lhs.type;
         std::string t = llvmType(type);
@@ -2048,6 +2296,13 @@ private:
             inst(result + " = " + ops.at(op) + " " + t + " " + lhs.ref + ", " + rhs.ref);
             return {result, type};
         }
+
+        if (op == BinaryOp::BitAnd || op == BinaryOp::BitOr || op == BinaryOp::BitXor) {  // D193
+            const char* name = op == BinaryOp::BitAnd ? "and" : op == BinaryOp::BitOr ? "or" : "xor";
+            inst(result + " = " + name + " " + t + " " + lhs.ref + ", " + rhs.ref);
+            return {result, type};
+        }
+        if (op == BinaryOp::Shl || op == BinaryOp::Shr) return shift(op, lhs, rhs, loc);
 
         if (op == BinaryOp::Add || op == BinaryOp::Sub || op == BinaryOp::Mul) {
             const char* name = op == BinaryOp::Add ? "add" : op == BinaryOp::Sub ? "sub" : "mul";
@@ -2170,7 +2425,9 @@ private:
 
     // print/println: the format was parsed by sema, so here there are only calls
     // to the runtime, one per piece (D38).
-    void generatePrint(const PrintExpr& print) {
+    // print and println, or format into `dest` (D200): the arguments are computed
+    // first, so a format inside them is finished before this one starts writing.
+    void generatePrint(const PrintExpr& print, const std::string& dest) {
         std::string stream = "i32 " + std::to_string(print.stream);
         std::vector<Value> values;
         for (const ExprPtr& arg : print.args) values.push_back(generateExpr(*arg));
@@ -2214,6 +2471,12 @@ private:
                 inst("call void @cromo_fmt_str(" + stream + ", ptr " + value.ref + ", i64 " +
                      std::to_string(literal.value.size()) + ", " + spec + ")");
             }
+        }
+        if (print.stream == 3) {  // the string takes the memory written
+            const StructDecl& decl = *print.type.structDecl;
+            inst("call void @cromo_format_end(ptr " + listField(dest, decl, "data") + ", ptr " + listField(dest, decl, "length") +
+                 ", ptr " + listField(dest, decl, "capacity") + ")");
+            return;
         }
         inst("call void @cromo_print_end(" + stream + ", i32 " + (print.newline ? "1" : "0") + ")");
     }

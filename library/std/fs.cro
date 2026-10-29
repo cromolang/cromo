@@ -1,0 +1,57 @@
+// The module std.fs (D201): files read and written whole, and folders. An error
+// is an exception whose message has the path and the reason. The system calls
+// are in fs_windows.cro and fs_linux.cro (D202), with:
+//   bool exists(string path)
+//   bool isFolder(string path)
+//   void remove(string path)           a file, or an empty folder
+//   void createFolder(string path)
+//   list<string> listFolder(string path)  the names in the folder, in no order
+import unsafe
+
+public list<u8> readBytes(string path) {
+    i64 size = 0
+    addr data = loadFile(path, ref size)
+    list<u8> bytes
+    bytes.reserve(size)
+    for (i64 i = 0; i < size; i++) {
+        bytes.add(copyAt<u8>(offset(data, i)))
+    }
+    free(data)
+    ret bytes
+}
+
+// The text of a file, which must be UTF-8.
+public string readText(string path) {
+    i64 size = 0
+    addr data = loadFile(path, ref size)
+    try {
+        ret string(data, size)
+    } finally {
+        free(data)
+    }
+}
+
+public void writeBytes(string path, list<u8> bytes) {
+    addr data = alloc(bytes.len())
+    for (i64 i = 0; i < bytes.len(); i++) {
+        put<u8>(offset(data, i), bytes[i])
+    }
+    try {
+        storeFile(path, data, bytes.len(), false)
+    } finally {
+        free(data)
+    }
+}
+
+public void writeText(string path, string text) {
+    storeFile(path, text.cstring(), text.len(), false)
+}
+
+// Adds the text at the end of the file, which is created if it does not exist.
+public void appendText(string path, string text) {
+    storeFile(path, text.cstring(), text.len(), true)
+}
+
+Error fileError(string action, string path, string reason) {
+    ret Error(format("cannot {} '{}': {}", action, path, reason))
+}

@@ -1,0 +1,10 @@
+// Errors with strings and bytes (D200).
+// expect-error: the bytes of a string are read-only: build a new string (D200)
+// expect-error: a i32[2] cannot be printed yet (D76)
+i32 main() {
+    string s = "abc"
+    s[0] = 'x'
+    i32[2] pair
+    string text = format("{}", pair)
+    ret 0
+}

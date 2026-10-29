@@ -1,0 +1,137 @@
+// The module std.time (D203): a monotonic clock to measure, the date and the
+// time in UTC and in the zone of the system, and pauses. The clocks are in
+// time_windows.cro and time_linux.cro (D202), with:
+//   i64 monotonic()               nanoseconds from an origin of the system
+//   i64 unixNanoseconds()         nanoseconds from 1970-01-01 UTC
+//   i32 localOffset(i64 seconds)  the offset of the zone at that time, in minutes
+//   void pause(i64 nanoseconds)
+
+// A span of time.
+public struct Duration {
+    public i64 nanoseconds
+
+    public f64 seconds() const {
+        ret f64(nanoseconds) / 1e9
+    }
+
+    public i64 milliseconds() const {
+        ret nanoseconds / 1000000
+    }
+
+    public i64 microseconds() const {
+        ret nanoseconds / 1000
+    }
+}
+
+// A moment of the monotonic clock, which never goes back: it serves to measure.
+public struct Instant {
+    i64 ticks
+
+    public Duration elapsed() const {
+        Duration result
+        result.nanoseconds = monotonic() - ticks
+        ret result
+    }
+
+    public Duration since(Instant earlier) const {
+        Duration result
+        result.nanoseconds = ticks - earlier.ticks
+        ret result
+    }
+}
+
+// A date with the time of day, in UTC or in the zone of the system.
+public struct DateTime {
+    public i32 year
+    public i32 month  // 1 to 12
+    public i32 day    // 1 to 31
+    public i32 hour
+    public i32 minute
+    public i32 second
+    public i32 nanosecond
+    public i32 offset  // from UTC, in minutes: 60 in Rome in winter
+
+    // ISO 8601: 2026-10-29T14:03:12.250+01:00, or Z at the end in UTC.
+    public string text() const {
+        string zone = "Z"
+        if (offset != 0) {
+            i32 minutes = offset
+            string sign = "+"
+            if (minutes < 0) {
+                sign = "-"
+                minutes = -minutes
+            }
+            zone = format("{}{:02}:{:02}", sign, minutes / 60, minutes % 60)
+        }
+        ret format("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}{}", year, month, day, hour, minute, second,
+            nanosecond / 1000000, zone)
+    }
+}
+
+public Instant now() {
+    Instant result
+    result.ticks = monotonic()
+    ret result
+}
+
+public DateTime utcNow() {
+    ret dateTime(unixNanoseconds(), 0)
+}
+
+public DateTime localNow() {
+    i64 now = unixNanoseconds()
+    ret dateTime(now, localOffset(now / 1000000000))
+}
+
+public void sleep(i64 seconds) {
+    pause(seconds * 1000000000)
+}
+
+public void msleep(i64 milliseconds) {
+    pause(milliseconds * 1000000)
+}
+
+public void usleep(i64 microseconds) {
+    pause(microseconds * 1000)
+}
+
+// The date of `nanoseconds` from 1970-01-01 UTC, moved by `offset` minutes, with
+// the algorithm of Howard Hinnant for the days.
+DateTime dateTime(i64 nanoseconds, i32 offset) {
+    i64 seconds = nanoseconds / 1000000000 + i64(offset) * 60
+    i64 days = seconds / 86400
+    i64 rest = seconds % 86400
+    i64 shifted = days + 719468
+    i64 era = shifted / 146097
+    i64 dayOfEra = shifted - era * 146097
+    i64 yearOfEra = (dayOfEra - dayOfEra / 1460 + dayOfEra / 36524 - dayOfEra / 146096) / 365
+    i64 dayOfYear = dayOfEra - (365 * yearOfEra + yearOfEra / 4 - yearOfEra / 100)
+    i64 shiftedMonth = (5 * dayOfYear + 2) / 153  // from March
+    DateTime result
+    result.year = i32(yearOfEra + era * 400)
+    result.day = i32(dayOfYear - (153 * shiftedMonth + 2) / 5 + 1)
+    result.month = i32(shiftedMonth + 3)
+    if (shiftedMonth >= 10) {
+        result.month = i32(shiftedMonth - 9)
+        result.year++
+    }
+    result.hour = i32(rest / 3600)
+    result.minute = i32(rest % 3600 / 60)
+    result.second = i32(rest % 60)
+    result.nanosecond = i32(nanoseconds % 1000000000)
+    result.offset = offset
+    ret result
+}
+
+// The days from 1970-01-01 to a date, for the rules of the zones.
+i64 daysFromCivil(i64 year, i64 month, i64 day) {
+    i64 y = year
+    if (month <= 2) {
+        y--
+    }
+    i64 era = y / 400
+    i64 yearOfEra = y - era * 400
+    i64 shiftedMonth = (month + 9) % 12
+    i64 dayOfYear = (153 * shiftedMonth + 2) / 5 + day - 1
+    ret era * 146097 + yearOfEra * 365 + yearOfEra / 4 - yearOfEra / 100 + dayOfYear - 719468
+}

@@ -1,0 +1,9 @@
+// In release the count is taken modulo the width (D195).
+// cromo-flags: --release
+// expect-output: 256
+i32 main() {
+    i32 n = 40
+    i32 x = 1 << n
+    println("{}", x)
+    ret 0
+}

@@ -49,6 +49,13 @@ int _fltused = 0;
 #define SYS_exit_group 231
 #define EINTR 4
 
+static i64 systemCall(i64 number, i64 a, i64 b, i64 c, i64 d, i64 e, i64 f);
+
+// For the modules of the library for Linux (D202): the result, or -errno.
+i64 cromo_system_call(i64 number, i64 a, i64 b, i64 c, i64 d, i64 e, i64 f) {
+    return systemCall(number, a, b, c, d, e, f);
+}
+
 static i64 systemCall(i64 number, i64 a, i64 b, i64 c, i64 d, i64 e, i64 f) {
     register i64 r10 __asm__("r10") = d;
     register i64 r8 __asm__("r8") = e;
@@ -117,13 +124,48 @@ static NORETURN void exitProcess(i32 code) {
 
 static Output* outputOf(i32 stream) { return &outputs[stream == 2 ? 1 : 0]; }
 
+// ---- format (D200): the stream 3 writes into memory, for a string ----
+
+void* cromo_realloc(void* memory, i64 size);
+
+static u8* formatData;
+static u64 formatLength;
+static u64 formatCapacity;
+
+static void formatPut(const u8* data, u64 size) {
+    if (formatLength + size > formatCapacity) {
+        u64 grown = formatCapacity * 2;
+        if (grown < formatLength + size) grown = formatLength + size;
+        if (grown < 32) grown = 32;
+        formatData = cromo_realloc(formatData, (i64)grown);
+        formatCapacity = grown;
+    }
+    for (u64 i = 0; i < size; ++i) formatData[formatLength + i] = data[i];
+    formatLength += size;
+}
+
+// The text written gives its memory to the string at the end of format.
+void cromo_format_end(u8** data, i64* length, i64* capacity) {
+    *data = formatData;
+    *length = (i64)formatLength;
+    *capacity = (i64)formatCapacity;
+    formatData = 0;
+    formatLength = 0;
+    formatCapacity = 0;
+}
+
 static void flush(i32 stream) {
+    if (stream == 3) return;
     Output* out = outputOf(stream);
     writeRaw(stream, out->data, out->length);
     out->length = 0;
 }
 
 static void put(i32 stream, const u8* data, u64 size) {
+    if (stream == 3) {
+        formatPut(data, size);
+        return;
+    }
     Output* out = outputOf(stream);
     while (size > 0) {
         if (out->length == BUFFER_SIZE) flush(stream);
@@ -267,7 +309,9 @@ void cromo_fmt_int(i32 stream, u64 value, i32 isSigned, const FmtSpec* spec) {
 // shortest form uses the algorithm of Steele & White / Burger & Dybvig, the forms
 // with a precision round the exact value half to even.
 
-#define BIG_WORDS 40  // 1280 bits: enough for 10^324 * 2^55 and for 2^1024 * 10
+// 4096 bits: enough for 10^324 * 2^55, for 2^1024 * 10, and for the 800 digits of
+// a text with 10^1124 * 2^56 when it is read (D199).
+#define BIG_WORDS 128
 
 typedef struct {
     u32 word[BIG_WORDS];
@@ -360,6 +404,23 @@ static u32 bigDigit(Big* r, const Big* s) {
         ++digit;
     }
     return digit;
+}
+
+static void bigAddSmall(Big* a, u32 value) {
+    u64 carry = value;
+    for (i32 i = 0; i < a->used && carry; ++i) {
+        u64 sum = (u64)a->word[i] + carry;
+        a->word[i] = (u32)sum;
+        carry = sum >> 32;
+    }
+    if (carry) a->word[a->used++] = (u32)carry;
+}
+
+static void bigShiftRightOne(Big* a) {
+    for (i32 i = 0; i < a->used; ++i) {
+        a->word[i] = (a->word[i] >> 1) | (i + 1 < a->used ? a->word[i + 1] << 31 : 0);
+    }
+    if (a->used > 0 && a->word[a->used - 1] == 0) --a->used;
 }
 
 // value = mantissa * 2^exponent
@@ -678,6 +739,152 @@ void cromo_fmt_f32(i32 stream, float value, const FmtSpec* spec) {
     formatFloat(stream, &f, (int)(bits >> 31), exponent == 0xFF && fraction != 0, exponent == 0xFF && fraction == 0, spec);
 }
 
+// ---- Hashes for the keys of a map (D198) ----
+
+// The finalizer of SplitMix64: every bit of the input changes half of the output.
+u64 cromo_hash_bits(u64 x) {
+    x ^= x >> 30;
+    x *= 0xBF58476D1CE4E5B9ull;
+    x ^= x >> 27;
+    x *= 0x94D049BB133111EBull;
+    return x ^ (x >> 31);
+}
+
+// FNV-1a over the bytes, then mixed, so that the low bits depend on all of them.
+u64 cromo_hash_bytes(const u8* data, i64 size) {
+    u64 hash = 0xCBF29CE484222325ull;
+    for (i64 i = 0; i < size; ++i) {
+        hash ^= data[i];
+        hash *= 0x100000001B3ull;
+    }
+    return cromo_hash_bits(hash);
+}
+
+// ---- Numbers from text (D199) ----
+
+#define MAX_READ_DIGITS 800  // more than the 767 that can decide the rounding of an f64
+
+static i32 bigBitLength(const Big* a) {
+    if (a->used == 0) return 0;
+    return (a->used - 1) * 32 + bitLength(a->word[a->used - 1]);
+}
+
+// The text from `text` is `word`, in any case.
+static int sameWord(const u8* text, u64 size, const char* word) {
+    u64 i = 0;
+    for (; word[i]; ++i) {
+        if (i == size || (text[i] | 0x20) != (u8)word[i]) return 0;
+    }
+    return i == size;
+}
+
+// The nearest f64 (bits 64) or f32 (bits 32) to a text that the library has
+// already checked: [+|-] digits [. digits] [e [+|-] digits], inf, infinity or nan.
+// The value r / s is divided with big integers, so the rounding, half to even,
+// is always exact. Too large a value gives an infinity: the library reports it.
+double cromo_parse_float(const u8* text, u64 size, i64 bits) {
+    u64 i = 0;
+    int negative = 0;
+    if (i < size && (text[i] == '+' || text[i] == '-')) negative = text[i++] == '-';
+    double sign = negative ? -1.0 : 1.0;
+    if (sameWord(text + i, size - i, "nan")) return __builtin_nan("");
+    if (sameWord(text + i, size - i, "inf") || sameWord(text + i, size - i, "infinity")) return sign * __builtin_inf();
+
+    // value = digits * 10^exponent, the digits without the zeros in front.
+    u8 digits[MAX_READ_DIGITS];
+    i32 count = 0;
+    int dropped = 0;  // nonzero digits beyond the ones kept
+    i64 exponent = 0;
+    int point = 0;
+    for (; i < size && text[i] != 'e' && text[i] != 'E'; ++i) {
+        u8 c = text[i];
+        if (c == '.') {
+            point = 1;
+        } else if (count == 0 && c == '0') {
+            if (point) --exponent;
+        } else if (count < MAX_READ_DIGITS) {
+            digits[count++] = (u8)(c - '0');
+            if (point) --exponent;
+        } else {
+            dropped |= c != '0';
+            if (!point) ++exponent;
+        }
+    }
+    if (i < size) {
+        ++i;
+        int down = 0;
+        if (text[i] == '+' || text[i] == '-') down = text[i++] == '-';
+        i64 written = 0;
+        for (; i < size; ++i) {
+            if (written < 100000) written = written * 10 + (text[i] - '0');
+        }
+        exponent += down ? -written : written;
+    }
+    if (count == 0) return sign * 0.0;
+    if (count + exponent > 310) return sign * __builtin_inf();  // above 10^309
+    if (count + exponent < -330) return sign * 0.0;            // below 10^-330, half of the smallest
+
+    i32 mantissaBits = bits == 32 ? 24 : 53;
+    i32 minExponent = bits == 32 ? -149 : -1074;  // of the last bit of the subnormal numbers
+    i32 maxExponent = bits == 32 ? 127 : 1023;    // of the first bit of the largest number
+    Big r;
+    Big s;
+    bigSet(&r, 0);
+    for (i32 k = 0; k < count; ++k) {
+        bigMulSmall(&r, 10);
+        bigAddSmall(&r, digits[k]);
+    }
+    bigSet(&s, 1);
+    if (exponent >= 0) bigMulPow10(&r, (i32)exponent);
+    else bigMulPow10(&s, (i32)-exponent);
+
+    // q = floor(r / s / 2^t) gets at least two bits more than the mantissa; the
+    // subnormal numbers have fewer, down to the last bit and one to round.
+    i32 t = bigBitLength(&r) - bigBitLength(&s) - (mantissaBits + 2);
+    if (t < minExponent - 1) t = minExponent - 1;
+    if (t < 0) bigShiftLeft(&r, -t);
+    else bigShiftLeft(&s, t);
+    Big divisor = s;
+    bigShiftLeft(&divisor, 56);
+    u64 q = 0;
+    for (i32 b = 56; b >= 0; --b) {
+        q <<= 1;
+        if (bigCompare(&r, &divisor) >= 0) {
+            bigSubtract(&r, &divisor);
+            q |= 1;
+        }
+        bigShiftRightOne(&divisor);
+    }
+    int inexact = dropped || r.used > 0;
+    while (q >= (u64)1 << (mantissaBits + 1)) {  // the mantissa and the bit to round
+        inexact |= (int)(q & 1);
+        q >>= 1;
+        ++t;
+    }
+    u64 mantissa = q >> 1;
+    if ((q & 1) && (inexact || (mantissa & 1))) ++mantissa;
+    i32 last = t + 1;  // value = mantissa * 2^last
+    if (mantissa == (u64)1 << mantissaBits) {
+        mantissa >>= 1;
+        ++last;
+    }
+    if (mantissa == 0) return sign * 0.0;
+    if (last + bitLength(mantissa) - 1 > maxExponent) return sign * __builtin_inf();
+    int normal = mantissa >> (mantissaBits - 1) != 0;
+    if (bits == 32) {
+        u32 pattern = normal ? ((u32)(last + 23 + 127) << 23) | ((u32)mantissa & 0x7FFFFF) : (u32)mantissa;
+        if (negative) pattern |= 0x80000000u;
+        float value;
+        memcpy(&value, &pattern, sizeof value);
+        return value;
+    }
+    u64 pattern = normal ? ((u64)(last + 52 + 1023) << 52) | (mantissa & 0xFFFFFFFFFFFFFull) : mantissa;
+    if (negative) pattern |= (u64)1 << 63;
+    double value;
+    memcpy(&value, &pattern, sizeof value);
+    return value;
+}
+
 // ---- End of a print, exit and panic ----
 
 void cromo_print_end(i32 stream, i32 newline) {
@@ -973,6 +1180,16 @@ u64* cromo_initial_stack;
 i64 cromo_arg_count(void) { return (i64)cromo_initial_stack[0]; }
 
 const u8* cromo_arg_data(i64 index) { return (const u8*)cromo_initial_stack[1 + index]; }
+
+// The variables of the environment, "NAME=value" ended by a zero, after the
+// arguments on the initial stack; null after the last one.
+const u8* cromo_environment(i64 index) {
+    u64* entries = cromo_initial_stack + 2 + cromo_initial_stack[0];
+    for (i64 i = 0; i < index; ++i) {
+        if (!entries[i]) return 0;
+    }
+    return (const u8*)entries[index];
+}
 
 i64 cromo_arg_length(i64 index) {
     const u8* text = cromo_arg_data(index);

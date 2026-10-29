@@ -110,7 +110,7 @@
       "patterns": [
         {
           "name": "storage.type.primitive.cromo",
-          "match": "\\b(?:i8|i16|i32|i64|u8|u16|u32|u64|f32|f64|bool|char|void|string|list|Self|addr)\\b"
+          "match": "\\b(?:i8|i16|i32|i64|u8|u16|u32|u64|f32|f64|bool|char|void|string|list|map|Self|addr)\\b"
         },
         {
           "name": "variable.other.constant.cromo",
@@ -143,7 +143,7 @@
     },
     "operators": {
       "name": "keyword.operator.cromo",
-      "match": "\\+\\+|--|==|!=|<=|>=|&&|\\|\\||[-+*/%]=?|=|<|>|!"
+      "match": "\\+\\+|--|==|!=|<<=?|>>=?|<=|>=|&&|\\|\\||[-+*/%&|^]=?|=|<|>|!"
     }
   }
 }

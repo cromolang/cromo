@@ -24,6 +24,7 @@ struct TypeName {
     bool isFunction = false;
     std::vector<int> modes;          // ParamMode of each parameter
     std::vector<TypeName> result;    // the type returned; none: void
+    std::vector<int64_t> dimensions; // `i32[3][4]` (D196): {3, 4}, the type before them is the element
 };
 
 // A type parameter of a generic, with its constraints: `T : Comparable + Named` (D52).
@@ -123,7 +124,7 @@ struct UnaryExpr : Expr {
     ExprPtr operand;
 };
 
-enum class BinaryOp { Add, Sub, Mul, Div, Rem, Eq, Ne, Lt, Le, Gt, Ge, And, Or };
+enum class BinaryOp { Add, Sub, Mul, Div, Rem, Eq, Ne, Lt, Le, Gt, Ge, And, Or, BitAnd, BitOr, BitXor, Shl, Shr };
 
 struct BinaryExpr : Expr {
     BinaryExpr(SourceLocation l, BinaryOp o, ExprPtr a, ExprPtr b)
@@ -139,7 +140,8 @@ struct BinaryExpr : Expr {
 // only, the `unsafe` dialect (D37, D98).
 enum class Intrinsic {
     None, Panic, Alloc, Resize, Free, SizeOf, Offset, Take, Put, Destroy, CopyAt, CopyMemory, CompareMemory, CheckIndex,
-    ArgumentCount, ArgumentLength, ArgumentData,
+    ArgumentCount, ArgumentLength, ArgumentData, DecimalToFloat, HashBytes, SystemCall, Environment, ExitProcess,
+    HashNumber,  // `x.hash()` of a number or a bool (D198): made by the compiler, not named
 };
 
 // Pairs of arguments that must not be the same element of a list: when the
@@ -195,7 +197,7 @@ struct FormatPiece {
 struct PrintExpr : Expr {
     PrintExpr(SourceLocation l, int s, bool nl) : Expr(ExprKind::Print, l), stream(s), newline(nl) {}
 
-    int stream;    // 1 = stdout, 2 = stderr
+    int stream;    // 1 = stdout, 2 = stderr, 3 = a string for format (D200)
     bool newline;
     std::vector<FormatPiece> pieces;
     std::vector<ExprPtr> args;
@@ -272,6 +274,9 @@ struct IndexExpr : Expr {
 
     ExprPtr object;
     ExprPtr index;
+    // `m[k]` of a map (D197): the method of the library that gives the address of
+    // the value, valueOf or place. Set by sema.
+    const struct FunctionDecl* access = nullptr;
 };
 
 // `Shape.Circle(1.0)`, `Color.Red`: a value of an enum (D105), made by sema.
@@ -322,7 +327,7 @@ struct VarDeclStmt : Stmt {
     Variable* variable = nullptr;  // set by sema
 };
 
-enum class AssignOp { Assign, Add, Sub, Mul, Div, Rem };
+enum class AssignOp { Assign, Add, Sub, Mul, Div, Rem, BitAnd, BitOr, BitXor, Shl, Shr };
 
 struct AssignStmt : Stmt {
     AssignStmt(SourceLocation l, ExprPtr t, AssignOp o) : Stmt(StmtKind::Assign, l), target(std::move(t)), op(o) {}
@@ -372,6 +377,14 @@ struct ForStmt : Stmt {
     SourceLocation elementLoc;
     ExprPtr list;
     Variable* element = nullptr;  // set by sema
+
+    // A map: `for (K k, [ref] V v in m)` (D197); the key is the element.
+    bool hasValue = false;
+    bool valueIsRef = false;
+    TypeName valueType;
+    std::string valueName;
+    SourceLocation valueLoc;
+    Variable* value = nullptr;  // set by sema
 };
 
 // The data of a case, named in a `switch` (D107).
@@ -574,6 +587,9 @@ struct ModuleFile {
     std::string name;  // "geometry.shapes": the path of the module, in front of its symbols
     std::vector<ImportDecl> imports;
     bool isUnsafe = false;  // `import unsafe` (D127)
+    // `fs_windows.cro` next to `fs.cro` (D202): the file of the same module whose
+    // names it shares; -1 for a file that is a module by itself.
+    int part = -1;
 };
 
 // A capture of a lambda: `limit`, `ref total`, `move name` (D183).

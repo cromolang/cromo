@@ -1,0 +1,4 @@
+// platform on Windows (D202).
+string systemName() {
+    ret "windows"
+}

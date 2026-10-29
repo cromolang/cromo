@@ -1,0 +1,47 @@
+// Bitwise operators and shifts (D193-D195).
+// expect-output: 1|7|6|-6
+// expect-output: 250
+// expect-output: 3
+// expect-output: -4
+// expect-output: 2147483648
+// expect-output: 65280
+// expect-output: true
+// expect-output: 9
+// expect-output: 32
+// expect-output: 1
+// expect-output: 224
+// expect-output: 4
+// expect-exit: 3
+i32 main() {
+    i32 a = 5
+    i32 b = 3
+    println("{}|{}|{}|{}", a & b, a | b, a ^ b, !a)
+    u8 c = 5
+    println("{}", !c)
+    u8 mask = 0x0F
+    println("{}", mask & 3)
+    i32 negative = -7
+    println("{}", negative >> 1)
+    u32 high = u32(1) << 31
+    println("{}", high)
+    i64 flags = 0xFF << 8
+    println("{}", flags)
+    // D193: `&` binds more than `==`
+    println("{}", flags & 0xFF == 0)
+    i32 x = 1
+    x |= 8
+    println("{}", x)
+    x <<= 2
+    x >>= 0
+    x &= 0x7FFF_FFF0
+    println("{}", x - 4 * 0 + 4 - 4 & !0)
+    u8 bits = 1
+    bits ^= 0
+    println("{}", bits)
+    u8 top = 0b1110_0000
+    println("{}", top)
+    list<list<i32>> nested
+    i64 count = i64(16) >> u8(2)
+    println("{}", count)
+    ret b
+}

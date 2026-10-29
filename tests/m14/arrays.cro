@@ -1,0 +1,73 @@
+// Fixed-size arrays (D196).
+// expect-output: 0 0 0 0
+// expect-output: 1 4 9 16
+// expect-output: len 4
+// expect-output: sum 30
+// expect-output: copy 1 changed 100
+// expect-output: grid 12 5
+// expect-output: point 3 4
+// expect-output: doubled 2 8 18 32
+// expect-output: made 7 7 7
+// expect-output: field 10 20
+struct Point {
+    i32 x = 1
+    i32 y = 2
+}
+
+struct Shape {
+    string name
+    i32[2] corner
+}
+
+i32 sum(i32[4] values) {
+    i32 total = 0
+    for (i32 v in values) {
+        total += v
+    }
+    ret total
+}
+
+void double(ref i32[4] values) {
+    for (ref i32 v in values) {
+        v *= 2
+    }
+}
+
+i32[3] make(i32 value) {
+    i32[3] result
+    for (i64 i = 0; i < result.len(); i++) {
+        result[i] = value
+    }
+    ret result
+}
+
+i32 main() {
+    i32[4] a
+    println("{} {} {} {}", a[0], a[1], a[2], a[3])
+    for (i64 i = 0; i < a.len(); i++) {
+        a[i] = i32((i + 1) * (i + 1))
+    }
+    println("{} {} {} {}", a[0], a[1], a[2], a[3])
+    println("len {}", a.len())
+    println("sum {}", sum(a))
+    i32[4] b = a
+    b[0] = 100
+    println("copy {} changed {}", a[0], b[0])
+    i32[3][4] grid
+    grid[2][3] = 12
+    grid[0][1] = 5
+    println("grid {} {}", grid[2][3], grid[0][1])
+    Point[5] points
+    points[4].x = 3
+    points[4].y += 2
+    println("point {} {}", points[4].x, points[4].y)
+    double(ref a)
+    println("doubled {} {} {} {}", a[0], a[1], a[2], a[3])
+    i32[3] m = make(7)
+    println("made {} {} {}", m[0], m[1], m[2])
+    Shape shape
+    shape.corner[0] = 10
+    shape.corner[1] = 20
+    println("field {} {}", shape.corner[0], shape.corner[1])
+    ret 0
+}

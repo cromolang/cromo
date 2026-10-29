@@ -1,0 +1,38 @@
+// Arrays of values that need destruction (D196): moved, and destroyed element by element.
+// expect-output: start
+// expect-output: names: anna bruno
+// expect-output: moved 2
+// expect-output: drop 3
+// expect-output: drop 2
+// expect-output: drop 1
+// expect-output: end
+struct Noisy {
+    i32 id
+    ~Noisy() {
+        println("drop {}", id)
+    }
+}
+
+i64 count(string[2] names) {
+    ret names.len()
+}
+
+void noisy() {
+    Noisy[3] items
+    items[0].id = 1
+    items[1].id = 2
+    items[2].id = 3
+}
+
+i32 main() {
+    println("start")
+    string[2] names
+    names[0] = "anna"
+    names[1] = "bruno"
+    println("names: {} {}", names[0], names[1])
+    string[2] other = move names
+    println("moved {}", count(other))
+    noisy()
+    println("end")
+    ret 0
+}

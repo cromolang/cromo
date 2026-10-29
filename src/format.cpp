@@ -111,6 +111,8 @@ bool spaceBetween(const Token& a, const Token& b, bool aUnary, const std::set<si
     if (x == TokenKind::Dot || y == TokenKind::Dot) return false;
     bool xAngle = angles.count(a.begin) > 0;
     if (angles.count(b.begin)) return false;                     // `list<`, `string>`
+    // `>>` and `>>=` are two tokens next to each other (D193).
+    if (x == TokenKind::Greater && (y == TokenKind::Greater || y == TokenKind::GreaterEqual) && a.end == b.begin) return false;
     if (xAngle && x == TokenKind::Less) return false;            // `<string`
     if (xAngle) return y != TokenKind::LParen && y != TokenKind::LBracket;  // `list<string> args`, `max<Money>(a, b)`
     if (y == TokenKind::PlusPlus || y == TokenKind::MinusMinus) return false;

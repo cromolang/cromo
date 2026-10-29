@@ -1,0 +1,71 @@
+// std.time on Windows (D202): QueryPerformanceCounter, the system time, the zone
+// of the system, and a waitable timer of high resolution for the pauses.
+import unsafe
+
+struct SystemTime {
+    u16 year
+    u16 month
+    u16 weekday
+    u16 day
+    u16 hour
+    u16 minute
+    u16 second
+    u16 milliseconds
+}
+
+extern "kernel32" {
+    i32 QueryPerformanceCounter(ref i64 count)
+    i32 QueryPerformanceFrequency(ref i64 frequency)
+    void GetSystemTimePreciseAsFileTime(ref i64 time)
+    i32 FileTimeToSystemTime(ref i64 time, ref SystemTime system)
+    i32 SystemTimeToTzSpecificLocalTime(addr zone, ref SystemTime utc, ref SystemTime local)
+    i32 SystemTimeToFileTime(ref SystemTime system, ref i64 time)
+    i64 CreateWaitableTimerExW(addr attributes, addr name, u32 flags, u32 access)
+    i32 SetWaitableTimer(i64 timer, ref i64 due, i32 period, addr routine, addr argument, i32 resume)
+    u32 WaitForSingleObject(i64 handle, u32 milliseconds)
+    i32 CloseHandle(i64 handle)
+    void Sleep(u32 milliseconds)
+}
+
+i64 monotonic() {
+    i64 count = 0
+    i64 frequency = 1
+    QueryPerformanceCounter(ref count)
+    QueryPerformanceFrequency(ref frequency)
+    ret count / frequency * 1000000000 + count % frequency * 1000000000 / frequency
+}
+
+// A FILETIME counts 100 ns from 1601-01-01.
+i64 unixNanoseconds() {
+    i64 time = 0
+    GetSystemTimePreciseAsFileTime(ref time)
+    ret (time - 116444736000000000) * 100
+}
+
+i32 localOffset(i64 seconds) {
+    addr none
+    i64 utc = seconds * 10000000 + 116444736000000000
+    SystemTime system
+    SystemTime local
+    FileTimeToSystemTime(ref utc, ref system)
+    SystemTimeToTzSpecificLocalTime(none, ref system, ref local)
+    i64 moved = 0
+    SystemTimeToFileTime(ref local, ref moved)
+    ret i32((moved - utc) / 600000000)
+}
+
+void pause(i64 nanoseconds) {
+    if (nanoseconds <= 0) {
+        ret
+    }
+    addr none
+    i64 timer = CreateWaitableTimerExW(none, none, 2, 0x1F0003)  // HIGH_RESOLUTION, TIMER_ALL_ACCESS
+    if (timer == 0) {                                            // before Windows 10 1803: milliseconds
+        Sleep(u32((nanoseconds + 999999) / 1000000))
+        ret
+    }
+    i64 due = -((nanoseconds + 99) / 100)  // relative, in units of 100 ns
+    SetWaitableTimer(timer, ref due, 0, none, none, 0)
+    WaitForSingleObject(timer, 0xFFFFFFFF)
+    CloseHandle(timer)
+}

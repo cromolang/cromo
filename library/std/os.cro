@@ -1,0 +1,14 @@
+// The module std.os (D201): the system, its environment and the process. The
+// functions that differ are in os_windows.cro and os_linux.cro (D202):
+//   string name()             "windows" or "linux"
+//   string env(string name)   the value of a variable of the environment, "" without it
+//   bool hasEnv(string name)  whether the variable is set
+//   i64 processId()
+//   string currentFolder()
+import unsafe
+
+// Ends the program with `code`, after writing what was printed. The objects still
+// alive are not destroyed, as with exit() of C.
+public void exit(i32 code) {
+    exitProcess(code)
+}

@@ -88,7 +88,7 @@ int build(Compilation& compilation) {
     sources.push_back({"cromo:core.cro", std::string(cromo::coreLibrary())});
     cromo::Diagnostics diag(sources[0]);
     diag.addFile(sources[1]);
-    cromo::Module module = cromo::loadProgram(sources, diag);
+    cromo::Module module = cromo::loadProgram(sources, diag, options.target);
     if (diag.hasErrors() || !cromo::check(module, diag) || !cromo::checkMoves(module, diag)) return 1;
 
     // The libraries of the extern blocks, with their C functions checked in the DLLs (D136, D137, D143).

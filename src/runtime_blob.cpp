@@ -1,5 +1,7 @@
 #include "runtime_blob.h"
 
+#include <string>
+
 namespace cromo {
 
 namespace {
@@ -18,6 +20,15 @@ const unsigned char kLibrary[] = {
 #include "library_blob.inc"
 };
 
+struct Embedded {
+    const char* name;
+    const unsigned char* data;
+    size_t size;
+};
+
+// The modules of library/std (cmake/embed_modules.cmake).
+#include "library_modules.inc"
+
 }  // namespace
 
 std::string_view runtimeLibrary(Target target) {
@@ -27,6 +38,13 @@ std::string_view runtimeLibrary(Target target) {
 
 std::string_view coreLibrary() {
     return {reinterpret_cast<const char*>(kLibrary), sizeof kLibrary};
+}
+
+std::optional<std::string_view> libraryModule(const std::string& name) {
+    for (const Embedded& module : kModules) {
+        if (name == module.name) return std::string_view(reinterpret_cast<const char*>(module.data), module.size);
+    }
+    return std::nullopt;
 }
 
 }  // namespace cromo

@@ -1,0 +1,9 @@
+// An index outside an array is a panic (D30, D196).
+// expect-exit: 101
+// expect-stderr: panic: index out of bounds: the index is 4 but the length is 4 at
+i32 main() {
+    i32[4] a
+    i64 i = 4
+    a[i] = 1
+    ret 0
+}

@@ -1,0 +1,4 @@
+// Only on Linux: on Windows this module does not exist (D202).
+public i32 linuxOnly() {
+    ret 1
+}

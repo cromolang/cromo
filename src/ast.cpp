@@ -167,6 +167,11 @@ StmtPtr clone(const Stmt& stmt) {
         to->elementName = from.elementName;
         to->elementLoc = from.elementLoc;
         to->list = cloneOrNull(from.list);
+        to->hasValue = from.hasValue;
+        to->valueIsRef = from.valueIsRef;
+        to->valueType = from.valueType;
+        to->valueName = from.valueName;
+        to->valueLoc = from.valueLoc;
         return to;
     }
     case StmtKind::Switch: {

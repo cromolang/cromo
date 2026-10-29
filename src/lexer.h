@@ -31,6 +31,8 @@ enum class TokenKind {
     Assign, PlusAssign, MinusAssign, StarAssign, SlashAssign, PercentAssign,
     Equal, NotEqual, Less, LessEqual, Greater, GreaterEqual,
     AndAnd, OrOr, Not,
+    Amp, Pipe, Caret, ShiftLeft,                          // D193; `>>` is two `>` next to each other
+    AmpAssign, PipeAssign, CaretAssign, ShiftLeftAssign,
 };
 
 struct Token {

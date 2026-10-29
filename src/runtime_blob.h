@@ -2,6 +2,8 @@
 
 #include "target.h"
 
+#include <optional>
+#include <string>
 #include <string_view>
 
 namespace cromo {
@@ -13,5 +15,8 @@ std::string_view runtimeLibrary(Target target);
 // The source of the standard library (library/core.cro), compiled with every
 // program (D97).
 std::string_view coreLibrary();
+
+// A module of the library (library/std/), as "std/fs.cro" or "std/fs_linux.cro" (D201).
+std::optional<std::string_view> libraryModule(const std::string& name);
 
 }  // namespace cromo

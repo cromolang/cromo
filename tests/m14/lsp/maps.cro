@@ -1,0 +1,13 @@
+// lsp-hover: 9:17 string name
+// lsp-hover: 9:33 ref i32 age
+// lsp-completion: 8:10 contains, remove, len, copy, !valueOf, !place, !keys
+// Hover and completion with maps (D171, D197).
+i32 main() {
+    map<string, i32> ages
+    ages["anna"] = 30
+    ages.len()
+    for (string name, ref i32 age in ages) {
+        age += i32(name.len())
+    }
+    ret 0
+}

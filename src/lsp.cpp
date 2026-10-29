@@ -470,7 +470,7 @@ private:
         Diagnostics diag(analysis->sources[0]);
         diag.addFile(analysis->sources[1]);
         diag.collectInto(&analysis->messages);
-        analysis->module = loadProgram(analysis->sources, diag, &overlay);
+        analysis->module = loadProgram(analysis->sources, diag, Target::Windows, &overlay);
         if (!diag.hasErrors()) {
             analysis->checked = true;
             if (check(analysis->module, diag, requireMain)) checkMoves(analysis->module, diag);
@@ -648,6 +648,10 @@ private:
             if (reference.loc.file != file || reference.loc.line != at.line || reference.loc.column != at.column) continue;
             Type type = reference.type;
             if (type.isStruct()) members(*type.structDecl, file, items);
+            if (type.isArray()) {  // D196
+                items.push(item("len", 2, "i64 len()"));
+                if (!needsDestruction(type)) items.push(item("copy", 2, type.name() + " copy()"));
+            }
             if (type.isInterface()) {
                 for (const FunctionDecl& method : type.interfaceDecl->methods) items.push(item(method.name, 2, signatureOf(method)));
             }

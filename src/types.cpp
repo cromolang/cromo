@@ -29,6 +29,12 @@ std::string Type::name() const {
         if (!sig->result.isVoid()) text += " " + sig->result.name();
         return text;
     }
+    case TypeKind::Array: {  // i32[3][4]: three arrays of four
+        std::string dims;
+        Type inner = *this;
+        for (; inner.isArray(); inner = inner.array->element) dims += "[" + std::to_string(inner.array->count) + "]";
+        return inner.name() + dims;
+    }
     case TypeKind::SelfType: return "Self";
     case TypeKind::Addr: return "addr";
     case TypeKind::UntypedInt: return "integer literal";
@@ -67,7 +73,22 @@ bool convertsLosslessly(Type from, Type to) {
 
 // A function value owns its captured data (D184).
 bool needsDestruction(Type type) {
+    if (type.isArray()) return needsDestruction(type.array->element);
     return type.isParam() || type.isFunction() || (type.isStruct() && type.structDecl->needsDestruction);
+}
+
+const ArrayInfo* internArray(Type element, int64_t count) {
+    static std::deque<ArrayInfo> arrays;
+    for (const ArrayInfo& array : arrays) {
+        if (array.element == element && array.count == count) return &array;
+    }
+    arrays.push_back(ArrayInfo{element, count});
+    return &arrays.back();
+}
+
+Type baseElement(Type type) {
+    while (type.isArray()) type = type.array->element;
+    return type;
 }
 
 const FunctionSig* internSignature(const std::vector<Type>& params, const std::vector<ParamMode>& modes, Type result) {
@@ -80,6 +101,7 @@ const FunctionSig* internSignature(const std::vector<Type>& params, const std::v
 }
 
 bool isAbstract(Type type) {
+    if (type.isArray()) return isAbstract(type.array->element);
     return type.isParam() || type.kind == TypeKind::SelfType || (type.isStruct() && type.structDecl->isAbstract);
 }
 
@@ -92,6 +114,7 @@ int sizeOf(Type type) {
     case TypeKind::Interface:
     case TypeKind::Function: return 16;
     case TypeKind::Addr: return 8;
+    case TypeKind::Array: return static_cast<int>(type.array->count * sizeOf(type.array->element));
     default: return 0;
     }
 }
@@ -99,6 +122,7 @@ int sizeOf(Type type) {
 int alignOf(Type type) {
     if (type.isStruct()) return type.structDecl->align;
     if (type.isInterface() || type.isFunction()) return 8;
+    if (type.isArray()) return alignOf(type.array->element);
     int size = sizeOf(type);
     return size > 0 ? size : 1;
 }
@@ -114,6 +138,7 @@ std::string llvmType(Type type) {
     case TypeKind::Interface:
     case TypeKind::Function: return "{ ptr, ptr }";
     case TypeKind::Addr: return "ptr";
+    case TypeKind::Array: return "[" + std::to_string(type.array->count) + " x " + llvmType(type.array->element) + "]";
     default: return "<invalid>";
     }
 }

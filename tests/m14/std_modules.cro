@@ -1,0 +1,65 @@
+// The modules std.fs, std.time and std.os (D201, D202, D203).
+// expect-output: read: hello, 世界
+// expect-output: appended: hello, 世界!
+// expect-output: bytes 14
+// expect-output: listed 2 a.txt b.bin
+// expect-output: exists true false
+// expect-output: removed true
+// expect-output: caught cannot read 'm14_missing/none.txt': no such file or folder
+// expect-output: env set true
+// expect-output: slept true
+// expect-output: dates true true
+import std.fs
+import std.os
+import std.time
+
+i32 main() {
+    string folder = "m14_std_folder"
+    if (fs.exists(folder)) {
+        for (string name in fs.listFolder(folder)) {
+            fs.remove(folder.concat("/").concat(name))
+        }
+        fs.remove(folder)
+    }
+    fs.createFolder(folder)
+    string path = folder.concat("/a.txt")
+    fs.writeText(path, "hello, 世界")
+    println("read: {}", fs.readText(path))
+    fs.appendText(path, "!")
+    println("appended: {}", fs.readText(path))
+    println("bytes {}", fs.readBytes(path).len())
+    list<u8> raw
+    raw.add(0)
+    raw.add(255)
+    fs.writeBytes(folder.concat("/b.bin"), raw)
+    list<string> names = fs.listFolder(folder)
+    string first = names[0].copy()
+    string second = names[1].copy()
+    if (first == "b.bin") {
+        first = "a.txt"
+        second = "b.bin"
+    }
+    println("listed {} {} {}", names.len(), first, second)
+    println("exists {} {}", fs.isFolder(folder), fs.isFolder(path))
+    fs.remove(path)
+    fs.remove(folder.concat("/b.bin"))
+    fs.remove(folder)
+    println("removed {}", !fs.exists(folder))
+    try {
+        string text = fs.readText("m14_missing/none.txt")
+        println("{}", text)
+    } catch (Exception e) {
+        println("caught {}", e.message())
+    }
+
+    println("env set {}", os.hasEnv("PATH") && os.env("PATH").len() > 0 && !os.hasEnv("CROMO_NO_SUCH_VARIABLE"))
+    time.Instant start = time.now()
+    time.msleep(20)
+    time.usleep(1000)
+    time.Duration slept = start.elapsed()
+    println("slept {}", slept.milliseconds() >= 20 && slept.seconds() < 5.0)
+    time.DateTime utc = time.utcNow()
+    time.DateTime local = time.localNow()
+    println("dates {} {}", utc.year >= 2025 && utc.offset == 0, local.offset >= -720 && local.offset <= 840)
+    ret 0
+}

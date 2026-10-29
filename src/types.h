@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <vector>
@@ -10,6 +11,7 @@ struct StructDecl;
 struct InterfaceDecl;
 struct TypeParam;
 struct FunctionSig;
+struct ArrayInfo;
 
 enum class TypeKind {
     Error,         // a type error has already been reported
@@ -26,6 +28,7 @@ enum class TypeKind {
     UntypedInt,    // integer literal still waiting for its type (D55)
     UntypedFloat,  // floating-point literal still waiting for its type (D55)
     Function,      // `func(i32, i32) bool`: a pair of captured data and code (D185, D186)
+    Array,         // `i32[4]`: a fixed number of elements, kept where the array is (D196)
 };
 
 struct Type {
@@ -36,6 +39,7 @@ struct Type {
     const TypeParam* param = nullptr;        // Param
     const InterfaceDecl* interfaceDecl = nullptr;  // Interface
     const FunctionSig* sig = nullptr;              // Function, one for each signature
+    const ArrayInfo* array = nullptr;              // Array, one for each element type and count
 
     static Type error() { return {}; }
     static Type voidType() { return {TypeKind::Void, 0, false}; }
@@ -51,6 +55,9 @@ struct Type {
     static Type untypedInt() { return {TypeKind::UntypedInt, 0, false}; }
     static Type untypedFloat() { return {TypeKind::UntypedFloat, 0, false}; }
     static Type functionType(const FunctionSig* sig) { return {TypeKind::Function, 0, false, nullptr, nullptr, nullptr, sig}; }
+    static Type arrayType(const ArrayInfo* array) {
+        return {TypeKind::Array, 0, false, nullptr, nullptr, nullptr, nullptr, array};
+    }
 
     bool isError() const { return kind == TypeKind::Error; }
     bool isVoid() const { return kind == TypeKind::Void; }
@@ -62,6 +69,8 @@ struct Type {
     bool isParam() const { return kind == TypeKind::Param; }
     bool isInterface() const { return kind == TypeKind::Interface; }
     bool isFunction() const { return kind == TypeKind::Function; }
+    bool isArray() const { return kind == TypeKind::Array; }
+    bool isAggregate() const { return isStruct() || isArray(); }  // kept in memory
     bool isUntyped() const { return kind == TypeKind::UntypedInt || kind == TypeKind::UntypedFloat; }
 
     bool operator==(const Type&) const = default;
@@ -80,6 +89,17 @@ struct FunctionSig {
 };
 
 const FunctionSig* internSignature(const std::vector<Type>& params, const std::vector<ParamMode>& modes, Type result);
+
+// An array type: the same element type and count are always the same object (D196).
+struct ArrayInfo {
+    Type element;
+    int64_t count;
+};
+
+const ArrayInfo* internArray(Type element, int64_t count);
+
+// The type of the elements of the innermost array: i32 for i32[3][4].
+Type baseElement(Type type);
 
 // Built-in types that can be named in the source (D9, D46). `char` is u8.
 std::optional<Type> findBuiltinType(const std::string& name);

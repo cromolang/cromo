@@ -1,0 +1,77 @@
+// std.os on Windows (D202): the functions of kernel32, with the texts in UTF-16.
+import unsafe
+
+extern "kernel32" {
+    u32 GetEnvironmentVariableW(addr name, addr value, u32 size)
+    u32 GetCurrentProcessId()
+    u32 GetCurrentDirectoryW(u32 size, addr buffer)
+    i32 MultiByteToWideChar(u32 page, u32 flags, addr text, i32 size, addr wide, i32 wideSize)
+    i32 WideCharToMultiByte(u32 page, u32 flags, addr wide, i32 size, addr text, i32 textSize, addr fallback, addr used)
+}
+
+public string name() {
+    ret "windows"
+}
+
+public i64 processId() {
+    ret i64(GetCurrentProcessId())
+}
+
+public bool hasEnv(string name) {
+    addr none
+    addr key = wide(name)
+    u32 size = GetEnvironmentVariableW(key, none, 0)
+    free(key)
+    ret size > 0
+}
+
+public string env(string name) {
+    addr none
+    addr key = wide(name)
+    u32 size = GetEnvironmentVariableW(key, none, 0)
+    if (size == 0) {
+        free(key)
+        ret ""
+    }
+    addr buffer = alloc(i64(size) * 2)
+    u32 length = GetEnvironmentVariableW(key, buffer, size)
+    free(key)
+    string value = narrow(buffer, i32(length))
+    free(buffer)
+    ret value
+}
+
+public string currentFolder() {
+    addr none
+    u32 size = GetCurrentDirectoryW(0, none)
+    addr buffer = alloc(i64(size) * 2)
+    u32 length = GetCurrentDirectoryW(size, buffer)
+    string folder = narrow(buffer, i32(length))
+    free(buffer)
+    ret folder
+}
+
+// The text in UTF-16 with a zero at the end, for Windows: to be freed.
+addr wide(string text) {
+    addr none
+    i32 n = i32(text.len())
+    i32 size = MultiByteToWideChar(65001, 0, text.cstring(), n, none, 0) + 1
+    addr buffer = alloc(i64(size) * 2)
+    i32 written = MultiByteToWideChar(65001, 0, text.cstring(), n, buffer, size)
+    put<u16>(offset(buffer, i64(written) * 2), 0)
+    ret buffer
+}
+
+// `count` characters of UTF-16 as a string.
+string narrow(addr text, i32 count) {
+    addr none
+    if (count == 0) {
+        ret ""
+    }
+    i32 size = WideCharToMultiByte(65001, 0, text, count, none, 0, none, none)
+    addr buffer = alloc(i64(size))
+    WideCharToMultiByte(65001, 0, text, count, buffer, size, none, none)
+    string result = string(buffer, i64(size))
+    free(buffer)
+    ret result
+}

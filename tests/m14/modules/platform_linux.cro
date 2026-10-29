@@ -1,0 +1,4 @@
+// platform on Linux (D202).
+string systemName() {
+    ret "linux"
+}

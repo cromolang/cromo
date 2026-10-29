@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(cromo VERSION 0.13.0 LANGUAGES CXX)  # 0.milestone.fix (D157)
+project(cromo VERSION 0.14.0 LANGUAGES CXX)  # 0.milestone.fix (D157)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -92,6 +92,15 @@ add_custom_command(
   DEPENDS library/core.cro cmake/embed.cmake
   COMMENT "Embedding the Cromo standard library")
 
+# The modules of the library (D201), with their files for each system (D202).
+file(GLOB CROMO_STD_MODULES CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/library/std/*.cro")
+add_custom_command(
+  OUTPUT "${CROMO_RT_DIR}/library_modules.inc"
+  COMMAND "${CMAKE_COMMAND}" "-DFOLDER=${CMAKE_SOURCE_DIR}/library/std" "-DOUTPUT=${CROMO_RT_DIR}/library_modules.inc"
+          -P "${CMAKE_SOURCE_DIR}/cmake/embed_modules.cmake"
+  DEPENDS ${CROMO_STD_MODULES} cmake/embed_modules.cmake
+  COMMENT "Embedding the modules of the Cromo standard library")
+
 add_executable(cromo
   src/main.cpp
   src/ast.cpp
@@ -113,6 +122,7 @@ add_executable(cromo
   "${CROMO_RT_DIR}/runtime_blob.inc"
   "${CROMO_RT_DIR}/runtime_linux_blob.inc"
   "${CROMO_RT_DIR}/library_blob.inc"
+  "${CROMO_RT_DIR}/library_modules.inc"
 )
 
 target_include_directories(cromo PRIVATE "${CROMO_RT_DIR}")

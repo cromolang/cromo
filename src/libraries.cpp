@@ -1,5 +1,7 @@
 #include "libraries.h"
 
+#include "loader.h"
+
 #include <llvm/Object/COFF.h>
 #include <llvm/Object/ObjectFile.h>
 #include <llvm/Support/Error.h>
@@ -74,7 +76,7 @@ Libraries findLibraries(const Module& module, const std::deque<SourceFile>& sour
         auto use = std::find_if(uses.begin(), uses.end(), [&](const Use& u) { return u.name == function.library; });
         if (use == uses.end()) use = uses.insert(uses.end(), Use{function.library, {}, {}});
         use->functions.push_back(&function);
-        if (function.loc.file == kLibraryFile) continue;  // embedded in cromo: it has no folder
+        if (function.loc.file == kLibraryFile || isEmbedded(sources[function.loc.file].path)) continue;  // no folder
         fs::path folder = fs::absolute(sources[function.loc.file].path).parent_path();
         if (std::find(use->folders.begin(), use->folders.end(), folder) == use->folders.end()) {
             use->folders.push_back(folder);

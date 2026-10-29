@@ -1,0 +1,17 @@
+// lsp-hover: 10:17 i32[4] values
+// lsp-hover: 15:14 Point[2] points
+// lsp-definition: 15:5 6:8
+// lsp-completion: 11:16 len, copy, !add
+// Hover, definition and completion with arrays (D171, D196).
+struct Point {
+    i32 x
+}
+
+i64 size(i32[4] values) {
+    ret values.len()
+}
+
+i32 main() {
+    Point[2] points
+    ret i32(points.len())
+}

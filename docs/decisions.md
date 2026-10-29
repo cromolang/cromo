@@ -1091,22 +1091,107 @@ extern "kernel32" {
 ### D192. Where the data of a lambda are
 *2026-10-29.* As an argument, the data of a lambda are in the frame of the caller, and what they own is destroyed at the end of the statement. Otherwise they are on the heap, and the value frees them when it is destroyed. A lambda without captures has no data.
 
+### D193. The precedence of the bitwise operators
+*2026-10-29.* It resolves the point left open by D59. `&`, `|` and `^` bind more than the comparisons, as in Go and Rust: `flags & MASK == 0` is `(flags & MASK) == 0`, while in C it is `flags & (MASK == 0)`. From the strongest: `* / %`, `+ -`, `<< >>`, `&`, `^`, `|`, the comparisons, `&&`, `||`.
+
+### D194. The bitwise not is `!`
+*2026-10-29.* As in Rust, `!` negates a `bool` and inverts the bits of an integer. `~` stays only in front of the name of a destructor.
+
+### D195. Shifts beyond the width
+*2026-10-29.* As overflow (D30, D57): a count that is negative, or not smaller than the width of the type, as `x << 40` on an `i32`, is a panic in debug; in `--release` the count is taken modulo the width, without undefined behavior. `>>` keeps the sign of a signed integer.
+
+### D196. Fixed-size arrays
+*2026-10-29.* `i32[4] a`: the type before the name, as every type of Cromo. An array is a value, as a struct: it lives where it is declared, it is copied when its elements are simple, `a[i]` is checked (D30), `a.len()` is its size, and `for (i32 x in a)` visits it.
+
+### D197. `map`
+*2026-10-29.* It amends D13: `map<K, V>` is the second container of the library. It is used as a list: `m[k] = v` inserts or replaces, `m[k]` reads and is a panic if the key is missing, as an index out of a list (D30). Also `m.contains(k)`, `m.remove(k)` and `for (K k, V v in m)`.
+
+### D198. The keys of a map
+*2026-10-29.* A map is a hash table. Its keys are numbers, `bool`, `string` and the structs that implement the interface `Key`, with `hash()` and `equals()`. It amends D87: the built-in types implement `Key` by themselves.
+
+### D199. A number from a text
+*2026-10-29.* `i64("42")`, `f64("2.5")`: a conversion, as `i32(x)` (D33), for every integer type and for `f32` and `f64`. It throws an exception, as the errors of D16, when the text is not a valid number or the number does not fit in the type.
+
+### D200. Strings and bytes
+*2026-10-29.* `s[i]` is a byte, a `u8`, coherent with the length in bytes (D12). `s.bytes()` gives a `list<u8>`; `string(bytes)` checks the UTF-8 and throws an exception when it is not valid; `s.slice(from, to)` copies a part; `format("{}", x)` writes into a string, as `println` writes on the screen (D21).
+
+### D201. The library: a core and modules
+*2026-10-29.* The core stays visible everywhere without import: `list`, `string`, `map`, `format`, the numbers from texts. Files, time and the system are modules to import: `import std.fs`, `import std.time`, `import std.os`. It closes the point of D130 on the modules of `std`.
+
+### D202. Code for each system
+*2026-10-29.* As in Go: next to `fs.cro` there can be `fs_windows.cro` and `fs_linux.cro`, and `cromo` uses only the one of the system it compiles for. It holds for the library and for the modules of the programs.
+
+### D203. Time
+*2026-10-29.* A monotonic clock to measure (`Instant` and `Duration`), the date and the time in UTC and in the time zone of the system. On Linux the zone is read from `/etc/localtime`. To wait, as in C: `sleep(s)` in seconds, `msleep(ms)` in milliseconds and `usleep(us)` in microseconds.
+
+### D204. A string for C
+*2026-10-29.* It resolves the open point of M7. In the modules with `import unsafe`, `s.cstring()` gives a copy that ends with a zero, destroyed at the end of the statement: the C APIs want that zero, and the string does not change.
+
+### D205. Bitwise operators: assignments, counts and literals
+*2026-10-29.*
+- The compound assignments `&=`, `|=`, `^=`, `<<=` and `>>=`.
+- The count of a shift can be any integer type; the result has the type of the value shifted.
+- `1 << n` and `!0` take their type from where they are used, as the literals (D55).
+
+### D206. Arrays: size, dimensions, default values and copies
+*2026-10-29.*
+- The size is an integer literal, at least 1; an array takes at most 2 GB.
+- `i32[3][4]` is three arrays of four: `a[i][j]` has `i < 3` and `j < 4`, as in C.
+- Every element starts with its default value; there is no literal of an array yet.
+- An index that is a constant outside the array is a compile error.
+- An array of values that are not simple (D23) is moved, never copied: it has no `copy()`.
+- Arrays cannot be compared or printed yet.
+- A local array is on the stack, which is 1 MB on Windows: a large array goes in a `list`.
+
+### D207. Strings and bytes: read-only bytes, slices and the bytes of C
+*2026-10-29.*
+- `s[i]` is read-only: a string is changed by building a new one.
+- `s.slice(from, to)` is a panic when the bounds are outside the string, or when it cuts a character of UTF-8 in two.
+- `string(bytes)` throws an `Error` that says where the bytes stop being UTF-8.
+- In the modules with `import unsafe`, `string(data, length)` copies bytes from memory, with the same check: the opposite of `cstring()` (D204).
+
+### D208. Numbers from text: the texts accepted and the errors
+*2026-10-29.*
+- The text is the number alone, without spaces: an optional `+` or `-`, then decimal digits. For `f32` and `f64` also a decimal point and an exponent with `e` or `E`, and `inf`, `infinity` and `nan` in any case.
+- `u8("-0")` is 0; another negative number does not fit in an unsigned type.
+- The errors are `Error`, with messages as `'300' does not fit in u8` and `'abc' is not a valid i32`.
+- A float is the nearest to the text, rounded half to even, as `strtod` does.
+
+### D209. Map: missing keys, remove, order and the keys
+*2026-10-29.*
+- `m[k] = v`, `m[k] += v` and `m[k]++` add a missing key with the default value first, as `operator[]` of C++. Any other use of a missing key is a panic, also `m[k].add(x)`.
+- `m.remove(k)` gives `true` if the key was there; `m.copy()` copies the map, when keys and values can be copied.
+- `for (K k, ref V v in m)` can modify the values, never the keys. The order of the keys is not defined.
+- `hash()` gives a `u64`, and the numbers and `bool` have `hash()` and `equals()` by themselves. For the floats, `-0.0` and `0.0` are the same key, and a `nan` is never found.
+- `Key` uses `Self`, so it is only a constraint (D84): a number is a key only through a generic.
+
+### D210. Files for each system: modules of one system and the language server
+*2026-10-29.*
+- In a folder, `x_linux.cro` without `x.cro` is a module of its own, which exists only on Linux.
+- The language server analyzes the programs with the files of Windows.
+
+### D211. The first modules of the library: std.fs, std.time and std.os
+*2026-10-29.*
+- `std.fs`: `readText`, `readBytes`, `writeText`, `writeBytes`, `appendText`, `exists`, `isFolder`, `remove` (a file, or an empty folder), `createFolder` and `listFolder`. A whole file is read or written at once; an error is an `Error` as `cannot read 'notes.txt': no such file or folder`.
+- `std.time`: `now()` gives an `Instant`, with `elapsed()` and `since()`; a `Duration` has `nanoseconds`, `seconds()`, `milliseconds()` and `microseconds()`. `utcNow()` and `localNow()` give a `DateTime` with its fields, the offset in minutes and `text()` in ISO 8601. `sleep`, `msleep` and `usleep` take an integer.
+- `std.os`: `name()`, `env(name)`, which gives `""` for a variable that is not set, `hasEnv(name)`, `processId()`, `currentFolder()` and `exit(code)`.
+
+### D212. The library and the compiler: new built-in functions and embedded modules
+*2026-10-29.*
+- New built-in functions of the `unsafe` dialect: `systemCall` for Linux, whose arguments can be integers or addresses, `environment`, `exitProcess`, `decimalToFloat` and `hashBytes`.
+- The modules of the library are files `library/std/*.cro`, embedded in `cromo` as the core.
+
 ---
 ---
 
 ## Open
 
 The points still to be defined, each when its milestone needs it (D152):
-- bitwise operators (D59);
 - the interface for making user-defined types printable (D38);
-- fixed-size arrays (`i32[4]`);
 - the content of the standard library;
-- code that differs between Windows and Linux: in M9 the differences are only in the runtime in C, which has a version for each system. Files for each system, as in Go, are one option;
 - the model of threads (D149). Recommended: threads that end with the block that starts them, and can therefore use its variables with `ref`, as the scoped threads of Rust; a shared value with an atomic counter for the threads that live long; the data of a mutex reached with an anonymous function;
 - the model of I/O for servers (D150). Recommended: blocking calls on threads first, then lightweight tasks under the same API, as the virtual threads of Java; no `async`/`await`, which splits the functions in two kinds;
 - the TLS library (D150). Recommended: mbedTLS, compiled without libc and included in `cromo` like the runtime, with the root certificates of the system. The alternatives are OpenSSL, which needs libc, SChannel on Windows with another library on Linux, or TLS written in Cromo;
 - `cromo update` (D153): where the new versions are published, and how a download is checked before `cromo` replaces itself. Recommended: a signature of each version, checked with a public key contained in `cromo`, and on Windows the running `cromo.exe` renamed before the new one is written;
 - where the completion of the other names goes among the milestones (D171, D179);
-- reading floating-point numbers from text: the runtime only prints them (M14);
 - converting structs to JSON and back: fcl does it with a macro that lists the fields; Cromo needs either reflection at compile time or methods generated by the compiler, as `copy()` (D35) (M18);
-- passing strings to C: a `string` cannot reach C yet, because its bytes are private to the library. The options are a function of the library that makes a copy ending with a zero, for the modules with `import unsafe` (recommended: the C APIs want that zero, and the string does not change), or letting those modules read `data` and `length`.

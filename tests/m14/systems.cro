@@ -1,0 +1,12 @@
+// The files of a system next to a module (D202).
+// expect-output: true
+// expect-output: 42
+import std.os
+import modules.platform
+import modules.kit
+
+i32 main() {
+    println("{}", platform.greeting() == format("hello from {}", os.name()))
+    println("{}", kit.answer())
+    ret 0
+}

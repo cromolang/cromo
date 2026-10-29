@@ -1,0 +1,77 @@
+// Example 7: arrays, maps, bytes and numbers from text.
+//
+// Decided: bitwise operators and their precedence (D193-D195, D205), fixed-size
+//          arrays (D196, D206), map and the interface Key (D197, D198, D209):
+//          `m[k] += 1` adds a missing key, the order of a `for` over a map is
+//          not defined; numbers from text (D199, D208), strings and bytes,
+//          format (D200, D207)
+
+struct Cell : Key {
+    i32 row
+    i32 column
+
+    u64 hash() const {
+        ret row.hash() ^ column.hash() << 1
+    }
+
+    bool equals(Cell other) const {
+        ret row == other.row && column == other.column
+    }
+}
+
+i32 main() {
+    // A fixed-size array lives where it is declared, as a struct.
+    i32[3][3] board
+    board[1][1] = 5
+    i64 sum = 0
+    for (i32[3] row in board) {
+        for (i32 value in row) {
+            sum += value
+        }
+    }
+    println("{} cells, sum {}", board.len() * board[0].len(), sum)
+
+    // Counting words with a map: `+=` adds the missing ones.
+    map<string, i32> counts
+    list<string> words
+    words.add("red")
+    words.add("blue")
+    words.add("red")
+    for (string word in words) {
+        counts[word] += 1
+    }
+    for (string word, i32 count in counts) {
+        println("{}: {}", word, count)
+    }
+
+    map<Cell, string> names
+    Cell center
+    center.row = 1
+    center.column = 1
+    names[center] = "center"
+    println("{}", names[center])
+
+    // The bytes of a text, and flags with the bitwise operators.
+    string text = "Ciao, città"
+    u8 flags = 0
+    for (i64 i = 0; i < text.len(); i++) {
+        if (text[i] & 0x80 != 0) {
+            flags |= 1  // a byte of a character beyond ASCII
+        }
+    }
+    println("{} bytes, beyond ASCII: {}", text.len(), flags & 1 == 1)
+    println("{}", text.slice(6, text.len()))
+
+    // Numbers from text throw an exception when the text is not a number.
+    try {
+        i32 n = i32("42")
+        f64 x = f64("2.5e3")
+        string line = format("{} and {}", n, x)
+        println("{}", line)
+        i32 wrong = i32("4 2")
+        println("{}", wrong)
+    } catch (Exception e) {
+        println("{}", e.message())
+    }
+    ret 0
+}

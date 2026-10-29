@@ -40,6 +40,8 @@ bool continuesOnNextLine(TokenKind kind) {
     case TokenKind::PercentAssign: case TokenKind::Equal: case TokenKind::NotEqual:
     case TokenKind::Less: case TokenKind::LessEqual: case TokenKind::Greater:
     case TokenKind::GreaterEqual: case TokenKind::AndAnd: case TokenKind::OrOr: case TokenKind::Not:
+    case TokenKind::Amp: case TokenKind::Pipe: case TokenKind::Caret: case TokenKind::ShiftLeft:
+    case TokenKind::AmpAssign: case TokenKind::PipeAssign: case TokenKind::CaretAssign: case TokenKind::ShiftLeftAssign:
         return true;
     default:
         return false;
@@ -401,20 +403,28 @@ private:
         case '%': next == '=' ? two(TokenKind::PercentAssign) : one(TokenKind::Percent); return;
         case '=': next == '=' ? two(TokenKind::Equal) : one(TokenKind::Assign); return;
         case '!': next == '=' ? two(TokenKind::NotEqual) : one(TokenKind::Not); return;
-        case '<': next == '=' ? two(TokenKind::LessEqual) : one(TokenKind::Less); return;
+        case '<':
+            if (next == '<' && peek(2) == '=') {
+                advance();
+                two(TokenKind::ShiftLeftAssign);
+            } else if (next == '<') {
+                two(TokenKind::ShiftLeft);
+            } else {
+                next == '=' ? two(TokenKind::LessEqual) : one(TokenKind::Less);
+            }
+            return;
+        case '^': next == '=' ? two(TokenKind::CaretAssign) : one(TokenKind::Caret); return;
         case '>': next == '=' ? two(TokenKind::GreaterEqual) : one(TokenKind::Greater); return;
         case '&':
-            if (next == '&') {
-                two(TokenKind::AndAnd);
-                return;
-            }
-            break;
+            if (next == '&') two(TokenKind::AndAnd);
+            else if (next == '=') two(TokenKind::AmpAssign);
+            else one(TokenKind::Amp);
+            return;
         case '|':
-            if (next == '|') {
-                two(TokenKind::OrOr);
-                return;
-            }
-            break;
+            if (next == '|') two(TokenKind::OrOr);
+            else if (next == '=') two(TokenKind::PipeAssign);
+            else one(TokenKind::Pipe);
+            return;
         default:
             break;
         }
@@ -484,6 +494,14 @@ std::string describe(TokenKind kind) {
     case TokenKind::AndAnd: return "'&&'";
     case TokenKind::OrOr: return "'||'";
     case TokenKind::Not: return "'!'";
+    case TokenKind::Amp: return "'&'";
+    case TokenKind::Pipe: return "'|'";
+    case TokenKind::Caret: return "'^'";
+    case TokenKind::ShiftLeft: return "'<<'";
+    case TokenKind::AmpAssign: return "'&='";
+    case TokenKind::PipeAssign: return "'|='";
+    case TokenKind::CaretAssign: return "'^='";
+    case TokenKind::ShiftLeftAssign: return "'<<='";
     default:
         for (const auto& [word, k] : keywords()) {
             if (k == kind) return "'" + word + "'";

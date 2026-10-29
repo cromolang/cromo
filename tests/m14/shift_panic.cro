@@ -1,0 +1,9 @@
+// A shift beyond the width is a panic in debug (D195).
+// expect-exit: 101
+// expect-stderr: shift count out of the width of i32 (D195)
+i32 main() {
+    i32 n = 40
+    i32 x = 1 << n
+    println("{}", x)
+    ret 0
+}

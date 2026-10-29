@@ -22,7 +22,7 @@ constexpr int kMaxPrecision = 500;
 enum class Flow { Continues, Returns, Jumps };
 
 bool isPrintFunction(const std::string& name) {
-    return name == "print" || name == "println" || name == "eprint" || name == "eprintln";
+    return name == "print" || name == "println" || name == "eprint" || name == "eprintln" || name == "format";
 }
 
 // The functions that every program can call without declaring them (D38, D102).
@@ -37,6 +37,9 @@ std::optional<Intrinsic> findIntrinsic(const std::string& name) {
         {"copyMemory", Intrinsic::CopyMemory}, {"compareMemory", Intrinsic::CompareMemory},
         {"checkIndex", Intrinsic::CheckIndex}, {"argumentCount", Intrinsic::ArgumentCount},
         {"argumentLength", Intrinsic::ArgumentLength}, {"argumentData", Intrinsic::ArgumentData},
+        {"decimalToFloat", Intrinsic::DecimalToFloat}, {"hashBytes", Intrinsic::HashBytes},
+        {"systemCall", Intrinsic::SystemCall}, {"environment", Intrinsic::Environment},
+        {"exitProcess", Intrinsic::ExitProcess},
     };
     auto found = intrinsics.find(name);
     if (found == intrinsics.end()) return std::nullopt;
@@ -51,9 +54,11 @@ bool withoutData(const StructDecl& decl) {
     return true;
 }
 
+bool isBitwise(BinaryOp op) { return op == BinaryOp::BitAnd || op == BinaryOp::BitOr || op == BinaryOp::BitXor; }
+
 bool isArithmetic(BinaryOp op) {
     return op == BinaryOp::Add || op == BinaryOp::Sub || op == BinaryOp::Mul || op == BinaryOp::Div ||
-           op == BinaryOp::Rem;
+           op == BinaryOp::Rem || isBitwise(op);
 }
 
 const char* spelling(BinaryOp op) {
@@ -71,6 +76,11 @@ const char* spelling(BinaryOp op) {
     case BinaryOp::Ge: return ">=";
     case BinaryOp::And: return "&&";
     case BinaryOp::Or: return "||";
+    case BinaryOp::BitAnd: return "&";
+    case BinaryOp::BitOr: return "|";
+    case BinaryOp::BitXor: return "^";
+    case BinaryOp::Shl: return "<<";
+    case BinaryOp::Shr: return ">>";
     }
     return "?";
 }
@@ -83,10 +93,12 @@ bool isUntypedLiteral(const Expr& expr) {
     case ExprKind::FloatLiteral: return true;
     case ExprKind::Unary: {
         const auto& unary = static_cast<const UnaryExpr&>(expr);
-        return unary.op == UnaryOp::Negate && isUntypedLiteral(*unary.operand);
+        if (unary.op == UnaryOp::Not) return unary.operand->kind != ExprKind::FloatLiteral && isUntypedLiteral(*unary.operand);
+        return isUntypedLiteral(*unary.operand);
     }
-    case ExprKind::Binary: {
+    case ExprKind::Binary: {  // a shift takes the type of what it shifts (D195)
         const auto& binary = static_cast<const BinaryExpr&>(expr);
+        if (binary.op == BinaryOp::Shl || binary.op == BinaryOp::Shr) return isUntypedLiteral(*binary.lhs);
         return isArithmetic(binary.op) && isUntypedLiteral(*binary.lhs) && isUntypedLiteral(*binary.rhs);
     }
     default: return false;
@@ -112,7 +124,7 @@ bool isConstantLiteral(const Expr& expr) {
 bool isTemporary(const Expr& expr) {
     return expr.kind == ExprKind::Construct || expr.kind == ExprKind::Call || expr.kind == ExprKind::MethodCall ||
            expr.kind == ExprKind::StringLiteral || expr.kind == ExprKind::EnumCase || expr.kind == ExprKind::Lambda ||
-           expr.kind == ExprKind::CallValue;
+           expr.kind == ExprKind::CallValue || expr.kind == ExprKind::Print;  // format gives a new string
 }
 
 // A variable, or a field or an element (D35) of a variable or of the object of a method.
@@ -251,6 +263,8 @@ public:
         ModuleScope& library = modules_[kLibraryFile];
         stringDecl_ = library.structs.count("string") ? library.structs["string"] : nullptr;
         listDecl_ = library.structs.count("list") ? library.structs["list"] : nullptr;
+        mapDecl_ = library.structs.count("map") ? library.structs["map"] : nullptr;
+        keyInterface_ = library.interfaces.count("Key") ? library.interfaces["Key"] : nullptr;
         exceptionDecl_ = library.interfaces.count("Exception") ? library.interfaces["Exception"] : nullptr;
         declareInterfaces();
         declareTypeParams();
@@ -319,7 +333,7 @@ private:
     void declareNames() {
         modules_.resize(std::max<size_t>(module_.files.size(), kLibraryFile + 1));
         for (InterfaceDecl& decl : module_.interfaces) {
-            ModuleScope& scope = modules_[decl.loc.file];
+            ModuleScope& scope = modules_[scopeOf(decl.loc.file)];
             decl.symbol = symbolFor(decl.loc, decl.name);
             if (scope.interfaces.count(decl.name)) {
                 diag_->error(decl.loc, "interface '" + decl.name + "' is already defined");
@@ -330,7 +344,7 @@ private:
             }
         }
         for (StructDecl& decl : module_.structs) {
-            ModuleScope& scope = modules_[decl.loc.file];
+            ModuleScope& scope = modules_[scopeOf(decl.loc.file)];
             decl.symbol = symbolFor(decl.loc, decl.name);
             if (scope.structs.count(decl.name)) {
                 diag_->error(decl.loc, "struct '" + decl.name + "' is already defined");
@@ -343,7 +357,7 @@ private:
             }
         }
         for (FunctionDecl& function : module_.functions) {
-            ModuleScope& scope = modules_[function.loc.file];
+            ModuleScope& scope = modules_[scopeOf(function.loc.file)];
             function.symbol = function.isExtern ? function.name : symbolFor(function.loc, function.name);
             if (scope.functions.count(function.name)) {
                 diag_->error(function.loc, "function '" + function.name + "' is already defined");
@@ -369,6 +383,13 @@ private:
         return module.empty() ? name : module + "." + name;
     }
 
+    // The file whose names a file shares: itself, or the one without the suffix of
+    // the system for `fs_windows.cro` (D202).
+    int scopeOf(int file) const {
+        int part = fileOf(file).part;
+        return part >= 0 ? part : file;
+    }
+
     // D127: the module wrote `import unsafe`.
     bool isUnsafe(SourceLocation loc) const { return fileOf(loc.file).isUnsafe; }
 
@@ -387,7 +408,7 @@ private:
     T* findDecl(std::map<std::string, T*> ModuleScope::*table, const std::string& name, SourceLocation at,
                 const std::string& module = {}) {
         if (module.empty()) {
-            auto& own = modules_[at.file].*table;
+            auto& own = modules_[scopeOf(at.file)].*table;
             auto found = own.find(name);
             if (found != own.end()) return found->second;
         }
@@ -396,7 +417,7 @@ private:
         for (const ImportDecl& import : fileOf(at.file).imports) {
             if (!module.empty() && import.qualifier() != module) continue;
             for (int file : import.files) {
-                auto& names = modules_[file].*table;
+                auto& names = modules_[scopeOf(file)].*table;
                 auto found = names.find(name);
                 if (found == names.end() || !found->second->isPublic || found->second == result) continue;
                 if (result) {
@@ -425,7 +446,7 @@ private:
         for (const ImportDecl& import : fileOf(at.file).imports) {
             if (!module.empty() && import.qualifier() != module) continue;
             for (int file : import.files) {
-                const ModuleScope& scope = modules_[file];
+                const ModuleScope& scope = modules_[scopeOf(file)];
                 if (scope.structs.count(name) || scope.interfaces.count(name) || scope.functions.count(name)) {
                     return import.qualifier();
                 }
@@ -438,7 +459,7 @@ private:
     // public. The methods that implement an interface can be called through it
     // anyway, so they need no `public`.
     bool visible(bool isPublic, const StructDecl& owner, SourceLocation at) const {
-        return isPublic || owner.loc.file == at.file;
+        return isPublic || scopeOf(owner.loc.file) == scopeOf(at.file);
     }
 
     bool memberVisible(const FunctionDecl& member, const StructDecl& owner, SourceLocation at) {
@@ -536,7 +557,8 @@ private:
         std::string key = pointer(generic);
         for (Type arg : args) {
             key += "|" + std::to_string(static_cast<int>(arg.kind)) + ":" + std::to_string(arg.bits) + ":" +
-                   std::to_string(arg.isSigned) + ":" + pointer(arg.structDecl) + ":" + pointer(arg.param);
+                   std::to_string(arg.isSigned) + ":" + pointer(arg.structDecl) + ":" + pointer(arg.param) + ":" +
+                   pointer(arg.sig) + ":" + pointer(arg.array);
         }
         return key;
     }
@@ -557,6 +579,7 @@ private:
 
     // Whether a type implements an interface, as a constraint requires (D52, D87).
     bool satisfies(Type type, const InterfaceDecl* iface) {
+        if (iface == keyInterface_ && (type.isNumeric() || type.isBool())) return true;  // D198
         std::vector<const InterfaceDecl*> list;
         if (type.isStruct()) list = implementsOf(*type.structDecl);
         if (type.isParam()) list = type.param->interfaces;
@@ -694,7 +717,28 @@ private:
         return type;
     }
 
+    // `i32[3][4]` (D196): three arrays of four i32, so that `a[i][j]` has i < 3 and j < 4.
     std::optional<Type> resolveTypeName(const TypeName& name) {
+        std::optional<Type> type = resolveNamedType(name);
+        if (!type || name.dimensions.empty()) return type;
+        if (type->isVoid() || type->kind == TypeKind::SelfType || type->isInterface()) {
+            diag_->error(name.loc, "an array cannot have elements of type " + type->name() + " (D196)");
+            return std::nullopt;
+        }
+        for (size_t i = name.dimensions.size(); i-- > 0;) {
+            int64_t count = name.dimensions[i];
+            int64_t element = sizeOf(*type);
+            if (count < 1 || count > INT32_MAX || (element > 0 && count > INT32_MAX / element)) {
+                diag_->error(name.loc, count < 1 ? "an array has at least one element (D196)"
+                                                 : "this array is too large: an array takes at most 2 GB (D196)");
+                return std::nullopt;
+            }
+            type = Type::arrayType(internArray(*type, count));
+        }
+        return type;
+    }
+
+    std::optional<Type> resolveNamedType(const TypeName& name) {
         if (name.isFunction) {  // D185
             std::vector<Type> params;
             std::vector<ParamMode> modes;
@@ -973,8 +1017,9 @@ private:
         int align = 1;
         for (FieldDecl& field : fields) {
             Type type = field.resolved;
-            if (type.isStruct()) {
-                auto* inner = const_cast<StructDecl*>(type.structDecl);
+            Type base = baseElement(type);
+            if (base.isStruct()) {
+                auto* inner = const_cast<StructDecl*>(base.structDecl);
                 if (layoutState_[inner] == 1) {
                     diag_->error(field.loc, std::string(decl.isEnum ? "enum '" : "struct '") + decl.name +
                                                 "' contains itself through " + (decl.isEnum ? "the data '" : "field '") + field.name +
@@ -984,9 +1029,10 @@ private:
                 }
                 completeStruct(*inner);
                 layout(*inner);
-                destruct = destruct || inner->needsDestruction;
             }
-            if (type.isParam()) destruct = true;  // it may need destruction: decided by each instance
+            // A parameter may need destruction: decided by each instance. A function
+            // value owns its data (D184).
+            destruct = destruct || needsDestruction(type);
             if (type.isError()) continue;
             offset = alignUp(offset, alignOf(type)) + sizeOf(type);
             align = std::max(align, alignOf(type));
@@ -1124,6 +1170,7 @@ private:
     // A number, or a struct of numbers: the same layout in C (D74, D129).
     static bool isCPointee(Type type) {
         if (type.isNumeric() || type.isBool()) return true;
+        if (type.isArray()) return isCPointee(type.array->element);
         if (!type.isStruct() || type.structDecl->isEnum || type.structDecl->needsDestruction) return false;
         for (const FieldDecl& field : type.structDecl->fields) {
             if (!isCPointee(field.resolved)) return false;
@@ -1163,6 +1210,7 @@ private:
     // D132: what a public declaration shows must be public too, or the modules that
     // use it could not name it.
     void checkExposed(Type type, SourceLocation loc, const std::string& what) {
+        type = baseElement(type);
         if (type.isStruct()) {
             const StructDecl* decl = type.structDecl;
             for (Type arg : decl->typeArgs) checkExposed(arg, loc, what);
@@ -1333,8 +1381,11 @@ private:
         }
         case ExprKind::Field:
             return readOnlyReason(*static_cast<const FieldExpr&>(expr).object);  // const is deep (D24)
-        case ExprKind::Index:
-            return readOnlyReason(*static_cast<const IndexExpr&>(expr).object);
+        case ExprKind::Index: {
+            const Expr& object = *static_cast<const IndexExpr&>(expr).object;
+            if (isString(object.type)) return "the bytes of a string are read-only: build a new string (D200)";
+            return readOnlyReason(object);
+        }
         case ExprKind::Self:
             if (current_->isConst) return "method '" + current_->name + "' is const and cannot modify the fields (D24)";
             return "";
@@ -1345,6 +1396,7 @@ private:
 
     // Checks the target of an assignment, `++` or `--`. Returns its type, or an error.
     Type checkTarget(ExprPtr& target) {
+        insertTarget_ = true;  // `m[k] = v` adds the key (D197)
         Type type = checkExpr(target, std::nullopt);
         if (type.isError()) return type;
         if (!isPlace(*target)) {
@@ -1387,6 +1439,7 @@ private:
     // A struct can be copied if it has copy(), or if the compiler can generate it (D35).
     bool canCopy(Type type) const {
         if (type.isFunction()) return false;  // it owns its captured data (D184)
+        if (type.isArray()) return !needsDestruction(type);  // only arrays of simple values
         if (!type.isStruct()) return true;
         const StructDecl& decl = *type.structDecl;
         if (decl.methods.count("copy")) return true;
@@ -1600,6 +1653,18 @@ private:
             }
             if (assign.op == AssignOp::Rem && !type.isInt()) {
                 diag_->error(assign.loc, "'%' only works on integers (D59)");
+                return;
+            }
+            if (assign.op >= AssignOp::BitAnd && !type.isInt()) {
+                diag_->error(assign.loc, "the bitwise operators only work on integers (D193)");
+                return;
+            }
+            if (assign.op == AssignOp::Shl || assign.op == AssignOp::Shr) {  // the count is any integer (D195)
+                Type count = checkExpr(assign.value, type);
+                if (count.isUntyped() && !coerce(assign.value, type)) return;
+                if (!count.isError() && !count.isInt() && !count.isUntyped()) {
+                    diag_->error(assign.loc, "the count of a shift is an integer, found " + count.name() + " (D195)");
+                }
                 return;
             }
         }
@@ -1976,11 +2041,18 @@ private:
         Type list = checkExpr(statement.list, std::nullopt);
         Type element = resolveType(statement.elementType).value_or(Type::error());
         bool ok = !list.isError() && !element.isError();
-        if (ok && !isList(list)) {
-            diag_->error(statement.list->loc, "'for' goes over the elements of a list, found " + list.name() + " (D25)");
+        if (ok && isMap(list)) return checkForMap(statement, list, element);
+        if (ok && statement.hasValue) {
+            diag_->error(statement.valueLoc, "only a 'for' over a map has a key and a value (D197)");
+            ok = false;
+        }
+        if (ok && !isList(list) && !list.isArray()) {
+            diag_->error(statement.list->loc, "'for' goes over the elements of a list or of an array, found " + list.name() +
+                                                  " (D25)");
             ok = false;
         } else if (ok && element != elementOf(list)) {
-            diag_->error(statement.elementType.loc, "the elements of this list are " + elementOf(list).name() + ": write for (" +
+            diag_->error(statement.elementType.loc, std::string("the elements of this ") + (list.isArray() ? "array" : "list") +
+                                                        " are " + elementOf(list).name() + ": write for (" +
                                                         std::string(statement.isRef ? "ref " : "") + elementOf(list).name() +
                                                         " " + statement.elementName + " in ...) (D101)");
             ok = false;
@@ -1998,6 +2070,62 @@ private:
         Variable* variable = declare(statement.elementName, ok ? element : Type::error(), statement.elementLoc, !statement.isRef);
         if (variable) variable->kind = VariableKind::Element;
         statement.element = variable;
+
+        std::optional<Path> path = pathOf(*statement.list);
+        if (path) loopBorrows_.push_back({*path, "while a 'for' goes over the elements of '" + placeText(*statement.list) + "' (D101)"});
+        loops_.push_back(false);
+        checkBlock(statement.body);
+        loops_.pop_back();
+        if (path) loopBorrows_.pop_back();
+        scopes_.pop_back();
+        return Flow::Continues;
+    }
+
+    // `for (K k, [ref] V v in m)` (D197): the keys are read-only, the map cannot
+    // change while the loop goes over it (D101).
+    Flow checkForMap(ForStmt& statement, Type map, Type key) {
+        Type keyType = map.structDecl->typeArgs[0];
+        Type valueType = map.structDecl->typeArgs[1];
+        bool ok = true;
+        Type value = Type::error();
+        if (!statement.hasValue) {
+            diag_->error(statement.elementLoc, "a 'for' over a map names the key and the value: for (" + keyType.name() + " " +
+                                                   statement.elementName + ", " + valueType.name() + " v in ...) (D197)");
+            ok = false;
+        } else {
+            value = resolveType(statement.valueType).value_or(Type::error());
+            ok = !value.isError();
+        }
+        if (ok && statement.isRef) {
+            diag_->error(statement.elementLoc, "the keys of a map are read-only: only the value can be 'ref' (D197)");
+            ok = false;
+        }
+        if (ok && (key != keyType || value != valueType)) {
+            diag_->error(statement.elementType.loc, "the keys of this map are " + keyType.name() + " and the values " +
+                                                        valueType.name() + ": write for (" + keyType.name() + " " +
+                                                        statement.elementName + ", " + (statement.valueIsRef ? "ref " : "") +
+                                                        valueType.name() + " " + statement.valueName + " in ...) (D197)");
+            ok = false;
+        }
+        if (ok && statement.valueIsRef) {
+            std::string reason = isPlace(*statement.list) ? readOnlyReason(*statement.list)
+                                                          : "only the values of a variable or of a field can be modified";
+            if (!reason.empty()) {
+                diag_->error(statement.list->loc, "cannot modify the values: " + reason);
+                ok = false;
+            } else if (!checkNotBorrowed(*statement.list, statement.list->loc)) {
+                ok = false;
+            }
+        }
+        Variable* variable = declare(statement.elementName, ok ? keyType : Type::error(), statement.elementLoc, true);
+        if (variable) variable->kind = VariableKind::Element;
+        statement.element = variable;
+        if (statement.hasValue) {
+            Variable* second = declare(statement.valueName, ok ? valueType : Type::error(), statement.valueLoc,
+                                       !statement.valueIsRef);
+            if (second) second->kind = VariableKind::Element;
+            statement.value = second;
+        }
 
         std::optional<Path> path = pathOf(*statement.list);
         if (path) loopBorrows_.push_back({*path, "while a 'for' goes over the elements of '" + placeText(*statement.list) + "' (D101)"});
@@ -2097,6 +2225,7 @@ private:
         // Only the expression that coerceValue is checking may be a `move`.
         bool moveAllowed = std::exchange(moveAllowed_, false);
         bool lambdaArgument = std::exchange(lambdaArgument_, false);
+        bool insertTarget = std::exchange(insertTarget_, false);
         switch (expr->kind) {
         case ExprKind::Lambda: return checkLambda(static_cast<LambdaExpr&>(*expr), lambdaArgument);
         case ExprKind::CallValue: return checkCallValue(expr);
@@ -2107,7 +2236,7 @@ private:
             if (stringDecl_) return Type::structType(stringDecl_);  // D100
             diag_->error(expr->loc, "the standard library has no string");
             return Type::error();
-        case ExprKind::Index: return checkIndex(static_cast<IndexExpr&>(*expr));
+        case ExprKind::Index: return checkIndex(static_cast<IndexExpr&>(*expr), insertTarget);
         case ExprKind::Name: return checkName(expr);
         case ExprKind::Unary: return checkUnary(expr, expected);
         case ExprKind::Binary: return checkBinary(expr, expected);
@@ -2493,6 +2622,11 @@ private:
             return object;
         }
         if (object.isParam() || object.isInterface()) return checkInterfaceCall(call, object);
+        if (object.isArray()) return checkArrayMethod(expr, object);
+        if ((object.isNumeric() || object.isBool()) && (call.method == "hash" || call.method == "equals")) {
+            return checkKeyMethod(expr, object);
+        }
+        if (isString(object) && call.method == "cstring") return checkCString(expr);
         if (!object.isStruct()) {
             diag_->error(call.loc, "a " + object.name() + " has no methods");
             return Type::error();
@@ -2542,6 +2676,88 @@ private:
         return method->resolvedReturn;
     }
 
+    // `s.cstring()` (D204): the address of a copy that ends with a zero, a
+    // temporary of the library destroyed at the end of the statement.
+    Type checkCString(ExprPtr& expr) {
+        auto& call = static_cast<MethodCallExpr&>(*expr);
+        if (!isUnsafe(call.loc)) {
+            diag_->error(call.loc, "cstring() is for the C functions: the module must write 'import unsafe' (D204)");
+            return Type::error();
+        }
+        if (!call.args.empty()) {
+            diag_->error(call.loc, "cstring() takes no arguments");
+            checkIgnored(call.args);
+            return Type::error();
+        }
+        SourceLocation loc = call.loc;
+        FunctionDecl* copy = stringDecl_->methods.at("zeroEnded");
+        use(copy, loc);
+        noteCall(copy, loc);
+        auto made = std::make_unique<MethodCallExpr>(loc, std::move(call.object), "zeroEnded");
+        made->function = copy;
+        made->type = copy->resolvedReturn;
+        auto data = std::make_unique<FieldExpr>(loc, std::move(made), "data");
+        data->index = 0;
+        data->type = Type::addrType();
+        expr = std::move(data);
+        return Type::addrType();
+    }
+
+    // The numbers and bool are keys by themselves (D198): `x.hash()` is computed by
+    // the compiler, `x.equals(y)` is `x == y`.
+    Type checkKeyMethod(ExprPtr& expr, Type object) {
+        auto& call = static_cast<MethodCallExpr&>(*expr);
+        size_t expected = call.method == "hash" ? 0 : 1;
+        if (call.args.size() != expected) {
+            diag_->error(call.loc, call.method + "() takes " + (expected ? "one argument" : "no arguments"));
+            checkIgnored(call.args);
+            return Type::error();
+        }
+        SourceLocation loc = call.loc;
+        if (call.method == "hash") {
+            auto hash = std::make_unique<CallExpr>(loc, "hash");
+            hash->intrinsic = Intrinsic::HashNumber;
+            hash->args.push_back(std::move(call.object));
+            expr = std::move(hash);
+            return Type::intType(64, false);
+        }
+        if (!coerce(call.args[0], object)) return Type::error();
+        auto equal = std::make_unique<BinaryExpr>(loc, BinaryOp::Eq, std::move(call.object), std::move(call.args[0]));
+        equal->operandType = object;
+        expr = std::move(equal);
+        return Type::boolType();
+    }
+
+    // `a.len()` is the size written in the type, `a.copy()` a copy of an array of
+    // simple values (D196).
+    Type checkArrayMethod(ExprPtr& expr, Type object) {
+        auto& call = static_cast<MethodCallExpr&>(*expr);
+        if (call.method != "len" && call.method != "copy") {
+            diag_->error(call.loc, "an array has only len() and copy(), not '" + call.method + "' (D196)");
+            return Type::error();
+        }
+        if (!call.args.empty()) {
+            diag_->error(call.loc, call.method + "() takes no arguments");
+            checkIgnored(call.args);
+            return Type::error();
+        }
+        SourceLocation loc = call.loc;
+        if (call.method == "len") {  // an i64, as the length of a list, not a literal without a type
+            Type i64 = Type::intType(64, true);
+            auto count = std::make_unique<IntLiteralExpr>(loc, static_cast<uint64_t>(object.array->count), false);
+            count->type = i64;
+            expr = std::make_unique<ConversionExpr>(loc, std::move(count), i64, false);
+            return i64;
+        }
+        if (!canCopy(object)) {
+            diag_->error(loc, object.name() + " cannot be copied: its elements are not simple values, move it instead (D196)");
+            return Type::error();
+        }
+        ExprPtr operand = std::move(call.object);
+        expr = std::make_unique<CopyExpr>(loc, std::move(operand));
+        return object;
+    }
+
     // A method of an interface: through a constraint of T (D52), or on a parameter
     // of interface type, with a dynamic call (D49).
     Type checkInterfaceCall(MethodCallExpr& call, Type object) {
@@ -2579,12 +2795,19 @@ private:
     Type checkUnary(ExprPtr& expr, std::optional<Type> expected) {
         auto& unary = static_cast<UnaryExpr&>(*expr);
         if (unary.op == UnaryOp::Not) {
-            Type type = checkExpr(unary.operand, Type::boolType());
-            if (!type.isBool()) {
-                if (!type.isError()) diag_->error(unary.loc, "'!' needs a bool, found " + type.name());
+            // D194: on an integer, `!` inverts its bits.
+            std::optional<Type> hint = expected && expected->isInt() ? expected : std::optional<Type>(Type::boolType());
+            Type type = checkExpr(unary.operand, hint);
+            if (type.isUntyped() && !type.isError()) {
+                diag_->error(unary.loc, "the type of this expression cannot be deduced: write the type of the value, for "
+                                        "example !u8(0) (D55)");
                 return Type::error();
             }
-            return Type::boolType();
+            if (!type.isBool() && !type.isInt()) {
+                if (!type.isError()) diag_->error(unary.loc, "'!' needs a bool or an integer, found " + type.name() + " (D194)");
+                return Type::error();
+            }
+            return type;
         }
 
         // A minus in front of a literal becomes part of the literal, so that
@@ -2636,6 +2859,7 @@ private:
             return Type::boolType();
         }
 
+        if (binary.op == BinaryOp::Shl || binary.op == BinaryOp::Shr) return checkShift(binary, expected);
         bool arithmetic = isArithmetic(binary.op);
         std::optional<Type> hint;
         if (arithmetic && expected && expected->isNumeric()) hint = expected;
@@ -2663,6 +2887,10 @@ private:
             diag_->error(binary.loc, std::string("'") + spelling(binary.op) + "' does not work on structs yet (D76)");
             return Type::error();
         }
+        if (operand.isArray() || operand.isFunction()) {
+            diag_->error(binary.loc, std::string("'") + spelling(binary.op) + "' does not work on values of type " + operand.name());
+            return Type::error();
+        }
         if (arithmetic) {
             if (!operand.isNumeric()) {
                 diag_->error(binary.loc, std::string("'") + spelling(binary.op) + "' needs numbers, found " + operand.name());
@@ -2672,6 +2900,10 @@ private:
                 diag_->error(binary.loc, "'%' only works on integers (D59)");
                 return Type::error();
             }
+            if (isBitwise(binary.op) && !operand.isInt()) {
+                diag_->error(binary.loc, std::string("'") + spelling(binary.op) + "' only works on integers (D193)");
+                return Type::error();
+            }
             return operand;
         }
         if (!operand.isNumeric() && !(equality && (operand.isBool() || operand.kind == TypeKind::Addr))) {
@@ -2679,6 +2911,36 @@ private:
             return Type::error();
         }
         return Type::boolType();
+    }
+
+    // `x << n`, `x >> n` (D195): the type is the one of x; n is any integer.
+    Type checkShift(BinaryExpr& binary, std::optional<Type> expected) {
+        Type type = checkExpr(binary.lhs, expected && expected->isInt() ? expected : std::nullopt);
+        if (type.isUntyped()) {
+            if (!expected || !expected->isInt()) {
+                diag_->error(binary.loc, "the type of this expression cannot be deduced: write the type of the value, for "
+                                         "example u32(1) << n (D55)");
+                return Type::error();
+            }
+            if (!coerce(binary.lhs, *expected)) return Type::error();
+            type = *expected;
+        }
+        Type count = checkExpr(binary.rhs, std::nullopt);
+        if (count.isUntyped() && !type.isError() && type.isInt()) {
+            if (!coerce(binary.rhs, type)) return Type::error();
+            count = type;
+        }
+        if (type.isError() || count.isError()) return Type::error();
+        if (!type.isInt()) {
+            diag_->error(binary.loc, std::string("'") + spelling(binary.op) + "' works on integers, found " + type.name() + " (D195)");
+            return Type::error();
+        }
+        if (!count.isInt()) {
+            diag_->error(binary.loc, "the count of a shift is an integer, found " + count.name() + " (D195)");
+            return Type::error();
+        }
+        binary.operandType = type;
+        return type;
     }
 
     // D95: the operators on strings are calls to the methods of the library.
@@ -2727,16 +2989,35 @@ private:
     Type stringType() const { return Type::structType(stringDecl_); }
     bool isString(Type type) const { return stringDecl_ && type.isStruct() && type.structDecl == stringDecl_; }
     bool isList(Type type) const { return listDecl_ && type.isStruct() && type.structDecl->generic == listDecl_; }
-    static Type elementOf(Type list) { return list.structDecl->typeArgs[0]; }
+    bool isMap(Type type) const { return mapDecl_ && type.isStruct() && type.structDecl->generic == mapDecl_; }
+    static Type elementOf(Type list) { return list.isArray() ? list.array->element : list.structDecl->typeArgs[0]; }
 
     // `v[i]`: an element of a list, with an i64 index (D12, D35).
-    Type checkIndex(IndexExpr& node) {
+    Type checkIndex(IndexExpr& node, bool inserts) {
         Type object = checkExpr(node.object, std::nullopt);
+        if (isMap(object)) {  // D197: through valueOf, or place for the target of an assignment
+            Type key = object.structDecl->typeArgs[0];
+            if (!coerce(node.index, key)) return Type::error();
+            FunctionDecl* access = object.structDecl->methods.at(inserts ? "place" : "valueOf");
+            node.access = access;
+            use(access, node.loc);
+            noteCall(access, node.loc);
+            return object.structDecl->typeArgs[1];
+        }
         bool indexOk = coerce(node.index, Type::intType(64, true));
         if (object.isError() || !indexOk) return Type::error();
+        if (object.isArray()) {  // D196: a constant index is checked here, the others when the program runs
+            std::optional<int64_t> constant = constantIndex(*node.index);
+            if (constant && (*constant < 0 || *constant >= object.array->count)) {
+                diag_->error(node.index->loc, "the index " + std::to_string(*constant) + " is outside the array, which has " +
+                                                  std::to_string(object.array->count) + " elements (D30)");
+                return Type::error();
+            }
+            return object.array->element;
+        }
+        if (isString(object)) return Type::intType(8, false);  // a byte, as the length is in bytes (D200)
         if (!isList(object)) {
-            diag_->error(node.loc, isString(object) ? std::string("a string cannot be indexed yet (D100)")
-                                                    : "only a list has elements, found " + object.name() + " (D35)");
+            diag_->error(node.loc, "only a list, an array and a string have elements, found " + object.name() + " (D35)");
             return Type::error();
         }
         return elementOf(object);
@@ -2794,6 +3075,23 @@ private:
         case Intrinsic::ArgumentCount: result = i64; break;
         case Intrinsic::ArgumentLength: params = {{ParamMode::Read, "index", i64}}; result = i64; break;
         case Intrinsic::ArgumentData: params = {{ParamMode::Read, "index", i64}}; result = addr; break;
+        case Intrinsic::DecimalToFloat:
+            params = {{ParamMode::Read, "data", addr}, {ParamMode::Read, "length", i64}, {ParamMode::Read, "bits", i64}};
+            result = Type::floatType(64);
+            break;
+        case Intrinsic::HashBytes:
+            params = {{ParamMode::Read, "data", addr}, {ParamMode::Read, "length", i64}};
+            result = Type::intType(64, false);
+            break;
+        case Intrinsic::HashNumber: break;
+        case Intrinsic::SystemCall:  // Linux only (D202): the number, then six arguments
+            params = {{ParamMode::Read, "number", i64}, {ParamMode::Read, "a", i64}, {ParamMode::Read, "b", i64},
+                      {ParamMode::Read, "c", i64},      {ParamMode::Read, "d", i64}, {ParamMode::Read, "e", i64},
+                      {ParamMode::Read, "f", i64}};
+            result = i64;
+            break;
+        case Intrinsic::Environment: params = {{ParamMode::Read, "index", i64}}; result = addr; break;
+        case Intrinsic::ExitProcess: params = {{ParamMode::Read, "code", Type::intType(32, true)}}; break;
         case Intrinsic::None: break;
         }
 
@@ -2807,6 +3105,16 @@ private:
             if (element.isStruct()) copyFunction(*element.structDecl, call.loc);
         }
 
+        if (kind == Intrinsic::SystemCall) {  // an argument is an integer or an address (D202)
+            bool ok = call.args.size() == params.size();
+            if (!ok) diag_->error(call.loc, "'systemCall' takes 7 arguments: the number of the call and 6 values");
+            for (ExprPtr& arg : call.args) {
+                Type type = checkExpr(arg, i64);
+                if (type.isError() || type.kind == TypeKind::Addr) continue;
+                ok = coerce(arg, i64) && ok;
+            }
+            return ok ? result : Type::error();
+        }
         FunctionDecl signature;
         signature.name = call.callee;
         signature.loc = call.loc;
@@ -3089,6 +3397,10 @@ private:
                 decl = const_cast<StructDecl*>(type->structDecl);
             }
             if (decl->isEnum && call.args.size() == 1) return checkEnumConversion(expr, decl);
+            if (decl == stringDecl_ && call.args.size() == 1) return checkLibraryCall(expr, "stringFromBytes");  // D200
+            if (decl == stringDecl_ && call.args.size() == 2 && isUnsafe(call.loc)) {  // the bytes of C (D204)
+                return checkLibraryCall(expr, "stringFromMemory");
+            }
             return checkConstruct(expr, decl);
         }
 
@@ -3138,6 +3450,58 @@ private:
         noteCall(function, call.loc);
         if (!checkArgs(call.args, *function, "'" + call.callee + "'", call.loc, &call.overlaps)) return Type::error();
         return function->resolvedReturn;
+    }
+
+    // A function of the standard library that the programs do not see: the
+    // compiler calls it for them, as `string(bytes)` (D200).
+    FunctionDecl* libraryFunction(const std::string& name) {
+        SourceLocation library;
+        library.file = kLibraryFile;
+        return findDecl(&ModuleScope::functions, name, library);
+    }
+
+    Type checkLibraryCall(ExprPtr& expr, const std::string& name) {
+        auto& call = static_cast<CallExpr&>(*expr);
+        FunctionDecl* function = libraryFunction(name);
+        call.function = function;
+        noteCall(function, call.loc);
+        if (!checkArgs(call.args, *function, "'" + call.callee + "'", call.loc, &call.overlaps)) return Type::error();
+        return function->resolvedReturn;
+    }
+
+    // `i32("42")` (D199): a function of the library reads the text, with the range
+    // of the type, and throws when it is not a number of the type.
+    Type numberFromText(ExprPtr& expr, ExprPtr text, Type target) {
+        SourceLocation loc = expr->loc;
+        Type i64 = Type::intType(64, true);
+        Type u64 = Type::intType(64, false);
+        auto literal = [&](uint64_t value, Type type) {
+            auto number = std::make_unique<IntLiteralExpr>(loc, value, false);
+            number->type = type;
+            return number;
+        };
+        const char* name = target.isFloat() ? "parseFloat" : target.isSigned ? "parseSigned" : "parseUnsigned";
+        auto call = std::make_unique<CallExpr>(loc, name);
+        call->args.push_back(std::move(text));
+        if (target.isFloat()) {
+            call->args.push_back(literal(static_cast<uint64_t>(target.bits), i64));
+        } else if (target.isSigned) {
+            call->args.push_back(literal((uint64_t{1} << (target.bits - 1)) - 1, i64));
+        } else {
+            call->args.push_back(literal(target.bits == 64 ? ~uint64_t{0} : (uint64_t{1} << target.bits) - 1, u64));
+        }
+        auto typeName = std::make_unique<StringLiteralExpr>(loc, target.name());
+        typeName->type = stringType();
+        call->args.push_back(std::move(typeName));
+        call->function = libraryFunction(name);
+        call->type = call->function->resolvedReturn;
+        noteCall(call->function, loc);
+        if (call->type == target) {
+            expr = std::move(call);
+        } else {  // always in the range: the library has checked it
+            expr = std::make_unique<ConversionExpr>(loc, std::move(call), target, true);
+        }
+        return target;
     }
 
     // The arguments of a call that cannot be checked against a function: only
@@ -3202,6 +3566,15 @@ private:
     // Matches the type of a parameter, as written, with the type of its argument.
     bool deduce(const TypeName& pattern, Type actual, const FunctionDecl& generic, std::vector<std::optional<Type>>& deduced,
                 SourceLocation loc) {
+        if (!pattern.dimensions.empty()) {  // `T[3]` takes the elements of an i32[3] (D196)
+            for (int64_t count : pattern.dimensions) {
+                if (!actual.isArray() || actual.array->count != count) return true;  // reported by the check of the argument
+                actual = actual.array->element;
+            }
+            TypeName element = pattern;
+            element.dimensions.clear();
+            return deduce(element, actual, generic, deduced, loc);
+        }
         for (size_t i = 0; i < generic.typeParams.size(); ++i) {
             if (generic.typeParams[i].name != pattern.name || !pattern.args.empty()) continue;
             if (!deduced[i]) {
@@ -3272,8 +3645,9 @@ private:
             expr = std::make_unique<ConversionExpr>(call.loc, std::move(operand), target, true);  // the value of the case (D135)
             return target;
         }
+        if (isString(type) && !target.isBool()) return numberFromText(expr, std::move(operand), target);
         if (type.isUntyped() || type.isVoid() || type.kind == TypeKind::String || type.isStruct() ||
-            type.isParam() || type.isInterface()) {
+            type.isParam() || type.isInterface() || type.isArray() || type.isFunction()) {
             diag_->error(operand->loc, "cannot convert this value to " + target.name());
             return Type::error();
         }
@@ -3316,7 +3690,8 @@ private:
 
     Type checkPrint(ExprPtr& expr) {
         auto& call = static_cast<CallExpr&>(*expr);
-        int stream = call.callee[0] == 'e' ? 2 : 1;
+        bool format = call.callee == "format";  // into a string (D200)
+        int stream = format ? 3 : call.callee[0] == 'e' ? 2 : 1;
         bool newline = call.callee.size() >= 2 && call.callee.compare(call.callee.size() - 2, 2, "ln") == 0;
 
         if (call.args.empty() || call.args[0]->kind != ExprKind::StringLiteral) {
@@ -3324,7 +3699,7 @@ private:
             return Type::error();
         }
         auto print = std::make_unique<PrintExpr>(call.loc, stream, newline);
-        std::string format = static_cast<StringLiteralExpr&>(*call.args[0]).value;
+        std::string text = static_cast<StringLiteralExpr&>(*call.args[0]).value;
         SourceLocation formatLoc = call.args[0]->loc;
 
         bool ok = true;
@@ -3340,7 +3715,8 @@ private:
                 } else if (type.isVoid()) {
                     diag_->error(arg->loc, "this call does not return a value");
                     ok = false;
-                } else if ((type.isStruct() && !isString(type)) || type.isParam() || type.isInterface()) {
+                } else if ((type.isStruct() && !isString(type)) || type.isParam() || type.isInterface() || type.isArray() ||
+                           type.isFunction()) {
                     diag_->error(arg->loc, "a " + type.name() + " cannot be printed yet (D76)");
                     ok = false;
                 } else if (type.isError()) {
@@ -3350,8 +3726,9 @@ private:
             print->args.push_back(std::move(arg));
         }
 
-        if (ok) parseFormat(format, formatLoc, *print);
+        if (ok) parseFormat(text, formatLoc, *print);
         expr = std::move(print);
+        if (format) return ok ? stringType() : Type::error();
         return Type::voidType();
     }
 
@@ -3512,6 +3889,9 @@ private:
     static constexpr int kMaxNesting = 16;
 
     Module& module_;
+    StructDecl* mapDecl_ = nullptr;
+    const InterfaceDecl* keyInterface_ = nullptr;
+    bool insertTarget_ = false;  // the next Index checked is the target of an assignment
     Diagnostics* diag_;
     bool requireMain_;
 

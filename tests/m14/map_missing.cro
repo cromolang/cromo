@@ -1,0 +1,9 @@
+// Reading a key that is not in the map is a panic (D197).
+// expect-exit: 101
+// expect-stderr: panic: the key is not in the map (D197) at
+i32 main() {
+    map<string, i32> ages
+    ages["anna"] = 30
+    println("{}", ages["bruno"])
+    ret 0
+}

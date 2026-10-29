@@ -2,10 +2,13 @@
 // every module sees its public names without importing it (D130). It uses the
 // `unsafe` dialect (D37, D98, D127): the type `addr` and the built-in functions
 // alloc, resize, free, sizeOf, offset, take, put, destroy, copyAt, copyMemory,
-// compareMemory, checkIndex, argumentCount, argumentLength and argumentData.
+// compareMemory, checkIndex, argumentCount, argumentLength, argumentData,
+// decimalToFloat and hashBytes.
 //
 // The compiler relies on the fields `data` and `length` of list and string, for
-// `v[i]`, `for` over the elements, string literals and printing.
+// `v[i]`, `for` over the elements, string literals and printing; on the fields of
+// map and its methods valueOf and place, for `m[k]` and `for` (D197); and on
+// the functions that read numbers and bytes (D199, D200).
 
 import unsafe
 
@@ -89,7 +92,7 @@ public struct list<T> {
 // UTF-8 text that owns its bytes (D10). A string literal has capacity 0: its
 // bytes belong to the program, and they are copied the first time the string
 // changes (D100).
-public struct string {
+public struct string : Key {
     addr data
     i64 length
     i64 capacity
@@ -147,6 +150,10 @@ public struct string {
         ret compareMemory(data, other.data, length) == 0
     }
 
+    public u64 hash() const {
+        ret hashBytes(data, length)
+    }
+
     // The order of the bytes, which in UTF-8 is the order of the code points (D95).
     public i32 compare(string other) const {
         i64 common = length
@@ -163,6 +170,48 @@ public struct string {
         ret 0
     }
 
+    // The bytes of the text (D200).
+    public list<u8> bytes() const {
+        list<u8> result
+        result.reserve(length)
+        copyMemory(result.data, data, length)
+        result.length = length
+        ret result
+    }
+
+    // A copy of the bytes from `from` to `to` excluded (D200). A slice that cuts a
+    // character of UTF-8 in two is a panic, as an index out of the string.
+    public string slice(i64 from, i64 to) const {
+        checkIndex(from, length + 1)
+        checkIndex(to, length + 1)
+        if (from > to) {
+            panic(format("the slice starts at {}, after its end {} (D200)", from, to))
+        }
+        if (!startsCharacter(from) || !startsCharacter(to)) {
+            panic(format("the slice from {} to {} cuts a character of UTF-8 (D200)", from, to))
+        }
+        string result
+        result.reserve(to - from)
+        copyMemory(result.data, offset(data, from), to - from)
+        result.length = to - from
+        ret result
+    }
+
+    // True at the end, and where a character starts: not on a byte 10xxxxxx.
+    bool startsCharacter(i64 index) const {
+        ret index == length || copyAt<u8>(offset(data, index)) & 0xC0 != 0x80
+    }
+
+    // `s.cstring()` in the modules with `import unsafe` (D204): the compiler takes
+    // the address of this copy, which is destroyed at the end of the statement.
+    CString zeroEnded() const {
+        CString result
+        result.data = alloc(length + 1)
+        copyMemory(result.data, data, length)
+        put<u8>(offset(result.data, length), 0)
+        ret result
+    }
+
     public string copy() const {
         string result
         if (capacity == 0) {  // a literal: the bytes can be shared
@@ -177,7 +226,6 @@ public struct string {
     }
 }
 
-// What can be thrown (D36, D115).
 // The arguments of the program, the name of the program first, for
 // `main(list<string> args)`: the entry point calls this function (D154).
 list<string> programArguments() {
@@ -194,6 +242,203 @@ list<string> programArguments() {
     ret args
 }
 
+// A copy of a string that ends with a zero, for the C functions (D204).
+struct CString {
+    addr data
+
+    ~CString() {
+        free(data)
+    }
+}
+
+// The keys of a map (D198). The numbers and bool implement it by themselves.
+public interface Key {
+    u64 hash() const
+    bool equals(Self other) const
+}
+
+// A hash table (D197, D198) with open addressing: the keys, the values and a byte
+// for each slot, 0 empty, 1 full, 2 removed. The capacity is a power of two, and
+// at most three quarters of the slots are full or removed.
+public struct map<K : Key, V> {
+    addr keys
+    addr values
+    addr states
+    i64 length
+    i64 taken  // full or removed
+    i64 capacity
+
+    ~map() {
+        for (i64 i = 0; i < capacity; i++) {
+            if (stateAt(i) == 1) {
+                destroy<K>(keyAt(i))
+                destroy<V>(valueAt(i))
+            }
+        }
+        free(keys)
+        free(values)
+        free(states)
+    }
+
+    public i64 len() const {
+        ret length
+    }
+
+    public bool contains(K key) const {
+        ret find(key) >= 0
+    }
+
+    // Removes the key with its value; false if the key was not there.
+    public bool remove(K key) {
+        i64 slot = find(key)
+        if (slot < 0) {
+            ret false
+        }
+        destroy<K>(keyAt(slot))
+        destroy<V>(valueAt(slot))
+        setState(slot, 2)
+        length--
+        ret true
+    }
+
+    public map<K, V> copy() const {
+        map<K, V> result
+        if (capacity == 0) {
+            ret result
+        }
+        result.allocate(capacity)
+        for (i64 i = 0; i < capacity; i++) {
+            u8 state = stateAt(i)
+            if (state == 1) {
+                put<K>(result.keyAt(i), copyAt<K>(keyAt(i)))
+                put<V>(result.valueAt(i), copyAt<V>(valueAt(i)))
+                result.length++
+            }
+            result.setState(i, state)
+        }
+        result.taken = taken
+        ret result
+    }
+
+    // m[k], read: the value of a key that must be there (D197).
+    addr valueOf(K key) const {
+        i64 slot = find(key)
+        if (slot < 0) {
+            panic("the key is not in the map (D197)")
+        }
+        ret valueAt(slot)
+    }
+
+    // m[k] = v, m[k] += v, m[k]++: the value of the key, added with the default
+    // value when it is missing.
+    addr place(K key) {
+        i64 slot = find(key)
+        if (slot >= 0) {
+            ret valueAt(slot)
+        }
+        if ((taken + 1) * 4 > capacity * 3) {
+            rehash()
+        }
+        slot = freeSlot(key.hash())
+        if (stateAt(slot) == 0) {
+            taken++
+        }
+        put<K>(keyAt(slot), key.copy())
+        V fresh
+        put<V>(valueAt(slot), move fresh)
+        setState(slot, 1)
+        length++
+        ret valueAt(slot)
+    }
+
+    i64 find(K key) const {
+        if (capacity == 0) {
+            ret -1
+        }
+        i64 slot = i64(key.hash() & u64(capacity - 1))
+        for {
+            u8 state = stateAt(slot)
+            if (state == 0) {
+                ret -1
+            }
+            if (state == 1) {
+                K stored = take<K>(keyAt(slot))  // looked at in place: put back below
+                bool same = stored.equals(key)
+                put<K>(keyAt(slot), move stored)
+                if (same) {
+                    ret slot
+                }
+            }
+            slot = (slot + 1) & (capacity - 1)
+        }
+    }
+
+    // The first slot that is not full, from the place of the hash on.
+    i64 freeSlot(u64 hash) const {
+        i64 slot = i64(hash & u64(capacity - 1))
+        for (stateAt(slot) == 1) {
+            slot = (slot + 1) & (capacity - 1)
+        }
+        ret slot
+    }
+
+    // A larger table, or one of the same size without the removed slots.
+    void rehash() {
+        i64 old = capacity
+        addr oldKeys = keys
+        addr oldValues = values
+        addr oldStates = states
+        i64 grown = capacity
+        if (grown == 0) {
+            grown = 8
+        } else if (length * 2 >= capacity) {
+            grown = capacity * 2
+        }
+        allocate(grown)
+        taken = length
+        for (i64 i = 0; i < old; i++) {
+            if (copyAt<u8>(offset(oldStates, i)) == 1) {
+                K key = take<K>(offset(oldKeys, i * sizeOf<K>()))
+                i64 slot = freeSlot(key.hash())
+                put<K>(keyAt(slot), move key)
+                put<V>(valueAt(slot), take<V>(offset(oldValues, i * sizeOf<V>())))
+                setState(slot, 1)
+            }
+        }
+        free(oldKeys)
+        free(oldValues)
+        free(oldStates)
+    }
+
+    // Empty slots for `count` keys, without freeing the old ones.
+    void allocate(i64 count) {
+        capacity = count
+        keys = alloc(count * sizeOf<K>())
+        values = alloc(count * sizeOf<V>())
+        states = alloc(count)
+        for (i64 i = 0; i < count; i++) {
+            setState(i, 0)
+        }
+    }
+
+    u8 stateAt(i64 slot) const {
+        ret copyAt<u8>(offset(states, slot))
+    }
+
+    void setState(i64 slot, u8 state) {
+        put<u8>(offset(states, slot), state)
+    }
+
+    addr keyAt(i64 slot) const {
+        ret offset(keys, slot * sizeOf<K>())
+    }
+
+    addr valueAt(i64 slot) const {
+        ret offset(values, slot * sizeOf<V>())
+    }
+}
+
+// What can be thrown (D36, D115).
 public interface Exception {
     string message() const
 }
@@ -209,4 +454,199 @@ public struct Error : Exception {
     string message() const {
         ret text.copy()
     }
+}
+
+// `string(bytes)` (D200): a copy of the bytes, after checking that they are UTF-8.
+string stringFromBytes(list<u8> bytes) {
+    ret stringFromMemory(bytes.data, bytes.length)
+}
+
+// `string(data, length)` in the modules with `import unsafe`, as the bytes of the C
+// functions and of the system (D204): the same check.
+string stringFromMemory(addr data, i64 n) {
+    i64 i = 0
+    for (i < n) {
+        u8 first = copyAt<u8>(offset(data, i))
+        i64 size = 1
+        u32 point = u32(first)
+        u32 least = 0
+        if (first < 0x80) {
+            size = 1
+        } else if (first & 0xE0 == 0xC0) {
+            size = 2
+            point = u32(first & 0x1F)
+            least = 0x80
+        } else if (first & 0xF0 == 0xE0) {
+            size = 3
+            point = u32(first & 0x0F)
+            least = 0x800
+        } else if (first & 0xF8 == 0xF0) {
+            size = 4
+            point = u32(first & 0x07)
+            least = 0x10000
+        } else {
+            throw notUtf8(i)
+        }
+        if (i + size > n) {
+            throw notUtf8(i)
+        }
+        for (i64 k = 1; k < size; k++) {
+            u8 next = copyAt<u8>(offset(data, i + k))
+            if (next & 0xC0 != 0x80) {
+                throw notUtf8(i)
+            }
+            point = point << 6 | u32(next & 0x3F)
+        }
+        // Not the shortest form, a surrogate of UTF-16, or beyond Unicode.
+        if (point < least || (point >= 0xD800 && point <= 0xDFFF) || point > 0x10FFFF) {
+            throw notUtf8(i)
+        }
+        i += size
+    }
+    string result
+    result.reserve(n)
+    copyMemory(result.data, data, n)
+    result.length = n
+    ret result
+}
+
+Error notUtf8(i64 index) {
+    ret Error(format("the bytes are not valid UTF-8: the character at {} (D200)", index))
+}
+
+// `i8("42")` to `i64("42")` (D199): the compiler passes the largest value of the type.
+i64 parseSigned(string text, i64 max, string type) {
+    bool negative = text.len() > 0 && text[0] == '-'
+    u64 limit = u64(max)
+    if (negative) {
+        limit += 1
+    }
+    u64 magnitude = integerMagnitude(text, limit, type)
+    if (!negative) {
+        ret i64(magnitude)
+    }
+    if (magnitude == u64(max) + 1) {
+        ret -max - 1
+    }
+    ret -i64(magnitude)
+}
+
+// `u8("42")` to `u64("42")` (D199): a minus sign only before a zero.
+u64 parseUnsigned(string text, u64 max, string type) {
+    u64 magnitude = integerMagnitude(text, max, type)
+    if (text.len() > 0 && text[0] == '-' && magnitude != 0) {
+        throw Error(format("'{}' does not fit in {} (D199)", text, type))
+    }
+    ret magnitude
+}
+
+// The digits of an integer, after an optional sign, up to `limit`.
+u64 integerMagnitude(string text, u64 limit, string type) {
+    i64 n = text.len()
+    i64 start = 0
+    if (n > 0 && (text[0] == '+' || text[0] == '-')) {
+        start = 1
+    }
+    if (start == n) {
+        throw notNumber(text, type)
+    }
+    u64 value = 0
+    for (i64 i = start; i < n; i++) {
+        u8 c = text[i]
+        if (c < '0' || c > '9') {
+            throw notNumber(text, type)
+        }
+        u64 digit = u64(c - '0')
+        if (value > (limit - digit) / 10) {
+            for (i64 j = i + 1; j < n; j++) {  // a text that is not a number says so first
+                if (text[j] < '0' || text[j] > '9') {
+                    throw notNumber(text, type)
+                }
+            }
+            throw Error(format("'{}' does not fit in {} (D199)", text, type))
+        }
+        value = value * 10 + digit
+    }
+    ret value
+}
+
+Error notNumber(string text, string type) {
+    ret Error(format("'{}' is not a valid {} (D199)", text, type))
+}
+
+// `f64("2.5")`, `f32("1e-3")` (D199): the text is checked here, the runtime finds
+// the nearest value.
+f64 parseFloat(string text, i64 bits, string type) {
+    i32 kind = decimalKind(text)
+    if (kind == 0) {
+        throw notNumber(text, type)
+    }
+    f64 value = decimalToFloat(text.data, text.length, bits)
+    if (kind == 1 && value - value != 0.0) {  // an infinity from a number too large
+        throw Error(format("'{}' does not fit in {} (D199)", text, type))
+    }
+    ret value
+}
+
+// 1 for [+|-] digits [. digits] [e [+|-] digits], with at least one digit before
+// the exponent; 2 for inf, infinity and nan in any case; 0 for anything else.
+i32 decimalKind(string text) {
+    i64 n = text.len()
+    i64 i = 0
+    if (n > 0 && (text[0] == '+' || text[0] == '-')) {
+        i = 1
+    }
+    if (sameWord(text, i, "inf") || sameWord(text, i, "infinity") || sameWord(text, i, "nan")) {
+        ret 2
+    }
+    i64 digits = 0
+    for (i < n && isDigit(text[i])) {
+        i++
+        digits++
+    }
+    if (i < n && text[i] == '.') {
+        i++
+        for (i < n && isDigit(text[i])) {
+            i++
+            digits++
+        }
+    }
+    if (digits == 0) {
+        ret 0
+    }
+    if (i < n && (text[i] == 'e' || text[i] == 'E')) {
+        i++
+        if (i < n && (text[i] == '+' || text[i] == '-')) {
+            i++
+        }
+        i64 exponent = 0
+        for (i < n && isDigit(text[i])) {
+            i++
+            exponent++
+        }
+        if (exponent == 0) {
+            ret 0
+        }
+    }
+    if (i != n) {
+        ret 0
+    }
+    ret 1
+}
+
+bool isDigit(u8 c) {
+    ret c >= '0' && c <= '9'
+}
+
+// The text from `from` to its end is `word`, written in small letters, in any case.
+bool sameWord(string text, i64 from, string word) {
+    if (text.len() - from != word.len()) {
+        ret false
+    }
+    for (i64 i = 0; i < word.len(); i++) {
+        if (text[from + i] | 0x20 != word[i]) {
+            ret false
+        }
+    }
+    ret true
 }

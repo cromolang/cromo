@@ -1,0 +1,60 @@
+// std.os on Linux (D202): system calls, and the environment on the initial stack.
+import unsafe
+
+public string name() {
+    ret "linux"
+}
+
+public i64 processId() {
+    ret systemCall(39, 0, 0, 0, 0, 0, 0)  // getpid
+}
+
+public bool hasEnv(string name) {
+    ret envIndex(name) >= 0
+}
+
+public string env(string name) {
+    i64 index = envIndex(name)
+    if (index < 0) {
+        ret ""
+    }
+    addr entry = environment(index)
+    i64 start = name.len() + 1
+    i64 end = start
+    for (copyAt<u8>(offset(entry, end)) != 0) {
+        end++
+    }
+    ret string(offset(entry, start), end - start)
+}
+
+public string currentFolder() {
+    addr buffer = alloc(4096)
+    i64 length = systemCall(79, buffer, 4096, 0, 0, 0, 0)  // getcwd, with its zero
+    string folder
+    if (length > 0) {
+        folder = string(buffer, length - 1)
+    }
+    free(buffer)
+    ret folder
+}
+
+// The index of "name=value" among the variables of the environment, or -1.
+i64 envIndex(string name) {
+    addr none
+    i64 n = name.len()
+    i64 i = 0
+    for {
+        addr entry = environment(i)
+        if (entry == none) {
+            ret -1
+        }
+        bool same = true
+        for (i64 k = 0; k < n && same; k++) {
+            same = copyAt<u8>(offset(entry, k)) == name[k]
+        }
+        if (same && copyAt<u8>(offset(entry, n)) == '=') {
+            ret i
+        }
+        i++
+    }
+}

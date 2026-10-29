@@ -1,0 +1,29 @@
+// Example 8: files, time and the system, with the modules of the library.
+//
+// Decided: the modules std.fs, std.time and std.os (D201) and their functions
+//          (D211), their files for each system (D202), time and pauses (D203)
+import std.fs
+import std.os
+import std.time
+
+i32 main() {
+    time.Instant start = time.now()
+    println("{} on {}, process {}", time.localNow().text(), os.name(), os.processId())
+
+    string path = "notes.txt"
+    fs.writeText(path, "first line\n")
+    fs.appendText(path, "second line\n")
+    string text = fs.readText(path)
+    println("{} bytes in {}", text.len(), path)
+    fs.remove(path)
+
+    try {
+        fs.readText(path)
+    } catch (Exception e) {
+        println("{}", e.message())  // cannot read 'notes.txt': no such file or folder
+    }
+
+    time.msleep(10)
+    println("done in {} ms", start.elapsed().milliseconds())
+    ret 0
+}

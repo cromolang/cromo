@@ -1,5 +1,7 @@
 #include "parser.h"
 
+#include <algorithm>
+#include <cstdint>
 #include <optional>
 
 namespace cromo {
@@ -242,6 +244,12 @@ private:
             markAngle();
             if (!expect(TokenKind::Greater, "to close the type arguments")) return false;
         }
+        // `i32[4]` (D196): the size is an integer literal.
+        while (check(TokenKind::LBracket) && peek(1).kind == TokenKind::IntegerLiteral && peek(2).kind == TokenKind::RBracket) {
+            advance();
+            out.dimensions.push_back(static_cast<int64_t>(std::min<uint64_t>(advance().intValue, INT64_MAX)));
+            advance();
+        }
         return true;
     }
 
@@ -314,8 +322,12 @@ private:
         if (peek(i).kind == TokenKind::KwVoid) return i + 1;
         if (peek(i).kind != TokenKind::Identifier) return 0;
         if (peek(i + 1).kind == TokenKind::Dot && peek(i + 2).kind == TokenKind::Identifier) i += 2;  // `geometry.Circle`
-        if (peek(i + 1).kind != TokenKind::Less) return i + 1;
-        return skipTypeArgs(i + 1);
+        size_t end = peek(i + 1).kind == TokenKind::Less ? skipTypeArgs(i + 1) : i + 1;
+        while (end && peek(end).kind == TokenKind::LBracket && peek(end + 1).kind == TokenKind::IntegerLiteral &&
+               peek(end + 2).kind == TokenKind::RBracket) {
+            end += 3;  // `i32[4]` (D196)
+        }
+        return end;
     }
 
     // The position after the type arguments that start with the '<' at `i`, or 0.
@@ -822,7 +834,15 @@ private:
         case TokenKind::StarAssign: op = AssignOp::Mul; break;
         case TokenKind::SlashAssign: op = AssignOp::Div; break;
         case TokenKind::PercentAssign: op = AssignOp::Rem; break;
+        case TokenKind::AmpAssign: op = AssignOp::BitAnd; break;
+        case TokenKind::PipeAssign: op = AssignOp::BitOr; break;
+        case TokenKind::CaretAssign: op = AssignOp::BitXor; break;
+        case TokenKind::ShiftLeftAssign: op = AssignOp::Shl; break;
         default: break;
+        }
+        if (!op && atShiftRight(TokenKind::GreaterEqual)) {  // `>>=`
+            advance();
+            op = AssignOp::Shr;
         }
         if (op) {
             advance();
@@ -1008,6 +1028,17 @@ private:
             }
             stmt->elementName = peek().text;
             stmt->elementLoc = advance().loc;
+            if (match(TokenKind::Comma)) {  // the key and the value of a map (D197)
+                stmt->hasValue = true;
+                stmt->valueIsRef = match(TokenKind::KwRef);
+                if (!parseType(stmt->valueType)) return nullptr;
+                if (!check(TokenKind::Identifier)) {
+                    errorAtCurrent("the name of the value");
+                    return nullptr;
+                }
+                stmt->valueName = peek().text;
+                stmt->valueLoc = advance().loc;
+            }
             if (!expect(TokenKind::KwIn, "after the name of the element")) return nullptr;
             stmt->list = parseExpression();
             if (!stmt->list) return nullptr;
@@ -1050,7 +1081,8 @@ private:
         size_t i = peek(0).kind == TokenKind::KwRef ? 1 : 0;
         if (peek(i).kind == TokenKind::Identifier && peek(i + 1).kind == TokenKind::KwIn) return true;  // no type: an error
         size_t afterType = skipType(i);
-        return afterType && peek(afterType).kind == TokenKind::Identifier && peek(afterType + 1).kind == TokenKind::KwIn;
+        TokenKind next = peek(afterType + 1).kind;
+        return afterType && peek(afterType).kind == TokenKind::Identifier && (next == TokenKind::KwIn || next == TokenKind::Comma);
     }
 
     // True if the 'for' header contains a ';' before its closing parenthesis.
@@ -1103,7 +1135,7 @@ private:
     }
 
     ExprPtr parseRelational() {
-        ExprPtr lhs = parseAdditive();
+        ExprPtr lhs = parseBitOr();
         for (;;) {
             std::optional<BinaryOp> op;
             switch (peek().kind) {
@@ -1113,10 +1145,55 @@ private:
             case TokenKind::GreaterEqual: op = BinaryOp::Ge; break;
             default: break;
             }
-            if (!lhs || !op) return lhs;
+            if (!lhs || !op || atShiftRight(TokenKind::GreaterEqual)) return lhs;  // `>>=` is an assignment
             SourceLocation loc = advance().loc;
-            lhs = binary(*op, loc, std::move(lhs), parseAdditive());
+            lhs = binary(*op, loc, std::move(lhs), parseBitOr());
         }
+    }
+
+    // D193: the bitwise operators bind more than the comparisons, less than `+`.
+    ExprPtr parseBitOr() {
+        ExprPtr lhs = parseBitXor();
+        while (lhs && check(TokenKind::Pipe)) {
+            SourceLocation loc = advance().loc;
+            lhs = binary(BinaryOp::BitOr, loc, std::move(lhs), parseBitXor());
+        }
+        return lhs;
+    }
+
+    ExprPtr parseBitXor() {
+        ExprPtr lhs = parseBitAnd();
+        while (lhs && check(TokenKind::Caret)) {
+            SourceLocation loc = advance().loc;
+            lhs = binary(BinaryOp::BitXor, loc, std::move(lhs), parseBitAnd());
+        }
+        return lhs;
+    }
+
+    ExprPtr parseBitAnd() {
+        ExprPtr lhs = parseShift();
+        while (lhs && check(TokenKind::Amp)) {
+            SourceLocation loc = advance().loc;
+            lhs = binary(BinaryOp::BitAnd, loc, std::move(lhs), parseShift());
+        }
+        return lhs;
+    }
+
+    // `>>` is two `>` next to each other: one alone closes the type arguments of
+    // `list<list<i32>>`.
+    bool atShiftRight(TokenKind second) const {
+        return check(TokenKind::Greater) && peek(1).kind == second && peek().end == peek(1).begin;
+    }
+
+    ExprPtr parseShift() {
+        ExprPtr lhs = parseAdditive();
+        while (lhs && (check(TokenKind::ShiftLeft) || atShiftRight(TokenKind::Greater))) {
+            BinaryOp op = check(TokenKind::ShiftLeft) ? BinaryOp::Shl : BinaryOp::Shr;
+            SourceLocation loc = advance().loc;
+            if (op == BinaryOp::Shr) advance();
+            lhs = binary(op, loc, std::move(lhs), parseAdditive());
+        }
+        return lhs;
     }
 
     ExprPtr parseAdditive() {

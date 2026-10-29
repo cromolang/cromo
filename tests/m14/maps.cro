@@ -1,0 +1,97 @@
+// map with the Key interface (D197, D198).
+// expect-output: anna 30 bruno 25
+// expect-output: len 2 true false
+// expect-output: counts 3 1 2
+// expect-output: total 6
+// expect-output: removed true false 2
+// expect-output: many 1000 499500 731
+// expect-output: copy 2 1 changed 99
+// expect-output: point 7
+// expect-output: floats 2 1
+// expect-output: bools 1
+// expect-output: lists 2
+struct Point : Key {
+    i32 x
+    i32 y
+
+    u64 hash() const {
+        ret x.hash() ^ y.hash()
+    }
+
+    bool equals(Point other) const {
+        ret x == other.x && y == other.y
+    }
+}
+
+i32 main() {
+    map<string, i32> ages
+    ages["anna"] = 30
+    ages["bruno"] = 25
+    println("anna {} bruno {}", ages["anna"], ages["bruno"])
+    println("len {} {} {}", ages.len(), ages.contains("anna"), ages.contains("carla"))
+
+    map<string, i32> counts
+    list<string> words
+    words.add("a")
+    words.add("b")
+    words.add("a")
+    words.add("c")
+    words.add("a")
+    words.add("c")
+    for (string w in words) {
+        counts[w] += 1
+    }
+    println("counts {} {} {}", counts["a"], counts["b"], counts["c"])
+    i32 total = 0
+    for (string k, i32 v in counts) {
+        total += v
+    }
+    println("total {}", total)
+    bool first = counts.remove("b")
+    bool second = counts.remove("b")
+    println("removed {} {} {}", first, second, counts.len())
+
+    map<i64, i64> squares
+    for (i64 i = 0; i < 1000; i++) {
+        squares[i] = i
+    }
+    i64 sum = 0
+    for (i64 k, ref i64 v in squares) {
+        sum += v
+        v = k * 2
+    }
+    for (i64 i = 0; i < 1000; i += 2) {
+        squares.remove(i)
+    }
+    squares[5000]++
+    println("many {} {} {}", i64(1000), sum, squares[731] / 2)
+
+    map<string, i32> other = counts.copy()
+    other["a"] = 99
+    println("copy {} {} changed {}", other.len(), counts["c"] - 1, other["a"])
+
+    map<Point, string> names
+    Point p
+    p.x = 1
+    p.y = 2
+    names[p] = "seven"
+    Point q
+    q.x = 1
+    q.y = 2
+    println("point {}", names[q].len() + 2)
+
+    map<f64, i32> floats
+    floats[0.0] = 1
+    floats[-0.0] += 1
+    floats[1.5] = 1
+    println("floats {} {}", floats[0.0], floats[1.5])
+    map<bool, i32> bools
+    bools[true] = 1
+    println("bools {}", bools[true])
+    map<i32, list<string>> lists
+    lists[1] = list<string>()
+    lists[1].add("x")
+    lists[1].add("y")
+    println("lists {}", lists[1].len())
+    ret 0
+}

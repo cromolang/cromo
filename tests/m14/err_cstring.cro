@@ -1,0 +1,7 @@
+// cstring() is for the modules with import unsafe (D204).
+// expect-error: cstring() is for the C functions: the module must write 'import unsafe' (D204)
+i32 main() {
+    string word = "hello"
+    word.cstring()
+    ret 0
+}
