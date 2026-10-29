@@ -1,0 +1,18 @@
+// Comments (D168).
+struct Point {
+    f64 x            // across
+    f64 longer_name  // aligned with the line above
+
+    f64 z  // alone in its group
+    /* a block comment */ f64 w
+}
+
+// a comment alone on its line is indented like the code
+void f() {
+    g()  // first
+         // goes on in the same column
+    // indented like the code
+    h(1, /* two */ 3)
+    /* a block
+       on two lines */
+}

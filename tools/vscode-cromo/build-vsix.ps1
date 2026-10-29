@@ -39,6 +39,7 @@ $contentTypes = @"
 <?xml version="1.0" encoding="utf-8"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
   <Default Extension=".json" ContentType="application/json" />
+  <Default Extension=".js" ContentType="application/javascript" />
   <Default Extension=".md" ContentType="text/markdown" />
   <Default Extension=".vsixmanifest" ContentType="text/xml" />
 </Types>
@@ -52,7 +53,7 @@ function Add-TextEntry($zip, $name, $text) {
 }
 
 # Entry names must use forward slashes, or VS Code rejects the package.
-$files = 'package.json', 'language-configuration.json', 'README.md', 'syntaxes/cromo.tmLanguage.json'
+$files = 'package.json', 'extension.js', 'language-configuration.json', 'README.md', 'syntaxes/cromo.tmLanguage.json'
 
 $zip = [System.IO.Compression.ZipFile]::Open($vsix, 'Create')
 try {

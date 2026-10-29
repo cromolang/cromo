@@ -12,7 +12,7 @@ The name comes from chromium (*cromo* in Italian), the element that makes steel 
 
 ## Status
 
-**Milestones M0 to M10 completed.** The bootstrap compiler in C++ (`src/`) compiles programs with numbers, `bool`, variables, `if`/`for`, functions, `println`, structs with methods, constructors and destructors (RAII), ownership with `ref`, `move` and `copy()`, generics and interfaces, `list<T>` and `string`, enums and exceptions, modules and calls to C functions into executables with no C runtime, for Windows without the Windows SDK and, from Windows, for Linux. The standard library is written in Cromo, in `library/core.cro`. `cromo` has the commands `build`, `run` and `version`. Next come `cromo fmt`, a language server for VS Code, anonymous functions, threads and a library for backends with networking and TLS; the compiler written in Cromo comes last (see [docs/compiler.md](docs/compiler.md)). The design choices are in the documents under `docs/`; of the examples under `examples/`, `01_functions.cro`, `02_loops.cro`, `04_lists.cro` and `05_c_interop.cro` can be compiled.
+**Milestones M0 to M11 completed.** The bootstrap compiler in C++ (`src/`) compiles programs with numbers, `bool`, variables, `if`/`for`, functions, `println`, structs with methods, constructors and destructors (RAII), ownership with `ref`, `move` and `copy()`, generics and interfaces, `list<T>` and `string`, enums and exceptions, modules and calls to C functions into executables with no C runtime, for Windows without the Windows SDK and, from Windows, for Linux. The standard library is written in Cromo, in `library/core.cro`. `cromo` has the commands `build`, `run`, `fmt` and `version`, and the extension for VS Code formats the files with `cromo fmt`. Next come a language server for VS Code, anonymous functions, threads and a library for backends with networking and TLS; the compiler written in Cromo comes last (see [docs/compiler.md](docs/compiler.md)). The design choices are in the documents under `docs/`; of the examples under `examples/`, `01_functions.cro`, `02_loops.cro`, `04_lists.cro` and `05_c_interop.cro` can be compiled.
 
 ## Building and trying it
 
@@ -29,6 +29,7 @@ build\cromo.exe build examples\02_loops.cro --emit-ir                 # shows th
 build\cromo.exe build examples\02_loops.cro --target linux -o loops   # an executable for Linux x64
 build\cromo.exe run examples\02_loops.cro                             # compiles and runs; arguments after --
 build\cromo.exe build                                                 # main.cro of this folder
+build\cromo.exe fmt library examples                                   # formats the code; --check only lists it
 build\cromo.exe version
 ```
 

@@ -102,6 +102,7 @@ add_executable(cromo
   src/sema.cpp
   src/ownership.cpp
   src/codegen.cpp
+  src/format.cpp
   src/backend.cpp
   src/libraries.cpp
   src/runtime_blob.cpp

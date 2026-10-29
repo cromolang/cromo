@@ -7,16 +7,16 @@
 // Draft:   os.open / os.close / os.readLine (library still to be defined)
 
 struct File {
-    i32 fd = -1                          // default: no file open
+    i32 fd = -1  // default: no file open
 
-    File(string path) {                  // constructor: acquires the resource
+    File(string path) {  // constructor: acquires the resource
         fd = os.open(path)
         if (fd < 0) {
             throw IoError(format("cannot open {}", path))
         }
     }
 
-    ~File() {                            // destructor: releases the resource
+    ~File() {  // destructor: releases the resource
         if (fd >= 0) {
             os.close(fd)
         }
@@ -30,16 +30,16 @@ struct File {
 string firstLine(string path) {
     File f = File(path)
     ret f.readLine()
-}                                        // f is closed here, even if readLine throws
+}  // f is closed here, even if readLine throws
 
 i32 main() {
     try {
         println("{}", firstLine("data.txt"))
     } catch (IoError e) {
         println("error: {}", e.message())
-        ret 1                            // finally runs before leaving
+        ret 1  // finally runs before leaving
     } finally {
-        println("done")                  // always runs
+        println("done")  // always runs
     }
     ret 0
 }

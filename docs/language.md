@@ -13,6 +13,8 @@
 
 ## 2. Lexical structure
 
+`cromo fmt` writes all the code in one style, without options (D161): 4 spaces, `{` at the end of the line and `} else {` (D162). It keeps the line breaks of the author (D163).
+
 - Sources in UTF-8, with the `.cro` extension (D29).
 - **A statement ends at the end of the line**, no `;` (D17). A statement continues on the next line if the line ends with a binary operator, a comma or an open parenthesis, or if there are round or square brackets still open. Only one statement per line (D32).
 - Comments: `// line` and `/* block */`.

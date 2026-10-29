@@ -1,0 +1,21 @@
+// The spaces of cromo fmt (D161, D166).
+struct   Pair<T  :  Comparable>   :Printable{
+    T first
+    T   second
+    ~Pair( ){
+    }
+}
+
+i32 sum ( list < i32 > values , ref i64 count ){
+    i32 total=0
+    for(i64 i=0;i<values.len( );i++){
+        total+=values [ i ]*-1
+        count ++
+    }
+    for(;;){
+        break
+    }
+    bool ok=! (total>=0&&count<10)||total!=- -3
+    T x=max< Money >( a,b )
+    ret Result < i32 , string > . Ok( - total )
+}

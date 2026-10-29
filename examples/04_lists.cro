@@ -11,56 +11,56 @@ struct Student {
     string name
     list<f64> grades
 
-    Student(move string n) {             // move: the constructor takes ownership of n
+    Student(move string n) {  // move: the constructor takes ownership of n
         name = move n
         grades = list<f64>()
     }
 
-    f64 average() const {                // const: does not modify name or grades
+    f64 average() const {  // const: does not modify name or grades
         if (grades.len() == 0) {
             ret 0.0
         }
         f64 sum = 0.0
-        for (f64 g in grades) {          // g is read-only
+        for (f64 g in grades) {  // g is read-only
             sum += g
         }
-        ret sum / f64(grades.len())      // explicit conversion from i64 to f64
+        ret sum / f64(grades.len())  // explicit conversion from i64 to f64
     }
 
-    void addGrade(f64 grade) {           // not const: modifies grades
+    void addGrade(f64 grade) {  // not const: modifies grades
         grades.add(grade)
     }
 }
 
-void addGrade(ref Student s, f64 grade) {    // ref: the function modifies s
+void addGrade(ref Student s, f64 grade) {  // ref: the function modifies s
     s.addGrade(grade)
 }
 
 i32 main() {
-    const f64 CONDUCT_GRADE = 9.0        // immutable
+    const f64 CONDUCT_GRADE = 9.0  // immutable
     list<Student> students = list<Student>()
 
-    Student anna = Student("Anna")       // "Anna" is a temporary: no move
+    Student anna = Student("Anna")  // "Anna" is a temporary: no move
     addGrade(ref anna, 8.5)
     addGrade(ref anna, 7.0)
-    students.add(move anna)              // anna moves into the list:
-                                         // from here on it can no longer be used
+    students.add(move anna)  // anna moves into the list:
+                             // from here on it can no longer be used
 
     Student marco = Student("Marco")
-    marco.addGrade(6.0)                  // non-const method on an owned variable
+    marco.addGrade(6.0)  // non-const method on an owned variable
     students.add(move marco)
 
-    for (ref Student s in students) {    // s can be modified
+    for (ref Student s in students) {  // s can be modified
         s.addGrade(CONDUCT_GRADE)
     }
 
-    for (Student s in students) {        // s is read-only: only const methods
+    for (Student s in students) {  // s is read-only: only const methods
         println("{:<10} average {:.2f}", s.name, s.average())
     }
 
-    for (i64 i = 0; i < students.len(); i++) {   // with the index
+    for (i64 i = 0; i < students.len(); i++) {  // with the index
         println("{}: {}", i, students[i].name)
     }
 
     ret 0
-}   // students goes out of scope: the names, the grades and the list itself are freed
+}  // students goes out of scope: the names, the grades and the list itself are freed

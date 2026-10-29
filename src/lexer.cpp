@@ -27,6 +27,8 @@ const std::unordered_map<std::string, TokenKind>& keywords() {
     return table;
 }
 
+}  // namespace
+
 // Tokens after which the statement continues on the next line (D32).
 bool continuesOnNextLine(TokenKind kind) {
     switch (kind) {
@@ -42,6 +44,8 @@ bool continuesOnNextLine(TokenKind kind) {
         return false;
     }
 }
+
+namespace {
 
 bool isDigit(char c) { return c >= '0' && c <= '9'; }
 bool isIdentStart(char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_'; }
@@ -74,11 +78,13 @@ void appendUtf8(std::string& out, uint32_t cp) {
 
 class Lexer {
 public:
-    Lexer(const SourceFile& file, int fileIndex, Diagnostics& diag) : src_(file.text), file_(fileIndex), diag_(diag) {}
+    Lexer(const SourceFile& file, int fileIndex, Diagnostics& diag, bool keepComments)
+        : src_(file.text), file_(fileIndex), diag_(diag), keepComments_(keepComments) {}
 
     std::vector<Token> run() {
         while (pos_ < src_.size()) {
             char c = src_[pos_];
+            start_ = pos_;
             if (c == ' ' || c == '\t' || c == '\r') {
                 advance();
             } else if (c == '\n') {
@@ -86,7 +92,9 @@ public:
                 advance();
                 newline(loc);
             } else if (c == '/' && peek(1) == '/') {
+                SourceLocation loc = here();
                 while (pos_ < src_.size() && src_[pos_] != '\n') advance();
+                if (keepComments_) comment(loc);
             } else if (c == '/' && peek(1) == '*') {
                 blockComment();
             } else if (isIdentStart(c)) {
@@ -102,8 +110,9 @@ public:
             }
         }
         SourceLocation end = here();
+        start_ = pos_;
         newline(end);
-        tokens_.push_back(Token{TokenKind::EndOfFile, {}, end, 0});
+        tokens_.push_back(Token{TokenKind::EndOfFile, {}, end, 0, pos_, pos_});
         return std::move(tokens_);
     }
 
@@ -125,7 +134,7 @@ private:
     }
 
     void push(TokenKind kind, SourceLocation loc, std::string text = {}, uint64_t value = 0) {
-        tokens_.push_back(Token{kind, std::move(text), loc, value});
+        tokens_.push_back(Token{kind, std::move(text), loc, value, start_, pos_});
         if (kind == TokenKind::LParen || kind == TokenKind::LBracket) ++depth_;
         if ((kind == TokenKind::RParen || kind == TokenKind::RBracket) && depth_ > 0) --depth_;
     }
@@ -135,8 +144,15 @@ private:
     void newline(SourceLocation loc) {
         if (depth_ > 0 || tokens_.empty()) return;
         TokenKind last = tokens_.back().kind;
-        if (last == TokenKind::Newline || continuesOnNextLine(last)) return;
-        tokens_.push_back(Token{TokenKind::Newline, {}, loc, 0});
+        if (last == TokenKind::Newline || last == TokenKind::Comment || continuesOnNextLine(last)) return;
+        tokens_.push_back(Token{TokenKind::Newline, {}, loc, 0, pos_, pos_});
+    }
+
+    // The text of a comment, without the spaces at its end.
+    void comment(SourceLocation loc) {
+        size_t end = pos_;
+        while (end > start_ && (src_[end - 1] == ' ' || src_[end - 1] == '\t' || src_[end - 1] == '\r')) --end;
+        tokens_.push_back(Token{TokenKind::Comment, src_.substr(start_, end - start_), loc, 0, start_, end});
     }
 
     void blockComment() {
@@ -154,6 +170,7 @@ private:
         }
         advance();
         advance();
+        if (keepComments_) comment(start);
         if (sawNewline) newline(here());  // a comment spanning lines counts as a newline
     }
 
@@ -402,8 +419,10 @@ private:
     const std::string& src_;
     int file_;  // index of the file, for the locations
     Diagnostics& diag_;
+    bool keepComments_;
     std::vector<Token> tokens_;
     size_t pos_ = 0;
+    size_t start_ = 0;  // where the current token starts
     int line_ = 1;
     int column_ = 1;
     int depth_ = 0;  // open parentheses and brackets
@@ -415,6 +434,7 @@ std::string describe(TokenKind kind) {
     switch (kind) {
     case TokenKind::EndOfFile: return "end of file";
     case TokenKind::Newline: return "a newline";
+    case TokenKind::Comment: return "a comment";
     case TokenKind::Identifier: return "a name";
     case TokenKind::IntegerLiteral: return "an integer";
     case TokenKind::FloatLiteral: return "a decimal number";
@@ -461,8 +481,8 @@ std::string describe(TokenKind kind) {
     }
 }
 
-std::vector<Token> tokenize(const SourceFile& file, int fileIndex, Diagnostics& diag) {
-    return Lexer(file, fileIndex, diag).run();
+std::vector<Token> tokenize(const SourceFile& file, int fileIndex, Diagnostics& diag, bool keepComments) {
+    return Lexer(file, fileIndex, diag, keepComments).run();
 }
 
 }  // namespace cromo

@@ -945,7 +945,7 @@ extern "kernel32" {
 ### D158. The command comes first
 *2026-10-29.*
 - `cromo hello.cro` is an error that shows the right form, `cromo build hello.cro`: there is a single way to write it.
-- `cromo help`, `-h` and `--help` print the commands; `cromo` alone prints them as an error. `update`, `fmt`, `lsp` and `rls` answer with the milestone in which they come.
+- `cromo help`, `-h` and `--help` print the commands; `cromo` alone prints them as an error. `update`, `fmt`, `lsp` and `rls` answer with the milestone in which they come (`fmt` exists from M11).
 
 ### D159. The options of `cromo run`
 *2026-10-29.*
@@ -957,6 +957,46 @@ extern "kernel32" {
 - The parameter is a read parameter of type `list<string>`, with any name: `ref`, `move` and other types are an error.
 - On Windows the runtime splits the command line with the rules of the C runtime of Microsoft (quotes, backslashes before a quote, `""` inside quotes) and converts it from UTF-16 to UTF-8. On Linux the arguments are the bytes that the kernel gives.
 - The standard library builds the list with three built-in functions of the `unsafe` dialect: `argumentCount()`, `argumentLength(i)` and `argumentData(i)`.
+
+### D161. One style, with 4 spaces
+*2026-10-29.* `cromo fmt` has a single style, without options, as `gofmt`: all the code in Cromo looks the same, and nobody discusses the style. It indents with 4 spaces, as the examples, the tests and the library already do.
+
+### D162. Braces on the same line
+*2026-10-29.* `cromo fmt` puts `{` at the end of the line, and `else`, `catch` and `finally` on the line of the `}` that comes before: `} else {`. The parser still accepts both styles (D32).
+
+### D163. Long lines are not broken
+*2026-10-29.* As `gofmt`, `cromo fmt` keeps the line breaks of the author and only fixes spaces and indentation, also of the lines that continue a statement. It never changes where a statement ends (D17), and the result is predictable: a change to one line does not move the lines around it.
+
+### D164. VS Code formats with `cromo fmt`
+*2026-10-29.* From M11 the extension for VS Code formats a file, also when it is saved, by passing its text to `cromo fmt` and reading the result. With M12 the language server takes its place.
+
+### D165. The command
+*2026-10-29.*
+- `cromo fmt` formats every `.cro` file of the current folder and of its subfolders, except the folders whose name starts with a dot; `cromo fmt a.cro lib` formats those files and folders. The files are rewritten in place, and their names are printed when they change.
+- `cromo fmt --check` changes nothing: it prints the files that are not formatted, and ends with 1 if there are some, for a check before a commit.
+- `cromo fmt -` reads the text from the standard input and writes the result on the standard output: this is what editors use.
+- A file with syntax errors is not changed: `cromo fmt` reports the errors and ends with 1.
+
+### D166. Spaces
+*2026-10-29.*
+- One space around binary operators, assignments and `:`, after commas and semicolons, and after keywords: `if (x > 0) {`.
+- No space inside parentheses and square brackets, before the `(` of a call, around `.`, inside the angle brackets of generics (`list<string>`, `max<Money>(a, b)`), after `-`, `!` and `~` used as unary operators, and before `++` and `--`.
+- One space before `{` and after it when the block goes on in the same line, and one before `}` in that case.
+
+### D167. Lines
+*2026-10-29.*
+- Each open block indents by 4 spaces. A line that continues a statement (D32) gets one more level, and one more for each parenthesis or square bracket still open where it starts; a line that starts by closing them gets one less.
+- At most one blank line in a row, and none at the start or at the end of a block or of the file. No spaces at the end of the lines, and the file ends with one newline.
+- The file keeps its line endings, LF or CRLF.
+
+### D168. Comments
+*2026-10-29.*
+- The text of the comments does not change. A comment alone on its line is indented like the code, unless it is right under the comment at the end of the line before, in the same column: then it goes on in the column of that comment.
+- The comments at the end of consecutive lines are aligned in a column, two spaces after the longest line of code of the group, as in the examples. A blank line, or a line without such a comment, ends the group.
+- When `{` or `else` move to the line before, they go before the comment at the end of that line. If both lines have a comment at the end, or there is a line with only a comment between them, they stay where they are.
+
+### D169. A formatting that cannot change the program
+*2026-10-29.* The formatter only changes spaces and line breaks. Before writing, it checks that the tokens of the file are the same, apart from the line breaks before `{`, `else`, `catch` and `finally` that it removes, that the result has no syntax errors, and that formatting it again changes nothing. If one of these checks fails, the file is not changed and `cromo fmt` reports an internal error.
 
 ---
 ---

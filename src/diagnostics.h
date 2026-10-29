@@ -43,6 +43,10 @@ public:
     bool muted() const { return muted_; }
     void setMuted(bool muted) { muted_ = muted; }
 
+    // While silent the errors are counted but not printed: cromo fmt uses it to
+    // check its own result.
+    void setSilent(bool silent) { silent_ = silent; }
+
     // Text added to every message, for example the generic being instantiated.
     const std::string& context() const { return context_; }
     void setContext(std::string context) { context_ = std::move(context); }
@@ -53,6 +57,7 @@ private:
     std::vector<const SourceFile*> files_;
     int errorCount_ = 0;
     bool muted_ = false;
+    bool silent_ = false;
     std::string context_;
 };
 

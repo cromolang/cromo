@@ -1,6 +1,9 @@
 # Behavior tests: compiles every .cro under tests/ and checks the result against
 # the directives written in its comments. The files in a folder named `modules`
-# are imported by the tests, and are not tests themselves (D50).
+# are imported by the tests, and are not tests themselves (D50). The files in a
+# folder named `formatting` are cases of cromo fmt (D161): x.cro must become
+# x.formatted.cro, which must not change again; without x.formatted.cro, cromo
+# fmt must refuse x.cro.
 #   // cromo-flags: --release       extra options for cromo
 #   // expect-exit: 42              exit code of the program
 #   // expect-output: text          one line of standard output (repeatable, exact match)
@@ -91,8 +94,9 @@ function ConvertTo-Argument([string]$Text) {
 }
 
 # Runs a program and returns its exit code, standard output and standard error,
-# read separately and decoded as UTF-8.
-function Invoke-Program([string]$Path, [string[]]$Arguments) {
+# read separately and decoded as UTF-8. $StandardInput, if given, are the bytes of
+# its standard input.
+function Invoke-Program([string]$Path, [string[]]$Arguments, [byte[]]$StandardInput = $null) {
     $info = New-Object System.Diagnostics.ProcessStartInfo
     $info.FileName = $Path
     $info.Arguments = ($Arguments | ForEach-Object { ConvertTo-Argument $_ }) -join ' '
@@ -102,7 +106,12 @@ function Invoke-Program([string]$Path, [string[]]$Arguments) {
     $info.RedirectStandardError = $true
     $info.StandardOutputEncoding = [System.Text.Encoding]::UTF8
     $info.StandardErrorEncoding = [System.Text.Encoding]::UTF8
+    if ($null -ne $StandardInput) { $info.RedirectStandardInput = $true }
     $process = [System.Diagnostics.Process]::Start($info)
+    if ($null -ne $StandardInput) {
+        $process.StandardInput.BaseStream.Write($StandardInput, 0, $StandardInput.Length)
+        $process.StandardInput.Close()
+    }
     $stdout = $process.StandardOutput.ReadToEndAsync()
     $stderr = $process.StandardError.ReadToEnd()
     $process.WaitForExit()
@@ -118,7 +127,7 @@ $failed = 0
 $skipped = 0
 foreach ($test in Get-ChildItem $PSScriptRoot -Recurse -Filter *.cro | Sort-Object FullName) {
     $name = $test.FullName.Substring($PSScriptRoot.Length + 1)
-    if ($name -split '\\' -contains 'modules') { continue }
+    if ($name -split '\\' -contains 'modules' -or $name -split '\\' -contains 'formatting') { continue }
     if ($Filter -and -not $name.Contains($Filter)) { continue }
 
     # Not $flags: names are case-insensitive, it would overwrite the -Flags parameter.
@@ -198,6 +207,36 @@ foreach ($test in Get-ChildItem $PSScriptRoot -Recurse -Filter *.cro | Sort-Obje
     } else {
         $failed++
         Write-Host "FAIL  $name" -ForegroundColor Red
+        foreach ($p in $problems) { Write-Host "      $p" }
+    }
+}
+
+# The cases of cromo fmt, with the text on the standard input (D164).
+foreach ($case in Get-ChildItem $PSScriptRoot -Recurse -Filter *.cro | Sort-Object FullName) {
+    $name = $case.FullName.Substring($PSScriptRoot.Length + 1)
+    if (-not ($name -split '\\' -contains 'formatting') -or $case.Name.EndsWith('.formatted.cro')) { continue }
+    if ($Filter -and -not $name.Contains($Filter)) { continue }
+    $expectedPath = $case.FullName -replace '\.cro$', '.formatted.cro'
+    $result = Invoke-Program $Cromo @('fmt', '-') ([System.IO.File]::ReadAllBytes($case.FullName))
+    $problems = @()
+    if (-not (Test-Path $expectedPath)) {
+        if ($result.Code -ne 1 -or $result.Out) { $problems += "cromo fmt should refuse it, exit code $($result.Code)" }
+    } else {
+        $expected = [System.IO.File]::ReadAllText($expectedPath, [System.Text.Encoding]::UTF8) -replace "`r`n", "`n"
+        if ($result.Code -ne 0) {
+            $problems += "cromo fmt failed:`n$($result.Err)"
+        } elseif ($result.Out -ne $expected) {
+            $problems += "formatted:`n$($result.Out)expected:`n$expected"
+        }
+        $again = Invoke-Program $Cromo @('fmt', '-') ([System.IO.File]::ReadAllBytes($expectedPath))
+        if ($again.Out -ne $expected) { $problems += 'formatting the expected text changes it' }
+    }
+    if ($problems.Count -eq 0) {
+        $passed++
+        Write-Host "ok    $name (fmt)"
+    } else {
+        $failed++
+        Write-Host "FAIL  $name (fmt)" -ForegroundColor Red
         foreach ($p in $problems) { Write-Host "      $p" }
     }
 }

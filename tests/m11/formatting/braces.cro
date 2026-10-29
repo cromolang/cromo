@@ -1,0 +1,29 @@
+// Braces on the same line (D162).
+void f(i32 x)
+{
+    if (x > 0)
+    {
+        g()
+    }
+    else
+    {
+        h()
+    }
+    try {
+        g()
+    }
+    catch (Error e) {
+        h()
+    }
+    finally {
+        g()
+    }
+    if (x == 1)  // one
+    {
+        g()
+    }
+    if (x == 2)  // two
+    {  // stays: both lines have a comment
+        g()
+    }
+}

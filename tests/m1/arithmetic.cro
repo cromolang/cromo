@@ -6,8 +6,8 @@ i32 main() {
     i32 b = (2 + 3) * 4
     i32 c = 7 / 3
     i32 d = 7 % 3
-    i32 e = -7 / 3            // division truncates toward zero (D60)
-    i32 f = -7 % 3            // the remainder has the sign of the dividend
+    i32 e = -7 / 3  // division truncates toward zero (D60)
+    i32 f = -7 % 3  // the remainder has the sign of the dividend
     println("{} {} {} {} {} {}", a, b, c, d, e, f)
 
     i32 x = 7

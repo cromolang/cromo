@@ -8,7 +8,8 @@ namespace {
 
 class Parser {
 public:
-    Parser(const std::vector<Token>& tokens, Diagnostics& diag) : tokens_(tokens), diag_(diag) {}
+    Parser(const std::vector<Token>& tokens, Diagnostics& diag, std::set<size_t>* genericAngles)
+        : tokens_(tokens), diag_(diag), genericAngles_(genericAngles) {}
 
     Module parseModule() {
         Module module;
@@ -227,15 +228,23 @@ private:
             out.name = peek().text;
             out.loc = advance().loc;
         }
-        if (match(TokenKind::Less)) {
+        if (check(TokenKind::Less)) {
+            markAngle();
+            advance();
             do {
                 TypeName arg;
                 if (!parseType(arg)) return false;
                 out.args.push_back(std::move(arg));
             } while (match(TokenKind::Comma));
+            markAngle();
             if (!expect(TokenKind::Greater, "to close the type arguments")) return false;
         }
         return true;
+    }
+
+    // A '<' or '>' around type arguments or parameters, for cromo fmt.
+    void markAngle() {
+        if (genericAngles_ && (check(TokenKind::Less) || check(TokenKind::Greater))) genericAngles_->insert(peek().begin);
     }
 
     // Looks ahead without consuming: the position after the type that starts at
@@ -275,6 +284,7 @@ private:
 
     // typeParams := '<' name [':' type {'+' type}] {',' ...} '>'   (D52, D88)
     bool parseTypeParams(std::vector<TypeParam>& out) {
+        markAngle();
         advance();  // '<'
         do {
             if (!check(TokenKind::Identifier)) {
@@ -294,6 +304,7 @@ private:
             }
             out.push_back(std::move(param));
         } while (match(TokenKind::Comma));
+        markAngle();
         return expect(TokenKind::Greater, "to close the type parameters");
     }
 
@@ -1118,12 +1129,15 @@ private:
         } else if (check(TokenKind::Identifier) && (peek(1).kind == TokenKind::LParen || isGenericCall())) {
             const Token& name = advance();
             auto call = std::make_unique<CallExpr>(name.loc, name.text);
-            if (match(TokenKind::Less)) {  // `max<Money>(a, b)`, `Pair<i32>()` (D86, D92)
+            if (check(TokenKind::Less)) {  // `max<Money>(a, b)`, `Pair<i32>()` (D86, D92)
+                markAngle();
+                advance();
                 do {
                     TypeName arg;
                     if (!parseType(arg)) return nullptr;
                     call->typeArgs.push_back(std::move(arg));
                 } while (match(TokenKind::Comma));
+                markAngle();
                 if (!expect(TokenKind::Greater, "to close the type arguments")) return nullptr;
             }
             if (!parseArgs(call->args)) return nullptr;
@@ -1199,13 +1213,14 @@ private:
 
     const std::vector<Token>& tokens_;
     Diagnostics& diag_;
+    std::set<size_t>* genericAngles_;
     size_t pos_ = 0;
 };
 
 }  // namespace
 
-Module parse(const std::vector<Token>& tokens, Diagnostics& diag) {
-    return Parser(tokens, diag).parseModule();
+Module parse(const std::vector<Token>& tokens, Diagnostics& diag, std::set<size_t>* genericAngles) {
+    return Parser(tokens, diag, genericAngles).parseModule();
 }
 
 }  // namespace cromo

@@ -1,6 +1,7 @@
 #include "backend.h"
 #include "codegen.h"
 #include "diagnostics.h"
+#include "format.h"
 #include "lexer.h"
 #include "libraries.h"
 #include "ownership.h"
@@ -16,6 +17,7 @@
 #include <deque>
 #include <filesystem>
 #include <fstream>
+#include <iostream>
 #include <iterator>
 #include <map>
 #include <set>
@@ -25,6 +27,8 @@
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+#include <fcntl.h>
+#include <io.h>
 #include <windows.h>
 #endif
 
@@ -33,10 +37,13 @@ namespace {
 void printUsage(FILE* out) {
     std::fputs(
         "usage: cromo <command> [options] [file.cro] [-- arguments]\n"
+        "       cromo fmt [--check] [files and folders | -]\n"
         "\n"
         "commands (D151):\n"
         "  build      compiles file.cro, or main.cro of this folder, into an executable\n"
         "  run        compiles and runs the program; its arguments come after --\n"
+        "  fmt        formats the .cro files, by default of this folder and its subfolders;\n"
+        "             --check only lists the ones to format, - formats the standard input\n"
         "  version    prints the version of cromo and of LLVM\n"
         "  help       prints this text\n"
         "\n"
@@ -278,6 +285,124 @@ bool readOptions(const std::vector<std::string>& args, size_t first, size_t last
     return true;
 }
 
+// Every .cro file of a folder and of its subfolders, except the folders whose
+// name starts with a dot (D165).
+void collectSources(const fs::path& folder, std::vector<fs::path>& files) {
+    std::error_code ec;
+    std::vector<fs::path> entries;
+    for (const fs::directory_entry& entry : fs::directory_iterator(folder, ec)) entries.push_back(entry.path());
+    std::sort(entries.begin(), entries.end());
+    for (const fs::path& path : entries) {
+        if (fs::is_directory(path, ec)) {
+            if (path.filename().string().rfind('.', 0) != 0) collectSources(path, files);
+        } else if (path.extension() == ".cro") {
+            files.push_back(path.lexically_normal());
+        }
+    }
+}
+
+// The text of a file as it is, and whether it starts with the UTF-8 BOM, which is
+// written back.
+bool readRaw(const fs::path& path, std::string& text, bool& bom) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return false;
+    text.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    bom = text.compare(0, 3, "\xEF\xBB\xBF") == 0;
+    if (bom) text.erase(0, 3);
+    return true;
+}
+
+// Formats one text; on failure the problem is already printed.
+bool formatText(const std::string& path, const std::string& text, std::string& out) {
+    cromo::SourceFile file{path, text};
+    cromo::Diagnostics diag(file);
+    std::string error;
+    if (cromo::formatSource(file, diag, out, error)) return true;
+    if (!error.empty()) std::fprintf(stderr, "cromo: %s: internal error of cromo fmt: %s (D169)\n", path.c_str(), error.c_str());
+    return false;
+}
+
+// D161-D163: cromo fmt [--check] [files and folders | -]. Returns the exit code.
+int formatCommand(const std::vector<std::string>& args) {
+    bool check = false;
+    bool standardInput = false;
+    std::vector<std::string> paths;
+    for (size_t i = 2; i < args.size(); ++i) {
+        if (args[i] == "--check") {
+            check = true;
+        } else if (args[i] == "-") {
+            standardInput = true;
+        } else if (!args[i].empty() && args[i][0] == '-') {
+            std::fprintf(stderr, "cromo: unknown option of cromo fmt: %s\n", args[i].c_str());
+            return 2;
+        } else {
+            paths.push_back(args[i]);
+        }
+    }
+
+    if (standardInput) {  // for editors (D164)
+        if (check || !paths.empty()) {
+            std::fputs("cromo: cromo fmt - only reads the standard input\n", stderr);
+            return 2;
+        }
+#ifdef _WIN32
+        _setmode(_fileno(stdin), _O_BINARY);  // the line endings stay as they are
+        _setmode(_fileno(stdout), _O_BINARY);
+#endif
+        std::string text((std::istreambuf_iterator<char>(std::cin)), std::istreambuf_iterator<char>());
+        bool bom = text.compare(0, 3, "\xEF\xBB\xBF") == 0;
+        if (bom) text.erase(0, 3);
+        std::string out;
+        if (!formatText("<stdin>", text, out)) return 1;
+        if (bom) out.insert(0, "\xEF\xBB\xBF");
+        std::fwrite(out.data(), 1, out.size(), stdout);
+        return 0;
+    }
+
+    std::vector<fs::path> files;
+    if (paths.empty()) collectSources(".", files);
+    for (const std::string& path : paths) {
+        std::error_code ec;
+        if (fs::is_directory(path, ec)) {
+            collectSources(path, files);
+        } else if (fs::is_regular_file(path, ec)) {
+            files.push_back(fs::path(path).lexically_normal());
+        } else {
+            std::fprintf(stderr, "cromo: cannot find %s\n", path.c_str());
+            return 2;
+        }
+    }
+    int result = 0;
+    for (const fs::path& file : files) {
+        std::string name = file.string();
+        std::string text;
+        bool bom = false;
+        if (!readRaw(file, text, bom)) {
+            std::fprintf(stderr, "cromo: cannot read %s\n", name.c_str());
+            result = 1;
+            continue;
+        }
+        std::string out;
+        if (!formatText(name, text, out)) {
+            result = 1;
+            continue;
+        }
+        if (out == text) continue;
+        std::printf("%s\n", name.c_str());
+        if (check) {  // D165: the files still to format
+            result = 1;
+            continue;
+        }
+        std::ofstream write(file, std::ios::binary);
+        write << (bom ? "\xEF\xBB\xBF" : "") << out;
+        if (!write) {
+            std::fprintf(stderr, "cromo: cannot write %s\n", name.c_str());
+            result = 1;
+        }
+    }
+    return result;
+}
+
 #ifdef _WIN32
 
 std::string narrow(const std::wstring& text) {
@@ -376,10 +501,7 @@ int main(int argc, char** argv) {
         std::fputs("cromo: update comes when the resource with the new versions exists (D153)\n", stderr);
         return 2;
     }
-    if (command == "fmt") {
-        std::fputs("cromo: fmt comes with milestone M11 (D152)\n", stderr);
-        return 2;
-    }
+    if (command == "fmt") return formatCommand(args);
     if (command == "lsp" || command == "rls") {
         std::fputs("cromo: the language server comes with milestone M12 (D152)\n", stderr);
         return 2;

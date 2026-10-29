@@ -8,9 +8,9 @@ i32 main() {
     y += 1
     i32 m = -2147483648
     i32 d = -1
-    i32 q = m / d             // MIN / -1 gives MIN in release (D60)
+    i32 q = m / d  // MIN / -1 gives MIN in release (D60)
     f64 huge = 1e20
-    i32 s = i32(huge)         // out of range: the nearest value in release (D61)
+    i32 s = i32(huge)  // out of range: the nearest value in release (D61)
     println("{} {} {} {}", x, y, q, s)
     ret 0
 }

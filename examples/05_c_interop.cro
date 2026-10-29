@@ -56,7 +56,7 @@ struct ConsoleColor {
 void warn(string text) {
     ConsoleColor yellow = ConsoleColor(14)
     println("warning: {}", text)
-}                                        // the color goes back here
+}  // the color goes back here
 
 i32 main() {
     Stopwatch watch = Stopwatch()

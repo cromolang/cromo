@@ -2,6 +2,8 @@
 
 Syntax highlighting for `.cro` files of the Cromo language: keywords, types, numbers, strings with format placeholders (`{}`, `{:.2f}`), comments, functions and destructors. It also provides comment toggling (`Ctrl+/`), auto-closing brackets and indentation after `{`.
 
+It formats the files with `cromo fmt` (D164), also when they are saved: set `cromo.path` to `cromo.exe`, for example `C:\dati\projects\cromo\build\cromo.exe`, unless it is in PATH. If the file has syntax errors nothing changes, and the errors are in the *Cromo* output panel.
+
 ## Installation
 
 From PowerShell, in the project folder:

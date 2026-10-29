@@ -1,15 +1,20 @@
 {
   "name": "cromo-lang",
   "displayName": "Cromo",
-  "description": "Syntax highlighting for the Cromo language",
-  "version": "0.1.7",
+  "description": "Syntax highlighting and formatting for the Cromo language",
+  "version": "0.2.0",
   "publisher": "cromo",
   "license": "UNLICENSED",
   "engines": {
     "vscode": "^1.60.0"
   },
   "categories": [
-    "Programming Languages"
+    "Programming Languages",
+    "Formatters"
+  ],
+  "main": "./extension.js",
+  "activationEvents": [
+    "onLanguage:cromo"
   ],
   "contributes": {
     "languages": [
@@ -31,6 +36,21 @@
         "scopeName": "source.cromo",
         "path": "./syntaxes/cromo.tmLanguage.json"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "Cromo",
+      "properties": {
+        "cromo.path": {
+          "type": "string",
+          "default": "cromo",
+          "description": "The cromo executable that formats the files, for example C:\\dati\\projects\\cromo\\build\\cromo.exe. Without a path it is looked for in PATH."
+        }
+      }
+    },
+    "configurationDefaults": {
+      "[cromo]": {
+        "editor.formatOnSave": true
+      }
+    }
   }
 }

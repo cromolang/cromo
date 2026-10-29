@@ -1,0 +1,3 @@
+// A file with syntax errors is not formatted (D165): there is no .formatted.cro.
+void f( {
+}
