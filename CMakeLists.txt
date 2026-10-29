@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(cromo VERSION 0.10.0 LANGUAGES CXX)  # 0.milestone.fix (D157)
+project(cromo VERSION 0.11.0 LANGUAGES CXX)  # 0.milestone.fix (D157)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
