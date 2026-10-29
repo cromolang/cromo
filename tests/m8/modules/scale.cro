@@ -1,0 +1,11 @@
+// The function of scale.lib, a static C library that run-tests.ps1 builds next
+// to this module (D136).
+import unsafe
+
+extern "scale" {
+    i32 triple(i32 x)
+}
+
+public i32 tripled(i32 x) {
+    ret triple(x)
+}

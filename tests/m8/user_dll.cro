@@ -1,0 +1,11 @@
+// expect-output: 5
+// expect-output: 42
+// A DLL next to a module (D136). The executable is written to tests/out: it
+// starts only because cromo copies adder.dll there (D138).
+import modules.adder
+
+i32 main() {
+    println("{}", sum(2, 3))
+    println("{}", doubled(21))
+    ret 0
+}

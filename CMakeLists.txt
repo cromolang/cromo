@@ -77,7 +77,7 @@ add_executable(cromo
   src/ownership.cpp
   src/codegen.cpp
   src/backend.cpp
-  src/windows_sdk.cpp
+  src/libraries.cpp
   src/runtime_blob.cpp
   "${CROMO_RT_DIR}/runtime_blob.inc"
   "${CROMO_RT_DIR}/library_blob.inc"
@@ -94,7 +94,7 @@ if(MSVC)
 endif()
 
 llvm_map_components_to_libnames(CROMO_LLVM_LIBS
-  Core IRReader Passes Support Target TargetParser MC
+  Core IRReader Object Passes Support Target TargetParser MC
   X86CodeGen X86AsmParser X86Desc X86Info
 )
 target_link_libraries(cromo PRIVATE lldCOFF lldCommon ${CROMO_LLVM_LIBS})

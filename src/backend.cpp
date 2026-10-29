@@ -2,7 +2,6 @@
 
 #include "codegen.h"
 #include "runtime_blob.h"
-#include "windows_sdk.h"
 
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/LegacyPassManager.h>
@@ -10,7 +9,11 @@
 #include <llvm/IR/Verifier.h>
 #include <llvm/IRReader/IRReader.h>
 #include <llvm/MC/TargetRegistry.h>
+#include <llvm/Object/Archive.h>
+#include <llvm/Object/COFFImportFile.h>
+#include <llvm/Object/ObjectFile.h>
 #include <llvm/Passes/PassBuilder.h>
+#include <llvm/Support/Error.h>
 #include <llvm/Support/FileSystem.h>
 #include <llvm/Support/MemoryBuffer.h>
 #include <llvm/Support/SourceMgr.h>
@@ -22,6 +25,7 @@
 
 #include <lld/Common/Driver.h>
 
+#include <algorithm>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -92,43 +96,103 @@ bool writeFile(const std::string& path, std::string_view data, std::string& erro
     return true;
 }
 
-bool link(const std::string& objectPath, const std::string& runtimePath, const BackendOptions& options,
-          std::string& error) {
-    const std::string& outputPath = options.outputPath;
-    std::string sdkLibDir = findWindowsSdkLibDir();
-    if (sdkLibDir.empty()) {
-        error = "Windows SDK not found: kernel32.lib is needed to link the executable";
+// The functions of kernel32 that the runtime imports: the `__imp_` symbols that
+// it leaves undefined, because it declares them with `dllimport`.
+bool runtimeImports(std::vector<std::string>& names, std::string& error) {
+    std::string_view data = runtimeLibrary();
+    llvm::MemoryBufferRef buffer(llvm::StringRef(data.data(), data.size()), "cromo_rt.lib");
+    llvm::Expected<std::unique_ptr<llvm::object::Archive>> archive = llvm::object::Archive::create(buffer);
+    if (!archive) {
+        error = "internal error: cannot read the runtime: " + llvm::toString(archive.takeError());
         return false;
+    }
+    std::string problem;
+    llvm::Error failure = llvm::Error::success();
+    for (const llvm::object::Archive::Child& child : (*archive)->children(failure)) {
+        llvm::Expected<llvm::MemoryBufferRef> member = child.getMemoryBufferRef();
+        if (!member) {
+            problem = llvm::toString(member.takeError());
+            break;
+        }
+        llvm::Expected<std::unique_ptr<llvm::object::ObjectFile>> object = llvm::object::ObjectFile::createObjectFile(*member);
+        if (!object) {
+            problem = llvm::toString(object.takeError());
+            break;
+        }
+        for (const llvm::object::SymbolRef& symbol : (*object)->symbols()) {
+            llvm::Expected<uint32_t> flags = symbol.getFlags();
+            if (!flags) {
+                problem = llvm::toString(flags.takeError());
+                break;
+            }
+            llvm::Expected<llvm::StringRef> name = symbol.getName();
+            if (!name) {
+                problem = llvm::toString(name.takeError());
+                break;
+            }
+            if ((*flags & llvm::object::SymbolRef::SF_Undefined) && name->starts_with("__imp_")) {
+                names.push_back(name->drop_front(6).str());
+            }
+        }
+        if (!problem.empty()) break;
+    }
+    if (failure) problem = llvm::toString(std::move(failure));
+    if (!problem.empty()) {
+        error = "internal error: cannot read the runtime: " + problem;
+        return false;
+    }
+    return true;
+}
+
+// The import library of a DLL, written by cromo instead of taken from the
+// Windows SDK (D136), as `lld-link /def` would do.
+bool writeImportLibrary(const ImportLibrary& import, const std::string& path, std::string& error) {
+    std::vector<llvm::object::COFFShortExport> exports;
+    for (const std::string& function : import.functions) {
+        llvm::object::COFFShortExport entry;
+        entry.Name = function;
+        exports.push_back(std::move(entry));
+    }
+    if (llvm::Error failure = llvm::object::writeImportLibrary(import.dll, path, exports,
+                                                               llvm::COFF::IMAGE_FILE_MACHINE_AMD64, false)) {
+        error = "cannot write the import library of " + import.dll + ": " + llvm::toString(std::move(failure));
+        return false;
+    }
+    return true;
+}
+
+bool link(const std::string& objectPath, const std::string& runtimePath, const BackendOptions& options,
+          std::vector<std::string>& temporaries, std::string& error) {
+    // The DLLs of the extern blocks, and kernel32 for the runtime.
+    std::vector<ImportLibrary> imports = options.imports;
+    auto kernel32 = std::find_if(imports.begin(), imports.end(), [](const ImportLibrary& i) { return i.dll == "kernel32.dll"; });
+    if (kernel32 == imports.end()) kernel32 = imports.insert(imports.end(), ImportLibrary{"kernel32.dll", {}});
+    std::vector<std::string> needed;
+    if (!runtimeImports(needed, error)) return false;
+    for (const std::string& name : needed) {
+        if (std::find(kernel32->functions.begin(), kernel32->functions.end(), name) == kernel32->functions.end()) {
+            kernel32->functions.push_back(name);
+        }
     }
 
     // No C runtime (D19): our own entry point and no default libraries.
     std::vector<std::string> args = {
         "lld-link",
         "/nologo",
-        "/out:" + outputPath,
+        "/out:" + options.outputPath,
         "/entry:cromo_start",
         "/subsystem:console",
         "/machine:x64",
         "/nodefaultlib",
-        "/libpath:" + sdkLibDir,
         objectPath,
         runtimePath,
-        "kernel32.lib",
     };
-    // The libraries of the extern blocks (D128): next to the modules, then in the SDK.
-    std::vector<std::string> folders = options.libraryPaths;
-    folders.push_back(sdkLibDir);
-    for (const std::string& folder : options.libraryPaths) args.push_back("/libpath:" + folder);
-    for (const std::string& library : options.libraries) {
-        if (library == "kernel32") continue;
-        bool found = false;
-        for (const std::string& folder : folders) found = found || llvm::sys::fs::exists(folder + "/" + library + ".lib");
-        if (!found) {
-            error = "cannot find the library '" + library + "': there is no " + library + ".lib next to the modules "
-                    "that use it, nor in the Windows SDK";
-            return false;
-        }
-        args.push_back(library + ".lib");
+    for (const std::string& archive : options.archives) args.push_back(archive);
+    for (const ImportLibrary& import : imports) {
+        std::string path = options.outputPath + "." + import.dll.substr(0, import.dll.size() - 4) + ".lib";
+        temporaries.push_back(path);
+        if (!writeImportLibrary(import, path, error)) return false;
+        args.push_back(path);
     }
     std::vector<const char*> argv;
     for (const std::string& arg : args) argv.push_back(arg.c_str());
@@ -199,8 +263,9 @@ bool buildExecutable(const std::string& irText, const std::string& moduleName, c
     if (!emitObject(*module, *machine, objectPath, error)) return false;
     if (!writeFile(runtimePath, runtimeLibrary(), error)) return false;
 
-    bool linked = link(objectPath, runtimePath, options, error);
-    llvm::sys::fs::remove(runtimePath);
+    std::vector<std::string> temporaries = {runtimePath};
+    bool linked = link(objectPath, runtimePath, options, temporaries, error);
+    for (const std::string& path : temporaries) llvm::sys::fs::remove(path);
     if (!options.keepObject) llvm::sys::fs::remove(objectPath);
     return linked;
 }

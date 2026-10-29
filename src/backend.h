@@ -5,12 +5,18 @@
 
 namespace cromo {
 
+// A DLL and the functions imported from it: cromo writes its import library (D136).
+struct ImportLibrary {
+    std::string dll;                     // "user32.dll"
+    std::vector<std::string> functions;
+};
+
 struct BackendOptions {
     std::string outputPath;  // executable to produce
     int optLevel = 2;        // from 0 to 3
     bool keepObject = false; // keep the intermediate object file
-    std::vector<std::string> libraries;     // of the extern blocks: "kernel32" is kernel32.lib (D128)
-    std::vector<std::string> libraryPaths;  // where to look for them, before the Windows SDK
+    std::vector<std::string> archives;   // .lib files of the extern blocks (D136)
+    std::vector<ImportLibrary> imports;  // DLLs of the extern blocks; kernel32 is always there, for the runtime
 };
 
 // Reads the textual IR with LLVM, optimizes it, generates machine code and links

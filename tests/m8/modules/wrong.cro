@@ -1,0 +1,10 @@
+// Libraries that cromo rejects (D137, D139).
+import unsafe
+
+extern "old32" {
+    i32 add(i32 a, i32 b)  // a DLL for 32 bits
+}
+
+extern "adder" {
+    i32 subtract(i32 a, i32 b)  // adder.dll does not export it
+}

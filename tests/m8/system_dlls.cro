@@ -1,0 +1,33 @@
+// expect-output: 21
+// expect-output: true
+// expect-output: false
+// expect-output: 42
+// expect-output: true
+// C functions of three system DLLs, linked without the Windows SDK: cromo writes
+// their import libraries (D136).
+import unsafe
+
+extern "kernel32" {
+    i32 MulDiv(i32 number, i32 numerator, i32 denominator)
+    addr GetProcessHeap()
+    addr HeapAlloc(addr heap, u32 flags, u64 size)  // kernel32 forwards it to ntdll (D140)
+    i32 HeapFree(addr heap, u32 flags, addr memory)
+}
+
+extern "user32" {
+    i32 IsCharAlphaA(u8 c)
+}
+
+extern "msvcrt" {
+    i32 labs(i32 x)  // the long of Windows is 32 bits
+}
+
+i32 main() {
+    println("{}", MulDiv(6, 7, 2))
+    println("{}", IsCharAlphaA('A') != 0)
+    println("{}", IsCharAlphaA('1') != 0)
+    println("{}", labs(-42))
+    addr memory = HeapAlloc(GetProcessHeap(), 0, 16)
+    println("{}", HeapFree(GetProcessHeap(), 0, memory) != 0)
+    ret 0
+}

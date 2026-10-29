@@ -854,7 +854,7 @@ extern "kernel32" {
 ### D133. The details of `extern`
 *2026-10-29.*
 - The C functions are private to their module, which offers safe functions instead (D42), and they keep their C name. An `extern` block is not public.
-- The library is a name without extension: `"kernel32"` is `kernel32.lib`, looked for in the folders of the modules that use it, then in the Windows SDK, until M8. The names that start with `cromo_` are reserved for the runtime.
+- The library is a name without extension: `"kernel32"` is `kernel32.lib`, looked for in the folders of the modules that use it, then in the Windows SDK, until M8 (amended by D136). The names that start with `cromo_` are reserved for the runtime.
 - The same C function can be declared by several modules, with the same signature.
 
 ### D134. The names of the symbols (D39, D50)
@@ -864,6 +864,30 @@ extern "kernel32" {
 *2026-10-29.* It closes the point left open by D112.
 - In an enum without data, every case can have a value, or none: `Red = 1`. The values are integer literals that fit in an `i32`, all different; without them a case has its position, from 0.
 - `i32(color)` gives the value of the case, as an explicit conversion to any integer type (D61). `Color(n)` gives the case whose value is `n`, and is a panic if there is none (D45). The default value stays the first case (D111).
+
+### D136. A C library is a DLL, or a `.lib` next to the module
+*2026-10-29.* It amends D133: the Windows SDK is no longer used. `extern "name"` is `name.dll`, and `cromo` writes its import library from the functions declared in the blocks, as Zig and the `raw-dylib` of Rust do. If a `name.lib` is next to the module, that one is used instead: it can be a static C library, or the import library of a DLL with another name.
+
+### D137. The names are checked in the DLL
+*2026-10-29.* While compiling, `cromo` reads the list of the functions that `name.dll` exports, looking for the DLL next to the module and then in the system folder of Windows. A C function that the DLL does not have, such as `GetStdHandel`, is a compile error, and so is a DLL that cannot be found. Without the check, the mistake would appear only when the program starts, in a window of Windows.
+
+### D138. `cromo` copies the DLLs next to the executable
+*2026-10-29.* A DLL found next to a module is needed next to the executable when the program starts. If the executable is written to another folder, `cromo` copies the DLL there, as Visual Studio does with the references.
+
+### D139. Where the libraries are looked for
+*2026-10-29.*
+- `name.lib` and `name.dll` are looked for in the folders of the modules that declare the library, in the order in which the modules are loaded, and `name.dll` then in the system folder of Windows (`System32`). The first one found is used.
+- A DLL that is not for x64 is an error.
+
+### D140. What is checked
+*2026-10-29.*
+- A C function must be exported by name by the DLL, also when the DLL forwards it to another one, as `kernel32` does with `HeapAlloc`.
+- With a `.lib` `cromo` checks nothing: a missing function is reported by the linker.
+
+### D141. The copy of the DLLs
+*2026-10-29.*
+- The DLLs found next to the modules are copied after linking, also when a `.lib` with the same name is used with them. The DLLs of the system folder are not copied.
+- A DLL is copied only if the executable is in another folder and the copy there is missing or different, in size or date. A copy that fails is an error. `--emit-ir` copies nothing.
 
 ---
 ---

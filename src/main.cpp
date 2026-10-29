@@ -2,6 +2,7 @@
 #include "codegen.h"
 #include "diagnostics.h"
 #include "lexer.h"
+#include "libraries.h"
 #include "ownership.h"
 #include "parser.h"
 #include "runtime_blob.h"
@@ -209,19 +210,11 @@ int main(int argc, char** argv) {
     cromo::Module module = Loader(sources, diag).load();
     if (diag.hasErrors() || !cromo::check(module, diag) || !cromo::checkMoves(module, diag)) return 1;
 
-    // The libraries of the extern blocks, looked for next to their modules (D128, D133).
-    std::set<std::string> libraries;
-    for (const cromo::FunctionDecl& function : module.functions) {
-        if (!function.isExtern || !libraries.insert(function.library).second) continue;
-        options.libraries.push_back(function.library);
-    }
-    for (const cromo::FunctionDecl& function : module.functions) {
-        if (!function.isExtern || function.loc.file == cromo::kLibraryFile) continue;
-        std::string folder = fs::absolute(sources[function.loc.file].path).parent_path().string();
-        if (std::find(options.libraryPaths.begin(), options.libraryPaths.end(), folder) == options.libraryPaths.end()) {
-            options.libraryPaths.push_back(folder);
-        }
-    }
+    // The libraries of the extern blocks, with their C functions checked in the DLLs (D136, D137).
+    cromo::Libraries libraries = cromo::findLibraries(module, sources, diag);
+    if (diag.hasErrors()) return 1;
+    options.archives = libraries.archives;
+    options.imports = libraries.imports;
 
     std::string sourceName = fs::path(inputPath).filename().string();
     for (const cromo::SourceFile& source : sources) codegen.sourcePaths.push_back(source.path);
@@ -232,7 +225,8 @@ int main(int argc, char** argv) {
     }
 
     std::string error;
-    if (!cromo::buildExecutable(ir, sourceName, options, error)) {
+    if (!cromo::buildExecutable(ir, sourceName, options, error) ||
+        !cromo::copyLibraries(libraries.copies, options.outputPath, error)) {
         std::fprintf(stderr, "cromo: %s\n", error.c_str());
         return 1;
     }

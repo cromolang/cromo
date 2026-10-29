@@ -9,10 +9,12 @@
 #   // expect-warning: text         text that must appear among the compiler warnings
 # Usage: powershell -ExecutionPolicy Bypass -File tests\run-tests.ps1 [-Cromo <path>] [-Filter <text>] [-Flags <options>]
 #   -Flags passes extra options to every compilation, for example -Flags -O0
+# The C libraries in m8\native are built first with the clang of LLVM (D136).
 param(
     [string]$Cromo = (Join-Path $PSScriptRoot '..\build\cromo.exe'),
     [string]$Filter = '',
-    [string]$Flags = ''
+    [string]$Flags = '',
+    [string]$LlvmRoot = 'C:\software\llvm-23.1.4'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -21,6 +23,27 @@ if (-not (Test-Path $Cromo)) { throw "cromo not found: $Cromo (run build.ps1 fir
 $Cromo = (Resolve-Path $Cromo).Path
 $out = Join-Path $PSScriptRoot 'out'
 New-Item -ItemType Directory -Force $out | Out-Null
+
+# A program that cannot find a DLL ends with an error code, instead of opening a
+# window of Windows that would stop the tests. The programs inherit this mode.
+Add-Type -Namespace Cromo -Name ErrorMode -MemberDefinition '[DllImport("kernel32.dll")] public static extern uint SetErrorMode(uint mode);'
+[Cromo.ErrorMode]::SetErrorMode(0x8003) | Out-Null
+
+# The libraries next to the modules of m8: a DLL, a static library, and a DLL
+# for 32 bits that cromo must reject. Without the C library, like the runtime.
+function Invoke-Tool([string]$Tool, [string[]]$Arguments) {
+    & (Join-Path $LlvmRoot "bin\$Tool") @Arguments
+    if ($LASTEXITCODE -ne 0) { throw "$Tool failed: $Arguments" }
+}
+$native = Join-Path $PSScriptRoot 'm8\native'
+$modules = Join-Path $PSScriptRoot 'm8\modules'
+$cflags = @('-ffreestanding', '-fno-builtin', '-nostdlib', '-O2', '-c')
+Invoke-Tool 'clang.exe' ($cflags + @('--target=x86_64-pc-windows-msvc', "$native\adder.c", '-o', "$out\adder.obj"))
+Invoke-Tool 'lld-link.exe' @('/nologo', '/dll', '/noentry', '/noimplib', '/nodefaultlib', '/machine:x64', "/out:$modules\adder.dll", "$out\adder.obj")
+Invoke-Tool 'clang.exe' ($cflags + @('--target=i686-pc-windows-msvc', "$native\adder.c", '-o', "$out\adder32.obj"))
+Invoke-Tool 'lld-link.exe' @('/nologo', '/dll', '/noentry', '/noimplib', '/nodefaultlib', '/machine:x86', "/out:$modules\old32.dll", "$out\adder32.obj")
+Invoke-Tool 'clang.exe' ($cflags + @('--target=x86_64-pc-windows-msvc', "$native\scale.c", '-o', "$out\scale.obj"))
+Invoke-Tool 'llvm-lib.exe' @('/nologo', "/out:$modules\scale.lib", "$out\scale.obj")
 
 # Runs a program and returns its exit code, standard output and standard error,
 # read separately and decoded as UTF-8.

@@ -1,0 +1,15 @@
+// The functions of adder.dll, which run-tests.ps1 builds next to this module (D136).
+import unsafe
+
+extern "adder" {
+    i32 add(i32 a, i32 b)
+    i32 twice(i32 x)
+}
+
+public i32 sum(i32 a, i32 b) {
+    ret add(a, b)
+}
+
+public i32 doubled(i32 x) {
+    ret twice(x)
+}

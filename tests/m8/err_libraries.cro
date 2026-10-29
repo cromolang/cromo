@@ -1,0 +1,19 @@
+// expect-error: kernel32.dll has no function 'GetStdHandel' (D137)
+// expect-error: cannot find the library 'nosuchlibrary': there is no nosuchlibrary.lib or nosuchlibrary.dll next to the modules that use it, nor nosuchlibrary.dll in
+// expect-error: old32.dll is not a DLL for x64 (D139)
+// expect-error: adder.dll has no function 'subtract' (D137)
+// The C functions are checked in their DLLs while compiling (D137).
+import unsafe
+import modules.wrong
+
+extern "kernel32" {
+    addr GetStdHandel(u32 id)
+}
+
+extern "nosuchlibrary" {
+    void Nothing()
+}
+
+i32 main() {
+    ret 0
+}

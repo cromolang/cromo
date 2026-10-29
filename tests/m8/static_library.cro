@@ -1,0 +1,8 @@
+// expect-output: 21
+// A static C library next to a module: scale.lib is used instead of a DLL (D136).
+import modules.scale
+
+i32 main() {
+    println("{}", tripled(7))
+    ret 0
+}
