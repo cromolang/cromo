@@ -317,6 +317,26 @@ private:
             break;
         }
         case ExprKind::TypeRef: typeName(static_cast<const TypeRefExpr&>(*node).name); break;
+        case ExprKind::Lambda: {
+            const auto& lambda = static_cast<const LambdaExpr&>(*node);
+            for (const Capture& capture : lambda.captures) variable(capture.outer, capture.loc);
+            const FunctionDecl& function = *lambda.function;
+            if (!function.bodyChecked) break;
+            typeName(function.returnType);
+            for (size_t i = 0; i < function.params.size(); ++i) {
+                const Param& param = function.params[i];
+                typeName(param.type);
+                if (i < function.variables.size()) variable(function.variables[i].get(), param.loc, modePrefix(param.mode, param.isConst));
+            }
+            block(function.body);
+            break;
+        }
+        case ExprKind::CallValue: {
+            const auto& call = static_cast<const CallValueExpr&>(*node);
+            expr(call.callee.get());
+            exprs(call.args);
+            break;
+        }
         case ExprKind::IntLiteral:
         case ExprKind::FloatLiteral:
         case ExprKind::BoolLiteral:

@@ -1,0 +1,56 @@
+// expect-output: 3
+// expect-output: uno-due-
+// expect-output: 7
+// expect-output: ciao Anna
+// expect-output: ciao Anna
+// Lambdas as arguments, with read and ref captures; a lambda returned; one that
+// owns its capture, kept in a variable and moved (D183-D186).
+i64 count(list<i64> values, func(i64) bool keep) {
+    i64 n = 0
+    for (i64 v in values) {
+        if (keep(v)) {
+            n++
+        }
+    }
+    ret n
+}
+
+void each(list<string> words, func(string) action) {
+    for (string w in words) {
+        action(w)
+    }
+}
+
+func(i64) i64 adder(i64 amount) {
+    ret [amount](i64 x) i64 { ret x + amount }
+}
+
+i32 main() {
+    list<i64> values
+    for (i64 i = 0; i < 10; i++) {
+        values.add(i)
+    }
+    i64 limit = 6
+    println("{}", count(values, [limit](i64 x) bool { ret x > limit }))
+
+    list<string> words
+    words.add("uno")
+    words.add("due")
+    string joined
+    each(words, [ref joined](string w) {
+        joined += w
+        joined += "-"
+    })
+    println("{}", joined)
+
+    func(i64) i64 plus3 = adder(3)
+    println("{}", plus3(4))
+    string name = "Anna"
+    func() greet = [move name]() {
+        println("ciao {}", name)
+    }
+    greet()
+    func() moved = move greet
+    moved()
+    ret 0
+}

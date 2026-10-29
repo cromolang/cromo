@@ -1,0 +1,28 @@
+// expect-output: 9
+// expect-output: anna!
+// expect-output: 4
+// Lambdas with generics: a function type with T, and a lambda inside a generic (D185).
+T apply<T>(T value, func(T) T f) {
+    ret f(value)
+}
+
+i64 countIf<T>(list<T> items, func(T) bool test) {
+    i64 n = 0
+    for (T item in items) {
+        if (test(item)) {
+            n++
+        }
+    }
+    ret n
+}
+
+i32 main() {
+    println("{}", apply<i32>(4, [](i32 x) i32 { ret x * 2 + 1 }))
+    println("{}", apply<string>("anna", [](string s) string { ret s + "!" }))
+    list<i32> values
+    for (i32 i = 0; i < 8; i++) {
+        values.add(i)
+    }
+    println("{}", countIf<i32>(values, [](i32 x) bool { ret x % 2 == 0 }))
+    ret 0
+}

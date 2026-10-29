@@ -1,0 +1,54 @@
+// Example 6: anonymous functions.
+//
+// Decided: lambdas with their captures (D183), where they can go (D184), the
+//          type of a function (D185), indirect calls (D186), function values
+//          moved and not copied, an empty one a panic (D189)
+
+struct Button {
+    string label
+    func() onClick  // a function value, kept in a field
+}
+
+// The values that pass a test: the test is a parameter of a function type.
+list<i64> select(list<i64> values, func(i64) bool test) {
+    list<i64> result
+    for (i64 v in values) {
+        if (test(v)) {
+            result.add(v)
+        }
+    }
+    ret result
+}
+
+// A lambda returned: it keeps its own copy of step.
+func(i64) i64 stepper(i64 step) {
+    ret [step](i64 x) i64 { ret x + step }
+}
+
+i32 main() {
+    list<i64> values
+    for (i64 i = 1; i <= 10; i++) {
+        values.add(i)
+    }
+
+    i64 limit = 7
+    list<i64> big = select(values, [limit](i64 x) bool { ret x > limit })
+    println("{} values above {}", big.len(), limit)
+
+    i64 sum = 0
+    select(values, [ref sum](i64 x) bool {  // ref: the lambda modifies sum
+        sum += x
+        ret false
+    })
+    println("sum {}", sum)
+
+    func(i64) i64 next = stepper(5)
+    println("{}", next(10))
+
+    string name = "save"
+    Button button
+    button.label = "Save"
+    button.onClick = [move name]() { println("{} clicked", name) }  // move: the lambda owns name
+    button.onClick()
+    ret 0
+}

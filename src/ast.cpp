@@ -95,11 +95,26 @@ ExprPtr cloneExpr(const Expr& expr) {
     }
     case ExprKind::TypeRef:
         return std::make_unique<TypeRefExpr>(expr.loc, static_cast<const TypeRefExpr&>(expr).name);
+    case ExprKind::Lambda: {
+        const auto& from = static_cast<const LambdaExpr&>(expr);
+        auto to = std::make_unique<LambdaExpr>(from.loc);
+        for (const Capture& capture : from.captures) to->captures.push_back(Capture{capture.mode, capture.name, capture.loc});
+        to->function = std::make_unique<FunctionDecl>(clone(*from.function));
+        return to;
+    }
+    case ExprKind::CallValue: {
+        const auto& from = static_cast<const CallValueExpr&>(expr);
+        auto to = std::make_unique<CallValueExpr>(from.loc, clone(*from.callee));
+        to->args = cloneAll(from.args);
+        return to;
+    }
     }
     return nullptr;
 }
 
 }  // namespace
+
+LambdaExpr::~LambdaExpr() = default;
 
 ExprPtr clone(const Expr& expr) {
     ExprPtr result = cloneExpr(expr);
@@ -222,6 +237,7 @@ FunctionDecl clone(const FunctionDecl& function) {
     result.params = function.params;
     result.isConst = function.isConst;
     result.isGenerated = function.isGenerated;
+    result.isLambda = function.isLambda;
     result.typeParams = function.typeParams;
     result.body = clone(function.body);
     return result;

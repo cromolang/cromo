@@ -1,0 +1,8 @@
+// expect-exit: 101
+// expect-stderr: panic: the function is empty
+// A function value without a lambda: calling it is a panic (D45).
+i32 main() {
+    func() nothing
+    nothing()
+    ret 0
+}

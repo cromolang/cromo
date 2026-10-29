@@ -1,0 +1,37 @@
+// expect-output: clicked 1
+// expect-output: clicked 2
+// expect-output: 10 20 30
+// expect-output: 6
+// expect-output: twice: 14
+// Function values in fields and lists, called through a field (D184, D186).
+struct Button {
+    string label
+    func(i32) onClick
+}
+
+i32 apply(func(i32) i32 f, i32 x) {
+    ret f(x)
+}
+
+func(i32) i32 twice(move func(i32) i32 f) {
+    ret [move f](i32 x) i32 { ret f(f(x)) }
+}
+
+i32 main() {
+    Button button
+    button.label = "ok"
+    button.onClick = [](i32 n) { println("clicked {}", n) }
+    button.onClick(1)
+    button.onClick(2)
+
+    list<func(i32) i32> scales
+    for (i32 k = 1; k <= 3; k++) {
+        scales.add([k](i32 x) i32 { ret x * k * 10 })
+    }
+    println("{} {} {}", scales[0](1), scales[1](1), scales[2](1))
+    println("{}", apply([](i32 x) i32 { ret x + 1 }, 5))
+
+    func(i32) i32 plus7 = twice([](i32 x) i32 { ret x + 7 })
+    println("twice: {}", plus7(0))
+    ret 0
+}

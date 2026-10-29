@@ -209,8 +209,11 @@ private:
     // ---- Declarations ----
 
     // type := 'void' | [module '.'] name ['<' type {',' type} '>']
-    bool parseType(TypeName& out) {
+    // `nameFollows`: a name comes after the type, as in a declaration; it decides
+    // whether `func(i32) f` returns f or names f (D185).
+    bool parseType(TypeName& out, bool nameFollows = true) {
         const Token& token = peek();
+        if (token.kind == TokenKind::KwFunc) return parseFunctionType(out, nameFollows);
         if (token.kind == TokenKind::KwVoid) {
             out = TypeName{"void", token.loc};
             advance();
@@ -233,13 +236,55 @@ private:
             advance();
             do {
                 TypeName arg;
-                if (!parseType(arg)) return false;
+                if (!parseType(arg, false)) return false;
                 out.args.push_back(std::move(arg));
             } while (match(TokenKind::Comma));
             markAngle();
             if (!expect(TokenKind::Greater, "to close the type arguments")) return false;
         }
         return true;
+    }
+
+    // functionType := 'func' '(' [['ref' | 'move'] type {',' ...}] ')' [type]   (D185)
+    bool parseFunctionType(TypeName& out, bool nameFollows) {
+        out = TypeName{"func", advance().loc};
+        out.isFunction = true;
+        if (!expect(TokenKind::LParen, "after 'func'")) return false;
+        if (!check(TokenKind::RParen)) {
+            do {
+                ParamMode mode = ParamMode::Read;
+                if (match(TokenKind::KwRef)) {
+                    mode = ParamMode::Ref;
+                } else if (match(TokenKind::KwMove)) {
+                    mode = ParamMode::Move;
+                }
+                TypeName param;
+                if (!parseType(param, false)) return false;
+                out.args.push_back(std::move(param));
+                out.modes.push_back(static_cast<int>(mode));
+            } while (match(TokenKind::Comma));
+        }
+        if (!expect(TokenKind::RParen, "to close the parameters of the function type")) return false;
+        if (hasResultType(0, nameFollows)) {
+            TypeName result;
+            if (!parseType(result, nameFollows)) return false;
+            out.result.push_back(std::move(result));
+        }
+        return true;
+    }
+
+    bool startsType(size_t i) const {
+        TokenKind kind = peek(i).kind;
+        return kind == TokenKind::Identifier || kind == TokenKind::KwVoid || kind == TokenKind::KwFunc;
+    }
+
+    // After the ')' of a function type: a type returned, unless what follows is
+    // the name of a declaration (D185).
+    bool hasResultType(size_t i, bool nameFollows) const {
+        if (!startsType(i)) return false;
+        if (!nameFollows) return true;
+        size_t after = skipType(i);
+        return after && peek(after).kind == TokenKind::Identifier;
     }
 
     // A '<' or '>' around type arguments or parameters, for cromo fmt.
@@ -249,7 +294,23 @@ private:
 
     // Looks ahead without consuming: the position after the type that starts at
     // `i`, or 0 if there is no type there.
-    size_t skipType(size_t i) const {
+    size_t skipType(size_t i, bool nameFollows = true) const {
+        if (peek(i).kind == TokenKind::KwFunc) {  // `func(i32, ref T) bool` (D185)
+            if (peek(i + 1).kind != TokenKind::LParen) return 0;
+            size_t j = i + 2;
+            if (peek(j).kind != TokenKind::RParen) {
+                for (;;) {
+                    if (peek(j).kind == TokenKind::KwRef || peek(j).kind == TokenKind::KwMove) ++j;
+                    j = skipType(j, false);
+                    if (j == 0) return 0;
+                    if (peek(j).kind != TokenKind::Comma) break;
+                    ++j;
+                }
+            }
+            if (peek(j).kind != TokenKind::RParen) return 0;
+            ++j;
+            return hasResultType(j, nameFollows) ? skipType(j, nameFollows) : j;
+        }
         if (peek(i).kind == TokenKind::KwVoid) return i + 1;
         if (peek(i).kind != TokenKind::Identifier) return 0;
         if (peek(i + 1).kind == TokenKind::Dot && peek(i + 2).kind == TokenKind::Identifier) i += 2;  // `geometry.Circle`
@@ -260,7 +321,7 @@ private:
     // The position after the type arguments that start with the '<' at `i`, or 0.
     size_t skipTypeArgs(size_t i) const {
         for (++i;;) {
-            i = skipType(i);
+            i = skipType(i, false);
             if (i == 0) return 0;
             if (peek(i).kind == TokenKind::Greater) return i + 1;
             if (peek(i).kind != TokenKind::Comma) return 0;
@@ -298,7 +359,7 @@ private:
             if (match(TokenKind::Colon)) {
                 do {
                     TypeName constraint;
-                    if (!parseType(constraint)) return false;
+                    if (!parseType(constraint, false)) return false;
                     param.constraints.push_back(std::move(constraint));
                 } while (match(TokenKind::Plus));
             }
@@ -399,7 +460,7 @@ private:
         if (match(TokenKind::Colon)) {
             do {
                 TypeName name;
-                if (!parseType(name)) return std::nullopt;
+                if (!parseType(name, false)) return std::nullopt;
                 decl.interfaces.push_back(std::move(name));
             } while (match(TokenKind::Comma));
         }
@@ -544,7 +605,7 @@ private:
         if (match(TokenKind::Colon)) {  // the interfaces it implements (D49, D88)
             do {
                 TypeName name;
-                if (!parseType(name)) return std::nullopt;
+                if (!parseType(name, false)) return std::nullopt;
                 decl.interfaces.push_back(std::move(name));
             } while (match(TokenKind::Comma));
         }
@@ -685,7 +746,7 @@ private:
 
     bool startsDeclaration() const {
         if (check(TokenKind::KwConst)) return true;
-        size_t afterType = check(TokenKind::Identifier) ? skipType(0) : 0;
+        size_t afterType = check(TokenKind::Identifier) || check(TokenKind::KwFunc) ? skipType(0) : 0;
         return afterType && peek(afterType).kind == TokenKind::Identifier;
     }
 
@@ -1124,7 +1185,7 @@ private:
         if (isGenericType()) {  // `Result<i32, string>.Ok(5)` (D105)
             SourceLocation loc = peek().loc;
             TypeName name;
-            if (!parseType(name)) return nullptr;
+            if (!parseType(name, false)) return nullptr;
             expr = std::make_unique<TypeRefExpr>(loc, std::move(name));
         } else if (check(TokenKind::Identifier) && (peek(1).kind == TokenKind::LParen || isGenericCall())) {
             const Token& name = advance();
@@ -1134,7 +1195,7 @@ private:
                 advance();
                 do {
                     TypeName arg;
-                    if (!parseType(arg)) return nullptr;
+                    if (!parseType(arg, false)) return nullptr;
                     call->typeArgs.push_back(std::move(arg));
                 } while (match(TokenKind::Comma));
                 markAngle();
@@ -1145,7 +1206,13 @@ private:
         } else {
             expr = parsePrimary();
         }
-        while (expr && (check(TokenKind::Dot) || check(TokenKind::LBracket))) {
+        while (expr && (check(TokenKind::Dot) || check(TokenKind::LBracket) || check(TokenKind::LParen))) {
+            if (check(TokenKind::LParen)) {  // `handlers[i](x)`, `make()(x)`: a function value (D186)
+                auto call = std::make_unique<CallValueExpr>(peek().loc, std::move(expr));
+                if (!parseArgs(call->args)) return nullptr;
+                expr = std::move(call);
+                continue;
+            }
             if (check(TokenKind::LBracket)) {  // `v[i]` (D35)
                 SourceLocation loc = advance().loc;
                 ExprPtr index = parseExpression();
@@ -1171,9 +1238,52 @@ private:
         return expr;
     }
 
+    // lambda  := '[' [capture {',' capture}] ']' params [type] block   (D183)
+    // capture := ['ref' | 'move'] name
+    ExprPtr parseLambda() {
+        auto lambda = std::make_unique<LambdaExpr>(advance().loc);
+        if (!check(TokenKind::RBracket)) {
+            do {
+                Capture capture;
+                if (match(TokenKind::KwRef)) {
+                    capture.mode = ParamMode::Ref;
+                } else if (match(TokenKind::KwMove)) {
+                    capture.mode = ParamMode::Move;
+                }
+                if (!check(TokenKind::Identifier)) {
+                    errorAtCurrent("the name of a variable to capture");
+                    return nullptr;
+                }
+                capture.name = peek().text;
+                capture.loc = advance().loc;
+                lambda->captures.push_back(std::move(capture));
+            } while (match(TokenKind::Comma));
+        }
+        if (!expect(TokenKind::RBracket, "to close the captures")) return nullptr;
+        auto function = std::make_unique<FunctionDecl>();
+        function->name = "lambda";
+        function->loc = lambda->loc;
+        function->isLambda = true;
+        if (!check(TokenKind::LParen)) {
+            errorAtCurrent("'(' with the parameters of the lambda");
+            return nullptr;
+        }
+        if (!parseParams(*function)) return nullptr;
+        if (check(TokenKind::LBrace)) {
+            function->returnType = TypeName{"void", peek().loc};  // without a type it returns nothing
+        } else if (!parseType(function->returnType, false)) {
+            return nullptr;
+        }
+        if (!parseFunctionBody(*function)) return nullptr;
+        lambda->function = std::move(function);
+        return lambda;
+    }
+
     ExprPtr parsePrimary() {
         const Token& token = peek();
         switch (token.kind) {
+        case TokenKind::LBracket:
+            return parseLambda();
         case TokenKind::IntegerLiteral:
             advance();
             return std::make_unique<IntLiteralExpr>(token.loc, token.intValue, false);

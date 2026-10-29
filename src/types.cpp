@@ -2,6 +2,8 @@
 
 #include "ast.h"
 
+#include <deque>
+
 namespace cromo {
 
 std::string Type::name() const {
@@ -15,6 +17,18 @@ std::string Type::name() const {
     case TypeKind::Struct: return structDecl->name;
     case TypeKind::Param: return param->name;
     case TypeKind::Interface: return interfaceDecl->name;
+    case TypeKind::Function: {
+        std::string text = "func(";
+        for (size_t i = 0; i < sig->params.size(); ++i) {
+            if (i) text += ", ";
+            if (sig->modes[i] == ParamMode::Ref) text += "ref ";
+            if (sig->modes[i] == ParamMode::Move) text += "move ";
+            text += sig->params[i].name();
+        }
+        text += ")";
+        if (!sig->result.isVoid()) text += " " + sig->result.name();
+        return text;
+    }
     case TypeKind::SelfType: return "Self";
     case TypeKind::Addr: return "addr";
     case TypeKind::UntypedInt: return "integer literal";
@@ -51,8 +65,18 @@ bool convertsLosslessly(Type from, Type to) {
     return false;
 }
 
+// A function value owns its captured data (D184).
 bool needsDestruction(Type type) {
-    return type.isParam() || (type.isStruct() && type.structDecl->needsDestruction);
+    return type.isParam() || type.isFunction() || (type.isStruct() && type.structDecl->needsDestruction);
+}
+
+const FunctionSig* internSignature(const std::vector<Type>& params, const std::vector<ParamMode>& modes, Type result) {
+    static std::deque<FunctionSig> signatures;
+    for (const FunctionSig& sig : signatures) {
+        if (sig.params == params && sig.modes == modes && sig.result == result) return &sig;
+    }
+    signatures.push_back(FunctionSig{params, modes, result});
+    return &signatures.back();
 }
 
 bool isAbstract(Type type) {
@@ -65,7 +89,8 @@ int sizeOf(Type type) {
     case TypeKind::Int:
     case TypeKind::Float: return type.bits / 8;
     case TypeKind::Struct: return type.structDecl->size;
-    case TypeKind::Interface: return 16;
+    case TypeKind::Interface:
+    case TypeKind::Function: return 16;
     case TypeKind::Addr: return 8;
     default: return 0;
     }
@@ -73,7 +98,7 @@ int sizeOf(Type type) {
 
 int alignOf(Type type) {
     if (type.isStruct()) return type.structDecl->align;
-    if (type.isInterface()) return 8;
+    if (type.isInterface() || type.isFunction()) return 8;
     int size = sizeOf(type);
     return size > 0 ? size : 1;
 }
@@ -86,7 +111,8 @@ std::string llvmType(Type type) {
     case TypeKind::Float: return type.bits == 32 ? "float" : "double";
     case TypeKind::String: return "ptr";
     case TypeKind::Struct: return llvmName('%', "struct." + type.structDecl->symbol);
-    case TypeKind::Interface: return "{ ptr, ptr }";
+    case TypeKind::Interface:
+    case TypeKind::Function: return "{ ptr, ptr }";
     case TypeKind::Addr: return "ptr";
     default: return "<invalid>";
     }

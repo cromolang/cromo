@@ -1,0 +1,41 @@
+// expect-error: this lambda captures by address
+// expect-error: 'total' is not captured: write it between the [] of the lambda (D183)
+// expect-error: 'limit' is captured to be read: capture it with 'ref limit' to modify it (D183)
+// expect-error: unknown name 'missing'
+// expect-error: cannot capture 'words' with 'move': only a local variable or a 'move' parameter can give its value (D183)
+// expect-error: a value of type func(i32) bool cannot be used as func(i64) bool
+// expect-error: write 'move f'
+// expect-error: overlaps
+// The rules of the captures (D183, D184).
+void use(func(i64) bool f) {
+}
+
+void add(ref i64 total, func(i64) f) {
+}
+
+void keep(list<string> words) {
+    func() owned = [move words]() {
+    }
+}
+
+i32 main() {
+    list<i64> values
+    func() stored = [values]() {
+    }
+    i64 total = 0
+    use([](i64 x) bool { ret x > total })
+    i64 limit = 3
+    use([limit](i64 x) bool {
+        limit = 4
+        ret true
+    })
+    use([missing](i64 x) bool { ret true })
+    use([](i32 x) bool { ret true })
+    func() f = []() {
+    }
+    func() g = f
+    add(ref total, [ref total](i64 x) {
+        total += x
+    })
+    ret 0
+}

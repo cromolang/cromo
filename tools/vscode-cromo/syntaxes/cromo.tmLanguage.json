@@ -94,7 +94,7 @@
         },
         {
           "name": "storage.type.cromo",
-          "match": "\\b(?:struct|interface|enum)\\b"
+          "match": "\\b(?:struct|interface|enum|func)\\b"
         },
         {
           "name": "storage.modifier.cromo",

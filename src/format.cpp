@@ -119,8 +119,8 @@ bool spaceBetween(const Token& a, const Token& b, bool aUnary, const std::set<si
         return (x == TokenKind::Minus && (y == TokenKind::Minus || y == TokenKind::MinusMinus)) ||
                (x == TokenKind::Plus && (y == TokenKind::Plus || y == TokenKind::PlusPlus));
     }
-    if (y == TokenKind::LParen || y == TokenKind::LBracket) {  // a call or an index
-        return !(x == TokenKind::Identifier || x == TokenKind::RParen || x == TokenKind::RBracket);
+    if (y == TokenKind::LParen || y == TokenKind::LBracket) {  // a call, an index, `func(i32)`, `[x](i32 a)`
+        return !(x == TokenKind::Identifier || x == TokenKind::RParen || x == TokenKind::RBracket || x == TokenKind::KwFunc);
     }
     return true;
 }
@@ -141,8 +141,15 @@ std::string layout(const std::string& source, const std::vector<Token>& tokens, 
     joinBraces(lines);
 
     std::vector<OutputLine> output;
-    int braces = 0;
-    int parens = 0;            // parentheses and square brackets
+    // The open braces, parentheses and brackets, each with the level of the lines
+    // inside it minus one: a parenthesis takes the level of its line, a brace the
+    // level of its statement, or of its line inside parentheses, as a lambda (D183).
+    struct Open {
+        TokenKind kind;
+        int base;
+    };
+    std::vector<Open> open;
+    int statementLevel = 0;    // of the first line of the statement
     bool continues = false;    // the line before asks to continue the statement (D32)
     const Token* previousCode = nullptr;
     int commentColumn = 0;  // in the source, of the comment at the end of the line before
@@ -160,14 +167,17 @@ std::string layout(const std::string& source, const std::vector<Token>& tokens, 
         }
         commentColumn = 0;
 
-        // D167: one level for each block, and for each parenthesis still open, or
-        // one for a statement that continues; a line that starts by closing has one less.
-        int level = braces + parens + (continues && parens == 0 ? 1 : 0);
-        for (const Token* token : line.tokens) {
-            TokenKind kind = token->kind;
-            if (kind != TokenKind::RBrace && kind != TokenKind::RParen && kind != TokenKind::RBracket) break;
-            --level;
-        }
+        // D167: one level more than what is open, and one more for a statement that
+        // continues after an operator; a line that starts by closing has the level
+        // of the line that opened.
+        bool inBlock = open.empty() || open.back().kind == TokenKind::LBrace;
+        int level = open.empty() ? 0 : open.back().base + 1;
+        if (continues && inBlock) ++level;
+        TokenKind firstKind = first->kind;
+        bool closes = firstKind == TokenKind::RBrace || firstKind == TokenKind::RParen || firstKind == TokenKind::RBracket;
+        if (closes && !open.empty()) level = open.back().base;
+        bool continuation = continues || !inBlock;
+        if (!continuation && !isComment(first)) statementLevel = level;
         OutputLine out;
         out.code.assign(static_cast<size_t>(std::max(level, 0)) * 4, ' ');
         const Token* previous = nullptr;
@@ -188,10 +198,14 @@ std::string layout(const std::string& source, const std::vector<Token>& tokens, 
                 if (kind == TokenKind::Minus || kind == TokenKind::Plus) {
                     unary = !previousCode || (!endsOperand(previousCode->kind) && !angles.count(previousCode->begin));
                 }
-                if (kind == TokenKind::LBrace) ++braces;
-                if (kind == TokenKind::RBrace && braces > 0) --braces;
-                if (kind == TokenKind::LParen || kind == TokenKind::LBracket) ++parens;
-                if ((kind == TokenKind::RParen || kind == TokenKind::RBracket) && parens > 0) --parens;
+                if (kind == TokenKind::LBrace) {
+                    bool inParens = !open.empty() && open.back().kind != TokenKind::LBrace;
+                    open.push_back({kind, inParens ? level : statementLevel});
+                }
+                if (kind == TokenKind::LParen || kind == TokenKind::LBracket) open.push_back({kind, level});
+                if ((kind == TokenKind::RBrace || kind == TokenKind::RParen || kind == TokenKind::RBracket) && !open.empty()) {
+                    open.pop_back();
+                }
                 previousCode = token;
             }
             previous = token;
@@ -203,8 +217,7 @@ std::string layout(const std::string& source, const std::vector<Token>& tokens, 
         }
 
         // D167: at most one blank line, none at the start or at the end of a block.
-        bool closes = line.tokens[0]->kind == TokenKind::RBrace;
-        out.blankBefore = line.blankBefore && !output.empty() && !output.back().opens && !closes;
+        out.blankBefore = line.blankBefore && !output.empty() && !output.back().opens && firstKind != TokenKind::RBrace;
         output.push_back(std::move(out));
     }
 

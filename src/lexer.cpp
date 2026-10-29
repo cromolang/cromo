@@ -15,6 +15,7 @@ const std::unordered_map<std::string, TokenKind>& keywords() {
         {"else", TokenKind::KwElse},         {"enum", TokenKind::KwEnum},
         {"extern", TokenKind::KwExtern},     {"false", TokenKind::KwFalse},
         {"finally", TokenKind::KwFinally},   {"for", TokenKind::KwFor},
+        {"func", TokenKind::KwFunc},
         {"if", TokenKind::KwIf},             {"import", TokenKind::KwImport},
         {"in", TokenKind::KwIn},             {"interface", TokenKind::KwInterface},
         {"move", TokenKind::KwMove},         {"public", TokenKind::KwPublic},
@@ -137,6 +138,15 @@ private:
         tokens_.push_back(Token{kind, std::move(text), loc, value, start_, pos_});
         if (kind == TokenKind::LParen || kind == TokenKind::LBracket) ++depth_;
         if ((kind == TokenKind::RParen || kind == TokenKind::RBracket) && depth_ > 0) --depth_;
+        // The body of a lambda inside parentheses ends its statements at the newline (D183).
+        if (kind == TokenKind::LBrace) {
+            outerDepths_.push_back(depth_);
+            depth_ = 0;
+        }
+        if (kind == TokenKind::RBrace && !outerDepths_.empty()) {
+            depth_ = outerDepths_.back();
+            outerDepths_.pop_back();
+        }
     }
 
     // A newline ends the statement, except inside parentheses or brackets, after
@@ -426,6 +436,7 @@ private:
     int line_ = 1;
     int column_ = 1;
     int depth_ = 0;  // open parentheses and brackets
+    std::vector<int> outerDepths_;  // the depth outside each open brace
 };
 
 }  // namespace

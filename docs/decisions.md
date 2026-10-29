@@ -1052,6 +1052,45 @@ extern "kernel32" {
 ### D182. Completion: when
 *2026-10-29.* VS Code asks when `.` is written, and with Ctrl+Space right after a dot or inside the name after it. Elsewhere the server proposes nothing yet.
 
+### D183. How an anonymous function is written
+*2026-10-29.* As the lambdas of C++, with the captures written: `[limit, ref total](i32 x) bool { ret x > limit }`. The captures are between square brackets, with the modes of Cromo: a name alone is read, `ref` can modify, `move` takes the ownership (D22). The parameters are written as in a function, and the type returned follows the parentheses; without it the function returns nothing. Whoever reads sees at once what the lambda uses and how. It resolves the open point of D148.
+
+### D184. Where an anonymous function can go
+*2026-10-29.* It depends on its captures. A lambda that captures with `ref`, or reads an object without copying it, can only be passed as an argument, as a `ref` parameter (D22): no borrow checker is needed. A lambda that captures only with `move`, or values of simple types, is a value that owns its captures: it can be kept in variables, fields and lists, returned, and moved with `move`. Keeping one that has captures allocates them on the heap, as a `string` does.
+
+### D185. The type of a function
+*2026-10-29.* `func(i32, i32) bool`: the keyword `func`, the types of the parameters with their modes, as `func(ref list<i64>, i64) bool`, and the type returned after them, as in the lambdas. Without it the function returns nothing.
+
+### D186. A function received as a parameter is called indirectly
+*2026-10-29.* The value of a function is a pair: the captured data and the address of the code, as the parameters of interface type (D49). LLVM makes the call direct, and puts it inline, when it sees both, for example after putting inline the function that receives it. One code serves every lambda.
+
+### D187. Lambdas: the details of the captures
+*2026-10-29.*
+- A name alone reads: a value of a simple type (D23) is copied when the lambda is made; the others are read where they are, by address.
+- `move` takes the value of a local variable or of a `move` parameter, which can no longer be used after (D23); for a simple type it is a copy.
+- A field cannot be captured: it is copied into a variable first. A name is captured once.
+
+### D188. Lambdas: inside the body
+*2026-10-29.*
+- What is captured is read-only, except with `ref`, and cannot be moved out, because the lambda can run again: to return a captured value, `.copy()` it.
+- A variable of outside that is not captured is an error that says so. `break` and `continue` do not leave the lambda.
+
+### D189. Function values
+*2026-10-29.*
+- They are moved, as a `string`, and have no `copy()`. They cannot be compared or printed.
+- A variable of a function type starts empty: calling it is a panic (D45).
+
+### D190. Calls of function values
+*2026-10-29.*
+- A variable or a field of a function type is called as a function: `less(a, b)`, `button.onClick(1)`; a method with the same name comes first. Also the value of an expression: `handlers[i](x)`, `make()(x)`.
+- The call of a function value can always throw (D36): every lambda takes the slot of the exceptions.
+
+### D191. Lambdas and exclusivity
+*2026-10-29.* What a lambda passed as an argument captures by address counts as used by the call (D22): `add(ref total, [ref total](i64 x) { ... })` is an error.
+
+### D192. Where the data of a lambda are
+*2026-10-29.* As an argument, the data of a lambda are in the frame of the caller, and what they own is destroyed at the end of the statement. Otherwise they are on the heap, and the value frees them when it is destroyed. A lambda without captures has no data.
+
 ---
 ---
 
@@ -1063,7 +1102,6 @@ The points still to be defined, each when its milestone needs it (D152):
 - fixed-size arrays (`i32[4]`);
 - the content of the standard library;
 - code that differs between Windows and Linux: in M9 the differences are only in the runtime in C, which has a version for each system. Files for each system, as in Go, are one option;
-- the syntax of anonymous functions: how the variables are captured, for example `[x, ref y]` as in C++, and the type of a function (D148). Recommended: a lambda that captures with `ref` can only be passed as an argument, as the non-escaping closures of Swift, so that no borrow checker is needed;
 - the model of threads (D149). Recommended: threads that end with the block that starts them, and can therefore use its variables with `ref`, as the scoped threads of Rust; a shared value with an atomic counter for the threads that live long; the data of a mutex reached with an anonymous function;
 - the model of I/O for servers (D150). Recommended: blocking calls on threads first, then lightweight tasks under the same API, as the virtual threads of Java; no `async`/`await`, which splits the functions in two kinds;
 - the TLS library (D150). Recommended: mbedTLS, compiled without libc and included in `cromo` like the runtime, with the root certificates of the system. The alternatives are OpenSSL, which needs libc, SChannel on Windows with another library on Linux, or TLS written in Cromo;

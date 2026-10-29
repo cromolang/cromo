@@ -1,0 +1,41 @@
+// expect-output: start
+// expect-output: kept 1
+// expect-output: kept 1
+// expect-output: destroy 1
+// expect-output: argument 2
+// expect-output: destroy 2
+// expect-output: end
+// The data that a lambda owns are destroyed once: with the value, or at the end
+// of the statement for a lambda passed as an argument (D184).
+struct Noisy {
+    i32 id
+
+    Noisy(i32 n) {
+        id = n
+    }
+
+    ~Noisy() {
+        println("destroy {}", id)
+    }
+}
+
+void call(func() f) {
+    f()
+}
+
+// The value owns the data of the lambda, and destroys them when it goes.
+void keepOne() {
+    Noisy one = Noisy(1)
+    func() keep = [move one]() { println("kept {}", one.id) }
+    keep()
+    call(keep)
+}
+
+i32 main() {
+    println("start")
+    keepOne()
+    Noisy two = Noisy(2)
+    call([move two]() { println("argument {}", two.id) })
+    println("end")
+    ret 0
+}

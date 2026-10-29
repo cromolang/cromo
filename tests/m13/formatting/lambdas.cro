@@ -1,0 +1,19 @@
+// Lambdas and function types (D183, D185).
+i64 count(list<i64> values,func (i64) bool keep) {
+    ret 0
+}
+
+i32 main() {
+    list<i64> values
+    i64 total=0
+    count(values,[ ref total ]( i64 x ) bool {
+            total+=x
+            ret x>0
+        })
+    count(values,
+    [](i64 x) bool {
+    ret true
+    })
+    func ( i64 ) bool test=[](i64 x)bool{ ret x>1 }
+    ret 0
+}

@@ -305,6 +305,23 @@ private:
             visit(*element.index);
             break;
         }
+        case ExprKind::Lambda:
+            // Its body is a function of its own; here it uses its captures, and
+            // takes those with `move` (D183).
+            for (const Capture& capture : static_cast<const LambdaExpr&>(expr).captures) {
+                use(capture.outer, capture.loc);
+                if (capture.mode == ParamMode::Move && capture.outer && needsDestruction(capture.outer->type)) {
+                    set(capture.outer, kMoved);
+                }
+            }
+            break;
+        case ExprKind::CallValue: {
+            const auto& call = static_cast<const CallValueExpr&>(expr);
+            visit(*call.callee);
+            for (const ExprPtr& arg : call.args) visit(*arg);
+            noteRaise();
+            break;
+        }
         }
     }
 
@@ -333,6 +350,14 @@ bool checkMoves(const Module& module, Diagnostics& diag) {
     }
     for (const FunctionDecl& function : module.functions) check(function);
     for (const auto& function : module.functionInstances) check(*function);
+    // A lambda is checked where the function that contains it is.
+    for (const LambdaExpr* lambda : module.lambdas) {
+        const FunctionDecl& enclosing = *lambda->enclosing;
+        bool instance = enclosing.generic || (enclosing.owner && enclosing.owner->generic);
+        if (lambda->function->bodyChecked && (!instance || enclosing.isDefinition || enclosing.isLambda)) {
+            checker.checkFunction(*lambda->function);
+        }
+    }
     return !diag.hasErrors();
 }
 

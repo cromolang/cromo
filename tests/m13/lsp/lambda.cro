@@ -1,0 +1,21 @@
+// lsp-hover: 9:13 func(i64) bool keep
+// lsp-hover: 19:57 i64 limit
+// lsp-definition: 19:57 19:28
+// lsp-hover: 19:39 i64 x
+// Hover and definition with lambdas (D171, D183).
+i64 count(list<i64> values, func(i64) bool keep) {
+    i64 n = 0
+    for (i64 v in values) {
+        if (keep(v)) {
+            n++
+        }
+    }
+    ret n
+}
+
+i32 main() {
+    list<i64> values
+    i64 limit = 2
+    i64 n = count(values, [limit](i64 x) bool { ret x > limit })
+    ret i32(n)
+}

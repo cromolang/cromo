@@ -20,7 +20,7 @@ enum class TokenKind {
 
     // Keywords
     KwBreak, KwCase, KwCatch, KwConst, KwContinue, KwDefault, KwElse, KwEnum, KwExtern,
-    KwFalse, KwFinally, KwFor, KwIf, KwImport, KwIn, KwInterface, KwMove, KwPublic,
+    KwFalse, KwFinally, KwFor, KwFunc, KwIf, KwImport, KwIn, KwInterface, KwMove, KwPublic,
     KwRef, KwRet, KwStruct, KwSwitch, KwThrow, KwTrue, KwTry, KwUnsafe, KwVoid,
 
     // Punctuation and operators

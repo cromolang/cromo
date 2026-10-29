@@ -1,0 +1,28 @@
+// expect-output: caught: too big
+// expect-output: done 2
+// A lambda can throw: the call of a function value can always throw (D186).
+void each(list<i32> values, func(i32) f) {
+    for (i32 v in values) {
+        f(v)
+    }
+}
+
+i32 main() {
+    list<i32> values
+    values.add(1)
+    values.add(2)
+    values.add(30)
+    i32 seen = 0
+    try {
+        each(values, [ref seen](i32 v) {
+            if (v > 10) {
+                throw Error("too big")
+            }
+            seen++
+        })
+    } catch (Error e) {
+        println("caught: {}", e.message())
+    }
+    println("done {}", seen)
+    ret 0
+}

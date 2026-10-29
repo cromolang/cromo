@@ -2,12 +2,14 @@
 
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace cromo {
 
 struct StructDecl;
 struct InterfaceDecl;
 struct TypeParam;
+struct FunctionSig;
 
 enum class TypeKind {
     Error,         // a type error has already been reported
@@ -23,6 +25,7 @@ enum class TypeKind {
     Addr,          // an address without a type: only in the standard library (D37, D98)
     UntypedInt,    // integer literal still waiting for its type (D55)
     UntypedFloat,  // floating-point literal still waiting for its type (D55)
+    Function,      // `func(i32, i32) bool`: a pair of captured data and code (D185, D186)
 };
 
 struct Type {
@@ -32,6 +35,7 @@ struct Type {
     const StructDecl* structDecl = nullptr;  // Struct
     const TypeParam* param = nullptr;        // Param
     const InterfaceDecl* interfaceDecl = nullptr;  // Interface
+    const FunctionSig* sig = nullptr;              // Function, one for each signature
 
     static Type error() { return {}; }
     static Type voidType() { return {TypeKind::Void, 0, false}; }
@@ -46,6 +50,7 @@ struct Type {
     static Type addrType() { return {TypeKind::Addr, 64, false}; }
     static Type untypedInt() { return {TypeKind::UntypedInt, 0, false}; }
     static Type untypedFloat() { return {TypeKind::UntypedFloat, 0, false}; }
+    static Type functionType(const FunctionSig* sig) { return {TypeKind::Function, 0, false, nullptr, nullptr, nullptr, sig}; }
 
     bool isError() const { return kind == TypeKind::Error; }
     bool isVoid() const { return kind == TypeKind::Void; }
@@ -56,12 +61,25 @@ struct Type {
     bool isStruct() const { return kind == TypeKind::Struct; }
     bool isParam() const { return kind == TypeKind::Param; }
     bool isInterface() const { return kind == TypeKind::Interface; }
+    bool isFunction() const { return kind == TypeKind::Function; }
     bool isUntyped() const { return kind == TypeKind::UntypedInt || kind == TypeKind::UntypedFloat; }
 
     bool operator==(const Type&) const = default;
 
     std::string name() const;  // as written in Cromo: "i32", "f64", "bool", ...
 };
+
+enum class ParamMode;
+
+// The signature of a function type: the same signature is always the same
+// object, so that two types are equal when their pointers are (D185).
+struct FunctionSig {
+    std::vector<Type> params;
+    std::vector<ParamMode> modes;
+    Type result;
+};
+
+const FunctionSig* internSignature(const std::vector<Type>& params, const std::vector<ParamMode>& modes, Type result);
 
 // Built-in types that can be named in the source (D9, D46). `char` is u8.
 std::optional<Type> findBuiltinType(const std::string& name);

@@ -111,7 +111,8 @@ bool isConstantLiteral(const Expr& expr) {
 // A new object that nobody owns yet: it is moved without writing `move` (D23).
 bool isTemporary(const Expr& expr) {
     return expr.kind == ExprKind::Construct || expr.kind == ExprKind::Call || expr.kind == ExprKind::MethodCall ||
-           expr.kind == ExprKind::StringLiteral || expr.kind == ExprKind::EnumCase;
+           expr.kind == ExprKind::StringLiteral || expr.kind == ExprKind::EnumCase || expr.kind == ExprKind::Lambda ||
+           expr.kind == ExprKind::CallValue;
 }
 
 // A variable, or a field or an element (D35) of a variable or of the object of a method.
@@ -694,6 +695,27 @@ private:
     }
 
     std::optional<Type> resolveTypeName(const TypeName& name) {
+        if (name.isFunction) {  // D185
+            std::vector<Type> params;
+            std::vector<ParamMode> modes;
+            for (size_t i = 0; i < name.args.size(); ++i) {
+                std::optional<Type> param = resolveType(name.args[i]);
+                if (!param) return std::nullopt;
+                if (param->isVoid()) {
+                    diag_->error(name.args[i].loc, "a parameter cannot be void");
+                    return std::nullopt;
+                }
+                params.push_back(*param);
+                modes.push_back(static_cast<ParamMode>(name.modes[i]));
+            }
+            Type result = Type::voidType();
+            if (!name.result.empty()) {
+                std::optional<Type> written = resolveType(name.result[0]);
+                if (!written) return std::nullopt;
+                result = *written;
+            }
+            return Type::functionType(internSignature(params, modes, result));
+        }
         if (bindings_ && name.module.empty()) {
             for (const auto& [param, type] : *bindings_) {
                 if (param != name.name) continue;
@@ -1291,6 +1313,10 @@ private:
             if (variable->kind == VariableKind::ReadParam) {
                 return "parameter '" + variable->name + "' cannot be modified: parameters are read-only (D22)";
             }
+            if (variable->kind == VariableKind::Captured && variable->isConst) {
+                return "'" + variable->name + "' is captured to be read: capture it with 'ref " + variable->name +
+                       "' to modify it (D183)";
+            }
             if (variable->kind == VariableKind::Element && variable->isConst) {
                 return "'" + variable->name + "' is an element of a read-only 'for': write 'for (ref " + variable->type.name() +
                        " " + variable->name + " in ...)' to modify it (D25)";
@@ -1353,13 +1379,14 @@ private:
             const Variable* variable = static_cast<const NameExpr&>(place).variable;
             return variable && variable->kind != VariableKind::ReadParam &&
                    !((variable->kind == VariableKind::Element || variable->kind == VariableKind::Binding) && variable->isConst) &&
-                   variable->kind != VariableKind::Caught;
+                   variable->kind != VariableKind::Caught && variable->kind != VariableKind::Captured;
         }
         return readOnlyReason(place).empty();
     }
 
     // A struct can be copied if it has copy(), or if the compiler can generate it (D35).
     bool canCopy(Type type) const {
+        if (type.isFunction()) return false;  // it owns its captured data (D184)
         if (!type.isStruct()) return true;
         const StructDecl& decl = *type.structDecl;
         if (decl.methods.count("copy")) return true;
@@ -1459,6 +1486,9 @@ private:
                 return Type::error();
             case VariableKind::Caught:
                 diag_->error(node.loc, "cannot move '" + variable->name + "': it is the exception of a 'catch' (D114)");
+                return Type::error();
+            case VariableKind::Captured:
+                diag_->error(node.loc, "cannot move '" + variable->name + "': it is captured, and the lambda can run again (D183)");
                 return Type::error();
             case VariableKind::Binding:
             case VariableKind::Element:
@@ -1598,7 +1628,7 @@ private:
 
     Flow checkExprStmt(ExprStmt& statement) {
         ExprKind kind = statement.expr->kind;
-        if (kind != ExprKind::Call && kind != ExprKind::MethodCall) {
+        if (kind != ExprKind::Call && kind != ExprKind::MethodCall && kind != ExprKind::CallValue) {
             diag_->error(statement.expr->loc, "this expression does nothing: only function calls can be statements");
             return Flow::Continues;
         }
@@ -1936,6 +1966,8 @@ private:
         for (const Escape& escape : escapes_) {
             if (!escape.callee || escape.callee->canThrow) diag_->error(escape.loc, escape.message);
         }
+        // A function value is called as if it could throw: every lambda takes the slot (D186).
+        for (LambdaExpr* lambda : module_.lambdas) lambda->function->canThrow = true;
     }
 
     // `for ([ref] T x in v)` (D25, D101).
@@ -2064,7 +2096,10 @@ private:
     Type computeType(ExprPtr& expr, std::optional<Type> expected) {
         // Only the expression that coerceValue is checking may be a `move`.
         bool moveAllowed = std::exchange(moveAllowed_, false);
+        bool lambdaArgument = std::exchange(lambdaArgument_, false);
         switch (expr->kind) {
+        case ExprKind::Lambda: return checkLambda(static_cast<LambdaExpr&>(*expr), lambdaArgument);
+        case ExprKind::CallValue: return checkCallValue(expr);
         case ExprKind::IntLiteral: return checkIntLiteral(static_cast<IntLiteralExpr&>(*expr), expected);
         case ExprKind::FloatLiteral: return checkFloatLiteral(static_cast<FloatLiteralExpr&>(*expr), expected);
         case ExprKind::BoolLiteral: return Type::boolType();
@@ -2152,10 +2187,22 @@ private:
             diag_->error(name.loc, "'" + name.name + "' is a function: call it with '()'");
         } else if (importsQualifier(name.loc, name.name)) {
             diag_->error(name.loc, "'" + name.name + "' is a module: write " + name.name + ".name (D126)");
+        } else if (hiddenByLambda(name.name)) {
+            diag_->error(name.loc, "'" + name.name + "' is not captured: write it between the [] of the lambda (D183)");
         } else {
             diag_->error(name.loc, "unknown name '" + name.name + "'");
         }
         return Type::error();
+    }
+
+    // A variable of the functions around a lambda, which its body sees only if captured.
+    bool hiddenByLambda(const std::string& name) const {
+        for (const auto* scopes : hiddenScopes_) {
+            for (const auto& scope : *scopes) {
+                if (scope.count(name)) return true;
+            }
+        }
+        return false;
     }
 
     // `Shape` in `Shape.Circle(1.0)`: an enum named as a type, not a variable (D105).
@@ -2271,6 +2318,7 @@ private:
                 diag_->error(arg->loc, name + " is read-only: remove '" + (arg->kind == ExprKind::Ref ? "ref" : "move") + "' (D22)");
                 return false;
             }
+            lambdaArgument_ = arg->kind == ExprKind::Lambda;  // it may capture by address (D184)
             return coerce(arg, type);
         case ParamMode::Ref: {
             if (arg->kind != ExprKind::Ref) {
@@ -2342,7 +2390,7 @@ private:
             Path path;
             const Expr* expr;
             bool modifies;
-            int arg;  // -1 for the object of the method
+            int arg;  // -1 for the object of the method, -2 for what a lambda captures
         };
         std::vector<Access> accesses;
         if (object) {
@@ -2352,6 +2400,14 @@ private:
         for (size_t i = 0; i < args.size(); ++i) {
             const Expr* arg = args[i].get();
             bool modifies = false;
+            if (arg->kind == ExprKind::Lambda) {
+                // What a lambda captures by address, the call uses as an argument (D184).
+                for (const auto& place : static_cast<const LambdaExpr&>(*arg).capturePlaces) {
+                    bool changes = capturedWithRef(static_cast<const LambdaExpr&>(*arg), *place);
+                    if (std::optional<Path> path = pathOf(*place)) accesses.push_back({*path, place.get(), changes, -2});
+                }
+                continue;
+            }
             if (arg->kind == ExprKind::Ref) {
                 arg = static_cast<const RefExpr&>(*arg).operand.get();
                 modifies = true;
@@ -2386,7 +2442,9 @@ private:
                 }
                 std::string message = "'" + placeText(*second.expr) + "' overlaps '" + placeText(*first.expr) +
                                       "' in the same call, ";
-                if (read.modifies) {
+                if (first.arg == -2 || second.arg == -2) {
+                    message += "which a lambda of the call captures (D184)";
+                } else if (read.modifies) {
                     message += "and the call can modify both (D22)";
                 } else if (read.arg < 0) {
                     message += "which is the object of the method (D22)";
@@ -2441,6 +2499,15 @@ private:
         }
         FunctionDecl* method = nullptr;
         auto found = object.structDecl->methods.find(call.method);
+        int field = found == object.structDecl->methods.end() ? fieldIndex(*object.structDecl, call.method) : -1;
+        if (field >= 0 && object.structDecl->fields[field].resolved.isFunction()) {
+            // `handler.run(x)`: the call of a field that holds a function (D186).
+            SourceLocation loc = call.loc;
+            auto value = std::make_unique<CallValueExpr>(loc, std::make_unique<FieldExpr>(loc, std::move(call.object), call.method));
+            value->args = std::move(call.args);
+            expr = std::move(value);
+            return checkCallValue(expr);
+        }
         if (found != object.structDecl->methods.end()) {
             method = found->second;
         } else if (call.method == "copy") {
@@ -2805,6 +2872,179 @@ private:
         return Type::error();
     }
 
+    static int fieldIndex(const StructDecl& decl, const std::string& name) {
+        for (size_t i = 0; i < decl.fields.size(); ++i) {
+            if (decl.fields[i].name == name) return static_cast<int>(i);
+        }
+        return -1;
+    }
+
+    static bool capturedWithRef(const LambdaExpr& lambda, const Expr& place) {
+        const Variable* variable = static_cast<const NameExpr&>(place).variable;
+        for (const Capture& capture : lambda.captures) {
+            if (capture.outer == variable) return capture.mode == ParamMode::Ref;
+        }
+        return false;
+    }
+
+    // The declaration that describes the parameters of a function type, for the
+    // checks of the arguments and for the code (D186). Its calls can always throw.
+    const FunctionDecl* signatureOf(Type type) {
+        const FunctionSig* sig = type.sig;
+        for (const auto& existing : module_.signatures) {
+            if (existing->resolvedReturn == sig->result && existing->paramTypes == sig->params) {
+                bool same = true;
+                for (size_t i = 0; i < sig->modes.size(); ++i) same = same && existing->params[i].mode == sig->modes[i];
+                if (same) return existing.get();
+            }
+        }
+        auto decl = std::make_unique<FunctionDecl>();
+        decl->name = type.name();
+        decl->isLambda = true;
+        decl->canThrow = true;
+        decl->resolvedReturn = sig->result;
+        for (size_t i = 0; i < sig->params.size(); ++i) {
+            Param param;
+            param.mode = sig->modes[i];
+            param.name = std::to_string(i + 1);
+            decl->params.push_back(param);
+            decl->paramTypes.push_back(sig->params[i]);
+        }
+        module_.signatures.push_back(std::move(decl));
+        return module_.signatures.back().get();
+    }
+
+    // `less(a, b)`: the call of a function value (D186).
+    Type checkCallValue(ExprPtr& expr) {
+        auto& call = static_cast<CallValueExpr&>(*expr);
+        Type type = checkExpr(call.callee, std::nullopt);
+        if (type.isError()) {
+            checkIgnored(call.args);
+            return Type::error();
+        }
+        if (!type.isFunction()) {
+            diag_->error(call.loc, "a " + type.name() + " is not a function");
+            checkIgnored(call.args);
+            return Type::error();
+        }
+        call.signature = signatureOf(type);
+        noteThrow(nullptr, call.loc);  // the function is not known: it may throw (D36)
+        if (!checkArgs(call.args, *call.signature, "this function", call.loc, &call.overlaps)) return Type::error();
+        expr->type = type.sig->result;
+        return type.sig->result;
+    }
+
+    // `[limit, ref total](i32 x) bool { ... }` (D183, D184). `asArgument`: it is
+    // the argument of a read parameter, the only place for one that borrows.
+    Type checkLambda(LambdaExpr& lambda, bool asArgument) {
+        FunctionDecl& function = *lambda.function;
+        lambda.enclosing = current_;
+        std::set<std::string> seen;
+        for (Capture& capture : lambda.captures) {
+            if (!seen.insert(capture.name).second) {
+                diag_->error(capture.loc, "'" + capture.name + "' is already captured");
+                continue;
+            }
+            Variable* outer = lookup(capture.name);
+            if (!outer) {
+                if (ownFieldIndex(capture.name) >= 0) {
+                    diag_->error(capture.loc, "'" + capture.name + "' is a field: copy it into a variable to capture it (D183)");
+                } else {
+                    diag_->error(capture.loc, "unknown name '" + capture.name + "'");
+                }
+                continue;
+            }
+            capture.outer = outer;
+            NameExpr place(capture.loc, capture.name);
+            place.variable = outer;
+            place.type = outer->type;
+            if (capture.mode == ParamMode::Ref) {
+                std::string reason = readOnlyReason(place);
+                if (!reason.empty()) diag_->error(capture.loc, "cannot capture '" + capture.name + "' with 'ref': " + reason);
+                capture.byAddress = true;
+            } else if (capture.mode == ParamMode::Move) {
+                bool owned = outer->kind == VariableKind::Local || outer->kind == VariableKind::MoveParam;
+                if (needsDestruction(outer->type) && !owned) {
+                    diag_->error(capture.loc, "cannot capture '" + capture.name + "' with 'move': only a local variable or a "
+                                              "'move' parameter can give its value (D183)");
+                }
+                if (needsDestruction(outer->type) && owned) outer->needsDropFlag = true;
+            } else {
+                capture.byAddress = needsDestruction(outer->type);  // read without a copy
+            }
+            lambda.borrows = lambda.borrows || capture.byAddress;
+            auto shown = std::make_unique<NameExpr>(capture.loc, capture.name);
+            shown->variable = outer;
+            shown->type = outer->type;
+            if (capture.byAddress) lambda.capturePlaces.push_back(std::move(shown));
+        }
+
+        // The body is a function of its own: its parameters, then the captures.
+        FunctionDecl* outerFunction = current_;
+        auto outerScopes = std::move(scopes_);
+        auto outerLoops = std::move(loops_);
+        auto outerTries = std::move(tryContexts_);
+        auto outerCatches = std::move(catchTypes_);
+        auto outerFinallyLoops = std::move(finallyLoops_);
+        auto outerRegions = std::move(regions_);
+        hiddenScopes_.push_back(&outerScopes);
+
+        function.symbol = symbolFor(lambda.loc, "lambda." + std::to_string(module_.lambdas.size()));
+        function.isAbstract = outerFunction->isAbstract;
+        resolveSignature(function);
+        current_ = &function;
+        scopes_.assign(1, {});
+        loops_.clear();
+        tryContexts_.clear();
+        catchTypes_.clear();
+        finallyLoops_.clear();
+        regions_.clear();
+        for (size_t i = 0; i < function.params.size(); ++i) {
+            const Param& param = function.params[i];
+            Variable* variable = declare(param.name, function.paramTypes[i], param.loc, param.isConst);
+            if (!variable) continue;
+            variable->kind = param.mode == ParamMode::Ref    ? VariableKind::RefParam
+                             : param.mode == ParamMode::Move ? VariableKind::MoveParam
+                                                             : VariableKind::ReadParam;
+        }
+        int index = 0;
+        for (Capture& capture : lambda.captures) {
+            if (!capture.outer) continue;
+            Variable* inner = declare(capture.name, capture.outer->type, capture.loc, capture.mode != ParamMode::Ref);
+            if (!inner) continue;
+            inner->kind = VariableKind::Captured;
+            inner->captureIndex = index++;
+            inner->captureByAddress = capture.byAddress;
+            capture.inner = inner;
+        }
+        Flow flow = checkBlock(function.body);
+        function.bodyChecked = true;
+        Type ret = function.resolvedReturn;
+        if (!ret.isVoid() && !ret.isError() && flow != Flow::Returns) {
+            diag_->error(function.body.close, "the lambda must end with 'ret' on every path: it returns " + ret.name());
+        }
+
+        hiddenScopes_.pop_back();
+        current_ = outerFunction;
+        scopes_ = std::move(outerScopes);
+        loops_ = std::move(outerLoops);
+        tryContexts_ = std::move(outerTries);
+        catchTypes_ = std::move(outerCatches);
+        finallyLoops_ = std::move(outerFinallyLoops);
+        regions_ = std::move(outerRegions);
+
+        module_.lambdas.push_back(&lambda);
+        lambda.onStack = asArgument;
+        if (lambda.borrows && !asArgument) {
+            diag_->error(lambda.loc, "this lambda captures by address (with 'ref', or reading a value that is not simple): "
+                                     "it can only be passed as an argument; capture with 'move' to keep it (D184)");
+            return Type::error();
+        }
+        std::vector<ParamMode> modes;
+        for (const Param& param : function.params) modes.push_back(param.mode);
+        return Type::functionType(internSignature(function.paramTypes, modes, function.resolvedReturn));
+    }
+
     Type checkCall(ExprPtr& expr) {
         auto& call = static_cast<CallExpr&>(*expr);
         bool typed = !call.typeArgs.empty();
@@ -2817,6 +3057,21 @@ private:
         }
         if (!qualified && isUnsafe(call.loc)) {
             if (std::optional<Intrinsic> intrinsic = findIntrinsic(call.callee)) return checkIntrinsic(call, *intrinsic);
+        }
+
+        if (!typed && !qualified) {
+            Variable* variable = lookup(call.callee);
+            int field = ownFieldIndex(call.callee);
+            bool fieldValue = !variable && field >= 0 && current_->owner->fields[field].resolved.isFunction();
+            if ((variable && variable->type.isFunction()) || fieldValue) {
+                SourceLocation loc = call.loc;
+                ExprPtr callee = variable ? ExprPtr(std::make_unique<NameExpr>(loc, call.callee))
+                                          : ExprPtr(std::make_unique<FieldExpr>(loc, std::make_unique<SelfExpr>(loc), call.callee));
+                auto value = std::make_unique<CallValueExpr>(loc, std::move(callee));
+                value->args = std::move(call.args);
+                expr = std::move(value);
+                return checkCallValue(expr);
+            }
         }
 
         if (StructDecl* decl = findDecl(&ModuleScope::structs, call.callee, call.loc, call.module)) {
@@ -3277,6 +3532,8 @@ private:
     std::map<const StructDecl*, int> layoutState_;  // 0 to do, 1 in progress, 2 done
     FunctionDecl* current_ = nullptr;
     std::vector<std::map<std::string, Variable*>> scopes_;
+    std::vector<const std::vector<std::map<std::string, Variable*>>*> hiddenScopes_;  // outside the lambdas being checked
+    bool lambdaArgument_ = false;  // the expression being checked is the argument of a read parameter
     std::vector<bool> loops_;  // one entry per enclosing loop: true if it contains a break
 
     // The lists that the enclosing `for` loops go over (D101).

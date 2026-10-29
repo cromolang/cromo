@@ -517,7 +517,43 @@ public struct Stopwatch {
 - C resources are wrapped in structs with a destructor (D42): see `examples/05_c_interop.cro`.
 - Strings cannot be passed to C yet: it is an open question in [decisions.md](decisions.md).
 
-## 15. Still to be written
+## 15. Anonymous functions (D183–D186)
+
+```cromo
+i64 count(list<i64> values, func(i64) bool keep) {
+    i64 n = 0
+    for (i64 v in values) {
+        if (keep(v)) {
+            n++
+        }
+    }
+    ret n
+}
+
+func(i64) i64 adder(i64 amount) {
+    ret [amount](i64 x) i64 { ret x + amount }   // it keeps a copy of amount
+}
+
+i32 main() {
+    list<i64> values
+    i64 limit = 6
+    i64 big = count(values, [limit](i64 x) bool { ret x > limit })
+    i64 total = 0
+    count(values, [ref total](i64 x) bool {          // it modifies total
+        total += x
+        ret true
+    })
+    func(i64) i64 plus3 = adder(3)
+    ret i32(plus3(4))
+}
+```
+
+- A lambda writes what it captures between square brackets, with the modes of Cromo: a name alone is read, `ref` modifies, `move` takes the value (D183). The parameters are written as in a function, and the type returned after them; without it the lambda returns nothing.
+- A lambda that captures by address (with `ref`, or reading a value that is not simple) can only be passed as an argument; one that captures only with `move`, or values of simple types, is a value: it can be kept in variables, fields and lists, returned and moved (D184).
+- The type of a function is `func(i32, ref T) bool` (D185). A variable or a field of that type is called as a function; the call is indirect (D186).
+- Function values are moved and not copied; an empty one, as a variable without a value, is a panic when called (D189).
+
+## 16. Still to be written
 
 - Contents of the standard library, written in Cromo without libc (D19, D37).
-- Anonymous functions (D148, milestone M13) and threads with synchronization (D149, milestone M15).
+- Threads with synchronization (D149, milestone M15).

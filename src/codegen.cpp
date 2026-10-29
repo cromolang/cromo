@@ -103,8 +103,11 @@ bool implementsInterfaceMethod(const FunctionDecl& function) {
 
 bool tracksCaller(const FunctionDecl& function) {
     return function.loc.file == kLibraryFile && function.kind != FunctionKind::Destructor && !function.isGenerated &&
-           !function.isExtern && !implementsInterfaceMethod(function);
+           !function.isExtern && !function.isLambda && !implementsInterfaceMethod(function);
 }
+
+// The data captured by a lambda: the function that destroys them, then the captures (D183).
+std::string environmentType(const FunctionDecl& lambda) { return llvmName('%', lambda.symbol + ".env"); }
 
 int fieldIndexOf(const StructDecl& decl, const std::string& name) {
     for (size_t i = 0; i < decl.fields.size(); ++i) {
@@ -186,6 +189,7 @@ std::string enumDefault(const StructDecl& decl) {
 }
 
 std::string defaultConstant(Type type) {
+    if (type.isFunction()) return "zeroinitializer";  // no code: calling it is a panic
     if (type.isBool()) return "false";
     if (type.isFloat()) return floatConstant(0, type.bits);
     if (type.kind == TypeKind::Addr) return "null";
@@ -257,6 +261,9 @@ public:
             out << (decl->fields.empty() ? "}\n" : " }\n");
         }
         if (!structs.empty()) out << "\n";
+        for (const LambdaExpr* lambda : module.lambdas) {
+            if (!lambda->function->isAbstract && lambda->function->bodyChecked) out << lambdaType(*lambda);
+        }
 
         for (const StructDecl* decl : structs) {
             for (const FunctionDecl& member : decl->members) {
@@ -272,6 +279,11 @@ public:
             if (function->name == "main" && function->loc.file == 0 && !function->generic) mainFunction = function;
         }
         if (mainFunction) out << entryPoint(*mainFunction);
+        for (const LambdaExpr* lambda : module.lambdas) {
+            if (lambda->function->isAbstract || !lambda->function->bodyChecked) continue;
+            out << lambdaData(*lambda);
+            out << generateFunction(*lambda->function);
+        }
 
         if (freesExceptions_) out << freeExceptionFunction();
         out << globals_.str() << "\n";
@@ -463,6 +475,7 @@ private:
         std::vector<std::string> params;
         if (byPointer(ret)) params.push_back("ptr noalias sret(" + llvmType(ret) + ") %ret");
         if (function.owner) params.push_back(std::string("ptr noalias ") + (function.isConst ? "readonly " : "") + "%self");
+        if (function.isLambda) params.push_back("ptr %env");  // the captured data (D183)
         for (size_t i = 0; i < function.paramTypes.size(); ++i) {
             const Param& param = function.params[i];
             Type type = function.paramTypes[i];
@@ -484,6 +497,19 @@ private:
             // The element of a `for` and the data of a case are where they are in memory.
             if (variable.kind == VariableKind::Element || variable.kind == VariableKind::Binding) continue;
             if (variable.kind == VariableKind::Caught && !variable.type.isInterface()) continue;  // the thrown object
+            if (variable.kind == VariableKind::Captured) {
+                // In the data of the lambda: the value, or the address of the variable outside.
+                std::string field = "%capture." + std::to_string(variable.captureIndex);
+                inst(field + " = getelementptr inbounds " + environmentType(function) + ", ptr %env, i32 0, i32 " +
+                     std::to_string(variable.captureIndex + 1));
+                if (variable.captureByAddress) {
+                    addresses_[variable.id] = temp();
+                    inst(addresses_[variable.id] + " = load ptr, ptr " + field);
+                } else {
+                    addresses_[variable.id] = field;
+                }
+                continue;
+            }
             std::string name = "%v" + std::to_string(variable.id) + "." + variable.name;
             if (variable.needsDropFlag) {
                 flags_[variable.id] = name + ".alive";
@@ -725,6 +751,26 @@ private:
     // ---- Lifetimes (D68) ----
 
     void drop(const std::string& address, Type type) {
+        if (type.isFunction()) {
+            // The data of a lambda, if it has any, go with the function that the lambda
+            // wrote in them (D184).
+            std::string value = temp();
+            std::string env = temp();
+            std::string owned = temp();
+            std::string release = label("release");
+            std::string done = label("released");
+            inst(value + " = load { ptr, ptr }, ptr " + address);
+            inst(env + " = extractvalue { ptr, ptr } " + value + ", 1");
+            inst(owned + " = icmp ne ptr " + env + ", null");
+            term("br i1 " + owned + ", label %" + release + ", label %" + done);
+            block(release);
+            std::string destroy = temp();
+            inst(destroy + " = load ptr, ptr " + env);
+            inst("call void " + destroy + "(ptr " + env + ")");
+            term("br label %" + done);
+            block(done);
+            return;
+        }
         inst("call void " + dropSymbol(*type.structDecl) + "(ptr " + address + ")");
     }
 
@@ -1001,7 +1047,7 @@ private:
         }
         case StmtKind::Expr: {
             const Expr& expr = *static_cast<const ExprStmt&>(statement).expr;
-            if (expr.type.isStruct()) {
+            if (expr.type.isStruct() || expr.type.isFunction()) {
                 addressOf(expr);  // a temporary, destroyed below
             } else {
                 generateExpr(expr);
@@ -1041,6 +1087,10 @@ private:
         }
         std::string value = decl.init ? generateExpr(*decl.init).ref : defaultConstant(type);
         inst("store " + llvmType(type) + " " + value + ", ptr " + address);
+        if (needsDestruction(type)) {  // a function value owns its data (D184)
+            scopes_.back().objects.push_back(LiveObject{address, type, &variable});
+            setAlive(variable, true);
+        }
     }
 
     void generateAssign(const AssignStmt& assign) {
@@ -1064,6 +1114,14 @@ private:
         }
         Value value = generateExpr(*assign.value);
         std::string address = addressOf(*assign.target);
+        if (type.isFunction()) {  // the old value gives back its data (D184)
+            const Variable* variable =
+                assign.target->kind == ExprKind::Name ? static_cast<const NameExpr&>(*assign.target).variable : nullptr;
+            dropVariable(address, type, variable);
+            inst("store " + llvmType(type) + " " + value.ref + ", ptr " + address);
+            if (variable) setAlive(*variable, true);
+            return;
+        }
         if (assign.op != AssignOp::Assign) {
             static const BinaryOp ops[] = {BinaryOp::Add, BinaryOp::Add, BinaryOp::Sub, BinaryOp::Mul, BinaryOp::Div, BinaryOp::Rem};
             Value current = load(address, type);
@@ -1083,6 +1141,7 @@ private:
             generateStructInto(*ret.value, dest);
             if (!byPointer(type)) result = dest;
         } else if (ret.value) {
+            if (type.isFunction() && ret.value->kind == ExprKind::Name) moved = static_cast<const NameExpr&>(*ret.value).variable;
             result = generateExpr(*ret.value).ref;
         }
 
@@ -1337,7 +1396,15 @@ private:
 
     // Builds the value of a struct expression directly in `dest`, which then owns it.
     void generateStructInto(const Expr& expr, const std::string& dest) {
+        if (expr.type.isFunction()) {  // a pair of values, not in memory
+            Value value = generateExpr(expr);
+            inst("store { ptr, ptr } " + value.ref + ", ptr " + dest);
+            return;
+        }
         switch (expr.kind) {
+        case ExprKind::CallValue:
+            callValue(static_cast<const CallValueExpr&>(expr), dest);
+            return;
         case ExprKind::StringLiteral:
             inst("store " + llvmType(expr.type) + " " + stringValue(static_cast<const StringLiteralExpr&>(expr)) + ", ptr " + dest);
             return;
@@ -1711,6 +1778,115 @@ private:
         return {result, type};
     }
 
+    // The value of a lambda: its code and its data (D183, D186). As an argument the
+    // data are in the frame of the caller, and what they own goes at the end of the
+    // statement; otherwise they are on the heap, owned by the value.
+    Value createLambda(const LambdaExpr& lambda) {
+        const FunctionDecl& function = *lambda.function;
+        std::string code = llvmName('@', function.symbol);
+        std::vector<const Capture*> captures = capturesOf(lambda);
+        if (captures.empty()) return {"{ ptr " + code + ", ptr null }", lambda.type};
+        std::string type = environmentType(function);
+        std::string env = temp();
+        if (lambda.onStack) {
+            allocas_ << "  " << env << " = alloca " << type << "\n";
+        } else {
+            std::string size = temp();
+            inst(size + " = ptrtoint ptr getelementptr (" + type + ", ptr null, i32 1) to i64");
+            inst(env + " = call ptr @cromo_alloc(i64 " + size + ")");
+        }
+        bool owns = !lambda.onStack || ownsCaptures(lambda);
+        std::string destroy = owns ? llvmName('@', function.symbol + (lambda.onStack ? ".release" : ".drop")) : "null";
+        inst("store ptr " + destroy + ", ptr " + env);
+        for (const Capture* capture : captures) {
+            const Variable& outer = *capture->outer;
+            std::string field = temp();
+            inst(field + " = getelementptr inbounds " + type + ", ptr " + env + ", i32 0, i32 " +
+                 std::to_string(capture->inner->captureIndex + 1));
+            std::string source = addresses_[outer.id];
+            if (capture->byAddress) {
+                inst("store ptr " + source + ", ptr " + field);
+                continue;
+            }
+            Value value = load(source, outer.type);
+            inst("store " + llvmType(outer.type) + " " + value.ref + ", ptr " + field);
+            if (capture->mode == ParamMode::Move && needsDestruction(outer.type)) setAlive(outer, false);
+        }
+        std::string half = temp();
+        std::string pair = temp();
+        inst(half + " = insertvalue { ptr, ptr } undef, ptr " + code + ", 0");
+        inst(pair + " = insertvalue { ptr, ptr } " + half + ", ptr " + env + ", 1");
+        if (lambda.onStack && owns) {
+            std::string place = slot(lambda.type);
+            inst("store { ptr, ptr } " + pair + ", ptr " + place);
+            temporaries_.push_back(LiveObject{place, lambda.type, nullptr});
+        }
+        return {pair, lambda.type};
+    }
+
+    static std::vector<const Capture*> capturesOf(const LambdaExpr& lambda) {
+        std::vector<const Capture*> captures;
+        for (const Capture& capture : lambda.captures) {
+            if (capture.inner) captures.push_back(&capture);
+        }
+        return captures;
+    }
+
+    // The values taken with `move` that need to be destroyed.
+    static bool ownsCaptures(const LambdaExpr& lambda) {
+        for (const Capture* capture : capturesOf(lambda)) {
+            if (!capture->byAddress && needsDestruction(capture->outer->type)) return true;
+        }
+        return false;
+    }
+
+    // The type of the data of a lambda: before the code, which takes its size.
+    static std::string lambdaType(const LambdaExpr& lambda) {
+        std::vector<const Capture*> captures = capturesOf(lambda);
+        if (captures.empty()) return "";
+        std::string out = environmentType(*lambda.function) + " = type { ptr";
+        for (const Capture* capture : captures) out += ", " + (capture->byAddress ? std::string("ptr") : llvmType(capture->outer->type));
+        return out + " }\n";
+    }
+
+    // The functions that destroy the data of a lambda: .drop also frees them from
+    // the heap, .release leaves them in the frame (D184).
+    std::string lambdaData(const LambdaExpr& lambda) {
+        const FunctionDecl& function = *lambda.function;
+        std::vector<const Capture*> captures = capturesOf(lambda);
+        if (captures.empty()) return "";
+        std::string type = environmentType(function);
+        std::string out;
+        for (bool frees : {true, false}) {
+            startFunction(nullptr);
+            for (const Capture* capture : captures) {
+                if (capture->byAddress || !needsDestruction(capture->outer->type)) continue;
+                std::string field = temp();
+                inst(field + " = getelementptr inbounds " + type + ", ptr %env, i32 0, i32 " +
+                     std::to_string(capture->inner->captureIndex + 1));
+                drop(field, capture->outer->type);
+            }
+            if (frees) inst("call void @cromo_free(ptr %env)");
+            term("ret void");
+            out += finishFunction("void", llvmName('@', function.symbol + (frees ? ".drop" : ".release")), {"ptr %env"});
+        }
+        return out;
+    }
+
+    // `less(a, b)`: through the address of the code, with the data of the lambda
+    // where a method has its object (D186).
+    Value callValue(const CallValueExpr& call, const std::string& dest) {
+        Value callee = generateExpr(*call.callee);
+        std::string code = temp();
+        std::string env = temp();
+        std::string empty = temp();
+        inst(code + " = extractvalue { ptr, ptr } " + callee.ref + ", 0");
+        inst(env + " = extractvalue { ptr, ptr } " + callee.ref + ", 1");
+        inst(empty + " = icmp eq ptr " + code + ", null");
+        panicIf(empty, "the function is empty: no lambda was given to it (D189)", call.loc);
+        return emitCall(*call.signature, env, Type::error(), call.args, dest, call.loc, &call.overlaps, code);
+    }
+
     Value generateExpr(const Expr& expr) {
         switch (expr.kind) {
         case ExprKind::IntLiteral:
@@ -1755,9 +1931,21 @@ private:
         case ExprKind::Print:
             generatePrint(static_cast<const PrintExpr&>(expr));
             return {"", Type::voidType()};
+        case ExprKind::Lambda:
+            return createLambda(static_cast<const LambdaExpr&>(expr));
+        case ExprKind::CallValue:
+            if (expr.type.isStruct()) return load(addressOf(expr), expr.type);
+            return callValue(static_cast<const CallValueExpr&>(expr), "");
         case ExprKind::Move:
         case ExprKind::Copy:
             if (expr.type.isStruct()) return load(addressOf(expr), expr.type);
+            if (expr.kind == ExprKind::Move && expr.type.isFunction()) {  // the value changes owner (D184)
+                const auto& move = static_cast<const MoveExpr&>(expr);
+                std::string address = addressOf(*move.operand);
+                Value value = load(address, expr.type);
+                finishMove(move, address);
+                return value;
+            }
             // A simple value: moving or copying it is reading it (D80).
             return generateExpr(expr.kind == ExprKind::Move ? *static_cast<const MoveExpr&>(expr).operand
                                                             : *static_cast<const CopyExpr&>(expr).operand);
