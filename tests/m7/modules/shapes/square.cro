@@ -1,0 +1,4 @@
+// A file of the folder module shapes (D50).
+public f64 squareArea(f64 side) {
+    ret side * side
+}

@@ -79,12 +79,13 @@ bool byAddress(const Param& param, Type type) {
     return !type.isInterface() && (param.mode == ParamMode::Ref || byPointer(type));
 }
 
-std::string structName(const StructDecl& decl) { return llvmName('%', "struct." + decl.name); }
+// The symbols have the module in front (D134): `%"struct.geometry.Circle"`.
+std::string structName(const StructDecl& decl) { return llvmName('%', "struct." + decl.symbol); }
 
 // Symbols of the members of a struct. The double dot cannot clash with a method.
-std::string methodSymbol(const StructDecl& decl, const std::string& method) { return llvmName('@', decl.name + "." + method); }
-std::string constructorSymbol(const StructDecl& decl) { return llvmName('@', decl.name + "..new"); }
-std::string dropSymbol(const StructDecl& decl) { return llvmName('@', decl.name + "..drop"); }
+std::string methodSymbol(const StructDecl& decl, const std::string& method) { return llvmName('@', decl.symbol + "." + method); }
+std::string constructorSymbol(const StructDecl& decl) { return llvmName('@', decl.symbol + "..new"); }
+std::string dropSymbol(const StructDecl& decl) { return llvmName('@', decl.symbol + "..drop"); }
 
 // The functions of the standard library receive where they were called from,
 // and their panics report it (D102).
@@ -102,7 +103,7 @@ bool implementsInterfaceMethod(const FunctionDecl& function) {
 
 bool tracksCaller(const FunctionDecl& function) {
     return function.loc.file == kLibraryFile && function.kind != FunctionKind::Destructor && !function.isGenerated &&
-           !implementsInterfaceMethod(function);
+           !function.isExtern && !implementsInterfaceMethod(function);
 }
 
 int fieldIndexOf(const StructDecl& decl, const std::string& name) {
@@ -114,7 +115,7 @@ int fieldIndexOf(const StructDecl& decl, const std::string& name) {
 
 std::string symbolOf(const FunctionDecl& function) {
     switch (function.kind) {
-    case FunctionKind::Free: return llvmName('@', function.name);
+    case FunctionKind::Free: return llvmName('@', function.symbol);
     case FunctionKind::Method: return methodSymbol(*function.owner, function.name);
     case FunctionKind::Constructor: return constructorSymbol(*function.owner);
     case FunctionKind::Destructor: return dropSymbol(*function.owner);
@@ -143,6 +144,18 @@ std::string literalConstant(const Expr& expr, Type type) {
 // The default value of a type (D31, D48): zero, or the initial values of the fields.
 std::string defaultConstant(Type type);
 
+// A C function (D128, D129): a `ref` is a pointer, and a bool is a byte, as in C.
+std::string cType(Type type) { return type.isBool() ? "i8" : llvmType(type); }
+
+std::string externDeclaration(const FunctionDecl& function) {
+    Type ret = function.resolvedReturn;
+    std::string out = "declare " + (ret.isVoid() ? std::string("void") : cType(ret)) + " " + symbolOf(function) + "(";
+    for (size_t i = 0; i < function.params.size(); ++i) {
+        out += (i ? ", " : "") + (function.params[i].mode == ParamMode::Ref ? std::string("ptr") : cType(function.paramTypes[i]));
+    }
+    return out + ") nounwind\n";
+}
+
 // An enum in memory (D104): a field of size zero that gives it the alignment of
 // its most aligned case, the tag, padding up to where the data start, the data
 // of the first case, and padding up to the size of the largest case:
@@ -159,13 +172,13 @@ std::string enumTypeBody(const StructDecl& decl) {
 }
 
 std::string caseTypeName(const StructDecl& decl, const EnumCase& item) {
-    return llvmName('%', "case." + decl.name + "." + item.name);
+    return llvmName('%', "case." + decl.symbol + "." + item.name);
 }
 
 // The default value of an enum is its first case, with the defaults of its data (D111).
 std::string enumDefault(const StructDecl& decl) {
-    std::string out = "{ [0 x " + alignmentType(decl.align) + "] zeroinitializer, i32 0, [" +
-                      std::to_string(decl.payloadOffset - 4) + " x i8] zeroinitializer";
+    std::string out = "{ [0 x " + alignmentType(decl.align) + "] zeroinitializer, i32 " + std::to_string(decl.cases[0].value) +
+                      ", [" + std::to_string(decl.payloadOffset - 4) + " x i8] zeroinitializer";
     for (const FieldDecl& field : decl.cases[0].fields) {
         out += ", " + llvmType(field.resolved) + " " + defaultConstant(field.resolved);
     }
@@ -213,8 +226,14 @@ public:
             if (!decl->isAbstract) structs.push_back(decl.get());
         }
         std::vector<const FunctionDecl*> functions;
+        std::vector<const FunctionDecl*> externs;  // the same C function can be declared by several modules
+        std::set<std::string> declared;
         for (const FunctionDecl& function : module.functions) {
-            if (function.typeParams.empty()) functions.push_back(&function);
+            if (function.isExtern) {
+                if (declared.insert(function.name).second) externs.push_back(&function);
+            } else if (function.typeParams.empty()) {
+                functions.push_back(&function);
+            }
         }
         for (const auto& function : module.functionInstances) {
             if (!function->isAbstract) functions.push_back(function.get());
@@ -247,12 +266,13 @@ public:
         const FunctionDecl* mainFunction = nullptr;
         for (const FunctionDecl* function : functions) {
             out << generateFunction(*function);
-            if (function->name == "main") mainFunction = function;
+            if (function->name == "main" && function->loc.file == 0 && !function->generic) mainFunction = function;
         }
         if (mainFunction) out << entryPoint(*mainFunction);
 
         if (freesExceptions_) out << freeExceptionFunction();
         out << globals_.str() << "\n";
+        for (const FunctionDecl* function : externs) out << externDeclaration(*function);
         out << "declare void @cromo_write(i32, ptr, i64) nounwind\n";
         out << "declare void @cromo_fmt_int(i32, i64, i32, ptr) nounwind\n";
         out << "declare void @cromo_fmt_f64(i32, double, ptr) nounwind\n";
@@ -266,7 +286,7 @@ public:
         out << "declare ptr @cromo_alloc(i64) nounwind\n";
         out << "declare ptr @cromo_realloc(ptr, i64) nounwind\n";
         out << "declare void @cromo_free(ptr) nounwind\n";
-        out << "declare i32 @memcmp(ptr, ptr, i64) nounwind\n";
+        if (!declared.count("memcmp")) out << "declare i32 @memcmp(ptr, ptr, i64) nounwind\n";
         out << "declare void @cromo_uncaught(ptr, i64) noreturn nounwind cold\n";
         for (const std::string& declaration : intrinsics_) out << declaration << "\n";
         return out.str();
@@ -563,7 +583,7 @@ private:
         for (size_t i = 0; i < decl.cases.size(); ++i) {
             if (decl.cases[i].fields.empty()) continue;
             labels[i] = label("case");
-            table += " i32 " + std::to_string(i) + ", label %" + labels[i];
+            table += " i32 " + std::to_string(decl.cases[i].value) + ", label %" + labels[i];
         }
         term("switch i32 " + tag.ref + ", label %" + done + " [" + table + " ]");
         for (size_t i = 0; i < decl.cases.size(); ++i) {
@@ -628,9 +648,9 @@ private:
             out << "  store { ptr, ptr } zeroinitializer, ptr %raised\n";
         }
         if (mainFunction.resolvedReturn.isVoid()) {
-            out << "  call void @main(" << raised << ")\n";
+            out << "  call void " << symbolOf(mainFunction) << "(" << raised << ")\n";
         } else {
-            out << "  %code = call i32 @main(" << raised << ")\n";
+            out << "  %code = call i32 " << symbolOf(mainFunction) << "(" << raised << ")\n";
         }
         std::string code = mainFunction.resolvedReturn.isVoid() ? "0" : "%code";
         if (mainFunction.canThrow && exceptionInterface_) {
@@ -811,7 +831,7 @@ private:
     // methods of Exception, for `catch (Exception e)`. Its address also tells the
     // `catch` clauses its type.
     std::string exceptionDescriptor(const StructDecl& decl) {
-        std::string name = llvmName('@', "exception." + decl.name);
+        std::string name = llvmName('@', "exception." + decl.symbol);
         if (!tables_.insert(name).second) return name;
         std::string table = methodTable(decl, *exceptionInterface_);  // first: it writes a global of its own
         std::string destroy = decl.needsDestruction ? dropSymbol(decl) : "null";
@@ -1105,7 +1125,7 @@ private:
             std::string table;
             for (size_t b = 0; b < statement.branches.size(); ++b) {
                 for (const CasePattern& pattern : statement.branches[b].patterns) {
-                    table += " i32 " + std::to_string(pattern.caseIndex) + ", label %" + labels[b];
+                    table += " i32 " + std::to_string(decl.cases[pattern.caseIndex].value) + ", label %" + labels[b];
                 }
             }
             term("switch i32 " + tag.ref + ", label %" + otherwise + " [" + table + " ]");
@@ -1318,7 +1338,31 @@ private:
                     inst("store " + llvmType(type) + " " + generateExpr(*node.args[i]).ref + ", ptr " + field);
                 }
             }
-            inst("store i32 " + std::to_string(node.index) + ", ptr " + enumTag(dest, decl));
+            inst("store i32 " + std::to_string(item.value) + ", ptr " + enumTag(dest, decl));
+            return;
+        }
+        case ExprKind::Conversion: {
+            // `Color(n)`: the case whose value is n, or a panic (D135).
+            const StructDecl& decl = *expr.type.structDecl;
+            Value number = generateExpr(*static_cast<const ConversionExpr&>(expr).operand);
+            Type from = number.type;
+            std::string ok = label("case.ok");
+            std::string bad = label("case.bad");
+            std::string table;
+            for (const EnumCase& item : decl.cases) {
+                bool negative = item.value < 0;
+                uint64_t magnitude = negative ? uint64_t(0) - static_cast<uint64_t>(item.value) : static_cast<uint64_t>(item.value);
+                if (negative && !from.isSigned) continue;
+                if (from.bits < 64 && magnitude > (uint64_t{1} << (from.isSigned ? from.bits - 1 : from.bits)) - (negative ? 0 : 1)) continue;
+                table += " " + llvmType(from) + " " + intConstant(magnitude, negative, from.bits) + ", label %" + ok;
+            }
+            term("switch " + llvmType(from) + " " + number.ref + ", label %" + bad + " [" + table + " ]");
+            block(bad);
+            panic("the value is not a case of " + decl.name + " (D135)", expr.loc);
+            block(ok);
+            Value tag = convert(number, Type::intType(32, true), expr.loc);
+            inst("store " + structName(decl) + " " + defaultConstant(expr.type) + ", ptr " + dest);
+            inst("store i32 " + tag.ref + ", ptr " + enumTag(dest, decl));
             return;
         }
         case ExprKind::Construct: {
@@ -1393,7 +1437,7 @@ private:
 
     // The method table of a struct for an interface, emitted the first time it is used.
     std::string methodTable(const StructDecl& decl, const InterfaceDecl& iface) {
-        std::string name = llvmName('@', "vtable." + decl.name + "." + iface.name);
+        std::string name = llvmName('@', "vtable." + decl.symbol + "." + iface.symbol);
         if (!tables_.insert(name).second) return name;
         globals_ << name << " = private unnamed_addr constant [" << iface.methods.size() << " x ptr] [";
         for (size_t i = 0; i < iface.methods.size(); ++i) {
@@ -1416,8 +1460,14 @@ private:
         std::vector<std::string> addresses(args.size());
         Handover handover;
         for (size_t i = 0; i < args.size(); ++i) {
-            list.push_back(
-                argument(*args[i], function.params[i], function.paramTypes[i], checks ? &addresses[i] : nullptr, &handover));
+            std::string value =
+                argument(*args[i], function.params[i], function.paramTypes[i], checks ? &addresses[i] : nullptr, &handover);
+            if (function.isExtern && function.params[i].mode == ParamMode::Read && function.paramTypes[i].isBool()) {
+                std::string byte = temp();  // a bool of C is a byte (D129)
+                inst(byte + " = zext " + value + " to i8");
+                value = "i8 " + byte;
+            }
+            list.push_back(value);
         }
         if (tracksCaller(function)) list.push_back("ptr " + where(loc));
         if (function.canThrow) list.push_back("ptr " + raisedSlot());
@@ -1437,6 +1487,12 @@ private:
             return {"", ret};
         }
         std::string result = temp();
+        if (function.isExtern && ret.isBool()) {
+            std::string byte = temp();
+            inst(byte + " = call i8 " + symbolOf(function) + "(" + joined + ")");
+            inst(result + " = icmp ne i8 " + byte + ", 0");
+            return {result, ret};
+        }
         inst(result + " = call " + llvmType(ret) + " " + (callee.empty() ? symbolOf(function) : callee) + "(" + joined + ")");
         if (function.canThrow) checkRaised();
         if (ret.isStruct()) inst("store " + llvmType(ret) + " " + result + ", ptr " + dest);
@@ -1660,6 +1716,13 @@ private:
         }
         case ExprKind::Conversion: {
             const auto& conversion = static_cast<const ConversionExpr&>(expr);
+            if (expr.type.isStruct()) return load(addressOf(expr), expr.type);  // `Color(n)` (D135)
+            if (conversion.operand->type.isStruct()) {
+                // `i32(color)`: the value of the case (D135).
+                const StructDecl& decl = *conversion.operand->type.structDecl;
+                Value tag = load(enumTag(addressOf(*conversion.operand), decl), Type::intType(32, true));
+                return convert(tag, expr.type, expr.loc);
+            }
             return convert(generateExpr(*conversion.operand), expr.type, expr.loc);
         }
         case ExprKind::Print:

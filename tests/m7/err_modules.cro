@@ -1,0 +1,30 @@
+// expect-error: 'square' of geometry is private to its module: it is not marked public (D50)
+// expect-error: field 'visits' of Point is private to its module: it is not marked public (D50)
+// expect-error: method 'touch' of Point is private to its module: it is not marked public (D50)
+// expect-error: 'describe' is in both geometry and text: write geometry.describe or text.describe (D126)
+// expect-error: no imported module is called 'nothing' (D126)
+// expect-error: 'geometry' is the name of an imported module (D131)
+// expect-error: the module geometry has no function 'nope'
+// expect-error: 'Secret' of geometry is private to its module: it is not marked public (D50)
+// expect-error: function 'make' is public, but its type Hidden is private to the module (D132)
+// expect-error: the constructor of Token is private to its module: it is not marked public (D50)
+// expect-error: unknown function 'pong'
+import modules.geometry
+import modules.text
+import modules.bad
+import modules.ping
+
+i32 main() {
+    f64 v = square(2.0)
+    Point p = Point(1.0, 2.0)
+    i32 n = p.visits
+    p.touch()
+    string name = describe()
+    nothing.Point q
+    i32 geometry = 1
+    geometry.nope()
+    Secret s
+    Token t = Token(1)
+    i32 x = pong(1)  // the imports are not transitive: ping imports pong
+    ret 0
+}

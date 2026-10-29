@@ -1,0 +1,9 @@
+// Two modules that import each other (D131).
+import modules.pong
+
+public i32 ping(i32 n) {
+    if (n == 0) {
+        ret 0
+    }
+    ret pong(n - 1) + 1
+}

@@ -12,30 +12,22 @@ public:
 
     Module parseModule() {
         Module module;
+        int file = tokens_.back().loc.file;
+        module.files.resize(file + 1);
+        ModuleFile& info = module.files[file];
         skipNewlines();
+        while (check(TokenKind::KwImport)) {  // the imports come first (D131)
+            parseImport(info);
+            skipNewlines();
+        }
         while (!check(TokenKind::EndOfFile)) {
-            if (check(TokenKind::KwStruct)) {
-                if (auto decl = parseStruct()) {
-                    module.structs.push_back(std::move(*decl));
-                } else {
-                    skipToNextDeclaration();
-                }
-            } else if (check(TokenKind::KwEnum)) {
-                if (auto decl = parseEnum()) {
-                    module.structs.push_back(std::move(*decl));
-                } else {
-                    skipToNextDeclaration();
-                }
-            } else if (check(TokenKind::KwInterface)) {
-                if (auto decl = parseInterface()) {
-                    module.interfaces.push_back(std::move(*decl));
-                } else {
-                    skipToNextDeclaration();
-                }
-            } else if (auto function = parseFunction()) {
-                module.functions.push_back(std::move(*function));
-            } else {
+            if (check(TokenKind::KwImport)) {
+                diag_.error(peek().loc, "the imports come before the declarations of the module (D131)");
                 skipToNextDeclaration();
+            } else if (check(TokenKind::KwExtern)) {
+                parseExtern(module, info.isUnsafe);
+            } else {
+                parseDeclaration(module);
             }
             skipNewlines();
         }
@@ -43,6 +35,116 @@ public:
     }
 
 private:
+    // declaration := ['public'] (struct | enum | interface | function)   (D50)
+    void parseDeclaration(Module& module) {
+        bool isPublic = false;
+        if (check(TokenKind::KwPublic)) {
+            SourceLocation loc = advance().loc;
+            if (check(TokenKind::KwExtern) || check(TokenKind::KwImport)) {
+                diag_.error(loc, check(TokenKind::KwExtern)
+                                     ? "an extern block is not public: the module offers safe functions instead (D42, D133)"
+                                     : "an import is not public: each module writes its own (D131)");
+                advance();
+                skipToNextDeclaration();
+                return;
+            }
+            isPublic = true;
+        }
+        if (check(TokenKind::KwStruct) || check(TokenKind::KwEnum)) {
+            auto decl = check(TokenKind::KwStruct) ? parseStruct() : parseEnum();
+            if (!decl) return skipToNextDeclaration();
+            decl->isPublic = isPublic;
+            module.structs.push_back(std::move(*decl));
+        } else if (check(TokenKind::KwInterface)) {
+            auto decl = parseInterface();
+            if (!decl) return skipToNextDeclaration();
+            decl->isPublic = isPublic;
+            module.interfaces.push_back(std::move(*decl));
+        } else if (auto function = parseFunction()) {
+            function->isPublic = isPublic;
+            module.functions.push_back(std::move(*function));
+        } else {
+            skipToNextDeclaration();
+        }
+    }
+
+    // import := 'import' (name {'.' name} | 'unsafe')   (D50, D127)
+    void parseImport(ModuleFile& info) {
+        advance();  // 'import'
+        if (match(TokenKind::KwUnsafe)) {
+            info.isUnsafe = true;
+        } else {
+            ImportDecl import;
+            import.loc = peek().loc;
+            do {
+                if (!check(TokenKind::Identifier)) {
+                    errorAtCurrent("the name of a module");
+                    skipToNextDeclaration();
+                    return;
+                }
+                import.path.push_back(advance().text);
+            } while (match(TokenKind::Dot));
+            info.imports.push_back(std::move(import));
+        }
+        if (!check(TokenKind::Newline) && !check(TokenKind::EndOfFile)) {
+            errorAtCurrent("a newline after the import");
+            skipToNextDeclaration();
+        }
+    }
+
+    // extern := 'extern' string '{' { signature } '}'   (D128)
+    void parseExtern(Module& module, bool isUnsafe) {
+        SourceLocation loc = advance().loc;  // 'extern'
+        if (!isUnsafe) diag_.error(loc, "an extern block needs 'import unsafe' at the top of the module (D127)");
+        if (!check(TokenKind::StringLiteral)) {
+            errorAtCurrent("the name of the library in quotes, as \"kernel32\" (D128)");
+            return skipToNextDeclaration();
+        }
+        SourceLocation libraryLoc = peek().loc;
+        std::string library = advance().text;
+        auto endsWith = [&library](const char* suffix) {
+            size_t n = std::char_traits<char>::length(suffix);
+            return library.size() >= n && library.compare(library.size() - n, n, suffix) == 0;
+        };
+        if (library.empty() || library.find_first_of("/\\:") != std::string::npos) {
+            diag_.error(libraryLoc, "the library is a name, as \"kernel32\": cromo looks for it (D133)");
+        } else if (endsWith(".lib") || endsWith(".dll")) {
+            diag_.error(libraryLoc, "write the library without extension, as \"kernel32\" (D133)");
+        }
+        skipNewlines();
+        if (!expect(TokenKind::LBrace, "to open the extern block")) return skipToNextDeclaration();
+        skipNewlines();
+        while (!check(TokenKind::RBrace) && !check(TokenKind::EndOfFile)) {
+            if (check(TokenKind::KwPublic)) {
+                diag_.error(peek().loc, "the C functions are private to the module: it offers safe functions instead (D42, D133)");
+                advance();
+            }
+            FunctionDecl function;
+            function.isExtern = true;
+            function.library = library;
+            if (!parseSignature(function, false)) {
+                skipToNextStatement();  // it also takes the newline
+                skipNewlines();
+                continue;
+            }
+            if (check(TokenKind::LBrace)) {
+                diag_.error(peek().loc, "a C function has no body: it is in the library (D128)");
+                parseBlock();
+            }
+            if (!function.typeParams.empty()) {
+                diag_.error(function.typeParams[0].loc, "a C function cannot be generic (D129)");
+                function.typeParams.clear();
+            }
+            module.functions.push_back(std::move(function));
+            if (!match(TokenKind::Newline) && !check(TokenKind::RBrace)) {
+                errorAtCurrent("a newline after the function");
+                skipToNextStatement();
+            }
+            skipNewlines();
+        }
+        expect(TokenKind::RBrace, "to close the extern block");
+    }
+
     // ---- Token helpers ----
 
     const Token& peek(size_t ahead = 0) const {
@@ -105,7 +207,7 @@ private:
 
     // ---- Declarations ----
 
-    // type := 'void' | name ['<' type {',' type} '>']
+    // type := 'void' | [module '.'] name ['<' type {',' type} '>']
     bool parseType(TypeName& out) {
         const Token& token = peek();
         if (token.kind == TokenKind::KwVoid) {
@@ -119,6 +221,12 @@ private:
         }
         out = TypeName{token.text, token.loc};
         advance();
+        if (check(TokenKind::Dot) && peek(1).kind == TokenKind::Identifier) {  // `geometry.Circle` (D126)
+            out.module = std::move(out.name);
+            advance();
+            out.name = peek().text;
+            out.loc = advance().loc;
+        }
         if (match(TokenKind::Less)) {
             do {
                 TypeName arg;
@@ -135,6 +243,7 @@ private:
     size_t skipType(size_t i) const {
         if (peek(i).kind == TokenKind::KwVoid) return i + 1;
         if (peek(i).kind != TokenKind::Identifier) return 0;
+        if (peek(i + 1).kind == TokenKind::Dot && peek(i + 2).kind == TokenKind::Identifier) i += 2;  // `geometry.Circle`
         if (peek(i + 1).kind != TokenKind::Less) return i + 1;
         return skipTypeArgs(i + 1);
     }
@@ -303,6 +412,8 @@ private:
     }
 
     bool parseEnumMember(StructDecl& decl) {
+        std::optional<SourceLocation> publicLoc;
+        if (check(TokenKind::KwPublic)) publicLoc = advance().loc;
         if (check(TokenKind::Tilde) || (check(TokenKind::Identifier) && peek().text == decl.name)) {
             diag_.error(peek().loc, "an enum has no constructor or destructor (D110)");
             return false;
@@ -312,11 +423,16 @@ private:
             auto method = parseFunction(true);
             if (!method) return false;
             method->kind = FunctionKind::Method;
+            method->isPublic = publicLoc.has_value();
             decl.members.push_back(std::move(*method));
             return true;
         }
         if (!check(TokenKind::Identifier)) {
             errorAtCurrent("a case or a method");
+            return false;
+        }
+        if (publicLoc) {
+            diag_.error(*publicLoc, "the cases of an enum are public with it (D132)");
             return false;
         }
         EnumCase item;
@@ -336,6 +452,10 @@ private:
                 field.loc = param.loc;
                 item.fields.push_back(std::move(field));
             }
+        }
+        if (match(TokenKind::Assign)) {  // `Red = 1` (D135)
+            item.valueExpr = parseExpression();
+            if (!item.valueExpr) return false;
         }
         decl.cases.push_back(std::move(item));
         return true;
@@ -364,6 +484,10 @@ private:
         if (!expect(TokenKind::LBrace, "to open the interface")) return std::nullopt;
         skipNewlines();
         while (!check(TokenKind::RBrace) && !check(TokenKind::EndOfFile)) {
+            if (check(TokenKind::KwPublic)) {
+                diag_.error(peek().loc, "the methods of an interface are public with it (D132)");
+                advance();
+            }
             FunctionDecl method;
             method.kind = FunctionKind::Method;
             size_t afterType = skipType(0);
@@ -432,7 +556,26 @@ private:
         return decl;
     }
 
+    // member := ['public'] (field | constructor | method) | destructor   (D50, D132)
     bool parseMember(StructDecl& decl) {
+        bool isPublic = false;
+        if (check(TokenKind::KwPublic)) {
+            SourceLocation loc = advance().loc;
+            if (check(TokenKind::Tilde)) {
+                diag_.error(loc, "a destructor has no 'public': it runs wherever its object ends (D132)");
+                return false;
+            }
+            isPublic = true;
+        }
+        size_t members = decl.members.size();
+        size_t fields = decl.fields.size();
+        if (!parseMemberDecl(decl)) return false;
+        if (decl.members.size() > members) decl.members.back().isPublic = isPublic;
+        if (decl.fields.size() > fields) decl.fields.back().isPublic = isPublic;
+        return true;
+    }
+
+    bool parseMemberDecl(StructDecl& decl) {
         // ~Name() { ... }
         if (check(TokenKind::Tilde)) {
             FunctionDecl destructor;

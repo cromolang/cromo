@@ -4,9 +4,9 @@
 // expect-error: cannot modify the elements: 'fixed' is const and cannot be modified (D26)
 // expect-error: a string cannot be indexed yet (D100)
 // expect-error: only a list has elements, found i32 (D35)
-// expect-error: 'addr' belongs to the unsafe dialect of the standard library (D37)
-// expect-error: unknown function 'alloc'
-// expect-error: the fields of string belong to the standard library: use its methods (D97)
+// expect-error: 'addr' belongs to the unsafe dialect: the module must write 'import unsafe' (D127)
+// expect-error: 'alloc' belongs to the unsafe dialect: the module must write 'import unsafe' (D127)
+// expect-error: field 'length' of string is private to its module: it is not marked public (D50)
 // expect-error: parameter 'value' is 'move': write 'move f' (D22)
 // expect-error: 'v[0]' overlaps 'v[0]' in the same call, and the call can modify both (D22)
 // expect-error: 'panic' is a built-in name

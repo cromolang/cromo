@@ -293,7 +293,7 @@ i64 total = price * quantity +
 - **Implementation: hidden error return**, as in Swift. Every function that can throw also returns an error indicator, and after every call the compiler checks it and jumps to the cleanup (destructors, `finally`) or to the `catch`. No runtime is needed and the generated code is the same on every platform.
 
 ### D37. Low-level library: `unsafe` dialect
-*2026-10-28.* The parts of the standard library that touch raw memory or the operating system (`list`, `string`, allocator, I/O) are written in an `unsafe` dialect of Cromo, with an address type and intrinsic functions (`load`, `store`, system calls). User code cannot use it. Underneath there are a few primitives in LLVM IR and in assembly, such as `memcpy` and `memset` (D19).
+*2026-10-28.* The parts of the standard library that touch raw memory or the operating system (`list`, `string`, allocator, I/O) are written in an `unsafe` dialect of Cromo, with an address type and intrinsic functions (`load`, `store`, system calls). User code cannot use it (amended by D127: modules that write `import unsafe` can). Underneath there are a few primitives in LLVM IR and in assembly, such as `memcpy` and `memset` (D19).
 
 ### D38. Formatting details
 *2026-10-28.*
@@ -314,7 +314,7 @@ i64 total = price * quantity +
 *2026-10-28.* Code is organized in modules, which are imported with `import`. There is no preprocessor and there are no header files. Visibility and mapping between files and modules: D50.
 
 ### D42. Interoperability with C
-*2026-10-28.* C functions are declared with `extern` and called from the `unsafe` dialect (D37). Normal code uses safe wrappers, without seeing the pointers of the C APIs. C resources (handles, descriptors) are encapsulated in structs with a destructor (RAII). The syntax is to be defined.
+*2026-10-28.* C functions are declared with `extern` and called from the `unsafe` dialect (D37). Normal code uses safe wrappers, without seeing the pointers of the C APIs. C resources (handles, descriptors) are encapsulated in structs with a destructor (RAII). Syntax: D128 and D129.
 
 ### D43. Concurrency postponed
 *2026-10-28.* Threads, async and the like come after the first version.
@@ -630,7 +630,7 @@ students.add(move anna)    // ok
 ### D97. The standard library
 *2026-10-28.*
 - It is the file `library/core.cro`, embedded in `cromo` and compiled with every program. In M5 it contains `list<T>` and `string`.
-- It is the only code that can use the `unsafe` dialect (D37). There is no syntax to mark it yet: it will come with modules (M7).
+- It is the only code that can use the `unsafe` dialect (D37). There is no syntax to mark it yet: it will come with modules (M7). Amended by D127: it writes `import unsafe`, as the modules of the user can.
 
 ### D98. The `unsafe` dialect in M5
 *2026-10-28.*
@@ -738,7 +738,7 @@ case Empty {
 ### D112. Comparing and printing enums
 *2026-10-28.*
 - `==` and `!=` work on enums whose cases have no data, as `color == Color.Red`. With data, the case is told by a `switch` (D76).
-- Explicit numeric values of the cases (`Red = 1`) and conversions to numbers come with `extern` (M7, D42); printing with `{}` comes with the interface for printing (D38).
+- Explicit numeric values of the cases (`Red = 1`) and conversions to numbers come with `extern` (M7, D42, D135); printing with `{}` comes with the interface for printing (D38).
 
 ### D113. Destructors and `finally` do not let exceptions out
 *2026-10-28.* It amends D36. If the body of a destructor or of a `finally` block can throw without catching, it is a compile error, as for the `noexcept` destructors of C++11 and `drop` in Rust. This way a second exception can never arise while one is propagating, and the cleanup has no special cases.
@@ -812,6 +812,59 @@ enum Shape {
 ### D125. The value of a `switch` while a branch uses its data
 *2026-10-28.* While a branch has names for the data of the case, the value of the `switch` cannot be modified, except through the names given with `ref`, as the list in a `for` (D101).
 
+### D126. The names of an imported module are used directly
+*2026-10-28.* After `import geometry` the public names of the module are used as they are, `area(c)` and `Circle c`, as with `#include` or the `using` of C#. The name of the module in front, `geometry.area(c)`, is needed only when two imported modules give the same name. The names of the module itself come first.
+
+### D127. `import unsafe`
+*2026-10-28.* It amends D37 and D97. A module that writes `import unsafe`, as in Go, can declare C functions with `extern` (D42), use the type `addr` and the built-in functions of D98. The other modules use only its public interface, which must be safe. The standard library is a module of this kind. It is easy to find with a search.
+
+### D128. An `extern` block names its library
+*2026-10-28.* C functions are declared in a block that names the library they come from. Inside, the prototypes are written as in Cromo:
+
+```cromo
+extern "kernel32" {
+    u32 GetLastError()
+    addr GetStdHandle(u32 id)
+}
+```
+
+`cromo` links that library with no options on the command line, and in M8 it will use the name to generate the import library, as Zig and the `DllImport` of C# do.
+
+### D129. The types at the boundary with C
+*2026-10-28.* The parameters and the result of a C function can be numbers, `bool` and `addr`. A `ref T` parameter, where `T` is a number or a struct of only numbers, is a C pointer to that value: structs already have the layout of C. The `bool` of C is one byte; the `BOOL` of Windows is an `i32`. Structs passed by value, callbacks and variadic functions such as `printf` come later.
+
+### D130. Where the modules are
+*2026-10-29.*
+- `import a.b` is the file `a/b.cro`, or the folder `a/b`, of which every `.cro` file is imported, without the subfolders. The paths start from the folder of the main file, as in Go and Java: a module is always written with the same name, wherever it is imported. A file and a folder with the same name are an error.
+- `std` is the standard library. In M7 it has only its core (`list`, `string`, `Exception`, `Error`), which every module sees without importing it; `import std.x` is an error until the library has modules.
+
+### D131. The rules of `import`
+*2026-10-29.*
+- The imports come at the top of the file, before the declarations, and they are not public: each module writes its own. They are not transitive: a module sees only what it imports itself.
+- Two modules can import each other: the program is compiled all together.
+- The name in front is the last name of the path: after `import a.shapes` it is `shapes.area(c)`. Two imports with the same last name in a file are an error, and so is a variable with the name of an imported module.
+- A name is looked for in the module itself, then in the imported modules, then in the standard library. So a name added to the library never breaks a program, as the prelude of Rust.
+
+### D132. `public` on members
+*2026-10-29.*
+- Fields, methods and the constructor are private to the module unless they are marked `public`, as in C#: `public struct Point { public f64 x }`. The destructor has no `public`: it runs wherever the object ends.
+- The cases of an enum and the methods of an interface are public with their type. A method that implements an interface needs no `public`, because it can be called through the interface anyway.
+- What a public declaration shows must be public too: a public function cannot return a private struct.
+
+### D133. The details of `extern`
+*2026-10-29.*
+- The C functions are private to their module, which offers safe functions instead (D42), and they keep their C name. An `extern` block is not public.
+- The library is a name without extension: `"kernel32"` is `kernel32.lib`, looked for in the folders of the modules that use it, then in the Windows SDK, until M8. The names that start with `cromo_` are reserved for the runtime.
+- The same C function can be declared by several modules, with the same signature.
+
+### D134. The names of the symbols (D39, D50)
+*2026-10-29.* Every symbol has its module in front: `@"geometry.area"`, `@"geometry.Circle.area"`, `%"struct.geometry.Circle"`, and the instances of generics have the types with their module, `@"std.list<geometry.Circle>.add"`. The main file is the module named after it, the standard library is `std`, and the C functions keep their own name. The names are readable in the IR and in a debugger, and two modules can have private names that are equal.
+
+### D135. The values of the cases
+*2026-10-29.* It closes the point left open by D112.
+- In an enum without data, every case can have a value, or none: `Red = 1`. The values are integer literals that fit in an `i32`, all different; without them a case has its position, from 0.
+- `i32(color)` gives the value of the case, as an explicit conversion to any integer type (D61). `Color(n)` gives the case whose value is `n`, and is a panic if there is none (D45). The default value stays the first case (D111).
+
 ---
 ---
 
@@ -819,8 +872,7 @@ enum Shape {
 
 There are currently no open questions. Still to be defined later, when needed:
 - bitwise operators (D59);
-- the `extern` syntax (D42), before milestone M7;
-- the symbol naming scheme for modules and generics (D39, D50);
 - the interface for making user-defined types printable (D38);
 - fixed-size arrays (`i32[4]`);
-- the content of the standard library.
+- the content of the standard library;
+- passing strings to C: a `string` cannot reach C yet, because its bytes are private to the library. The options are a function of the library that makes a copy ending with a zero, for the modules with `import unsafe` (recommended: the C APIs want that zero, and the string does not change), or letting those modules read `data` and `length`.

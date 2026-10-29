@@ -1,13 +1,16 @@
-// The standard library of Cromo (D97). It is compiled with every program, and it
-// is the only code that can use the `unsafe` dialect (D37, D98): the type `addr`
-// and the built-in functions alloc, resize, free, sizeOf, offset, take, put,
-// destroy, copyAt, copyMemory, compareMemory and checkIndex.
+// The standard library of Cromo (D97). It is compiled with every program, and
+// every module sees its public names without importing it (D130). It uses the
+// `unsafe` dialect (D37, D98, D127): the type `addr` and the built-in functions
+// alloc, resize, free, sizeOf, offset, take, put, destroy, copyAt, copyMemory,
+// compareMemory and checkIndex.
 //
 // The compiler relies on the fields `data` and `length` of list and string, for
 // `v[i]`, `for` over the elements, string literals and printing.
 
+import unsafe
+
 // A dynamic array with its elements contiguous on the heap (D13).
-struct list<T> {
+public struct list<T> {
     addr data
     i64 length
     i64 capacity
@@ -19,17 +22,17 @@ struct list<T> {
         free(data)
     }
 
-    i64 len() const {
+    public i64 len() const {
         ret length
     }
 
-    void add(move T value) {
+    public void add(move T value) {
         reserve(length + 1)
         put<T>(addressOf(length), move value)
         length++
     }
 
-    void insert(i64 index, move T value) {
+    public void insert(i64 index, move T value) {
         checkIndex(index, length + 1)
         reserve(length + 1)
         copyMemory(addressOf(index + 1), addressOf(index), (length - index) * sizeOf<T>())
@@ -37,7 +40,7 @@ struct list<T> {
         length++
     }
 
-    T remove(i64 index) {
+    public T remove(i64 index) {
         checkIndex(index, length)
         T value = take<T>(addressOf(index))
         copyMemory(addressOf(index), addressOf(index + 1), (length - index - 1) * sizeOf<T>())
@@ -45,7 +48,7 @@ struct list<T> {
         ret value
     }
 
-    void clear() {
+    public void clear() {
         for (i64 i = 0; i < length; i++) {
             destroy<T>(addressOf(i))
         }
@@ -54,7 +57,7 @@ struct list<T> {
 
     // Makes room for `count` elements in all, so that adding them does not
     // move the elements again.
-    void reserve(i64 count) {
+    public void reserve(i64 count) {
         if (count <= capacity) {
             ret
         }
@@ -69,7 +72,7 @@ struct list<T> {
         capacity = grown
     }
 
-    list<T> copy() const {
+    public list<T> copy() const {
         list<T> result
         result.reserve(length)
         for (i64 i = 0; i < length; i++) {
@@ -86,7 +89,7 @@ struct list<T> {
 // UTF-8 text that owns its bytes (D10). A string literal has capacity 0: its
 // bytes belong to the program, and they are copied the first time the string
 // changes (D100).
-struct string {
+public struct string {
     addr data
     i64 length
     i64 capacity
@@ -98,11 +101,11 @@ struct string {
     }
 
     // The length in bytes (D12).
-    i64 len() const {
+    public i64 len() const {
         ret length
     }
 
-    void reserve(i64 count) {
+    public void reserve(i64 count) {
         if (count <= capacity) {
             ret
         }
@@ -122,13 +125,13 @@ struct string {
         capacity = grown
     }
 
-    void append(string other) {
+    public void append(string other) {
         reserve(length + other.length)
         copyMemory(offset(data, length), other.data, other.length)
         length += other.length
     }
 
-    string concat(string other) const {
+    public string concat(string other) const {
         string result
         result.reserve(length + other.length)
         copyMemory(result.data, data, length)
@@ -137,7 +140,7 @@ struct string {
         ret result
     }
 
-    bool equals(string other) const {
+    public bool equals(string other) const {
         if (length != other.length) {
             ret false
         }
@@ -145,7 +148,7 @@ struct string {
     }
 
     // The order of the bytes, which in UTF-8 is the order of the code points (D95).
-    i32 compare(string other) const {
+    public i32 compare(string other) const {
         i64 common = length
         if (other.length < common) {
             common = other.length
@@ -160,7 +163,7 @@ struct string {
         ret 0
     }
 
-    string copy() const {
+    public string copy() const {
         string result
         if (capacity == 0) {  // a literal: the bytes can be shared
             result.data = data
@@ -175,15 +178,15 @@ struct string {
 }
 
 // What can be thrown (D36, D115).
-interface Exception {
+public interface Exception {
     string message() const
 }
 
 // A ready-made exception with its message, for the simple cases (D115).
-struct Error : Exception {
+public struct Error : Exception {
     string text
 
-    Error(move string description) {
+    public Error(move string description) {
         text = move description
     }
 

@@ -58,7 +58,7 @@ add_custom_command(
   DEPENDS "${CROMO_RT_DIR}/cromo_rt.lib" cmake/embed.cmake
   COMMENT "Embedding the Cromo runtime")
 
-# ---- Standard library in Cromo (P1), embedded as text ----
+# ---- Standard library in Cromo (D97), embedded as text ----
 add_custom_command(
   OUTPUT "${CROMO_RT_DIR}/library_blob.inc"
   COMMAND "${CMAKE_COMMAND}" "-DINPUT=${CMAKE_SOURCE_DIR}/library/core.cro" "-DOUTPUT=${CROMO_RT_DIR}/library_blob.inc"

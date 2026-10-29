@@ -1,0 +1,4 @@
+// A file of the folder module shapes (D50).
+public f64 triangleArea(f64 base, f64 height) {
+    ret base * height / 2.0
+}

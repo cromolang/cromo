@@ -1,0 +1,78 @@
+// expect-output: 25
+// expect-output: 5
+// expect-output: 1
+// expect-output: geometry text
+// expect-output: 3
+// expect-output: 40
+// expect-output: 3 7
+// expect-output: 6 3
+// expect-output: 9 10
+// expect-output: 12
+// expect-output: 5
+// expect-output: bad input -2
+// expect-output: 4 1
+// expect-output: green
+// Modules: files, folders, public names, cycles and names in front (D41, D50, D126).
+import modules.geometry
+import modules.text
+import modules.shapes
+import modules.ping
+import modules.errors
+
+struct Item {  // the same name as a private struct of text: no clash
+    i32 n = 3
+}
+
+f64 square(f64 v) {  // the names of the module itself come first (D126)
+    ret v + 1.0
+}
+
+struct Box : Measured {
+    f64 side
+
+    f64 size() const {
+        ret side
+    }
+}
+
+i32 main() {
+    Point a = Point(1.0, 2.0)
+    geometry.Point b = geometry.Point(4.0, 6.0)
+    println("{}", distance2(a, b))
+    println("{}", a.norm2())
+    println("{}", a.x)
+    println("{} {}", geometry.describe(), text.describe())
+    println("{}", square(2.0))
+    println("{}", tenSquares(2.0))
+    Item item
+    println("{} {}", item.n, itemValue())
+
+    Shape s = Shape.Rect(2.0, 3.0)
+    geometry.Shape c = geometry.Shape.Circle(1.0)
+    println("{} {}", s.area(), c.area())
+    println("{} {}", squareArea(3.0), triangleArea(4.0, 5.0))
+    println("{}", ping(3))
+
+    list<Box> boxes
+    Box small
+    small.side = 2.0
+    Box big
+    big.side = 3.0
+    boxes.add(small)
+    boxes.add(big)
+    println("{}", total(boxes))
+
+    try {
+        check(5)
+        check(-2)
+    } catch (ParseError e) {
+        println("{} {}", e.message(), e.line)
+    }
+
+    println("{} {}", i32(Color.Blue), i32(geometry.Color.Red))
+    Color green = Color(2)
+    if (green == Color.Green) {
+        println("green")
+    }
+    ret 0
+}

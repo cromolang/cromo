@@ -212,7 +212,7 @@ i32 b = a               // simple types are always copied
 
 ## 8. Dynamic memory (D11)
 
-Heap memory is obtained **only** through the dynamic containers and `string`. They are implemented in the standard library, in the `unsafe` dialect that user code does not see (D37). There is no garbage collector: when a variable goes out of scope, everything it contains is freed, at any depth.
+Heap memory is obtained **only** through the dynamic containers and `string`. They are implemented in the standard library, in the `unsafe` dialect that only the modules with `import unsafe` use (D37, D127). There is no garbage collector: when a variable goes out of scope, everything it contains is freed, at any depth.
 
 ```cromo
 struct Student {
@@ -339,6 +339,7 @@ Shape s = Shape.Circle(1.0)     // a value is created with the name of the enum
 - `switch` also works on integers and strings, with literals as cases; there `default` is optional (D109).
 - Enums can have methods, implement interfaces and be generic, like structs (D110). An enum whose cases have no data can be compared with `==` (D112).
 - In a method of the enum, `switch { ... }` without a value is the `switch` on the enum itself (D117).
+- In an enum without data, the cases can have a value, `Red = 1`. `i32(color)` gives the value of the case, and `Color(n)` the case with the value `n`, with a panic if there is none (D135).
 - `break` and `continue` written directly in a branch of a `switch` are errors: the branch ends by itself, and a `break` written out of C habit would leave the loop instead (D116).
 - While a branch uses the data of a case, the value of the `switch` cannot be modified (D125).
 
@@ -434,22 +435,70 @@ shapes.add(Square(2.0))
 - An interface that uses `Self` can only be a constraint: `T max<T : Comparable>(T a, T b)` (D84).
 - The numbers and `bool` do not implement interfaces yet: the built-in interfaces for comparison, equality, printing and arithmetic will come with the standard library (D87).
 
-## 13. Modules (D41, D50)
+## 13. Modules (D41, D50, D126)
 
 ```cromo
-import std.io
+// file geometry.cro
+public struct Point {
+    public f64 x                  // visible to whoever imports the module
+    public f64 y
+    i32 visits                    // private to the module
+}
 
-public f64 average(list<f64> values) { ... }   // visible to whoever imports the module
-f64 sum(list<f64> values) { ... }              // private to the module
+public f64 distance2(Point a, Point b) {
+    ret square(a.x - b.x) + square(a.y - b.y)
+}
+
+f64 square(f64 v) {               // private to the module
+    ret v * v
+}
+```
+
+```cromo
+// file main.cro, in the same folder
+import geometry
+
+i32 main() {
+    Point a = Point()             // the names of the module, used directly (D126)
+    geometry.Point b = geometry.Point()
+    println("{}", distance2(a, b))
+    ret 0
+}
 ```
 
 - There is no preprocessor and there are no header files.
-- A file is a module; a folder is a module that contains the modules of its files. `import std.io` corresponds to `std/io.cro`.
-- Everything is private to the module, except what is marked `public`.
+- A file is a module; a folder is a module that contains the modules of its files. `import a.b` corresponds to `a/b.cro`, or to the folder `a/b`, starting from the folder of the main file (D130).
+- Everything is private to the module, except what is marked `public`: also the fields, the methods and the constructor of a struct (D132).
+- The public names of an imported module are used directly. The module in front, with the last name of its path, is needed only when two imported modules give the same name; the names of the module itself come first (D126).
+- The imports come at the top of the file. They are not transitive, and two modules can import each other (D131).
+- The standard library is seen by every module without importing it.
 
-## 14. Interoperability with C (D42)
+## 14. Interoperability with C (D42, D127–D129)
 
-C functions are declared with `extern` and are called only from the `unsafe` dialect (D37). Normal code uses safe wrappers, and C resources are wrapped in structs with a destructor. The syntax is to be defined.
+```cromo
+import unsafe
+
+extern "kernel32" {
+    i32 QueryPerformanceCounter(ref i64 count)
+    i32 QueryPerformanceFrequency(ref i64 frequency)
+}
+
+public struct Stopwatch {
+    i64 start
+    i64 frequency
+
+    public Stopwatch() {
+        QueryPerformanceFrequency(ref frequency)
+        QueryPerformanceCounter(ref start)
+    }
+}
+```
+
+- A module that writes `import unsafe` can declare C functions in an `extern` block, use the type `addr` and the built-in functions of the library, as `alloc` and `free` (D127). The other modules use only its public interface, which must be safe.
+- The block names its library: `cromo` links it without options (D128). The C functions keep their name and are private to the module (D133).
+- They take and return numbers, `bool` and `addr`; a `ref` parameter is a C pointer to a number or to a struct of numbers, which have the layout of C (D129). The `BOOL` of Windows is an `i32`.
+- C resources are wrapped in structs with a destructor (D42): see `examples/05_c_interop.cro`.
+- Strings cannot be passed to C yet: it is an open question in [decisions.md](decisions.md).
 
 ## 15. Still to be written
 

@@ -1,0 +1,4 @@
+// A file next to a folder with the same name (D130).
+public i32 bothValue() {
+    ret 1
+}

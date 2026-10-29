@@ -1,0 +1,21 @@
+// Another module, with a public name that geometry has too (D126).
+public string describe() {
+    ret "text"
+}
+
+f64 square(f64 v) {  // private, as the one of geometry: they do not clash
+    ret v * v * 10.0
+}
+
+public f64 tenSquares(f64 v) {
+    ret square(v)
+}
+
+struct Item {  // private, as the one of the test
+    i32 n = 7
+}
+
+public i32 itemValue() {
+    Item item
+    ret item.n
+}

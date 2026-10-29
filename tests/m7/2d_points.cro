@@ -1,0 +1,18 @@
+// expect-output: 25
+// The symbols of a module whose name starts with a digit are quoted in the IR (D134).
+struct Point {
+    i32 x
+    i32 y
+
+    i32 norm2() const {
+        ret x * x + y * y
+    }
+}
+
+i32 main() {
+    Point p
+    p.x = 3
+    p.y = 4
+    println("{}", p.norm2())
+    ret 0
+}

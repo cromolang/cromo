@@ -1,0 +1,17 @@
+// Mistakes found in a module (D132).
+struct Hidden {
+    i32 n
+}
+
+public Hidden make() {
+    Hidden h
+    ret h
+}
+
+public struct Token {
+    i32 n
+
+    Token(i32 value) {  // private constructor
+        n = value
+    }
+}

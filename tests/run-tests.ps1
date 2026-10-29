@@ -1,5 +1,6 @@
 # Behavior tests: compiles every .cro under tests/ and checks the result against
-# the directives written in its comments:
+# the directives written in its comments. The files in a folder named `modules`
+# are imported by the tests, and are not tests themselves (D50).
 #   // cromo-flags: --release       extra options for cromo
 #   // expect-exit: 42              exit code of the program
 #   // expect-output: text          one line of standard output (repeatable, exact match)
@@ -48,6 +49,7 @@ $passed = 0
 $failed = 0
 foreach ($test in Get-ChildItem $PSScriptRoot -Recurse -Filter *.cro | Sort-Object FullName) {
     $name = $test.FullName.Substring($PSScriptRoot.Length + 1)
+    if ($name -split '\\' -contains 'modules') { continue }
     if ($Filter -and -not $name.Contains($Filter)) { continue }
 
     # Not $flags: names are case-insensitive, it would overwrite the -Flags parameter.

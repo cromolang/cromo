@@ -44,6 +44,7 @@ ExprPtr cloneExpr(const Expr& expr) {
     case ExprKind::Call: {
         const auto& from = static_cast<const CallExpr&>(expr);
         auto to = std::make_unique<CallExpr>(from.loc, from.callee);
+        to->module = from.module;
         to->typeArgs = from.typeArgs;
         to->args = cloneAll(from.args);
         return to;
@@ -217,6 +218,7 @@ FunctionDecl clone(const FunctionDecl& function) {
     result.returnType = function.returnType;
     result.name = function.name;
     result.loc = function.loc;
+    result.isPublic = function.isPublic;
     result.params = function.params;
     result.isConst = function.isConst;
     result.isGenerated = function.isGenerated;
@@ -230,6 +232,7 @@ FieldDecl clone(const FieldDecl& field) {
     result.type = field.type;
     result.name = field.name;
     result.loc = field.loc;
+    result.isPublic = field.isPublic;
     result.init = cloneOrNull(field.init);
     return result;
 }

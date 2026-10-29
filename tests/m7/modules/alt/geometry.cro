@@ -1,0 +1,4 @@
+// A module whose name is also the last name of modules.geometry (D131).
+public i32 altValue() {
+    ret 1
+}

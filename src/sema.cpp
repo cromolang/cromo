@@ -42,7 +42,13 @@ std::optional<Intrinsic> findIntrinsic(const std::string& name) {
     return found->second;
 }
 
-bool inLibrary(SourceLocation loc) { return loc.file == kLibraryFile; }
+// An enum whose cases have no data: it can be compared and converted to numbers (D112).
+bool withoutData(const StructDecl& decl) {
+    for (const EnumCase& item : decl.cases) {
+        if (!item.fields.empty()) return false;
+    }
+    return true;
+}
 
 bool isArithmetic(BinaryOp op) {
     return op == BinaryOp::Add || op == BinaryOp::Sub || op == BinaryOp::Mul || op == BinaryOp::Div ||
@@ -226,20 +232,23 @@ std::string rangeOf(Type type) {
 
 int alignUp(int value, int align) { return (value + align - 1) / align * align; }
 
+// The names declared in a source file, a module (D50).
+struct ModuleScope {
+    std::map<std::string, StructDecl*> structs;
+    std::map<std::string, InterfaceDecl*> interfaces;
+    std::map<std::string, FunctionDecl*> functions;
+};
+
 class Checker {
 public:
     Checker(Module& module, Diagnostics& diag) : module_(module), diag_(&diag) {}
 
     void run() {
         declareNames();
-        auto library = [this](const char* name) {
-            auto found = structs_.find(name);
-            return found != structs_.end() && inLibrary(found->second->loc) ? found->second : nullptr;
-        };
-        stringDecl_ = library("string");
-        auto exception = interfaces_.find("Exception");
-        if (exception != interfaces_.end() && inLibrary(exception->second->loc)) exceptionDecl_ = exception->second;
-        listDecl_ = library("list");
+        ModuleScope& library = modules_[kLibraryFile];
+        stringDecl_ = library.structs.count("string") ? library.structs["string"] : nullptr;
+        listDecl_ = library.structs.count("list") ? library.structs["list"] : nullptr;
+        exceptionDecl_ = library.interfaces.count("Exception") ? library.interfaces["Exception"] : nullptr;
         declareInterfaces();
         declareTypeParams();
         // Every generic is checked once, with its type parameters as types (D52).
@@ -253,13 +262,14 @@ public:
             if (decl.typeParams.empty()) completeStruct(decl);
         }
         declareFunctions();
+        checkPublicSignatures();
         checkBodies(definitions_);
         for (StructDecl& decl : module_.structs) {
             if (!decl.typeParams.empty()) continue;
             for (FunctionDecl& member : decl.members) checkFunction(member);
         }
         for (FunctionDecl& function : module_.functions) {
-            if (function.typeParams.empty()) checkFunction(function);
+            if (function.typeParams.empty() && !function.isExtern) checkFunction(function);
         }
         checkBodies(instances_);  // it grows while the instances ask for others
         computeThrows();
@@ -301,40 +311,146 @@ private:
 
     // ---- Declarations ----
 
+    // The names of each module (D50). The symbols have the module in front, so
+    // that two modules can use the same names; a C function keeps its own (D128).
     void declareNames() {
+        modules_.resize(std::max<size_t>(module_.files.size(), kLibraryFile + 1));
         for (InterfaceDecl& decl : module_.interfaces) {
-            if (interfaces_.count(decl.name)) {
+            ModuleScope& scope = modules_[decl.loc.file];
+            decl.symbol = symbolFor(decl.loc, decl.name);
+            if (scope.interfaces.count(decl.name)) {
                 diag_->error(decl.loc, "interface '" + decl.name + "' is already defined");
             } else if (findBuiltinType(decl.name) || isBuiltinFunction(decl.name) || decl.name == "void" || decl.name == "Self") {
                 diag_->error(decl.loc, "'" + decl.name + "' is a built-in name");
             } else {
-                interfaces_[decl.name] = &decl;
+                scope.interfaces[decl.name] = &decl;
             }
         }
         for (StructDecl& decl : module_.structs) {
-            if (structs_.count(decl.name)) {
+            ModuleScope& scope = modules_[decl.loc.file];
+            decl.symbol = symbolFor(decl.loc, decl.name);
+            if (scope.structs.count(decl.name)) {
                 diag_->error(decl.loc, "struct '" + decl.name + "' is already defined");
             } else if (findBuiltinType(decl.name) || isBuiltinFunction(decl.name) || decl.name == "void" || decl.name == "Self") {
                 diag_->error(decl.loc, "'" + decl.name + "' is a built-in name");
-            } else if (interfaces_.count(decl.name)) {
+            } else if (scope.interfaces.count(decl.name)) {
                 diag_->error(decl.loc, "'" + decl.name + "' is already the name of an interface");
             } else {
-                structs_[decl.name] = &decl;
+                scope.structs[decl.name] = &decl;
             }
         }
         for (FunctionDecl& function : module_.functions) {
-            if (functions_.count(function.name)) {
+            ModuleScope& scope = modules_[function.loc.file];
+            function.symbol = function.isExtern ? function.name : symbolFor(function.loc, function.name);
+            if (scope.functions.count(function.name)) {
                 diag_->error(function.loc, "function '" + function.name + "' is already defined");
-            } else if (function.name.rfind("cromo_", 0) == 0 || function.name == "ExitProcess") {
+            } else if (function.isExtern && function.name.rfind("cromo_", 0) == 0) {
                 diag_->error(function.loc, "the name '" + function.name + "' is reserved for the runtime");
             } else if (isBuiltinFunction(function.name) || findBuiltinType(function.name)) {
                 diag_->error(function.loc, "'" + function.name + "' is a built-in name");
-            } else if (structs_.count(function.name) || interfaces_.count(function.name)) {
+            } else if (scope.structs.count(function.name) || scope.interfaces.count(function.name)) {
                 diag_->error(function.loc, "'" + function.name + "' is already the name of a type");
             } else {
-                functions_[function.name] = &function;
+                scope.functions[function.name] = &function;
             }
         }
+    }
+
+    const ModuleFile& fileOf(int file) const {
+        static const ModuleFile none;
+        return file >= 0 && static_cast<size_t>(file) < module_.files.size() ? module_.files[file] : none;
+    }
+
+    std::string symbolFor(SourceLocation loc, const std::string& name) const {
+        const std::string& module = fileOf(loc.file).name;
+        return module.empty() ? name : module + "." + name;
+    }
+
+    // D127: the module wrote `import unsafe`.
+    bool isUnsafe(SourceLocation loc) const { return fileOf(loc.file).isUnsafe; }
+
+    bool importsQualifier(SourceLocation loc, const std::string& module) const {
+        for (const ImportDecl& import : fileOf(loc.file).imports) {
+            if (import.qualifier() == module) return true;
+        }
+        return false;
+    }
+
+    // What a name means in a file: its own declarations first, then the public
+    // ones of the modules it imports (D126), then those of the standard library,
+    // so that a name added to the library never breaks a program (D131). `module`
+    // is the name written in front: `geometry.Circle`.
+    template <class T>
+    T* findDecl(std::map<std::string, T*> ModuleScope::*table, const std::string& name, SourceLocation at,
+                const std::string& module = {}) {
+        if (module.empty()) {
+            auto& own = modules_[at.file].*table;
+            auto found = own.find(name);
+            if (found != own.end()) return found->second;
+        }
+        T* result = nullptr;
+        std::string resultModule;
+        for (const ImportDecl& import : fileOf(at.file).imports) {
+            if (!module.empty() && import.qualifier() != module) continue;
+            for (int file : import.files) {
+                auto& names = modules_[file].*table;
+                auto found = names.find(name);
+                if (found == names.end() || !found->second->isPublic || found->second == result) continue;
+                if (result) {
+                    reportAmbiguous(name, at, resultModule, import.qualifier());
+                    return result;
+                }
+                result = found->second;
+                resultModule = import.qualifier();
+            }
+        }
+        if (result || !module.empty() || at.file == kLibraryFile) return result;
+        auto& library = modules_[kLibraryFile].*table;
+        auto found = library.find(name);
+        return found != library.end() && found->second->isPublic ? found->second : nullptr;
+    }
+
+    void reportAmbiguous(const std::string& name, SourceLocation at, const std::string& first, const std::string& second) {
+        if (!ambiguous_.insert({at.file, at.line, at.column}).second) return;
+        std::string where = first == second ? "twice in " + first : "in both " + first + " and " + second;
+        diag_->error(at, "'" + name + "' is " + where + ": write " + first + "." + name +
+                             (first == second ? "" : " or " + second + "." + name) + " (D126)");
+    }
+
+    // The imported module that has a name, but not public: for a clearer error.
+    std::string privateIn(const std::string& name, SourceLocation at, const std::string& module = {}) const {
+        for (const ImportDecl& import : fileOf(at.file).imports) {
+            if (!module.empty() && import.qualifier() != module) continue;
+            for (int file : import.files) {
+                const ModuleScope& scope = modules_[file];
+                if (scope.structs.count(name) || scope.interfaces.count(name) || scope.functions.count(name)) {
+                    return import.qualifier();
+                }
+            }
+        }
+        return "";
+    }
+
+    // D50, D132: a member is visible in its own module, or everywhere when it is
+    // public. The methods that implement an interface can be called through it
+    // anyway, so they need no `public`.
+    bool visible(bool isPublic, const StructDecl& owner, SourceLocation at) const {
+        return isPublic || owner.loc.file == at.file;
+    }
+
+    bool memberVisible(const FunctionDecl& member, const StructDecl& owner, SourceLocation at) {
+        if (visible(member.isPublic, owner, at) || member.isGenerated) return true;
+        if (member.kind != FunctionKind::Method) return false;
+        for (const InterfaceDecl* iface : implementsOf(owner)) {
+            for (const FunctionDecl& method : iface->methods) {
+                if (method.name == member.name) return true;
+            }
+        }
+        return false;
+    }
+
+    void reportPrivate(SourceLocation loc, const std::string& what) {
+        diag_->error(loc, what + " is private to its module: it is not marked public (D50)");
     }
 
     // The signatures of the interface methods, where `Self` is allowed (D84).
@@ -366,16 +482,16 @@ private:
             for (TypeParam& param : params) {
                 if (names.count(param.name)) diag_->error(param.loc, "type parameter '" + param.name + "' is already defined");
                 names[param.name] = true;
-                if (findBuiltinType(param.name) || structs_.count(param.name) || interfaces_.count(param.name) ||
-                    param.name == "Self") {
+                if (findBuiltinType(param.name) || findDecl(&ModuleScope::structs, param.name, param.loc) ||
+                    findDecl(&ModuleScope::interfaces, param.name, param.loc) || param.name == "Self") {
                     diag_->error(param.loc, "'" + param.name + "' is already the name of a type");
                 }
                 for (const TypeName& constraint : param.constraints) {
-                    auto found = interfaces_.find(constraint.name);
-                    if (found == interfaces_.end() || !constraint.args.empty()) {
+                    InterfaceDecl* found = findDecl(&ModuleScope::interfaces, constraint.name, constraint.loc, constraint.module);
+                    if (!found || !constraint.args.empty()) {
                         diag_->error(constraint.loc, "a constraint must be an interface, found '" + constraint.name + "' (D52)");
                     } else {
-                        param.interfaces.push_back(found->second);
+                        param.interfaces.push_back(found);
                     }
                 }
             }
@@ -397,10 +513,18 @@ private:
         return true;
     }
 
-    static std::string instanceName(const std::string& name, const std::vector<Type>& args) {
+    // `Pair<i32, Point>` for the messages; with `symbols`, the types have their
+    // module in front: `geometry.Pair<i32, geometry.Point>`.
+    static std::string instanceName(const std::string& name, const std::vector<Type>& args, bool symbols = false) {
         std::string result = name + "<";
-        for (size_t i = 0; i < args.size(); ++i) result += (i ? ", " : "") + args[i].name();
+        for (size_t i = 0; i < args.size(); ++i) result += (i ? ", " : "") + (symbols ? symbolOf(args[i]) : args[i].name());
         return result + ">";
+    }
+
+    static std::string symbolOf(Type type) {
+        if (type.isStruct()) return type.structDecl->symbol;
+        if (type.isInterface()) return type.interfaceDecl->symbol;
+        return type.name();
     }
 
     // Identifies an instance: the generic and the identity of each type argument.
@@ -474,13 +598,16 @@ private:
 
         auto instance = std::make_unique<StructDecl>();
         instance->name = instanceName(generic.name, args);
+        instance->symbol = instanceName(generic.symbol, args, true);
         instance->loc = generic.loc;
+        instance->isPublic = generic.isPublic;
         instance->interfaces = generic.interfaces;
         instance->isEnum = generic.isEnum;
         for (const EnumCase& item : generic.cases) {
             EnumCase copy;
             copy.name = item.name;
             copy.loc = item.loc;
+            if (item.valueExpr) copy.valueExpr = clone(*item.valueExpr);
             for (const FieldDecl& field : item.fields) copy.fields.push_back(clone(field));
             instance->cases.push_back(std::move(copy));
         }
@@ -519,6 +646,7 @@ private:
         auto instance = std::make_unique<FunctionDecl>(clone(generic));
         instance->typeParams.clear();
         instance->name = instanceName(generic.name, args);
+        instance->symbol = instanceName(generic.symbol, args, true);
         instance->generic = &generic;
         instance->typeBindings = bind(generic.typeParams, args);
         for (Type arg : args) instance->isAbstract = instance->isAbstract || isAbstract(arg);
@@ -557,7 +685,7 @@ private:
     }
 
     std::optional<Type> resolveType(const TypeName& name) {
-        if (bindings_) {
+        if (bindings_ && name.module.empty()) {
             for (const auto& [param, type] : *bindings_) {
                 if (param != name.name) continue;
                 if (!name.args.empty()) {
@@ -567,19 +695,25 @@ private:
                 return type;
             }
         }
-        if (name.name == "addr" && !structs_.count(name.name)) {
-            if (inLibrary(name.loc)) return Type::addrType();
-            diag_->error(name.loc, "'addr' belongs to the unsafe dialect of the standard library (D37)");
+        if (name.name == "addr" && name.module.empty() && !findDecl(&ModuleScope::structs, name.name, name.loc)) {
+            if (isUnsafe(name.loc)) return Type::addrType();
+            diag_->error(name.loc, "'addr' belongs to the unsafe dialect: the module must write 'import unsafe' (D127)");
             return std::nullopt;
         }
-        if (name.name == "Self") {
+        if (!name.module.empty() && !importsQualifier(name.loc, name.module)) {
+            diag_->error(name.loc, "no imported module is called '" + name.module + "' (D126)");
+            return std::nullopt;
+        }
+        if (name.name == "Self" && name.module.empty()) {
             if (!selfAllowed_) {
                 diag_->error(name.loc, "Self can be used only in the methods of an interface (D84)");
                 return std::nullopt;
             }
             return Type::selfType();
         }
-        std::optional<Type> builtin = name.name == "void" ? Type::voidType() : findBuiltinType(name.name);
+        std::optional<Type> builtin = !name.module.empty() ? std::nullopt
+                                      : name.name == "void"  ? Type::voidType()
+                                                             : findBuiltinType(name.name);
         if (builtin) {
             if (!name.args.empty()) {
                 diag_->error(name.loc, "'" + name.name + "' has no type arguments");
@@ -587,9 +721,8 @@ private:
             }
             return builtin;
         }
-        auto found = structs_.find(name.name);
-        if (found != structs_.end()) {
-            StructDecl& decl = *found->second;
+        if (StructDecl* found = findDecl(&ModuleScope::structs, name.name, name.loc, name.module)) {
+            StructDecl& decl = *found;
             if (decl.typeParams.empty()) {
                 if (!name.args.empty()) {
                     diag_->error(name.loc, "'" + decl.name + "' is not generic: it has no type arguments");
@@ -603,16 +736,18 @@ private:
             if (!instance) return std::nullopt;
             return Type::structType(instance);
         }
-        auto iface = interfaces_.find(name.name);
-        if (iface != interfaces_.end()) {
+        if (InterfaceDecl* iface = findDecl(&ModuleScope::interfaces, name.name, name.loc, name.module)) {
             if (!name.args.empty()) {
                 diag_->error(name.loc, "an interface has no type arguments (D84)");
                 return std::nullopt;
             }
-            return Type::interfaceType(iface->second);
+            return Type::interfaceType(iface);
         }
-        if (name.name == "string" || name.name == "list") {
-            diag_->error(name.loc, "the type '" + name.name + "' arrives in milestone M5");
+        std::string where = privateIn(name.name, name.loc, name.module);
+        if (!where.empty()) {
+            reportPrivate(name.loc, "'" + name.name + "' of " + where);
+        } else if (!name.module.empty()) {
+            diag_->error(name.loc, "the module " + name.module + " has no type '" + name.name + "'");
         } else {
             diag_->error(name.loc, "unknown type '" + name.name + "'");
         }
@@ -698,6 +833,7 @@ private:
             }
         }
         if (decl.isEnum && decl.cases.empty()) diag_->error(decl.loc, "an enum needs at least one case (D104)");
+        caseValues(decl);
 
         for (FunctionDecl& member : decl.members) {
             member.owner = &decl;
@@ -727,6 +863,48 @@ private:
         for (FunctionDecl& member : decl.members) resolveSignature(member);
         checkCopySignature(decl);
         checkImplements(decl);
+    }
+
+    // The values of the cases (D135): their position, or `Red = 1` in an enum
+    // without data, for every case.
+    void caseValues(StructDecl& decl) {
+        bool written = false;
+        for (const EnumCase& item : decl.cases) written = written || item.valueExpr;
+        std::map<int64_t, const EnumCase*> seen;
+        for (size_t i = 0; i < decl.cases.size(); ++i) {
+            EnumCase& item = decl.cases[i];
+            item.value = static_cast<int64_t>(i);
+            if (!written) continue;
+            if (!item.valueExpr) {
+                diag_->error(item.loc, "give a value to every case of " + decl.name + ", or to none (D135)");
+                continue;
+            }
+            if (!item.fields.empty()) {
+                diag_->error(item.valueExpr->loc, "only the cases of an enum without data can have a value (D135)");
+                continue;
+            }
+            const Expr* value = item.valueExpr.get();
+            bool negative = false;
+            if (value->kind == ExprKind::Unary && static_cast<const UnaryExpr*>(value)->op == UnaryOp::Negate) {
+                negative = true;
+                value = static_cast<const UnaryExpr*>(value)->operand.get();
+            }
+            if (value->kind != ExprKind::IntLiteral || static_cast<const IntLiteralExpr*>(value)->isChar) {
+                diag_->error(item.valueExpr->loc, "the value of a case is an integer literal (D135)");
+                continue;
+            }
+            uint64_t magnitude = static_cast<const IntLiteralExpr*>(value)->magnitude;
+            if (!fits(magnitude, negative, Type::intType(32, true))) {
+                diag_->error(item.valueExpr->loc, "the value of a case must fit in an i32 (D135)");
+                continue;
+            }
+            item.value = negative ? -static_cast<int64_t>(magnitude) : static_cast<int64_t>(magnitude);
+            auto [other, fresh] = seen.emplace(item.value, &item);
+            if (!fresh) {
+                diag_->error(item.valueExpr->loc, "the value " + std::to_string(item.value) + " is already the one of " +
+                                                      other->second->name + " (D135)");
+            }
+        }
     }
 
     // Computes size, alignment and need for destruction, and rejects structs
@@ -790,13 +968,13 @@ private:
         auto& decl = const_cast<StructDecl&>(constDecl);
         if (!implementsDone_.insert(&decl).second) return decl.implements;
         for (const TypeName& name : decl.interfaces) {
-            auto found = interfaces_.find(name.name);
-            if (found == interfaces_.end() || !name.args.empty()) {
+            InterfaceDecl* found = findDecl(&ModuleScope::interfaces, name.name, name.loc, name.module);
+            if (!found || !name.args.empty()) {
                 diag_->error(name.loc, "'" + name.name + "' is not an interface: a struct can only implement interfaces (D40)");
-            } else if (std::find(decl.implements.begin(), decl.implements.end(), found->second) != decl.implements.end()) {
+            } else if (std::find(decl.implements.begin(), decl.implements.end(), found) != decl.implements.end()) {
                 diag_->error(name.loc, decl.name + " already implements " + name.name);
             } else {
-                decl.implements.push_back(found->second);
+                decl.implements.push_back(found);
             }
         }
         return decl.implements;
@@ -872,12 +1050,20 @@ private:
 
     // The signatures of the functions that are not generic, and main.
     void declareFunctions() {
+        std::map<std::string, const FunctionDecl*> externs;
         for (FunctionDecl& function : module_.functions) {
             if (function.typeParams.empty()) resolveSignature(function);
+            if (!function.isExtern) continue;
+            checkExtern(function);
+            auto [other, fresh] = externs.emplace(function.name, &function);
+            if (!fresh && !sameExtern(function, *other->second)) {
+                diag_->error(function.loc, "the C function '" + function.name + "' is already declared with another signature, in " +
+                                               fileOf(other->second->loc.file).name);
+            }
         }
 
-        auto main = functions_.find("main");
-        if (main == functions_.end()) {
+        auto main = modules_[0].functions.find("main");
+        if (main == modules_[0].functions.end() || main->second->isExtern) {
             diag_->error("missing function main");
             return;
         }
@@ -892,6 +1078,90 @@ private:
         }
         if (!function.params.empty()) {
             diag_->error(function.params[0].loc, "main has no parameters");
+        }
+    }
+
+    // D129: the types that a C function can take and return.
+    static bool isCType(Type type) { return type.isNumeric() || type.isBool() || type.kind == TypeKind::Addr; }
+
+    // A number, or a struct of numbers: the same layout in C (D74, D129).
+    static bool isCPointee(Type type) {
+        if (type.isNumeric() || type.isBool()) return true;
+        if (!type.isStruct() || type.structDecl->isEnum || type.structDecl->needsDestruction) return false;
+        for (const FieldDecl& field : type.structDecl->fields) {
+            if (!isCPointee(field.resolved)) return false;
+        }
+        return true;
+    }
+
+    void checkExtern(const FunctionDecl& function) {
+        Type ret = function.resolvedReturn;
+        if (!ret.isError() && !ret.isVoid() && !isCType(ret)) {
+            diag_->error(function.returnType.loc, "a C function returns a number, bool or addr, not " + ret.name() + " (D129)");
+        }
+        for (size_t i = 0; i < function.params.size(); ++i) {
+            const Param& param = function.params[i];
+            Type type = function.paramTypes[i];
+            if (type.isError()) continue;
+            if (param.mode == ParamMode::Move) {
+                diag_->error(param.loc, "a C function has no 'move' parameters (D129)");
+            } else if (param.mode == ParamMode::Ref && !isCPointee(type)) {
+                diag_->error(param.type.loc, "'ref' to a C function is a pointer to a number or to a struct of numbers, not " +
+                                                 type.name() + " (D129)");
+            } else if (param.mode == ParamMode::Read && !isCType(type)) {
+                diag_->error(param.type.loc, "a C function takes numbers, bool, addr and 'ref' to numbers or structs of "
+                                             "numbers, not " + type.name() + " (D129)");
+            }
+        }
+    }
+
+    static bool sameExtern(const FunctionDecl& a, const FunctionDecl& b) {
+        if (a.resolvedReturn != b.resolvedReturn || a.params.size() != b.params.size()) return false;
+        for (size_t i = 0; i < a.params.size(); ++i) {
+            if (a.params[i].mode != b.params[i].mode || a.paramTypes[i] != b.paramTypes[i]) return false;
+        }
+        return true;
+    }
+
+    // D132: what a public declaration shows must be public too, or the modules that
+    // use it could not name it.
+    void checkExposed(Type type, SourceLocation loc, const std::string& what) {
+        if (type.isStruct()) {
+            const StructDecl* decl = type.structDecl;
+            for (Type arg : decl->typeArgs) checkExposed(arg, loc, what);
+            if (decl->generic) decl = decl->generic;
+            if (decl->isPublic) return;
+        } else if (!type.isInterface() || type.interfaceDecl->isPublic) {
+            return;
+        }
+        diag_->error(loc, what + " is public, but its type " + type.name() + " is private to the module (D132)");
+    }
+
+    void checkPublicSignatures() {
+        auto signature = [this](const FunctionDecl& function, const std::string& what) {
+            checkExposed(function.resolvedReturn, function.returnType.loc, what);
+            for (size_t i = 0; i < function.params.size() && i < function.paramTypes.size(); ++i) {
+                checkExposed(function.paramTypes[i], function.params[i].type.loc, what);
+            }
+        };
+        for (const FunctionDecl& function : module_.functions) {
+            if (function.isPublic && function.typeParams.empty()) signature(function, "function '" + function.name + "'");
+        }
+        for (const InterfaceDecl& decl : module_.interfaces) {
+            if (!decl.isPublic) continue;
+            for (const FunctionDecl& method : decl.methods) signature(method, "method '" + method.name + "'");
+        }
+        for (const StructDecl& decl : module_.structs) {
+            if (!decl.isPublic || !decl.typeParams.empty()) continue;
+            for (const FieldDecl& field : decl.fields) {
+                if (field.isPublic) checkExposed(field.resolved, field.type.loc, "field '" + field.name + "'");
+            }
+            for (const EnumCase& item : decl.cases) {
+                for (const FieldDecl& field : item.fields) checkExposed(field.resolved, field.type.loc, "case '" + item.name + "'");
+            }
+            for (const FunctionDecl& member : decl.members) {
+                if (member.isPublic) signature(member, member.kind == FunctionKind::Constructor ? "the constructor" : "method '" + member.name + "'");
+            }
         }
     }
 
@@ -968,8 +1238,12 @@ private:
     }
 
     Variable* declare(const std::string& name, Type type, SourceLocation loc, bool isConst) {
-        if (findBuiltinType(name) || structs_.count(name)) {
+        if (findBuiltinType(name) || findDecl(&ModuleScope::structs, name, loc)) {
             diag_->error(loc, "'" + name + "' is a type name");
+            return nullptr;
+        }
+        if (importsQualifier(loc, name)) {
+            diag_->error(loc, "'" + name + "' is the name of an imported module (D131)");
             return nullptr;
         }
         if (ownFieldIndex(name) >= 0) {
@@ -1858,9 +2132,11 @@ private:
             expr = std::make_unique<FieldExpr>(loc, std::make_unique<SelfExpr>(loc), field);
             return checkField(expr);
         }
-        if (functions_.count(name.name) || isPrintFunction(name.name) ||
+        if (findDecl(&ModuleScope::functions, name.name, name.loc) || isPrintFunction(name.name) ||
             (current_->owner && current_->owner->methods.count(name.name))) {
             diag_->error(name.loc, "'" + name.name + "' is a function: call it with '()'");
+        } else if (importsQualifier(name.loc, name.name)) {
+            diag_->error(name.loc, "'" + name.name + "' is a module: write " + name.name + ".name (D126)");
         } else {
             diag_->error(name.loc, "unknown name '" + name.name + "'");
         }
@@ -1879,16 +2155,27 @@ private:
             }
             return type;
         }
-        if (object.kind != ExprKind::Name) return std::nullopt;
-        const std::string& name = static_cast<const NameExpr&>(object).name;
-        if (lookup(name) || ownFieldIndex(name) >= 0) return std::nullopt;
-        auto found = structs_.find(name);
-        if (found == structs_.end() || !found->second->isEnum) return std::nullopt;
-        if (!found->second->typeParams.empty()) {
+        std::string name;
+        std::string module;
+        if (object.kind == ExprKind::Field) {  // `geometry.Shape` (D126)
+            const auto& field = static_cast<const FieldExpr&>(object);
+            if (field.object->kind != ExprKind::Name) return std::nullopt;
+            module = static_cast<const NameExpr&>(*field.object).name;
+            if (lookup(module) || ownFieldIndex(module) >= 0 || !importsQualifier(object.loc, module)) return std::nullopt;
+            name = field.field;
+        } else if (object.kind == ExprKind::Name) {
+            name = static_cast<const NameExpr&>(object).name;
+            if (lookup(name) || ownFieldIndex(name) >= 0) return std::nullopt;
+        } else {
+            return std::nullopt;
+        }
+        StructDecl* found = findDecl(&ModuleScope::structs, name, object.loc, module);
+        if (!found || !found->isEnum) return std::nullopt;
+        if (!found->typeParams.empty()) {
             diag_->error(object.loc, name + " is generic: write its type arguments, " + name + "<...>." + "Case (D92)");
             return Type::error();
         }
-        return Type::structType(found->second);
+        return Type::structType(found);
     }
 
     // `Shape.Circle(1.0)` and `Color.Red` (D105). The data are given like `move`
@@ -1945,13 +2232,13 @@ private:
             diag_->error(field.loc, "a " + object.name() + " has no fields");
             return Type::error();
         }
-        if (inLibrary(object.structDecl->loc) && !inLibrary(field.loc)) {
-            diag_->error(field.loc, "the fields of " + object.name() + " belong to the standard library: use its methods (D97)");
-            return Type::error();
-        }
         const auto& fields = object.structDecl->fields;
         for (size_t i = 0; i < fields.size(); ++i) {
             if (fields[i].name == field.field) {
+                if (!visible(fields[i].isPublic, *object.structDecl, field.loc)) {
+                    reportPrivate(field.loc, "field '" + field.field + "' of " + object.name());
+                    return Type::error();
+                }
                 field.index = static_cast<int>(i);
                 return fields[i].resolved;
             }
@@ -2105,6 +2392,17 @@ private:
 
     Type checkMethodCall(ExprPtr& expr) {
         auto& call = static_cast<MethodCallExpr&>(*expr);
+        // `geometry.area(c)`: a function or a struct of an imported module (D126).
+        if (call.object->kind == ExprKind::Name) {
+            std::string module = static_cast<NameExpr&>(*call.object).name;
+            if (!lookup(module) && ownFieldIndex(module) < 0 && importsQualifier(call.loc, module)) {
+                auto qualified = std::make_unique<CallExpr>(call.loc, call.method);
+                qualified->module = std::move(module);
+                qualified->args = std::move(call.args);
+                expr = std::move(qualified);
+                return checkCall(expr);
+            }
+        }
         if (std::optional<Type> named = enumNamed(*call.object)) {
             return checkEnumCase(expr, *named, call.method, &call.args, call.loc);
         }
@@ -2139,6 +2437,10 @@ private:
             }
         } else {
             diag_->error(call.loc, object.name() + " has no method named '" + call.method + "'");
+            return Type::error();
+        }
+        if (!memberVisible(*method, *object.structDecl, call.loc)) {
+            reportPrivate(call.loc, "method '" + call.method + "' of " + object.name());
             return Type::error();
         }
         if (!method->isConst) {
@@ -2488,37 +2790,37 @@ private:
     Type checkCall(ExprPtr& expr) {
         auto& call = static_cast<CallExpr&>(*expr);
         bool typed = !call.typeArgs.empty();
+        bool qualified = !call.module.empty();  // `geometry.area(c)` (D126)
 
-        if (!typed) {
+        if (!typed && !qualified) {
             if (std::optional<Type> target = findBuiltinType(call.callee)) return checkConversion(expr, *target);
             if (isPrintFunction(call.callee)) return checkPrint(expr);
             if (call.callee == "panic") return checkIntrinsic(call, Intrinsic::Panic);
         }
-        if (inLibrary(call.loc)) {
+        if (!qualified && isUnsafe(call.loc)) {
             if (std::optional<Intrinsic> intrinsic = findIntrinsic(call.callee)) return checkIntrinsic(call, *intrinsic);
         }
 
-        auto structFound = structs_.find(call.callee);
-        if (structFound != structs_.end()) {
-            StructDecl* decl = structFound->second;
+        if (StructDecl* decl = findDecl(&ModuleScope::structs, call.callee, call.loc, call.module)) {
             if (!decl->typeParams.empty() && !typed) {
                 diag_->error(call.loc, decl->name + " is generic: write its type arguments, " + decl->name + "<...>(...) (D92)");
                 checkIgnored(call.args);
                 return Type::error();
             }
             if (typed) {
-                std::optional<Type> type = resolveType(TypeName{call.callee, call.loc, call.typeArgs});
+                std::optional<Type> type = resolveType(TypeName{call.callee, call.loc, call.typeArgs, call.module});
                 if (!type) {
                     checkIgnored(call.args);
                     return Type::error();
                 }
                 decl = const_cast<StructDecl*>(type->structDecl);
             }
+            if (decl->isEnum && call.args.size() == 1) return checkEnumConversion(expr, decl);
             return checkConstruct(expr, decl);
         }
 
         // D72: inside a method, a call refers first to a method of the same struct.
-        if (current_->owner && !typed) {
+        if (current_->owner && !typed && !qualified) {
             auto method = current_->owner->methods.find(call.callee);
             if (method != current_->owner->methods.end()) {
                 SourceLocation loc = call.loc;
@@ -2529,12 +2831,19 @@ private:
             }
         }
 
-        auto found = functions_.find(call.callee);
-        if (found == functions_.end()) {
-            if (lookup(call.callee) || ownFieldIndex(call.callee) >= 0) {
+        FunctionDecl* function = findDecl(&ModuleScope::functions, call.callee, call.loc, call.module);
+        if (!function) {
+            std::string where = privateIn(call.callee, call.loc, call.module);
+            if (!qualified && (lookup(call.callee) || ownFieldIndex(call.callee) >= 0)) {
                 diag_->error(call.loc, "'" + call.callee + "' is a variable, not a function");
-            } else if (typed && (findBuiltinType(call.callee) || isPrintFunction(call.callee))) {
+            } else if (typed && !qualified && (findBuiltinType(call.callee) || isPrintFunction(call.callee))) {
                 diag_->error(call.loc, "'" + call.callee + "' has no type arguments");
+            } else if (!where.empty()) {
+                reportPrivate(call.loc, "'" + call.callee + "' of " + where);
+            } else if (!qualified && findIntrinsic(call.callee)) {
+                diag_->error(call.loc, "'" + call.callee + "' belongs to the unsafe dialect: the module must write 'import unsafe' (D127)");
+            } else if (qualified) {
+                diag_->error(call.loc, "the module " + call.module + " has no function '" + call.callee + "'");
             } else {
                 diag_->error(call.loc, "unknown function '" + call.callee + "'");
             }
@@ -2542,7 +2851,6 @@ private:
             return Type::error();
         }
 
-        FunctionDecl* function = found->second;
         if (!function->typeParams.empty()) {
             function = instanceFor(*function, call);
         } else if (typed) {
@@ -2652,6 +2960,11 @@ private:
         Type type = Type::structType(decl);
 
         if (decl->constructor) {
+            if (!visible(decl->constructor->isPublic, *decl, node.loc)) {
+                reportPrivate(node.loc, "the constructor of " + decl->name);
+                checkIgnored(node.args);
+                return Type::error();
+            }
             use(decl->constructor, node.loc);
             noteCall(decl->constructor, node.loc);
             if (!checkArgs(node.args, *decl->constructor, "the constructor of " + decl->name, node.loc, &node.overlaps)) {
@@ -2682,6 +2995,10 @@ private:
             type = checkExpr(operand, std::nullopt);
         }
         if (type.isError()) return type;
+        if (type.isStruct() && type.structDecl->isEnum && withoutData(*type.structDecl) && target.isInt()) {
+            expr = std::make_unique<ConversionExpr>(call.loc, std::move(operand), target, true);  // the value of the case (D135)
+            return target;
+        }
         if (type.isUntyped() || type.isVoid() || type.kind == TypeKind::String || type.isStruct() ||
             type.isParam() || type.isInterface()) {
             diag_->error(operand->loc, "cannot convert this value to " + target.name());
@@ -2698,6 +3015,28 @@ private:
             expr = std::make_unique<ConversionExpr>(loc, std::move(operand), target, true);
         }
         return target;
+    }
+
+    // `Color(n)`: the case whose value is n, or a panic if there is none (D135).
+    Type checkEnumConversion(ExprPtr& expr, StructDecl* decl) {
+        auto& call = static_cast<CallExpr&>(*expr);
+        if (!withoutData(*decl)) {
+            diag_->error(call.loc, decl->name + " has data: its values are created with " + decl->name + ".Case(...) (D105)");
+            checkIgnored(call.args);
+            return Type::error();
+        }
+        ExprPtr operand = std::move(call.args[0]);
+        std::optional<Type> expected;
+        if (isUntypedLiteral(*operand)) expected = Type::intType(32, true);
+        Type type = checkExpr(operand, expected);
+        if (type.isError()) return type;
+        if (!type.isInt()) {
+            diag_->error(operand->loc, "a " + decl->name + " is made from an integer, not from " + type.name() + " (D135)");
+            return Type::error();
+        }
+        SourceLocation loc = call.loc;
+        expr = std::make_unique<ConversionExpr>(loc, std::move(operand), Type::structType(decl), true);
+        return expr->type;
     }
 
     // ---- print / println (D21, D38) ----
@@ -2901,9 +3240,9 @@ private:
 
     Module& module_;
     Diagnostics* diag_;
-    std::map<std::string, FunctionDecl*> functions_;
-    std::map<std::string, StructDecl*> structs_;
-    std::map<std::string, InterfaceDecl*> interfaces_;
+
+    std::vector<ModuleScope> modules_;  // by SourceLocation::file
+    std::set<std::tuple<int, int, int>> ambiguous_;  // where an ambiguous name was reported
 
     // Generics (D39): instances by key, structs already completed, the bodies to
     // check, and the generics whose definition has errors.

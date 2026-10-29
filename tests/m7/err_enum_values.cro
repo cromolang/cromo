@@ -1,0 +1,47 @@
+// expect-error: give a value to every case of Partial, or to none (D135)
+// expect-error: only the cases of an enum without data can have a value (D135)
+// expect-error: the value 1 is already the one of One (D135)
+// expect-error: the value of a case must fit in an i32 (D135)
+// expect-error: the value of a case is an integer literal (D135)
+// expect-error: cannot convert this value to i32
+// expect-error: Shape has data: its values are created with Shape.Case(...) (D105)
+// expect-error: a Color is made from an integer, not from f64 (D135)
+enum Partial {
+    A = 1
+    B
+}
+
+enum WithData {
+    Number(i32 n) = 1
+}
+
+enum Twice {
+    One = 1
+    Uno = 1
+}
+
+enum Huge {
+    Big = 3000000000
+}
+
+enum Text {
+    Word = 1.5
+}
+
+enum Shape {
+    Circle(f64 r)
+    Empty
+}
+
+enum Color {
+    Red = 1
+}
+
+i32 main() {
+    Shape s = Shape.Empty
+    i32 n = i32(s)
+    Shape t = Shape(1)
+    f64 x = 1.0
+    Color c = Color(x)
+    ret 0
+}

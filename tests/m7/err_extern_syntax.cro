@@ -1,0 +1,28 @@
+// expect-error: a C function has no body: it is in the library (D128)
+// expect-error: write the library without extension, as "kernel32" (D133)
+// expect-error: the C functions are private to the module: it offers safe functions instead (D42, D133)
+// expect-error: an extern block is not public: the module offers safe functions instead (D42, D133)
+// expect-error: a C function cannot be generic (D129)
+// expect-error: the name of the library in quotes, as "kernel32" (D128)
+import unsafe
+
+extern "kernel32" {
+    void HasBody() {
+    }
+    public void Exported()
+    void Generic<T>(T x)
+}
+
+extern "kernel32.dll" {
+    void Other()
+}
+
+public extern "kernel32" {
+}
+
+extern kernel32 {
+}
+
+i32 main() {
+    ret 0
+}

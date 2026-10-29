@@ -1,0 +1,62 @@
+// expect-output: 50
+// expect-output: 42
+// expect-output: 2000-1-1 6
+// expect-output: hi
+// expect-output: written 3
+// expect-output: true
+// C functions declared with extern, in a module with import unsafe (D127, D128, D129).
+import unsafe
+import modules.win
+
+extern "kernel32" {
+    i32 FileTimeToSystemTime(ref FileTime time, ref SystemTime result)
+    addr GetStdHandle(u32 id)
+    i32 WriteFile(addr file, addr data, u32 size, ref u32 written, addr overlapped)
+    i32 QueryPerformanceFrequency(ref i64 frequency)
+    u32 GetLastError()  // modules.win declares it too, with the same signature
+}
+
+// The structs of C, with the same layout (D74, D129).
+struct FileTime {
+    u32 low
+    u32 high
+}
+
+struct SystemTime {
+    u16 year
+    u16 month
+    u16 dayOfWeek
+    u16 day
+    u16 hour
+    u16 minute
+    u16 second
+    u16 milliseconds
+}
+
+i32 main() {
+    println("{}", scale(10, 20, 4))
+    println("{}", roundTrip(42))
+
+    FileTime time  // 2000-01-01, in 100 ns since 1601
+    time.low = 627916800
+    time.high = 29316075
+    SystemTime date
+    if (FileTimeToSystemTime(ref time, ref date) != 0) {
+        println("{}-{}-{} {}", date.year, date.month, date.day, date.dayOfWeek)
+    }
+
+    addr text = alloc(3)
+    put<u8>(text, 'h')
+    put<u8>(offset(text, 1), 'i')
+    put<u8>(offset(text, 2), '\n')
+    u32 written
+    addr none
+    i32 ok = WriteFile(GetStdHandle(4294967285), text, 3, ref written, none)
+    free(text)
+    println("written {}", written)
+
+    i64 frequency
+    ok = QueryPerformanceFrequency(ref frequency)
+    println("{}", frequency > 0)
+    ret 0
+}

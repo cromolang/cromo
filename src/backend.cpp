@@ -92,8 +92,9 @@ bool writeFile(const std::string& path, std::string_view data, std::string& erro
     return true;
 }
 
-bool link(const std::string& objectPath, const std::string& runtimePath, const std::string& outputPath,
+bool link(const std::string& objectPath, const std::string& runtimePath, const BackendOptions& options,
           std::string& error) {
+    const std::string& outputPath = options.outputPath;
     std::string sdkLibDir = findWindowsSdkLibDir();
     if (sdkLibDir.empty()) {
         error = "Windows SDK not found: kernel32.lib is needed to link the executable";
@@ -114,6 +115,21 @@ bool link(const std::string& objectPath, const std::string& runtimePath, const s
         runtimePath,
         "kernel32.lib",
     };
+    // The libraries of the extern blocks (D128): next to the modules, then in the SDK.
+    std::vector<std::string> folders = options.libraryPaths;
+    folders.push_back(sdkLibDir);
+    for (const std::string& folder : options.libraryPaths) args.push_back("/libpath:" + folder);
+    for (const std::string& library : options.libraries) {
+        if (library == "kernel32") continue;
+        bool found = false;
+        for (const std::string& folder : folders) found = found || llvm::sys::fs::exists(folder + "/" + library + ".lib");
+        if (!found) {
+            error = "cannot find the library '" + library + "': there is no " + library + ".lib next to the modules "
+                    "that use it, nor in the Windows SDK";
+            return false;
+        }
+        args.push_back(library + ".lib");
+    }
     std::vector<const char*> argv;
     for (const std::string& arg : args) argv.push_back(arg.c_str());
 
@@ -183,7 +199,7 @@ bool buildExecutable(const std::string& irText, const std::string& moduleName, c
     if (!emitObject(*module, *machine, objectPath, error)) return false;
     if (!writeFile(runtimePath, runtimeLibrary(), error)) return false;
 
-    bool linked = link(objectPath, runtimePath, options.outputPath, error);
+    bool linked = link(objectPath, runtimePath, options, error);
     llvm::sys::fs::remove(runtimePath);
     if (!options.keepObject) llvm::sys::fs::remove(objectPath);
     return linked;

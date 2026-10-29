@@ -1,0 +1,65 @@
+// Example 5: C functions behind safe structs, with RAII.
+//
+// Decided: import unsafe (D127), extern blocks with their library (D128), the
+//          types at the boundary with C (D129), RAII constructors and
+//          destructors (D6), the default value of a variable (D31), the
+//          values of the cases, Output = -11 (D135)
+
+import unsafe
+
+extern "kernel32" {
+    i32 QueryPerformanceCounter(ref i64 count)
+    i32 QueryPerformanceFrequency(ref i64 frequency)
+    addr GetStdHandle(u32 id)
+    i32 SetConsoleTextAttribute(addr console, u16 attributes)
+}
+
+// The handles of the console, with the numbers that Windows gives them.
+enum StdHandle {
+    Input = -10
+    Output = -11
+    Error = -12
+}
+
+// Measures the time from its creation.
+struct Stopwatch {
+    i64 start
+    i64 frequency
+
+    Stopwatch() {
+        QueryPerformanceFrequency(ref frequency)
+        QueryPerformanceCounter(ref start)
+    }
+
+    i64 micros() const {
+        i64 now
+        QueryPerformanceCounter(ref now)
+        ret (now - start) * 1000000 / frequency
+    }
+}
+
+// Colors the text of the console while it is alive.
+struct ConsoleColor {
+    addr console
+
+    ConsoleColor(u16 color) {
+        console = GetStdHandle(u32(i32(StdHandle.Output)))
+        SetConsoleTextAttribute(console, color)
+    }
+
+    ~ConsoleColor() {
+        SetConsoleTextAttribute(console, 7)  // light gray, the default
+    }
+}
+
+void warn(string text) {
+    ConsoleColor yellow = ConsoleColor(14)
+    println("warning: {}", text)
+}                                        // the color goes back here
+
+i32 main() {
+    Stopwatch watch = Stopwatch()
+    warn("the disk is almost full")
+    println("done in {} microseconds", watch.micros())
+    ret 0
+}

@@ -1,0 +1,16 @@
+// An exception thrown by a module and caught by another (D36).
+public struct ParseError : Exception {
+    public i32 line
+
+    string message() const {  // it implements Exception: no public needed (D132)
+        ret "bad input"
+    }
+}
+
+public void check(i32 n) {
+    if (n < 0) {
+        ParseError error
+        error.line = n
+        throw move error
+    }
+}

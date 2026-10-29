@@ -1,0 +1,4 @@
+// A folder next to a file with the same name (D130).
+public i32 innerValue() {
+    ret 2
+}

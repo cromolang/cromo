@@ -1,0 +1,18 @@
+// A module that uses C and offers safe functions (D42, D127, D128).
+import unsafe
+
+extern "kernel32" {
+    i32 MulDiv(i32 number, i32 numerator, i32 denominator)
+    void SetLastError(u32 code)
+    u32 GetLastError()
+}
+
+// a * b / c, rounded, without overflow in the middle.
+public i32 scale(i32 a, i32 b, i32 c) {
+    ret MulDiv(a, b, c)
+}
+
+public u32 roundTrip(u32 code) {
+    SetLastError(code)
+    ret GetLastError()
+}

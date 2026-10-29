@@ -1,0 +1,23 @@
+// expect-error: cannot find the module modules.missing
+// expect-error: the standard library has no module std.io yet: its core is visible without import (D130)
+// expect-error: another import is also called geometry (D131)
+// expect-error: both modules/both.cro and the folder modules/both exist: rename one of them (D130)
+// expect-error: the imports come before the declarations of the module (D131)
+// expect-error: an extern block needs 'import unsafe' at the top of the module (D127)
+// expect-error: an import is not public: each module writes its own (D131)
+import modules.missing
+import std.io
+import modules.geometry
+import modules.alt.geometry
+import modules.both
+
+extern "kernel32" {
+    u32 GetLastError()
+}
+
+i32 main() {
+    ret 0
+}
+
+import modules.text
+public import modules.ping

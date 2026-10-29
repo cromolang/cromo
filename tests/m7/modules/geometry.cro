@@ -1,0 +1,70 @@
+// A module imported by the tests of M7 (D50, D126).
+public struct Point {
+    public f64 x
+    public f64 y
+    i32 visits  // private to the module
+
+    public Point(f64 px, f64 py) {
+        x = px
+        y = py
+    }
+
+    public f64 norm2() const {
+        ret square(x) + square(y)
+    }
+
+    void touch() {
+        visits++
+    }
+}
+
+struct Secret {
+    i32 code
+}
+
+f64 square(f64 v) {
+    ret v * v
+}
+
+public f64 distance2(Point a, Point b) {
+    ret square(a.x - b.x) + square(a.y - b.y)
+}
+
+public string describe() {
+    ret "geometry"
+}
+
+public enum Shape {
+    Circle(f64 radius)
+    Rect(f64 width, f64 height)
+
+    public f64 area() const {
+        switch {
+            case Circle(f64 r) {
+                ret 3.0 * r * r
+            }
+            case Rect(f64 w, f64 h) {
+                ret w * h
+            }
+        }
+    }
+}
+
+public enum Color {
+    Red = 1
+    Green = 2
+    Blue = 4
+}
+
+public interface Measured {
+    f64 size() const
+}
+
+// A generic whose type argument can come from another module.
+public f64 total<T : Measured>(list<T> items) {
+    f64 sum = 0.0
+    for (T item in items) {
+        sum += item.size()
+    }
+    ret sum
+}

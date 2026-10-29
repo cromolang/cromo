@@ -85,7 +85,7 @@ std::string llvmType(Type type) {
     case TypeKind::Int: return "i" + std::to_string(type.bits);
     case TypeKind::Float: return type.bits == 32 ? "float" : "double";
     case TypeKind::String: return "ptr";
-    case TypeKind::Struct: return llvmName('%', "struct." + type.structDecl->name);
+    case TypeKind::Struct: return llvmName('%', "struct." + type.structDecl->symbol);
     case TypeKind::Interface: return "{ ptr, ptr }";
     case TypeKind::Addr: return "ptr";
     default: return "<invalid>";
@@ -93,7 +93,9 @@ std::string llvmType(Type type) {
 }
 
 std::string llvmName(char sigil, const std::string& name) {
-    bool plain = true;
+    // A name can start with a digit only when it is all digits, as `%0`: the
+    // module `04_lists` must be quoted.
+    bool plain = !name.empty() && !(name[0] >= '0' && name[0] <= '9');
     for (char c : name) {
         bool allowed = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '.' ||
                        c == '$' || c == '-';
