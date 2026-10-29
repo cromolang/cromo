@@ -1,0 +1,790 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cromo programming language (cromolang) — native code, familiar syntax, no pointers</title>
+<meta name="description" content="Cromo (cromolang) is a compiled programming language with the syntax of C and C++, RAII, ownership checked by the compiler and no garbage collector. One executable compiles and links, for Windows and Linux.">
+<meta name="theme-color" content="#0a0d13">
+<link rel="icon" href="logo-mark.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #0a0d13;
+  --bg-2: #0d1118;
+  --surface: #121722;
+  --surface-2: #171d2a;
+  --border: #212a3a;
+  --border-2: #2b3548;
+  --text: #e7ebf2;
+  --muted: #98a3b6;
+  --dim: #66728a;
+  --accent: #5ee7ff;
+  --accent-2: #8f86ff;
+  --ok: #7ee2a8;
+  --warn: #ffcb6b;
+  --error: #ff7a8a;
+  --chrome: linear-gradient(100deg, #f4f7fb 0%, #aab5c4 28%, #ffffff 46%, #8792a3 66%, #dfe5ec 100%);
+  --radius: 14px;
+  --mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
+  --sans: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --display: "Space Grotesk", "Inter", system-ui, sans-serif;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 16px/1.6 var(--sans);
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+a { color: inherit; text-decoration: none; }
+code { font-family: var(--mono); font-size: 0.9em; color: #cfe9ff; background: rgba(94, 231, 255, 0.08); border: 1px solid rgba(94, 231, 255, 0.14); padding: 0.05em 0.35em; border-radius: 6px; white-space: nowrap; }
+.wrap { width: 100%; max-width: 1180px; margin: 0 auto; padding: 0 24px; }
+
+/* The grid of the background, faded at the edges */
+.backdrop {
+  position: absolute; inset: 0 0 auto 0; height: 980px; pointer-events: none; z-index: 0;
+  background:
+    radial-gradient(600px 380px at 75% 22%, rgba(94, 231, 255, 0.13), transparent 70%),
+    radial-gradient(520px 360px at 15% 10%, rgba(143, 134, 255, 0.12), transparent 70%),
+    linear-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px) 0 0 / 40px 40px,
+    linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px) 0 0 / 40px 40px;
+  -webkit-mask-image: linear-gradient(to bottom, #000 40%, transparent);
+  mask-image: linear-gradient(to bottom, #000 40%, transparent);
+}
+
+/* Navigation */
+header.nav {
+  position: sticky; top: 0; z-index: 10;
+  background: rgba(10, 13, 19, 0.72);
+  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+.nav .wrap { display: flex; align-items: center; gap: 28px; height: 64px; }
+.brand { display: flex; align-items: center; gap: 10px; }
+.brand svg { display: block; }
+.nav-links { display: flex; gap: 22px; margin-left: 8px; font-size: 14.5px; color: var(--muted); }
+.nav-links a:hover { color: var(--text); }
+.nav-right { margin-left: auto; display: flex; align-items: center; gap: 12px; }
+.pill {
+  font: 500 12px/1 var(--mono); color: var(--accent);
+  border: 1px solid rgba(94, 231, 255, 0.35); background: rgba(94, 231, 255, 0.07);
+  padding: 7px 10px; border-radius: 999px; white-space: nowrap;
+}
+
+/* Buttons */
+.btn {
+  display: inline-flex; align-items: center; gap: 8px;
+  font: 600 15px/1 var(--sans); padding: 13px 18px; border-radius: 10px;
+  border: 1px solid var(--border-2); background: var(--surface); color: var(--text);
+  transition: transform 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+.btn:hover { transform: translateY(-1px); border-color: #3a4660; }
+.btn.primary { background: var(--chrome); color: #0b0f17; border-color: transparent; box-shadow: 0 8px 30px rgba(170, 190, 215, 0.18); }
+.btn.small { padding: 9px 13px; font-size: 14px; }
+
+/* Hero */
+.hero { position: relative; z-index: 1; padding: 84px 0 40px; }
+.hero .wrap { display: grid; grid-template-columns: 0.92fr 1.08fr; gap: 48px; align-items: center; }
+.eyebrow { display: inline-flex; align-items: center; gap: 10px; font: 500 13px/1 var(--mono); color: var(--muted); margin-bottom: 22px; }
+.eyebrow .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 12px var(--ok); }
+h1 { font: 700 clamp(40px, 5.6vw, 66px)/1.03 var(--display); letter-spacing: -0.03em; margin: 0 0 22px; }
+.chrome { background: var(--chrome); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.lead { font-size: 18.5px; color: var(--muted); max-width: 540px; margin: 0 0 30px; }
+.lead strong { color: var(--text); font-weight: 500; }
+.cta { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 28px; }
+.facts { display: flex; flex-wrap: wrap; gap: 8px 18px; font: 13px/1.4 var(--mono); color: var(--dim); }
+.facts span::before { content: "▸ "; color: var(--accent); }
+
+/* Windows with code and terminals */
+.window {
+  background: linear-gradient(180deg, #121825, #0e131c);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.02) inset;
+  overflow: hidden; min-width: 0;
+}
+.window-bar { display: flex; align-items: center; gap: 8px; padding: 11px 14px; border-bottom: 1px solid var(--border); background: rgba(255, 255, 255, 0.015); }
+.window-bar i { width: 11px; height: 11px; border-radius: 50%; background: #2a3242; }
+.window-bar i:nth-child(1) { background: #ff5f57; } .window-bar i:nth-child(2) { background: #febc2e; } .window-bar i:nth-child(3) { background: #28c840; }
+.window-bar .title { margin-left: 8px; font: 12.5px/1 var(--mono); color: var(--muted); }
+.window-bar .title b { color: var(--text); font-weight: 500; }
+pre { margin: 0; padding: 18px 20px; overflow-x: auto; font: 13.5px/1.62 var(--mono); color: #c8d1df; tab-size: 4; }
+pre code { all: unset; font: inherit; white-space: pre; }
+pre, .lsp-demo { scrollbar-width: thin; scrollbar-color: #2b3548 transparent; }
+pre::-webkit-scrollbar, .lsp-demo::-webkit-scrollbar { height: 8px; }
+pre::-webkit-scrollbar-thumb, .lsp-demo::-webkit-scrollbar-thumb { background: #2b3548; border-radius: 8px; }
+pre::-webkit-scrollbar-track, .lsp-demo::-webkit-scrollbar-track { background: transparent; }
+.term { border-top: 1px solid var(--border); background: #0a0e15; }
+.term pre { padding: 14px 20px; font-size: 13px; color: #b9c4d6; }
+.prompt { color: var(--ok); user-select: none; }
+.cmd { color: var(--text); }
+.out-dim { color: var(--dim); }
+.out-err { color: var(--error); }
+.out-ok { color: var(--ok); }
+.hero .window { transform: perspective(1400px) rotateY(-4deg) rotateX(2deg); }
+
+/* The colors of the code */
+.tk-k { color: #82aaff; }
+.tk-s { color: #c3e88d; }
+.tk-n { color: #f78c6c; }
+.tk-c { color: #5f6b80; font-style: italic; }
+.tk-t { color: #5ee7d0; }
+.tk-f { color: #ffcb6b; }
+.tk-o { color: #89ddff; }
+
+/* Numbers */
+.stats { position: relative; z-index: 1; padding: 34px 0 10px; }
+.stats-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 1px; background: var(--border); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.stat { background: var(--bg-2); padding: 22px 22px 20px; }
+.stat b { display: block; font: 700 30px/1.1 var(--display); letter-spacing: -0.02em; }
+.stat span { font-size: 13.5px; color: var(--muted); }
+
+/* Sections */
+section { position: relative; z-index: 1; padding: 96px 0 0; }
+.kicker { font: 500 13px/1 var(--mono); color: var(--accent); letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 14px; }
+h2 { font: 700 clamp(30px, 3.6vw, 42px)/1.1 var(--display); letter-spacing: -0.025em; margin: 0 0 16px; }
+.section-lead { color: var(--muted); font-size: 17.5px; max-width: 680px; margin: 0 0 40px; }
+
+/* Features */
+.features { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+.card {
+  background: linear-gradient(180deg, var(--surface), var(--bg-2));
+  border: 1px solid var(--border); border-radius: var(--radius); padding: 22px;
+  transition: border-color 0.2s ease, transform 0.2s ease;
+}
+.card:hover { border-color: #33405a; transform: translateY(-2px); }
+.card .icon {
+  width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center; margin-bottom: 16px;
+  background: rgba(94, 231, 255, 0.08); border: 1px solid rgba(94, 231, 255, 0.2); color: var(--accent);
+}
+.card h3 { font: 600 17px/1.3 var(--display); margin: 0 0 8px; }
+.card p { margin: 0; color: var(--muted); font-size: 14.5px; line-height: 1.58; }
+
+/* Two columns: text and code */
+.split { display: grid; grid-template-columns: 0.9fr 1.1fr; gap: 48px; align-items: center; }
+.modes { display: grid; gap: 12px; margin: 26px 0 0; padding: 0; list-style: none; }
+.modes li { display: grid; grid-template-columns: 74px 1fr; gap: 14px; align-items: baseline; padding: 14px 16px; border: 1px solid var(--border); border-radius: 12px; background: var(--bg-2); }
+.modes li b { font: 500 14px var(--mono); color: var(--accent); }
+.modes li span { color: var(--muted); font-size: 14.5px; }
+
+/* Examples with tabs */
+.tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+.tab {
+  font: 500 13.5px/1 var(--mono); color: var(--muted); background: transparent;
+  border: 1px solid var(--border); border-radius: 9px; padding: 10px 14px; cursor: pointer;
+}
+.tab:hover { color: var(--text); }
+.tab[aria-selected="true"] { color: #0b0f17; background: var(--chrome); border-color: transparent; }
+.panel[hidden] { display: none; }
+.panel .window { transform: none; }
+
+/* Toolchain */
+.tools { display: grid; grid-template-columns: 1.15fr 0.85fr; gap: 20px; align-items: stretch; }
+.vscode { display: flex; flex-direction: column; gap: 14px; }
+.vscode .card { flex: 1; }
+.lsp-demo { font: 13px/1.6 var(--mono); background: #0a0e15; border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; margin-top: 14px; color: #c8d1df; overflow-x: auto; white-space: pre; }
+.squiggle { text-decoration: underline wavy var(--error); text-underline-offset: 3px; }
+.hover-box { display: inline-block; margin-top: 6px; padding: 6px 10px; border: 1px solid var(--border-2); border-radius: 8px; background: var(--surface-2); color: var(--text); }
+
+/* Roadmap */
+.roadmap { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+.phase { border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-2); padding: 22px; }
+.phase h3 { display: flex; align-items: center; justify-content: space-between; font: 600 17px var(--display); margin: 0 0 16px; }
+.badge { font: 500 11.5px/1 var(--mono); padding: 6px 9px; border-radius: 999px; border: 1px solid; }
+.badge.done { color: var(--ok); border-color: rgba(126, 226, 168, 0.35); background: rgba(126, 226, 168, 0.07); }
+.badge.next { color: var(--warn); border-color: rgba(255, 203, 107, 0.35); background: rgba(255, 203, 107, 0.07); }
+.badge.later { color: var(--accent-2); border-color: rgba(143, 134, 255, 0.4); background: rgba(143, 134, 255, 0.08); }
+.steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.steps li { display: grid; grid-template-columns: 46px 1fr; gap: 10px; font-size: 14.5px; color: var(--muted); }
+.steps li b { font: 500 12.5px/1.75 var(--mono); color: var(--text); }
+.progress-label { display: flex; justify-content: space-between; gap: 12px; font: 12.5px var(--mono); color: var(--dim); }
+.progress { height: 6px; border-radius: 999px; background: var(--surface-2); overflow: hidden; margin: 8px 0 18px; }
+.progress div { height: 100%; width: 79%; background: var(--chrome); }
+
+/* Get started */
+.start { margin-top: 96px; border: 1px solid var(--border); border-radius: 20px; padding: 44px; background: radial-gradient(500px 240px at 85% 0%, rgba(94, 231, 255, 0.1), transparent 70%), linear-gradient(180deg, var(--surface), var(--bg-2)); display: grid; grid-template-columns: 1fr 1fr; gap: 36px; align-items: center; }
+.downloads { display: grid; gap: 10px; }
+.download { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 16px; border: 1px dashed var(--border-2); border-radius: 12px; color: var(--muted); font-size: 14.5px; }
+.download b { color: var(--text); font-weight: 500; }
+.download .soon { font: 500 12px var(--mono); color: var(--dim); }
+
+footer { margin-top: 96px; border-top: 1px solid var(--border); padding: 36px 0 48px; color: var(--dim); font-size: 14px; }
+footer .wrap { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 20px; }
+footer .links { display: flex; gap: 20px; }
+footer a:hover { color: var(--text); }
+
+@media (max-width: 1100px) {
+  .hero { padding-top: 48px; }
+  .hero .wrap { grid-template-columns: 1fr; }
+  .hero .window { transform: none; }
+}
+@media (max-width: 1020px) {
+  .features { grid-template-columns: repeat(2, 1fr); }
+  .stats-grid { grid-template-columns: repeat(6, 1fr); }
+  .stat { grid-column: span 2; }
+  .stat:nth-child(n+4) { grid-column: span 3; }
+}
+@media (max-width: 900px) {
+  .split, .tools, .start { grid-template-columns: 1fr; }
+  .roadmap { grid-template-columns: 1fr; }
+  .nav-links { display: none; }
+  .start { padding: 28px; }
+}
+@media (max-width: 560px) {
+  .wrap { padding: 0 16px; }
+  .features { grid-template-columns: 1fr; }
+  .stats-grid { grid-template-columns: 1fr 1fr; }
+  .stat, .stat:nth-child(n+4) { grid-column: span 1; }
+  .stat:last-child { grid-column: span 2; }
+  pre { font-size: 12.5px; padding: 16px; }
+  .pill { display: none; }
+  section { padding-top: 72px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  .btn, .card { transition: none; }
+}
+</style>
+</head>
+<body>
+<div class="backdrop" aria-hidden="true"></div>
+
+<header class="nav">
+  <div class="wrap">
+    <a class="brand" href="#" aria-label="Cromo, home">
+      <svg height="30" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 232 64">
+  <defs>
+    <linearGradient id="nav-chrome" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f8fafd"/>
+      <stop offset="0.3" stop-color="#b3bdca"/>
+      <stop offset="0.47" stop-color="#f1f4f8"/>
+      <stop offset="0.66" stop-color="#8691a2"/>
+      <stop offset="1" stop-color="#d9dfe7"/>
+    </linearGradient>
+    <linearGradient id="nav-edge" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#3e4757"/>
+    </linearGradient>
+    <linearGradient id="nav-word" gradientUnits="userSpaceOnUse" x1="74" y1="20" x2="228" y2="48">
+      <stop offset="0" stop-color="#f4f7fb"/>
+      <stop offset="0.35" stop-color="#b9c3d0"/>
+      <stop offset="0.55" stop-color="#ffffff"/>
+      <stop offset="0.8" stop-color="#9aa5b5"/>
+      <stop offset="1" stop-color="#e3e8ef"/>
+    </linearGradient>
+  </defs>
+  <rect x="2" y="2" width="60" height="60" rx="12" fill="url(#nav-chrome)" stroke="url(#nav-edge)" stroke-width="1.5"/>
+  <g fill="none" stroke="#1a2130" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M9.6 11.6a2.5 2.5 0 0 1 5 0c0 2-5 3.4-5 5.6h5"/>
+    <path d="M21.6 17.2V8.8l-4.4 6h6"/>
+  </g>
+  <g fill="none" stroke="#111722" stroke-width="5.6" stroke-linecap="round">
+    <path d="M32.2 32.6A11 11 0 1 0 32.2 47.4"/>
+    <path d="M41.5 33.2V50.6M41.5 40.4A8.6 8.6 0 0 1 50.6 33.4"/>
+  </g>
+  <g fill="none" stroke="url(#nav-word)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M96.4 26.9A11 11 0 1 0 96.4 41.1"/>
+    <path d="M108 23V45M108 31.5A9 9 0 0 1 117.5 23.5"/>
+    <circle cx="140" cy="34" r="11"/>
+    <path d="M163 45V23M163 30A7 7 0 0 1 177 30V45M177 30A7 7 0 0 1 191 30V45"/>
+    <circle cx="213.5" cy="34" r="11"/>
+  </g>
+</svg>
+    </a>
+    <nav class="nav-links" aria-label="Sections">
+      <a href="#features">Features</a>
+      <a href="#ownership">Ownership</a>
+      <a href="#examples">Examples</a>
+      <a href="#tooling">Tooling</a>
+      <a href="#roadmap">Roadmap</a>
+    </nav>
+    <div class="nav-right">
+      <span class="pill">v0.14 · preview</span>
+      <a class="btn small" href="#start">Get started</a>
+    </div>
+  </div>
+</header>
+
+<main>
+  <div class="hero">
+    <div class="wrap">
+      <div>
+        <div class="eyebrow"><span class="dot"></span>A systems language in development · Windows &amp; Linux x64</div>
+        <h1>Native code.<br>Familiar syntax.<br><span class="chrome">No pointers.</span></h1>
+        <p class="lead">Cromo is a compiled language with the syntax of C and C++, <strong>RAII</strong> and <strong>ownership checked by the compiler</strong>, and no garbage collector. A single executable, <code>cromo</code>, compiles and links your program — the goal is to be <strong>simpler than Rust</strong>.</p>
+        <div class="cta">
+          <a class="btn primary" href="#start">Get started
+            <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h9M8.5 4.5 12 8l-3.5 3.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </a>
+          <a class="btn" href="#examples">See the code</a>
+        </div>
+        <div class="facts"><span>LLVM backend</span><span>no libc, no SDK</span><span>cross-compiles to Linux</span><span>VS Code support</span></div>
+      </div>
+      <div class="window">
+        <div class="window-bar"><i></i><i></i><i></i><span class="title"><b>timer.cro</b> — RAII, maps and bitwise operators</span></div>
+        <pre><code class="cromo">import std.time
+
+// RAII: the destructor runs when the timer leaves its scope.
+struct Timer {
+    string name
+    time.Instant start
+
+    Timer(move string label) {
+        name = move label
+        start = time.now()
+    }
+
+    ~Timer() {
+        println("{}: {} µs", name, start.elapsed().microseconds())
+    }
+}
+
+i32 main() {
+    Timer timer = Timer("sum")
+    map&lt;bool, i64&gt; parity
+    for (i64 n = 0; n &lt; 1000; n++) {
+        parity[n &amp; 1 == 0] += n
+    }
+    println("even {}, odd {}", parity[true], parity[false])
+    ret 0
+}</code></pre>
+        <div class="term"><pre><span class="prompt">$ </span><span class="cmd">cromo run timer.cro</span>
+even 249500, odd 250000
+sum: 120 µs</pre></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="stats" aria-label="Cromo in numbers">
+    <div class="wrap"><div class="stats-grid">
+      <div class="stat"><b>1</b><span>executable: compiler, linker, runtime and library</span></div>
+      <div class="stat"><b>0</b><span>dependencies: no libc, no Windows SDK</span></div>
+      <div class="stat"><b>32 KB</b><span>for a hello world, statically linked</span></div>
+      <div class="stat"><b>2</b><span>targets: Windows and Linux x64</span></div>
+      <div class="stat"><b>212</b><span>design decisions, all written down</span></div>
+    </div></div>
+  </div>
+
+  <section id="features">
+    <div class="wrap">
+      <div class="kicker">Why Cromo</div>
+      <h2>The control of C++, <span class="chrome">without its traps</span></h2>
+      <p class="section-lead">Cromo keeps what C and C++ programmers already know — braces, value types, destructors — and leaves out pointers, undefined behavior and the borrow checker's lifetimes.</p>
+      <div class="features">
+        <div class="card">
+          <div class="icon"><svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h8m-3-3 3 3-3 3M15 4v12" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+          <h3>Ownership you can read</h3>
+          <p><code>ref</code> lends, <code>move</code> gives away, <code>copy()</code> duplicates. No lifetimes to annotate: the compiler follows every path.</p>
+        </div>
+        <div class="card">
+          <div class="icon"><svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><path d="M5 4h10v12H5zM8 8h4M8 11h4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" stroke-linecap="round"/></svg></div>
+          <h3>RAII, always</h3>
+          <p>Destructors run at the end of every scope, on <code>ret</code> and <code>break</code>, and while an exception unwinds.</p>
+        </div>
+        <div class="card">
+          <div class="icon"><svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><path d="M11 2 4 11h5l-1 7 7-9h-5z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg></div>
+          <h3>LLVM inside</h3>
+          <p>Cromo emits LLVM IR and optimizes it with a pinned LLVM. Overflow is a panic in debug builds and wraps around in <code>--release</code>.</p>
+        </div>
+        <div class="card">
+          <div class="icon"><svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2.5 16.5 6v8L10 17.5 3.5 14V6zM3.5 6 10 9.5 16.5 6M10 9.5v8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg></div>
+          <h3>One file, no SDK</h3>
+          <p><code>cromo</code> carries LLVM, the LLD linker, the runtime and the library. No Visual Studio, no libc: programs start in kilobytes.</p>
+        </div>
+        <div class="card">
+          <div class="icon"><svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><rect x="2.5" y="4" width="15" height="10" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M7 17h6M6 8l2 1.5L6 11m4 0h3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+          <h3>Windows and Linux</h3>
+          <p>Build for Linux from Windows with <code>--target linux</code>. A module can add <code>fs_windows.cro</code> and <code>fs_linux.cro</code> next to <code>fs.cro</code>.</p>
+        </div>
+        <div class="card">
+          <div class="icon"><svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><path d="M7 4 3 10l4 6M13 4l4 6-4 6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+          <h3>Generics and interfaces</h3>
+          <p>Generics compiled once for each type, constrained by interfaces. Dynamic calls only through interface parameters. No inheritance.</p>
+        </div>
+        <div class="card">
+          <div class="icon"><svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 3v8m0 4v.5" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/><circle cx="10" cy="10" r="8" fill="none" stroke="currentColor" stroke-width="1.5"/></svg></div>
+          <h3>Exceptions that clean up</h3>
+          <p><code>try</code>, <code>catch</code> and <code>finally</code>, with every live object destroyed on the way out. Bugs are panics, not exceptions.</p>
+        </div>
+        <div class="card">
+          <div class="icon"><svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><path d="M4 5h12M4 10h8M4 15h10" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></div>
+          <h3>Tooling included</h3>
+          <p><code>cromo fmt</code> has one style and no options. <code>cromo lsp</code> gives VS Code errors as you type, hover, definitions and completion.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="ownership">
+    <div class="wrap split">
+      <div>
+        <div class="kicker">Ownership</div>
+        <h2>The compiler explains the rules</h2>
+        <p class="section-lead" style="margin-bottom:0">Strings, lists and maps own memory, so Cromo never copies them behind your back. When a value would be duplicated or used after a move, the error says how to fix it — and names the design decision behind the rule.</p>
+        <ul class="modes">
+          <li><b>read</b><span>The default for parameters: borrowed and read-only, never copied.</span></li>
+          <li><b>ref</b><span>The function can modify the caller's value. Two <code>ref</code> to the same place are an error.</span></li>
+          <li><b>move</b><span>The function becomes the owner; the caller can no longer use the value.</span></li>
+        </ul>
+      </div>
+      <div class="window">
+        <div class="window-bar"><i></i><i></i><i></i><span class="title"><b>own.cro</b></span></div>
+        <pre><code class="cromo">void keep(move string text) {
+    println("kept {}", text)
+}
+
+i32 main() {
+    string name = "Ada"
+    string other = name
+    keep(move name)
+    println("{}", name)
+    ret 0
+}</code></pre>
+        <div class="term"><pre><span class="prompt">$ </span><span class="cmd">cromo build own.cro</span>
+<span class="out-dim">own.cro:7:20:</span> <span class="out-err">error:</span> values of type string are not copied implicitly (D23): write 'move name' or 'name.copy()'
+    string other = name
+                   <span class="out-err">^</span>
+<span class="out-dim">own.cro:9:19:</span> <span class="out-err">error:</span> 'name' has been moved and can no longer be used (D23)
+    println("{}", name)
+                  <span class="out-err">^</span></pre></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="examples">
+    <div class="wrap">
+      <div class="kicker">Examples</div>
+      <h2>Read it once, <span class="chrome">know what it does</span></h2>
+      <p class="section-lead">Every example on this page compiles with the current version of <code>cromo</code>. Statements end at the end of the line; types come before names; <code>ret</code> returns.</p>
+      <div class="tabs" role="tablist" aria-label="Examples">
+        <button class="tab" role="tab" aria-selected="true" aria-controls="ex-generics" id="tab-generics">generics.cro</button>
+        <button class="tab" role="tab" aria-selected="false" aria-controls="ex-lambdas" id="tab-lambdas">lambdas.cro</button>
+        <button class="tab" role="tab" aria-selected="false" aria-controls="ex-collections" id="tab-collections">collections.cro</button>
+        <button class="tab" role="tab" aria-selected="false" aria-controls="ex-errors" id="tab-errors">errors.cro</button>
+        <button class="tab" role="tab" aria-selected="false" aria-controls="ex-c" id="tab-c">c_interop.cro</button>
+      </div>
+      <div class="panel" id="ex-generics" role="tabpanel" aria-labelledby="tab-generics">
+        <div class="window">
+          <div class="window-bar"><i></i><i></i><i></i><span class="title"><b>generics.cro</b> — interfaces, constraints, monomorphization</span></div>
+          <pre><code class="cromo">interface Shape {
+    f64 area() const
+}
+
+struct Circle : Shape {
+    f64 radius
+
+    f64 area() const {
+        ret 3.14159 * radius * radius
+    }
+}
+
+// Compiled once for each type: no boxing, no virtual calls.
+f64 total&lt;T : Shape&gt;(list&lt;T&gt; shapes) {
+    f64 sum = 0.0
+    for (T shape in shapes) {
+        sum += shape.area()
+    }
+    ret sum
+}
+
+i32 main() {
+    list&lt;Circle&gt; circles
+    for (i32 i = 1; i &lt;= 3; i++) {
+        Circle c
+        c.radius = f64(i)
+        circles.add(c)
+    }
+    println("{:.2f}", total(circles))
+    ret 0
+}</code></pre>
+          <div class="term"><pre><span class="prompt">$ </span><span class="cmd">cromo run generics.cro</span>
+43.98</pre></div>
+        </div>
+      </div>
+      <div class="panel" id="ex-lambdas" role="tabpanel" aria-labelledby="tab-lambdas" hidden>
+        <div class="window">
+          <div class="window-bar"><i></i><i></i><i></i><span class="title"><b>lambdas.cro</b> — captures by value, ref and move</span></div>
+          <pre><code class="cromo">// A lambda captures by value, with ref or with move.
+list&lt;i64&gt; select(list&lt;i64&gt; values, func(i64) bool test) {
+    list&lt;i64&gt; result
+    for (i64 v in values) {
+        if (test(v)) {
+            result.add(v)
+        }
+    }
+    ret result
+}
+
+i32 main() {
+    list&lt;i64&gt; values
+    for (i64 i = 1; i &lt;= 10; i++) {
+        values.add(i)
+    }
+    i64 limit = 7
+    i64 sum = 0
+    list&lt;i64&gt; big = select(values, [limit](i64 x) bool { ret x &gt; limit })
+    select(values, [ref sum](i64 x) bool {
+        sum += x
+        ret false
+    })
+    println("{} above {}, sum {}", big.len(), limit, sum)
+    ret 0
+}</code></pre>
+          <div class="term"><pre><span class="prompt">$ </span><span class="cmd">cromo run lambdas.cro</span>
+3 above 7, sum 55</pre></div>
+        </div>
+      </div>
+      <div class="panel" id="ex-collections" role="tabpanel" aria-labelledby="tab-collections" hidden>
+        <div class="window">
+          <div class="window-bar"><i></i><i></i><i></i><span class="title"><b>collections.cro</b> — map, arrays and format</span></div>
+          <pre><code class="cromo">i32 main() {
+    map&lt;string, i32&gt; stock
+    stock["apples"] = 12
+    stock["pears"] += 3  // a missing key starts from 0
+    i32[7] week          // a fixed-size array, where it is declared
+    week[0] = stock["apples"]
+    for (string item, i32 count in stock) {
+        println("{:&lt;8}{:&gt;4}", item, count)
+    }
+    string report = format("{} items, monday {}", stock.len(), week[0])
+    println("{}", report)
+    ret 0
+}</code></pre>
+          <div class="term"><pre><span class="prompt">$ </span><span class="cmd">cromo run collections.cro</span>
+apples    12
+pears      3
+2 items, monday 12</pre></div>
+        </div>
+      </div>
+      <div class="panel" id="ex-errors" role="tabpanel" aria-labelledby="tab-errors" hidden>
+        <div class="window">
+          <div class="window-bar"><i></i><i></i><i></i><span class="title"><b>errors.cro</b> — exceptions, files and numbers from text</span></div>
+          <pre><code class="cromo">import std.fs
+
+struct Config {
+    string path
+    i32 port
+}
+
+Config load(string path) {
+    Config config
+    config.path = path.copy()
+    config.port = i32(fs.readText(path))
+    ret config
+}
+
+i32 main() {
+    try {
+        Config config = load("port.txt")
+        println("listening on {}", config.port)
+    } catch (Exception e) {
+        eprintln("cannot start: {}", e.message())
+        ret 1
+    } finally {
+        println("bye")
+    }
+    ret 0
+}</code></pre>
+          <div class="term"><pre><span class="prompt">$ </span><span class="cmd">cromo run errors.cro</span>
+<span class="out-err">cannot start: cannot read 'port.txt': no such file or folder</span>
+bye</pre></div>
+        </div>
+      </div>
+      <div class="panel" id="ex-c" role="tabpanel" aria-labelledby="tab-c" hidden>
+        <div class="window">
+          <div class="window-bar"><i></i><i></i><i></i><span class="title"><b>c_interop.cro</b> — calling a DLL, checked while compiling</span></div>
+          <pre><code class="cromo">import unsafe
+
+extern "user32" {
+    i32 MessageBoxA(addr window, addr text, addr title, u32 kind)
+}
+
+i32 main() {
+    addr none
+    string text = "Hello from Cromo"
+    MessageBoxA(none, text.cstring(), "cromo".cstring(), 0)
+    ret 0
+}</code></pre>
+          <div class="term"><pre><span class="prompt">$ </span><span class="cmd">cromo run c_interop.cro</span>
+<span class="out-dim"># a message box opens; user32.dll was checked for MessageBoxA at compile time</span></pre></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="tooling">
+    <div class="wrap">
+      <div class="kicker">Tooling</div>
+      <h2>One command for everything</h2>
+      <p class="section-lead">Build, run, format and edit with the same executable. No build system to configure: a folder with <code>main.cro</code> is a program.</p>
+      <div class="tools">
+        <div class="window">
+          <div class="window-bar"><i></i><i></i><i></i><span class="title"><b>terminal</b></span></div>
+          <pre><span class="prompt">$ </span><span class="cmd">cromo run hello.cro</span>
+Hello, world!
+<span class="prompt">$ </span><span class="cmd">cromo build</span>                 <span class="out-dim"># main.cro of the folder</span>
+<span class="prompt">$ </span><span class="cmd">cromo build --release</span>       <span class="out-dim"># optimized</span>
+<span class="prompt">$ </span><span class="cmd">cromo build --target linux</span>  <span class="out-dim"># an ELF, from Windows</span>
+<span class="prompt">$ </span><span class="cmd">cromo fmt .</span>                 <span class="out-dim"># one style, no options</span>
+<span class="prompt">$ </span><span class="cmd">cromo lsp</span>                   <span class="out-dim"># for the editors</span>
+<span class="prompt">$ </span><span class="cmd">cromo version</span>
+cromo 0.14.0 (LLVM 23.1.4)</pre>
+        </div>
+        <div class="vscode">
+          <div class="card">
+            <div class="icon"><svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><path d="M14 2.5 17.5 4v12L14 17.5 5 10zM14 2.5 3 11l-1-1 1.5-1.5L14 15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg></div>
+            <h3>VS Code, from day one</h3>
+            <p>The extension highlights the syntax and runs <code>cromo lsp</code>: errors while you type, the type of every name on hover, go to definition and the members after a dot.</p>
+            <div class="lsp-demo">i64 total = <span class="squiggle">ages</span>.len()
+<span class="hover-box">map&lt;string, i32&gt; ages</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="roadmap">
+    <div class="wrap">
+      <div class="kicker">Roadmap</div>
+      <h2>Built in the open, <span class="chrome">one milestone at a time</span></h2>
+      <p class="section-lead">Every choice is decided first and written down with its reasons, then implemented with tests on Windows and Linux. Fifteen milestones, M0 to M14, are done.</p>
+      <div class="progress-label"><span>M0 – M14 done</span><span>15 of 19 numbered milestones</span></div>
+      <div class="progress" aria-hidden="true"><div></div></div>
+      <div class="roadmap">
+        <div class="phase">
+          <h3>Done <span class="badge done">M0 – M14</span></h3>
+          <ul class="steps">
+            <li><b>M0–2</b><span>LLVM backend, numbers, control flow, structs, RAII</span></li>
+            <li><b>M3–6</b><span>Ownership, generics, interfaces, lists, strings, enums, exceptions</span></li>
+            <li><b>M7–10</b><span>Modules, C interop without the SDK, Linux, <code>build</code> and <code>run</code></span></li>
+            <li><b>M11–13</b><span>Formatter, language server, anonymous functions</span></li>
+            <li><b>M14</b><span>Arrays, maps, bytes, files, time, code for each system</span></li>
+          </ul>
+        </div>
+        <div class="phase">
+          <h3>Next <span class="badge next">M15 – M18</span></h3>
+          <ul class="steps">
+            <li><b>M15</b><span>Threads and synchronization</span></li>
+            <li><b>M16</b><span>Networking: TCP, UDP and DNS without libc</span></li>
+            <li><b>M17</b><span>TLS, cryptography and an HTTPS client</span></li>
+            <li><b>M18</b><span>HTTP server and client, JSON</span></li>
+          </ul>
+        </div>
+        <div class="phase">
+          <h3>Later <span class="badge later">self-hosting</span></h3>
+          <ul class="steps">
+            <li><b>tasks</b><span>Lightweight tasks under the same API as threads</span></li>
+            <li><b>update</b><span><code>cromo update</code>, with signed releases</span></li>
+            <li><b>last</b><span>The compiler written in Cromo, compiling itself</span></li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="wrap" id="start">
+    <div class="start">
+      <div>
+        <div class="kicker">Get started</div>
+        <h2 style="margin-bottom:12px">Hello, world</h2>
+        <p class="section-lead" style="margin-bottom:18px">Cromo is in development: the first public release will be a single <code>cromo</code> executable to download, nothing to install next to it.</p>
+        <div class="window">
+          <div class="window-bar"><i></i><i></i><i></i><span class="title"><b>hello.cro</b></span></div>
+          <pre><code class="cromo">i32 main() {
+    println("Hello, world!")
+    ret 0
+}</code></pre>
+        </div>
+      </div>
+      <div class="downloads">
+        <div class="download"><span><b>Windows x64</b> · cromo.exe</span><span class="soon">coming soon</span></div>
+        <div class="download"><span><b>Linux x64</b> · from Windows today, <code>--target linux</code></span><span class="soon">coming soon</span></div>
+        <div class="download"><span><b>VS Code</b> · cromo-lang extension</span><span class="soon">coming soon</span></div>
+        <div class="download"><span><b>Specification</b> · language, compiler, decisions</span><span class="soon">draft</span></div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="brand"><svg height="26" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="foot-chrome" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f8fafd"/>
+      <stop offset="0.3" stop-color="#b3bdca"/>
+      <stop offset="0.47" stop-color="#f1f4f8"/>
+      <stop offset="0.66" stop-color="#8691a2"/>
+      <stop offset="1" stop-color="#d9dfe7"/>
+    </linearGradient>
+    <linearGradient id="foot-edge" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#3e4757"/>
+    </linearGradient>
+  </defs>
+  <rect x="2" y="2" width="60" height="60" rx="12" fill="url(#foot-chrome)" stroke="url(#foot-edge)" stroke-width="1.5"/>
+  <g fill="none" stroke="#1a2130" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M9.6 11.6a2.5 2.5 0 0 1 5 0c0 2-5 3.4-5 5.6h5"/>
+    <path d="M21.6 17.2V8.8l-4.4 6h6"/>
+  </g>
+  <g fill="none" stroke="#111722" stroke-width="5.6" stroke-linecap="round">
+    <path d="M32.2 32.6A11 11 0 1 0 32.2 47.4"/>
+    <path d="M41.5 33.2V50.6M41.5 40.4A8.6 8.6 0 0 1 50.6 33.4"/>
+  </g>
+</svg><span>Cromo is Italian for chromium, element 24: the metal that keeps steel from rusting.</span></div>
+    <div class="links">
+      <a href="#features">Features</a>
+      <a href="#examples">Examples</a>
+      <a href="#roadmap">Roadmap</a>
+      <span>cromolang.org</span>
+    </div>
+  </div>
+</footer>
+
+<script>
+// Colors the Cromo code: comments, strings, numbers, keywords, types, functions.
+(function () {
+  const keywords = "if|else|for|in|break|continue|ret|switch|case|default|try|catch|finally|throw|import|struct|interface|enum|func|const|ref|move|extern|unsafe|public|true|false";
+  const types = "i8|i16|i32|i64|u8|u16|u32|u64|f32|f64|bool|char|void|string|list|map|Self|addr";
+  const token = new RegExp(
+    "(//[^\\n]*)" +                                   // 1 comment
+    "|(\"(?:\\\\.|[^\"\\\\])*\"|'(?:\\\\.|[^'\\\\])')" +  // 2 string, character
+    "|\\b(0x[0-9A-Fa-f_]+|0b[01_]+|\\d[\\d_]*(?:\\.\\d+)?(?:[eE][+-]?\\d+)?)\\b" + // 3 number
+    "|\\b(" + keywords + ")\\b" +                     // 4 keyword
+    "|\\b(" + types + "|[A-Z][A-Za-z0-9_]*)\\b" +     // 5 type
+    "|\\b([a-z_][A-Za-z0-9_]*)(?=\\s*[(<])" +         // 6 function
+    "|(~[A-Za-z_]+|[-+*/%=!<>&|^]+)", "g");           // 7 operator, destructor
+  const classes = [null, "c", "s", "n", "k", "t", "f", "o"];
+  const escape = (text) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  document.querySelectorAll("code.cromo").forEach((block) => {
+    const source = block.textContent;
+    let html = "", last = 0, match;
+    token.lastIndex = 0;
+    while ((match = token.exec(source))) {
+      html += escape(source.slice(last, match.index));
+      const group = match.findIndex((value, i) => i > 0 && value !== undefined);
+      html += '<span class="tk-' + classes[group] + '">' + escape(match[0]) + "</span>";
+      last = token.lastIndex;
+    }
+    block.innerHTML = html + escape(source.slice(last));
+  });
+
+  // The tabs of the examples.
+  const tabs = Array.from(document.querySelectorAll('[role="tab"]'));
+  tabs.forEach((tab) => tab.addEventListener("click", () => {
+    tabs.forEach((other) => {
+      const selected = other === tab;
+      other.setAttribute("aria-selected", String(selected));
+      document.getElementById(other.getAttribute("aria-controls")).hidden = !selected;
+    });
+  }));
+})();
+</script>
+</body>
+</html>

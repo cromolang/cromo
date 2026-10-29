@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 232 64" role="img" aria-label="Cromo">
+  <!-- The tile of chromium (element 24, Cr) and the name, for dark backgrounds. -->
+  <defs>
+    <linearGradient id="chrome" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f8fafd"/>
+      <stop offset="0.3" stop-color="#b3bdca"/>
+      <stop offset="0.47" stop-color="#f1f4f8"/>
+      <stop offset="0.66" stop-color="#8691a2"/>
+      <stop offset="1" stop-color="#d9dfe7"/>
+    </linearGradient>
+    <linearGradient id="edge" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#3e4757"/>
+    </linearGradient>
+    <linearGradient id="word" gradientUnits="userSpaceOnUse" x1="74" y1="20" x2="228" y2="48">
+      <stop offset="0" stop-color="#f4f7fb"/>
+      <stop offset="0.35" stop-color="#b9c3d0"/>
+      <stop offset="0.55" stop-color="#ffffff"/>
+      <stop offset="0.8" stop-color="#9aa5b5"/>
+      <stop offset="1" stop-color="#e3e8ef"/>
+    </linearGradient>
+  </defs>
+  <rect x="2" y="2" width="60" height="60" rx="12" fill="url(#chrome)" stroke="url(#edge)" stroke-width="1.5"/>
+  <g fill="none" stroke="#1a2130" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M9.6 11.6a2.5 2.5 0 0 1 5 0c0 2-5 3.4-5 5.6h5"/>
+    <path d="M21.6 17.2V8.8l-4.4 6h6"/>
+  </g>
+  <g fill="none" stroke="#111722" stroke-width="5.6" stroke-linecap="round">
+    <path d="M32.2 32.6A11 11 0 1 0 32.2 47.4"/>
+    <path d="M41.5 33.2V50.6M41.5 40.4A8.6 8.6 0 0 1 50.6 33.4"/>
+  </g>
+  <g fill="none" stroke="url(#word)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M96.4 26.9A11 11 0 1 0 96.4 41.1"/>
+    <path d="M108 23V45M108 31.5A9 9 0 0 1 117.5 23.5"/>
+    <circle cx="140" cy="34" r="11"/>
+    <path d="M163 45V23M163 30A7 7 0 0 1 177 30V45M177 30A7 7 0 0 1 191 30V45"/>
+    <circle cx="213.5" cy="34" r="11"/>
+  </g>
+</svg>

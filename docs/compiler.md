@@ -348,9 +348,10 @@ cromo/
   src/                  bootstrap compiler in C++ (lexer, parser, semantics, IR emission, driver)
   compiler/             compiler written in Cromo (the last milestone, D147)
   runtime/              entry point and low-level primitives (LLVM IR, assembly)
-  std/                  standard library in Cromo
+  library/              standard library in Cromo: core.cro and the modules of std/ (D201)
   tests/                behavior and IR tests
   examples/             example programs
   tools/
     vscode-cromo/       VS Code extension for syntax highlighting
+  site/                 the site cromolang.org and the logo (D213)
 ```

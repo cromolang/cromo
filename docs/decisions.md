@@ -235,7 +235,7 @@ Consequences:
 Replaces an earlier proposal: textual IR with Clang as the driver.
 
 ### D29. Source file extension: `.cro`
-*2026-10-28.* Files containing Cromo code have the `.cro` extension.
+*2026-10-28.* Files containing Cromo code have the `.cro` extension. *2026-10-29:* `.cr`, the symbol of chromium, was considered and left out: it is the extension of Crystal, which GitHub and the editors already give to it. The symbol stays in the logo (D213).
 
 ### D30. Overflow and bounds checking
 *2026-10-28.*
@@ -1180,6 +1180,9 @@ extern "kernel32" {
 *2026-10-29.*
 - New built-in functions of the `unsafe` dialect: `systemCall` for Linux, whose arguments can be integers or addresses, `environment`, `exitProcess`, `decimalToFloat` and `hashBytes`.
 - The modules of the library are files `library/std/*.cro`, embedded in `cromo` as the core.
+
+### D213. Cromo, and cromolang on the web
+*2026-10-29.* It completes D1. The language stays Cromo, and its command `cromo`. On the web, where *cromo* is a common word and close to Chrome, its name is **cromolang**: the domain `cromolang.org`, the accounts and the searches, as Go does with *golang* and Zig with `ziglang.org`. The site is in `site/`, with the logo: the tile of chromium, element 24, Cr.
 
 ---
 ---

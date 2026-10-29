@@ -44,6 +44,7 @@ On the first build vcpkg downloads and builds zlib, zstd and libxml2, which the 
 | [docs/compiler.md](docs/compiler.md) | Compiler architecture, runtime and development milestones |
 | [examples/](examples/) | Example programs, as drafts, to discuss the syntax |
 | [tools/vscode-cromo/](tools/vscode-cromo/) | VS Code extension for syntax highlighting of `.cro` files |
+| [site/](site/) | Mockup of the site [cromolang.org](https://cromolang.org), with the logo (D213) |
 | [CLAUDE.md](CLAUDE.md) | Instructions for the AI assistants working on the project |
 
 ## A taste
