@@ -4,7 +4,7 @@
 
 ## 1. Pipeline
 
-The final product is a single executable, `cromo`, which does everything (D28):
+The final product is an archive for each system (D237): `cromo`, which does everything (D28), and next to it the library and the runtime of each target. For now the build of development embeds them in `cromo.exe`. The pipeline of `cromo`:
 
 ```
 .cro source

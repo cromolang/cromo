@@ -4,7 +4,7 @@
 
 Cromo is a **general-purpose**, compiled programming language with a syntax close to **C/C++**, **no pointers** and **no garbage collector**. Resources are managed with the **RAII** paradigm of C++: every resource belongs to an object and is released deterministically when the object goes out of scope.
 
-The compiler generates **LLVM IR**: optimization and machine-code generation are done by LLVM, as for Rust and Clang. It will be a single executable, `cromo`, that compiles and links with no other dependencies. Cromo programs do not depend on the C library: the basic functions are written in Cromo and in assembly. The goal is a language **simpler than Rust** that stays safe and fast.
+The compiler generates **LLVM IR**: optimization and machine-code generation are done by LLVM, as for Rust and Clang. It will be distributed as an archive for each system, installed with one line: `cromo`, which compiles and links with no other dependencies, and next to it the library and the runtime (D237, D238). Cromo programs do not depend on the C library: the basic functions are written in Cromo and in assembly. The goal is a language **simpler than Rust** that stays safe and fast.
 
 The first compiler is written in C++; the goal is a compiler written in Cromo that compiles itself.
 
