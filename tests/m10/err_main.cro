@@ -1,0 +1,4 @@
+// expect-error: main has no parameters, or one with the arguments of the program: list<string> args (D154)
+i32 main(ref list<string> args) {
+    ret 0
+}

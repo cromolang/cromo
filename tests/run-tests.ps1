@@ -8,6 +8,8 @@
 #   // expect-error: text           text that must appear among the compiler errors
 #   // expect-warning: text         text that must appear among the compiler warnings
 #   // target: windows              the test is only for that system (windows or linux)
+#   // program-arg: text           an argument of the program (repeatable, exact)
+#   // cromo-command: run          compiles and runs with cromo run, instead of build
 # Usage: powershell -ExecutionPolicy Bypass -File tests\run-tests.ps1 [-Cromo <path>] [-Filter <text>] [-Flags <options>]
 #   -Flags passes extra options to every compilation, for example -Flags -O0
 #   -Flags '--target linux' compiles for Linux and runs the programs in WSL (D142),
@@ -63,11 +65,29 @@ function Get-Target([string[]]$Options) {
 }
 
 # A program for Linux runs in WSL, from the same folder seen as /mnt/c/...
-function Invoke-Linux([string]$Path) {
+function Invoke-Linux([string]$Path, [string[]]$Arguments) {
     $linuxPath = '/mnt/' + $Path.Substring(0, 1).ToLower() + ($Path.Substring(2) -replace '\\', '/')
-    $arguments = @()
-    if ($Distro) { $arguments += @('-d', $Distro) }
-    Invoke-Program 'wsl.exe' ($arguments + @('-e', $linuxPath))
+    $options = @()
+    if ($Distro) { $options += @('-d', $Distro) }
+    Invoke-Program 'wsl.exe' ($options + @('-e', $linuxPath) + $Arguments)
+}
+
+# Writes an argument in a command line so that the program reads it back as it
+# is, with the rules of the C runtime of Microsoft.
+function ConvertTo-Argument([string]$Text) {
+    if ($Text -and $Text -notmatch '[\s"]') { return $Text }
+    $quoted = '"'
+    $backslashes = 0
+    foreach ($c in $Text.ToCharArray()) {
+        if ($c -eq '\') {
+            $backslashes++
+            continue
+        }
+        if ($c -eq '"') { $quoted += '\' * ($backslashes * 2 + 1) } else { $quoted += '\' * $backslashes }
+        $backslashes = 0
+        $quoted += $c
+    }
+    $quoted + ('\' * ($backslashes * 2)) + '"'
 }
 
 # Runs a program and returns its exit code, standard output and standard error,
@@ -75,7 +95,7 @@ function Invoke-Linux([string]$Path) {
 function Invoke-Program([string]$Path, [string[]]$Arguments) {
     $info = New-Object System.Diagnostics.ProcessStartInfo
     $info.FileName = $Path
-    $info.Arguments = ($Arguments | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } }) -join ' '
+    $info.Arguments = ($Arguments | ForEach-Object { ConvertTo-Argument $_ }) -join ' '
     $info.UseShellExecute = $false
     $info.CreateNoWindow = $true
     $info.RedirectStandardOutput = $true
@@ -110,6 +130,8 @@ foreach ($test in Get-ChildItem $PSScriptRoot -Recurse -Filter *.cro | Sort-Obje
     $expectError = @()
     $expectWarning = @()
     $only = ''
+    $programArgs = @()
+    $command = 'build'
     foreach ($line in Get-Content $test.FullName -Encoding UTF8) {
         if ($line -match '^\s*//\s*cromo-flags:\s*(.+?)\s*$') { $compileFlags += ($matches[1] -split '\s+') }
         elseif ($line -match '^\s*//\s*expect-exit:\s*(-?\d+)\s*$') { $expectExit = [int64]$matches[1] }
@@ -118,6 +140,8 @@ foreach ($test in Get-ChildItem $PSScriptRoot -Recurse -Filter *.cro | Sort-Obje
         elseif ($line -match '^\s*//\s*expect-error:\s*(.+?)\s*$') { $expectError += $matches[1] }
         elseif ($line -match '^\s*//\s*expect-warning:\s*(.+?)\s*$') { $expectWarning += $matches[1] }
         elseif ($line -match '^\s*//\s*target:\s*(\w+)\s*$') { $only = $matches[1] }
+        elseif ($line -match '^\s*//\s*program-arg:\s?(.*)$') { $programArgs += $matches[1] }
+        elseif ($line -match '^\s*//\s*cromo-command:\s*(\w+)\s*$') { $command = $matches[1] }
     }
     $target = Get-Target $compileFlags
     if ($only -and $only -ne $target) {
@@ -126,7 +150,12 @@ foreach ($test in Get-ChildItem $PSScriptRoot -Recurse -Filter *.cro | Sort-Obje
     }
 
     $exe = Join-Path $out ($test.BaseName + $(if ($target -eq 'linux') { '' } else { '.exe' }))
-    $compile = Invoke-Program $Cromo (@($test.FullName, '-o', $exe) + $compileFlags)
+    if ($command -eq 'run') {
+        # cromo run compiles and runs: its result is the one of the program (D156).
+        $compile = Invoke-Program $Cromo (@('run') + $compileFlags + @($test.FullName, '--') + $programArgs)
+    } else {
+        $compile = Invoke-Program $Cromo (@('build', $test.FullName, '-o', $exe) + $compileFlags)
+    }
     $compileText = $compile.Out + $compile.Err
 
     $problems = @()
@@ -138,15 +167,17 @@ foreach ($test in Get-ChildItem $PSScriptRoot -Recurse -Filter *.cro | Sort-Obje
         foreach ($e in $expectError) {
             if (-not $compileText.Contains($e)) { $problems += "missing error: $e" }
         }
-    } elseif ($compile.Code -ne 0) {
+    } elseif ($compile.Code -ne 0 -and $command -ne 'run') {
         $problems += "compilation failed:`n$compileText"
     } else {
-        if ($target -eq 'linux') {
-            $run = Invoke-Linux $exe
+        if ($command -eq 'run') {
+            $run = $compile
+        } elseif ($target -eq 'linux') {
+            $run = Invoke-Linux $exe $programArgs
             # Linux keeps only the lowest byte of the exit code (D145).
             if ($null -ne $expectExit) { $expectExit = $expectExit -band 0xFF }
         } else {
-            $run = Invoke-Program $exe @()
+            $run = Invoke-Program $exe $programArgs
         }
         if ($null -ne $expectExit -and $run.Code -ne $expectExit) {
             $problems += "exit code $($run.Code), expected $expectExit"

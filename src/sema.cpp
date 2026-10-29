@@ -35,7 +35,8 @@ std::optional<Intrinsic> findIntrinsic(const std::string& name) {
         {"sizeOf", Intrinsic::SizeOf},   {"offset", Intrinsic::Offset},   {"take", Intrinsic::Take},
         {"put", Intrinsic::Put},         {"destroy", Intrinsic::Destroy}, {"copyAt", Intrinsic::CopyAt},
         {"copyMemory", Intrinsic::CopyMemory}, {"compareMemory", Intrinsic::CompareMemory},
-        {"checkIndex", Intrinsic::CheckIndex},
+        {"checkIndex", Intrinsic::CheckIndex}, {"argumentCount", Intrinsic::ArgumentCount},
+        {"argumentLength", Intrinsic::ArgumentLength}, {"argumentData", Intrinsic::ArgumentData},
     };
     auto found = intrinsics.find(name);
     if (found == intrinsics.end()) return std::nullopt;
@@ -1076,8 +1077,13 @@ private:
         if (!ret.isError() && !ret.isVoid() && !(ret.isInt() && ret.bits == 32 && ret.isSigned)) {
             diag_->error(function.returnType.loc, "main must return i32 or void");
         }
-        if (!function.params.empty()) {
-            diag_->error(function.params[0].loc, "main has no parameters");
+        // D154: no parameters, or the arguments of the program.
+        bool arguments = function.params.size() == 1 && function.params[0].mode == ParamMode::Read &&
+                         !function.params[0].isConst && isList(function.paramTypes[0]) &&
+                         isString(elementOf(function.paramTypes[0]));
+        if (!function.params.empty() && !arguments) {
+            diag_->error(function.params[0].loc, "main has no parameters, or one with the arguments of the program: "
+                                                 "list<string> args (D154)");
         }
     }
 
@@ -2709,6 +2715,9 @@ private:
             result = Type::intType(32, true);
             break;
         case Intrinsic::CheckIndex: params = {{ParamMode::Read, "index", i64}, {ParamMode::Read, "length", i64}}; break;
+        case Intrinsic::ArgumentCount: result = i64; break;
+        case Intrinsic::ArgumentLength: params = {{ParamMode::Read, "index", i64}}; result = i64; break;
+        case Intrinsic::ArgumentData: params = {{ParamMode::Read, "index", i64}}; result = addr; break;
         case Intrinsic::None: break;
         }
 

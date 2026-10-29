@@ -80,7 +80,7 @@ How M6 implements it:
 - **Leaving.** The code that handles an exception at a point destroys the temporaries and the objects of the scopes it leaves, runs the `finally` blocks on the way, and jumps to the dispatch of the nearest `try` body, or returns from the function with the exception still in the slot. A constructor first destroys the fields of its object (D123).
 - **The descriptor** of a thrown struct, `@"exception.T" = { drop, methods of Exception }`, tells the `catch` clauses its type, frees it, and gives `catch (Exception e)` its method table. A `catch` moves the exception out of the slot and frees it at its end, unless `throw` alone gives it back.
 - **`finally`** is generated again at every exit of its `try` (end of the body or of a `catch`, `ret`, `break`, `continue`, exception), as the C# compilers do. It can always be copied, because it can neither jump out nor let an exception out (D113, D120).
-- **`main`** that can throw is called by `cromo_start` with a slot: an exception left there is reported with its `message()` (D121).
+- **`main`** that can throw is called by `cromo_start` with a slot: an exception left there is reported with its `message()` (D121). When `main` takes the arguments (D154), `cromo_start` first calls `programArguments()` of the library, which builds the `list<string>`.
 
 ### Enums (D104)
 An enum is `{ [0 x i64], i32 tag, [n x i8] padding, data of the first case, [m x i8] padding }`: the field of size zero gives it the alignment of its most aligned case, the data of every case start at the same offset after the tag, and the size is that of the largest case. Each case also has a type of its own, `%"case.Shape.Rect" = type { double, double }`, used to read its data at that offset. The default value is a constant: the first case with the defaults of its data (D111). `switch` on an enum is a `switch` of LLVM on the tag; destroying and copying an enum look at the tag too.
@@ -161,6 +161,13 @@ Every symbol has its module in front, set by sema in `symbol`: the type of struc
 ### The values of the cases (D135)
 The tag of an enum is the value of its case, which is its position unless it is written. `i32(color)` reads the tag; `Color(n)` is a `switch` on `n` with a value for each case, and the `default` is a panic.
 
+### The commands of `cromo` (D151, M10)
+`cromo` reads its command line as UTF-16 (`wmain`): the program arguments of `cromo run` reach the program exactly as they were written.
+- `build [options] [file.cro]` compiles; without a file, `main.cro` of the current folder, and the executable is named after the folder (D155).
+- `run [options] [file.cro] [-- arguments]` compiles into `cromo-run-<pid>` in the temporary folder, starts the program with `CreateProcessW`, quoting every argument with the rules of the C runtime of Microsoft, waits for it, deletes the folder and returns its exit code (D156, D159).
+- `version` prints `cromo <version> (LLVM <version>)`: the version comes from `project(... VERSION ...)` in `CMakeLists.txt` (D157).
+- `help` prints the commands. `update`, `fmt` and the language server answer with their milestone (D158).
+
 ## 4. Toolchain (D28)
 
 - **LLVM and LLD inside `cromo`:** a stable version of LLVM is pinned, because the textual IR format and the API can change between major versions. The tests always run with that version.
@@ -195,7 +202,7 @@ Exceptions require nothing from the runtime (D36).
 ### The runtime in C (D58, D93)
 Until the bitwise operators and fixed-size arrays exist, the runtime is the freestanding C code in `runtime/`; `extern` (M7) is already there:
 - `cromo_rt.c`: buffered output on stdout and stderr (UTF-8, converted to UTF-16 when writing to a Windows console), the formatting functions called by `print`/`println`, the heap for `list` and `string`, `cromo_exit` and the panics;
-- `mem_x64.S`: `memcpy`, `memset`, `memmove` and `memcmp`; on Windows `__chkstk`, on Linux `bcmp` and the entry point `_start`, which aligns the stack to 16 bytes and calls `cromo_start`.
+- `mem_x64.S`: `memcpy`, `memset`, `memmove` and `memcmp`; on Windows `__chkstk`, on Linux `bcmp` and the entry point `_start`, which keeps the address of the stack in `cromo_initial_stack` (the arguments of the program are there), aligns the stack to 16 bytes and calls `cromo_start`.
 
 The two files have a part for each system, chosen with `#ifdef _WIN32` (D142). CMake compiles them twice with the clang of the LLVM archive (`-ffreestanding -fno-builtin -nostdlib`): for Windows it archives them with `llvm-lib` into `cromo_rt.lib`, for Linux with `llvm-ar` into `libcromo_rt.a`. Both libraries are embedded in `cromo.exe` as byte arrays (`cmake/embed.cmake`). At link time `cromo` writes the one of the target next to the object file and passes it to LLD.
 
@@ -218,6 +225,7 @@ The generated code calls these functions (all `nounwind`):
 | `cromo_panic_index(index, length, where)` | an index out of bounds (D30) |
 | `cromo_alloc(size)`, `cromo_realloc(p, size)`, `cromo_free(p)` | the heap of the process (`HeapAlloc` on Windows); out of memory is a panic |
 | `cromo_uncaught(message, len)` | an exception that leaves `main` (D121), exit code 1 |
+| `cromo_arg_count()`, `cromo_arg_length(i)`, `cromo_arg_data(i)` | the arguments of the program, in UTF-8 (D154): on Windows `GetCommandLineW` split as the C runtime of Microsoft does, on Linux the stack found by `_start` |
 
 `spec` points to a constant `FmtSpec` built by the compiler from the format specification, or is null for `{}`.
 
@@ -238,8 +246,10 @@ Implementation for x86-64:
   // expect-error: 's' has been moved
   // expect-warning: unreachable code
   // target: windows
+  // program-arg: two words
+  // cromo-command: run
   ```
-  `tests/run-tests.ps1` compiles and runs each file and compares the result with the expected one; `-Flags -O0` passes extra options to every compilation. With `-Flags --release` the three tests that check the panics of debug mode fail, as expected. The files in a folder named `modules` are imported by the tests, and are not tests themselves. Before the tests the runner builds the C libraries of `tests/m8/native` with the clang of LLVM, next to the modules of `tests/m8`: a DLL, a static library and a DLL for 32 bits. It also sets the error mode of Windows, so that a program that cannot find a DLL ends with an error code instead of opening a window.
+  `tests/run-tests.ps1` compiles each file with `cromo build`, runs it with the arguments of `program-arg` and compares the result with the expected one; with `cromo-command: run` it uses `cromo run` instead (D156); `-Flags -O0` passes extra options to every compilation. With `-Flags --release` the three tests that check the panics of debug mode fail, as expected. The files in a folder named `modules` are imported by the tests, and are not tests themselves. Before the tests the runner builds the C libraries of `tests/m8/native` with the clang of LLVM, next to the modules of `tests/m8`: a DLL, a static library and a DLL for 32 bits. It also sets the error mode of Windows, so that a program that cannot find a DLL ends with an error code instead of opening a window.
 - **Linux:** `-Flags '--target linux'` compiles the tests for Linux and runs them in WSL, in the default distribution or in the one given with `-Distro`; the expected exit code keeps only its lowest byte (D145). `// target: windows` marks the tests that use the DLLs of Windows; the runner also builds `libscale.a` for the static library of `tests/m8`.
 - **IR tests:** a few checks that verify the attributes that matter for the optimizer, for example that a `ref` parameter is really `noalias`.
 - **Later:** differential tests with generated programs.
@@ -256,6 +266,7 @@ Each milestone lists the decisions still open that are needed **before** writing
 - **M4** completed on 2026-10-28: generic functions and structs with constraints, deduction of the type arguments, interfaces with `Self`, structs that implement them, static calls through generics and dynamic calls through parameters of interface type. Tests in `tests/m4/`; the choices made for M4 are decisions D84–D92 in [decisions.md](decisions.md).
 - **M5** completed on 2026-10-28: the standard library `library/core.cro` with `list<T>` and `string` written in the `unsafe` dialect, indexing with bounds checking, `for` over the elements, the operators of `string`, `panic`, and the runtime checks of exclusivity between elements. The runtime in C stays (D93). Tests in `tests/m5/`, among them the program of `examples/04_lists.cro`; the choices made for M5 are decisions D93–D103 in [decisions.md](decisions.md).
 - **M6** completed on 2026-10-28: enums with data, methods and type parameters, `switch` on enums, integers and strings, and exceptions with `throw`, `try`, `catch` and `finally`, the interface `Exception` and the struct `Error` of the library. Tests in `tests/m6/`; the choices made for M6 are decisions D104–D125 in [decisions.md](decisions.md).
+- **M10** completed on 2026-10-29: the commands `cromo build`, `run`, `version` and `help`; `build` and `run` without a file use `main.cro` of the current folder; `main(list<string> args)` with the arguments of the program, on Windows and on Linux. Version 0.10.0. Tests in `tests/m10/`; the choices made for M10 are decisions D154–D160 in [decisions.md](decisions.md).
 - **M9** completed on 2026-10-29: executables for Linux x64 by cross-compilation, with `--target linux`. The runtime in C has a version for Linux, with system calls and an allocator on top of `mmap`, and LLD writes static ELF executables. In `extern` blocks, the static libraries `libname.a`. All the tests that do not use the DLLs of Windows also pass in WSL, at every optimization level. Tests in `tests/m9/`; the choices made for M9 are decisions D142–D146 in [decisions.md](decisions.md).
 - **M8** completed on 2026-10-29: linking without the Windows SDK. `cromo` writes the import libraries of the DLLs, checks the C functions in their export tables, uses a `.lib` next to the module when there is one, and copies the DLLs of the modules next to the executable. Tests in `tests/m8/`; the choices made for M8 are decisions D136–D141 in [decisions.md](decisions.md).
 - **M7** completed on 2026-10-28: modules with `import` of files and folders, `public`, names written with their module when they clash, symbols with the module in front, `import unsafe`, C functions declared in `extern` blocks with their library, `ref` as a C pointer, and the values of the cases of enums. Tests in `tests/m7/`, and the example `examples/05_c_interop.cro`; the choices made for M7 are decisions D126–D135 in [decisions.md](decisions.md).
@@ -272,7 +283,7 @@ Each milestone lists the decisions still open that are needed **before** writing
 | **M7** | Modules and interoperability with C | none: D126–D129 |
 | **M8** | No Windows SDK: import libraries generated by `cromo` | none: D136–D138 |
 | **M9** | Linux | none: D142–D143 |
-| **M10** | The commands `cromo build`, `run` and `version` (D151) | the arguments of `main`; what `build` compiles without a file |
+| **M10** | The commands `cromo build`, `run` and `version` (D151) | none: D154–D157 |
 | **M11** | `cromo fmt`: the formatter, also for VS Code; the lexer keeps the comments | the style |
 | **M12** | Language server for VS Code: errors while writing, types, definitions, then completion | the name of the command |
 | **M13** | Anonymous functions and the type of a function (D148) | syntax and captures |

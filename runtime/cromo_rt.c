@@ -31,6 +31,9 @@ __declspec(dllimport) void* WINAPI GetProcessHeap(void);
 __declspec(dllimport) void* WINAPI HeapAlloc(void* heap, u32 flags, u64 size);
 __declspec(dllimport) void* WINAPI HeapReAlloc(void* heap, u32 flags, void* memory, u64 size);
 __declspec(dllimport) int WINAPI HeapFree(void* heap, u32 flags, void* memory);
+__declspec(dllimport) u16* WINAPI GetCommandLineW(void);
+__declspec(dllimport) int WINAPI WideCharToMultiByte(u32 codePage, u32 flags, const u16* text, int size, char* out,
+                                                     int outSize, const char* defaultChar, int* usedDefault);
 
 // The Microsoft x64 ABI requires this symbol when floating point is used (D19).
 int _fltused = 0;
@@ -866,3 +869,116 @@ void* cromo_realloc(void* memory, i64 size) {
 void cromo_free(void* memory) {
     if (memory) heapFree(memory);
 }
+
+// ---- Arguments of the program (D154) ----
+
+#ifdef _WIN32
+
+// The command line, split as the C runtime of Microsoft does, and converted
+// from UTF-16 to UTF-8 the first time it is needed.
+typedef struct {
+    u8* data;
+    i64 length;
+} Argument;
+
+static Argument* arguments;
+static i64 argumentTotal = -1;
+
+static void loadArguments(void) {
+    if (argumentTotal >= 0) return;
+    const u16* line = GetCommandLineW();
+    u64 size = 0;
+    while (line[size]) ++size;
+    // The arguments one after the other, each ended by a zero: they are never longer than the line.
+    u16* parsed = cromo_alloc((i64)((size + 2) * sizeof(u16)));
+    u64 n = 0;
+    u64 i = 0;
+    i64 count = 1;
+    // The name of the program ends at the first space, or between quotes, without escapes.
+    if (line[i] == '"') {
+        for (++i; line[i] && line[i] != '"'; ++i) parsed[n++] = line[i];
+        if (line[i]) ++i;
+    } else {
+        for (; line[i] && line[i] != ' ' && line[i] != '\t'; ++i) parsed[n++] = line[i];
+    }
+    parsed[n++] = 0;
+    for (;;) {
+        while (line[i] == ' ' || line[i] == '\t') ++i;
+        if (!line[i]) break;
+        int quoted = 0;
+        for (;;) {
+            u64 backslashes = 0;
+            while (line[i] == '\\') {
+                ++backslashes;
+                ++i;
+            }
+            if (line[i] == '"') {
+                // 2n backslashes and a quote: n backslashes, and the quote opens or closes.
+                // 2n+1 backslashes and a quote: n backslashes and the quote itself.
+                for (u64 k = 0; k < backslashes / 2; ++k) parsed[n++] = '\\';
+                if (backslashes % 2) {
+                    parsed[n++] = '"';
+                } else if (quoted && line[i + 1] == '"') {  // "" between quotes is a quote
+                    parsed[n++] = '"';
+                    ++i;
+                } else {
+                    quoted = !quoted;
+                }
+                ++i;
+                continue;
+            }
+            for (u64 k = 0; k < backslashes; ++k) parsed[n++] = '\\';
+            if (!line[i] || (!quoted && (line[i] == ' ' || line[i] == '\t'))) break;
+            parsed[n++] = line[i++];
+        }
+        parsed[n++] = 0;
+        ++count;
+    }
+
+    arguments = cromo_alloc(count * (i64)sizeof(Argument));
+    const u16* piece = parsed;
+    for (i64 k = 0; k < count; ++k) {
+        int wide = 0;
+        while (piece[wide]) ++wide;
+        int bytes = wide ? WideCharToMultiByte(65001, 0, piece, wide, 0, 0, 0, 0) : 0;
+        arguments[k].data = cromo_alloc(bytes);
+        if (bytes) WideCharToMultiByte(65001, 0, piece, wide, (char*)arguments[k].data, bytes, 0, 0);
+        arguments[k].length = bytes;
+        piece += wide + 1;
+    }
+    cromo_free(parsed);
+    argumentTotal = count;
+}
+
+i64 cromo_arg_count(void) {
+    loadArguments();
+    return argumentTotal;
+}
+
+i64 cromo_arg_length(i64 index) {
+    loadArguments();
+    return arguments[index].length;
+}
+
+const u8* cromo_arg_data(i64 index) {
+    loadArguments();
+    return arguments[index].data;
+}
+
+#else
+
+// Where _start found the stack: the number of arguments, then their addresses (mem_x64.S).
+u64* cromo_initial_stack;
+
+i64 cromo_arg_count(void) { return (i64)cromo_initial_stack[0]; }
+
+const u8* cromo_arg_data(i64 index) { return (const u8*)cromo_initial_stack[1 + index]; }
+
+i64 cromo_arg_length(i64 index) {
+    const u8* text = cromo_arg_data(index);
+    i64 length = 0;
+    while (text[length]) ++length;
+    return length;
+}
+
+#endif

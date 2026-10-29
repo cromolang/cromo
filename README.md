@@ -12,7 +12,7 @@ The name comes from chromium (*cromo* in Italian), the element that makes steel 
 
 ## Status
 
-**Milestones M0 to M9 completed.** The bootstrap compiler in C++ (`src/`) compiles programs with numbers, `bool`, variables, `if`/`for`, functions, `println`, structs with methods, constructors and destructors (RAII), ownership with `ref`, `move` and `copy()`, generics and interfaces, `list<T>` and `string`, enums and exceptions, modules and calls to C functions into executables with no C runtime, for Windows without the Windows SDK and, from Windows, for Linux. The standard library is written in Cromo, in `library/core.cro`. Next come the commands of `cromo` (`build`, `run`, `fmt`, a language server for VS Code), anonymous functions, threads and a library for backends with networking and TLS; the compiler written in Cromo comes last (see [docs/compiler.md](docs/compiler.md)). The design choices are in the documents under `docs/`; of the examples under `examples/`, `01_functions.cro`, `02_loops.cro`, `04_lists.cro` and `05_c_interop.cro` can be compiled.
+**Milestones M0 to M10 completed.** The bootstrap compiler in C++ (`src/`) compiles programs with numbers, `bool`, variables, `if`/`for`, functions, `println`, structs with methods, constructors and destructors (RAII), ownership with `ref`, `move` and `copy()`, generics and interfaces, `list<T>` and `string`, enums and exceptions, modules and calls to C functions into executables with no C runtime, for Windows without the Windows SDK and, from Windows, for Linux. The standard library is written in Cromo, in `library/core.cro`. `cromo` has the commands `build`, `run` and `version`. Next come `cromo fmt`, a language server for VS Code, anonymous functions, threads and a library for backends with networking and TLS; the compiler written in Cromo comes last (see [docs/compiler.md](docs/compiler.md)). The design choices are in the documents under `docs/`; of the examples under `examples/`, `01_functions.cro`, `02_loops.cro`, `04_lists.cro` and `05_c_interop.cro` can be compiled.
 
 ## Building and trying it
 
@@ -23,10 +23,13 @@ Requirements, on Windows x64:
 ```powershell
 powershell -ExecutionPolicy Bypass -File build.ps1               # builds build\cromo.exe
 powershell -ExecutionPolicy Bypass -File tests\run-tests.ps1     # runs the tests
-build\cromo.exe examples\02_loops.cro -o loops.exe               # compiles a program (debug, with checks)
-build\cromo.exe examples\02_loops.cro --release -o loops.exe     # release: integers wrap around
-build\cromo.exe examples\02_loops.cro --emit-ir                  # shows the LLVM IR
-build\cromo.exe examples\02_loops.cro --target linux -o loops    # an executable for Linux x64
+build\cromo.exe build examples\02_loops.cro -o loops.exe              # compiles a program (debug, with checks)
+build\cromo.exe build examples\02_loops.cro --release -o loops.exe    # release: integers wrap around
+build\cromo.exe build examples\02_loops.cro --emit-ir                 # shows the LLVM IR
+build\cromo.exe build examples\02_loops.cro --target linux -o loops   # an executable for Linux x64
+build\cromo.exe run examples\02_loops.cro                             # compiles and runs; arguments after --
+build\cromo.exe build                                                 # main.cro of this folder
+build\cromo.exe version
 ```
 
 On the first build vcpkg downloads and builds zlib, zstd and libxml2, which the static LLVM libraries need. The runtime in `runtime/` is compiled with the clang of the LLVM archive and embedded in `cromo.exe`. To compile programs, `cromo.exe` needs neither Visual Studio nor the Windows SDK. The tests also build a few C libraries with the clang of the archive. With `-Flags '--target linux'` they run in WSL.

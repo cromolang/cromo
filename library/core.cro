@@ -2,7 +2,7 @@
 // every module sees its public names without importing it (D130). It uses the
 // `unsafe` dialect (D37, D98, D127): the type `addr` and the built-in functions
 // alloc, resize, free, sizeOf, offset, take, put, destroy, copyAt, copyMemory,
-// compareMemory and checkIndex.
+// compareMemory, checkIndex, argumentCount, argumentLength and argumentData.
 //
 // The compiler relies on the fields `data` and `length` of list and string, for
 // `v[i]`, `for` over the elements, string literals and printing.
@@ -178,6 +178,22 @@ public struct string {
 }
 
 // What can be thrown (D36, D115).
+// The arguments of the program, the name of the program first, for
+// `main(list<string> args)`: the entry point calls this function (D154).
+list<string> programArguments() {
+    list<string> args
+    i64 count = argumentCount()
+    for (i64 i = 0; i < count; i++) {
+        string arg
+        i64 length = argumentLength(i)
+        arg.reserve(length)
+        copyMemory(arg.data, argumentData(i), length)
+        arg.length = length
+        args.add(move arg)
+    }
+    ret args
+}
+
 public interface Exception {
     string message() const
 }

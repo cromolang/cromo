@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(cromo LANGUAGES CXX)
+project(cromo VERSION 0.10.0 LANGUAGES CXX)  # 0.milestone.fix (D157)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -113,7 +113,7 @@ add_executable(cromo
 target_include_directories(cromo PRIVATE "${CROMO_RT_DIR}")
 target_include_directories(cromo SYSTEM PRIVATE ${LLVM_INCLUDE_DIRS} ${LLD_INCLUDE_DIRS})
 separate_arguments(CROMO_LLVM_DEFINITIONS NATIVE_COMMAND "${LLVM_DEFINITIONS}")
-target_compile_definitions(cromo PRIVATE ${CROMO_LLVM_DEFINITIONS})
+target_compile_definitions(cromo PRIVATE ${CROMO_LLVM_DEFINITIONS} CROMO_VERSION="${PROJECT_VERSION}")
 
 if(MSVC)
   # C4702 (unreachable code) comes from the LLVM headers during optimization.

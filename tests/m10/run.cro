@@ -1,0 +1,12 @@
+// target: windows
+// cromo-command: run
+// program-arg: --verbose
+// program-arg: two words
+// expect-output: [--verbose] [two words]
+// expect-exit: 3
+// cromo run compiles the program, runs it with the arguments after -- and ends
+// with its exit code (D156).
+i32 main(list<string> args) {
+    println("[{}] [{}]", args[1], args[2])
+    ret i32(args.len())
+}

@@ -1,0 +1,25 @@
+// program-arg: one
+// program-arg: two words
+// program-arg: a "quote" inside
+// program-arg: back\slash\
+// program-arg: città
+// program-arg:
+// expect-output: 6 arguments
+// expect-output: [one]
+// expect-output: [two words]
+// expect-output: [a "quote" inside]
+// expect-output: [back\slash\]
+// expect-output: [città]
+// expect-output: []
+// expect-output: true
+// expect-exit: 7
+// The arguments reach main, after the name of the program (D154). On Windows
+// the runtime splits the command line as the C runtime of Microsoft does.
+i32 main(list<string> args) {
+    println("{} arguments", args.len() - 1)
+    for (i64 i = 1; i < args.len(); i++) {
+        println("[{}]", args[i])
+    }
+    println("{}", args[0].len() > 0)
+    ret i32(args.len())
+}

@@ -216,6 +216,9 @@ public:
         for (const InterfaceDecl& iface : module.interfaces) {
             if (iface.name == "Exception" && iface.loc.file == kLibraryFile) exceptionInterface_ = &iface;
         }
+        for (const FunctionDecl& function : module.functions) {
+            if (function.name == "programArguments" && function.loc.file == kLibraryFile) programArguments_ = &function;
+        }
 
         // Generics are emitted only through their instances with real types (D39).
         std::vector<const StructDecl*> structs;
@@ -288,6 +291,9 @@ public:
         out << "declare void @cromo_free(ptr) nounwind\n";
         if (!declared.count("memcmp")) out << "declare i32 @memcmp(ptr, ptr, i64) nounwind\n";
         out << "declare void @cromo_uncaught(ptr, i64) noreturn nounwind cold\n";
+        out << "declare i64 @cromo_arg_count() nounwind\n";
+        out << "declare i64 @cromo_arg_length(i64) nounwind\n";
+        out << "declare ptr @cromo_arg_data(i64) nounwind\n";
         for (const std::string& declaration : intrinsics_) out << declaration << "\n";
         return out.str();
     }
@@ -642,15 +648,27 @@ private:
         std::ostringstream out;
         out << "define void @cromo_start() noreturn nounwind {\n";
         out << "entry:\n";
-        std::string raised = mainFunction.canThrow ? "ptr %raised" : "";
+        std::vector<std::string> args;
+        if (!mainFunction.params.empty()) {
+            // D154: the arguments of the program, made by the standard library.
+            const FunctionDecl& arguments = *programArguments_;
+            std::string type = llvmType(arguments.resolvedReturn);
+            out << "  %args = alloca " << type << "\n";
+            out << "  call void " << symbolOf(arguments) << "(ptr %args" << (tracksCaller(arguments) ? ", ptr null" : "")
+                << ")\n";
+            args.push_back("ptr %args");
+        }
         if (mainFunction.canThrow) {
             out << "  %raised = alloca { ptr, ptr }\n";
             out << "  store { ptr, ptr } zeroinitializer, ptr %raised\n";
+            args.push_back("ptr %raised");
         }
+        std::string list;
+        for (size_t i = 0; i < args.size(); ++i) list += (i ? ", " : "") + args[i];
         if (mainFunction.resolvedReturn.isVoid()) {
-            out << "  call void " << symbolOf(mainFunction) << "(" << raised << ")\n";
+            out << "  call void " << symbolOf(mainFunction) << "(" << list << ")\n";
         } else {
-            out << "  %code = call i32 " << symbolOf(mainFunction) << "(" << raised << ")\n";
+            out << "  %code = call i32 " << symbolOf(mainFunction) << "(" << list << ")\n";
         }
         std::string code = mainFunction.resolvedReturn.isVoid() ? "0" : "%code";
         if (mainFunction.canThrow && exceptionInterface_) {
@@ -1671,6 +1689,15 @@ private:
             checkIndex(index, arg(1), call.loc);
             return {"", Type::voidType()};
         }
+        case Intrinsic::ArgumentCount:
+            inst(result + " = call i64 @cromo_arg_count()");
+            return {result, i64};
+        case Intrinsic::ArgumentLength:
+            inst(result + " = call i64 @cromo_arg_length(i64 " + arg(0) + ")");
+            return {result, i64};
+        case Intrinsic::ArgumentData:
+            inst(result + " = call ptr @cromo_arg_data(i64 " + arg(0) + ")");
+            return {result, addr};
         case Intrinsic::None: break;
         }
         return {"", Type::error()};
@@ -2025,6 +2052,7 @@ private:
     int nextSpec_ = 0;
     bool terminated_ = false;
     bool tracksCaller_ = false;  // in the standard library: panics report the caller (D102)
+    const FunctionDecl* programArguments_ = nullptr;  // of the standard library, for main (D154)
     std::string localRaised_;    // the slot for exceptions of a function that cannot throw
     std::vector<Caught> catches_;
     bool freesExceptions_ = false;

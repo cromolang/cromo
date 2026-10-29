@@ -138,6 +138,17 @@ This is why `ref const` does not exist: it would be a second way of writing the 
 - **The object of a method** that is not `const` counts as a `ref` argument for exclusivity. A read argument of a simple type that overlaps something the call modifies is passed as a copy, so `c.add(c.step)` is allowed (D79).
 - **Return values:** they are always returned by value, that is, moved. The compiler avoids the copy by constructing the result directly in the destination.
 
+**`main`** returns `i32`, the exit code, or nothing. It can receive the arguments of the program (D154):
+
+```cromo
+i32 main(list<string> args) {
+    for (string arg in args) {   // args[0] is the name of the program, as in C
+        println("{}", arg)
+    }
+    ret 0
+}
+```
+
 ## 6. Structs, constructors and destructors (RAII)
 
 ```cromo

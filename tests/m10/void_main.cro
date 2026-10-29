@@ -1,0 +1,7 @@
+// program-arg: first
+// program-arg: second
+// expect-output: first second
+// main can also return nothing (D154).
+void main(list<string> args) {
+    println("{} {}", args[1], args[2])
+}

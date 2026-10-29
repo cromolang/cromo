@@ -131,6 +131,7 @@ struct BinaryExpr : Expr {
 // only, the `unsafe` dialect (D37, D98).
 enum class Intrinsic {
     None, Panic, Alloc, Resize, Free, SizeOf, Offset, Take, Put, Destroy, CopyAt, CopyMemory, CompareMemory, CheckIndex,
+    ArgumentCount, ArgumentLength, ArgumentData,
 };
 
 // Pairs of arguments that must not be the same element of a list: when the
