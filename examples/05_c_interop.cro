@@ -4,6 +4,7 @@
 //          types at the boundary with C (D129), RAII constructors and
 //          destructors (D6), the default value of a variable (D31), the
 //          values of the cases, Output = -11 (D135)
+// Only for Windows: it uses kernel32.dll, which Linux does not have (D143).
 
 import unsafe
 

@@ -4,6 +4,7 @@
 // expect-output: hi
 // expect-output: written 3
 // expect-output: true
+// target: windows
 // C functions declared with extern, in a module with import unsafe (D127, D128, D129).
 import unsafe
 import modules.win

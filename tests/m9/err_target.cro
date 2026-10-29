@@ -1,0 +1,6 @@
+// cromo-flags: --target mac
+// expect-error: cromo: unknown target: mac (windows or linux)
+// The systems are Windows and Linux (D142, D144).
+i32 main() {
+    ret 0
+}

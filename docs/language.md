@@ -473,7 +473,7 @@ i32 main() {
 - The imports come at the top of the file. They are not transitive, and two modules can import each other (D131).
 - The standard library is seen by every module without importing it.
 
-## 14. Interoperability with C (D42, D127–D129, D136–D138)
+## 14. Interoperability with C (D42, D127–D129, D136–D138, D143)
 
 ```cromo
 import unsafe
@@ -499,6 +499,7 @@ public struct Stopwatch {
 - `extern "name"` is `name.dll`, and `cromo` writes its import library: the Windows SDK is not needed. A `name.lib` next to the module is used instead, for example a static C library (D136).
 - `cromo` reads the functions exported by the DLL, next to the module or in the system folder of Windows: a C function that the DLL does not have is a compile error (D137).
 - A DLL next to a module is copied next to the executable, if that is in another folder (D138).
+- When compiling for Linux, `extern "name"` is the static library `libname.a` next to the module (D143). Shared libraries and the C library of Linux are not supported yet.
 - They take and return numbers, `bool` and `addr`; a `ref` parameter is a C pointer to a number or to a struct of numbers, which have the layout of C (D129). The `BOOL` of Windows is an `i32`.
 - C resources are wrapped in structs with a destructor (D42): see `examples/05_c_interop.cro`.
 - Strings cannot be passed to C yet: it is an open question in [decisions.md](decisions.md).

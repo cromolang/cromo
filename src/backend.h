@@ -1,5 +1,7 @@
 #pragma once
 
+#include "target.h"
+
 #include <string>
 #include <vector>
 
@@ -13,9 +15,10 @@ struct ImportLibrary {
 
 struct BackendOptions {
     std::string outputPath;  // executable to produce
+    Target target = Target::Windows;
     int optLevel = 2;        // from 0 to 3
     bool keepObject = false; // keep the intermediate object file
-    std::vector<std::string> archives;   // .lib files of the extern blocks (D136)
+    std::vector<std::string> archives;   // static libraries of the extern blocks: name.lib, libname.a (D136, D143)
     std::vector<ImportLibrary> imports;  // DLLs of the extern blocks; kernel32 is always there, for the runtime
 };
 

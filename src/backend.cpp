@@ -31,6 +31,7 @@
 #include <vector>
 
 LLD_HAS_DRIVER(coff)
+LLD_HAS_DRIVER(elf)
 
 namespace cromo {
 
@@ -77,7 +78,7 @@ bool emitObject(llvm::Module& module, llvm::TargetMachine& machine, const std::s
     }
     llvm::legacy::PassManager passes;
     if (machine.addPassesToEmitFile(passes, out, nullptr, llvm::CodeGenFileType::ObjectFile)) {
-        error = "LLVM cannot generate object files for " + std::string(kTargetTriple);
+        error = "LLVM cannot generate object files for " + machine.getTargetTriple().str();
         return false;
     }
     passes.run(module);
@@ -99,7 +100,7 @@ bool writeFile(const std::string& path, std::string_view data, std::string& erro
 // The functions of kernel32 that the runtime imports: the `__imp_` symbols that
 // it leaves undefined, because it declares them with `dllimport`.
 bool runtimeImports(std::vector<std::string>& names, std::string& error) {
-    std::string_view data = runtimeLibrary();
+    std::string_view data = runtimeLibrary(Target::Windows);
     llvm::MemoryBufferRef buffer(llvm::StringRef(data.data(), data.size()), "cromo_rt.lib");
     llvm::Expected<std::unique_ptr<llvm::object::Archive>> archive = llvm::object::Archive::create(buffer);
     if (!archive) {
@@ -161,8 +162,24 @@ bool writeImportLibrary(const ImportLibrary& import, const std::string& path, st
     return true;
 }
 
-bool link(const std::string& objectPath, const std::string& runtimePath, const BackendOptions& options,
-          std::vector<std::string>& temporaries, std::string& error) {
+bool runLld(const std::vector<std::string>& args, std::string& error) {
+    std::vector<const char*> argv;
+    for (const std::string& arg : args) argv.push_back(arg.c_str());
+
+    std::string messages;
+    llvm::raw_string_ostream stream(messages);
+    lld::Result result =
+        lld::lldMain(argv, stream, stream, {{lld::WinLink, &lld::coff::link}, {lld::Gnu, &lld::elf::link}});
+    stream.flush();
+    if (result.retCode != 0) {
+        error = "linking failed:\n" + messages;
+        return false;
+    }
+    return true;
+}
+
+bool linkWindows(const std::string& objectPath, const std::string& runtimePath, const BackendOptions& options,
+                 std::vector<std::string>& temporaries, std::string& error) {
     // The DLLs of the extern blocks, and kernel32 for the runtime.
     std::vector<ImportLibrary> imports = options.imports;
     auto kernel32 = std::find_if(imports.begin(), imports.end(), [](const ImportLibrary& i) { return i.dll == "kernel32.dll"; });
@@ -194,18 +211,18 @@ bool link(const std::string& objectPath, const std::string& runtimePath, const B
         if (!writeImportLibrary(import, path, error)) return false;
         args.push_back(path);
     }
-    std::vector<const char*> argv;
-    for (const std::string& arg : args) argv.push_back(arg.c_str());
+    return runLld(args, error);
+}
 
-    std::string messages;
-    llvm::raw_string_ostream stream(messages);
-    lld::Result result = lld::lldMain(argv, stream, stream, {{lld::WinLink, &lld::coff::link}});
-    stream.flush();
-    if (result.retCode != 0) {
-        error = "linking failed:\n" + messages;
-        return false;
-    }
-    return true;
+// A static executable at a fixed address, without the dynamic loader (D142, D145).
+// The static libraries of the extern blocks come before the runtime, because
+// their C code can call memcpy and the other functions of mem_x64.S.
+bool linkLinux(const std::string& objectPath, const std::string& runtimePath, const BackendOptions& options,
+               std::string& error) {
+    std::vector<std::string> args = {"ld.lld", "-o", options.outputPath, "-e", "_start", "-static", objectPath};
+    for (const std::string& archive : options.archives) args.push_back(archive);
+    args.push_back(runtimePath);
+    return runLld(args, error);
 }
 
 }  // namespace
@@ -226,7 +243,7 @@ bool buildExecutable(const std::string& irText, const std::string& moduleName, c
         return false;
     }
 
-    llvm::Triple triple(kTargetTriple);
+    llvm::Triple triple(targetTriple(options.target));
     std::string lookupError;
     const llvm::Target* target = llvm::TargetRegistry::lookupTarget(triple, lookupError);
     if (!target) {
@@ -242,7 +259,7 @@ bool buildExecutable(const std::string& irText, const std::string& moduleName, c
     std::unique_ptr<llvm::TargetMachine> machine(target->createTargetMachine(
         triple, "x86-64", "", targetOptions, std::nullopt, std::nullopt, codegenLevel));
     if (!machine) {
-        error = "cannot create the target machine for " + std::string(kTargetTriple);
+        error = "cannot create the target machine for " + triple.str();
         return false;
     }
     module->setTargetTriple(triple);
@@ -258,13 +275,15 @@ bool buildExecutable(const std::string& irText, const std::string& moduleName, c
 
     optimize(*module, *machine, options.optLevel);
 
-    std::string objectPath = options.outputPath + ".obj";
-    std::string runtimePath = options.outputPath + ".rt.lib";
+    bool linux = options.target == Target::Linux;
+    std::string objectPath = options.outputPath + (linux ? ".o" : ".obj");
+    std::string runtimePath = options.outputPath + (linux ? ".rt.a" : ".rt.lib");
     if (!emitObject(*module, *machine, objectPath, error)) return false;
-    if (!writeFile(runtimePath, runtimeLibrary(), error)) return false;
+    if (!writeFile(runtimePath, runtimeLibrary(options.target), error)) return false;
 
     std::vector<std::string> temporaries = {runtimePath};
-    bool linked = link(objectPath, runtimePath, options, temporaries, error);
+    bool linked = linux ? linkLinux(objectPath, runtimePath, options, error)
+                        : linkWindows(objectPath, runtimePath, options, temporaries, error);
     for (const std::string& path : temporaries) llvm::sys::fs::remove(path);
     if (!options.keepObject) llvm::sys::fs::remove(objectPath);
     return linked;

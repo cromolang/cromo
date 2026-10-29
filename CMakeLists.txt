@@ -27,10 +27,11 @@ message(STATUS "LLD: ${LLD_DIR}")
 set(CMAKE_MSVC_RUNTIME_LIBRARY MultiThreaded)
 
 # ---- Temporary runtime in freestanding C (D58) ----
-# Compiled with the clang of the LLVM archive, without the C library, and embedded
-# in cromo.exe as a byte array.
+# Compiled with the clang of the LLVM archive, without the C library, once for
+# Windows and once for Linux (D142), and embedded in cromo.exe as byte arrays.
 set(CROMO_CLANG "${CROMO_LLVM_ROOT}/bin/clang.exe")
 set(CROMO_LLVM_LIB "${CROMO_LLVM_ROOT}/bin/llvm-lib.exe")
+set(CROMO_LLVM_AR "${CROMO_LLVM_ROOT}/bin/llvm-ar.exe")
 set(CROMO_RT_DIR "${CMAKE_BINARY_DIR}/runtime")
 set(CROMO_RT_FLAGS --target=x86_64-pc-windows-msvc -ffreestanding -fno-builtin -nostdlib -O2
     -fno-stack-protector -mno-stack-arg-probe -Wall -Wextra)
@@ -58,6 +59,31 @@ add_custom_command(
   DEPENDS "${CROMO_RT_DIR}/cromo_rt.lib" cmake/embed.cmake
   COMMENT "Embedding the Cromo runtime")
 
+set(CROMO_RT_LINUX_FLAGS --target=x86_64-unknown-linux-gnu -ffreestanding -fno-builtin -nostdlib -O2
+    -fno-stack-protector -fno-pic -Wall -Wextra)
+add_custom_command(
+  OUTPUT "${CROMO_RT_DIR}/cromo_rt_linux.o"
+  COMMAND "${CROMO_CLANG}" ${CROMO_RT_LINUX_FLAGS} -c "${CMAKE_SOURCE_DIR}/runtime/cromo_rt.c" -o "${CROMO_RT_DIR}/cromo_rt_linux.o"
+  DEPENDS runtime/cromo_rt.c
+  COMMENT "Compiling the Cromo runtime for Linux")
+add_custom_command(
+  OUTPUT "${CROMO_RT_DIR}/mem_x64_linux.o"
+  COMMAND "${CROMO_CLANG}" --target=x86_64-unknown-linux-gnu -c "${CMAKE_SOURCE_DIR}/runtime/mem_x64.S" -o "${CROMO_RT_DIR}/mem_x64_linux.o"
+  DEPENDS runtime/mem_x64.S
+  COMMENT "Assembling the Cromo runtime for Linux")
+add_custom_command(
+  OUTPUT "${CROMO_RT_DIR}/libcromo_rt.a"
+  COMMAND "${CMAKE_COMMAND}" -E rm -f "${CROMO_RT_DIR}/libcromo_rt.a"
+  COMMAND "${CROMO_LLVM_AR}" rcs "${CROMO_RT_DIR}/libcromo_rt.a" "${CROMO_RT_DIR}/cromo_rt_linux.o" "${CROMO_RT_DIR}/mem_x64_linux.o"
+  DEPENDS "${CROMO_RT_DIR}/cromo_rt_linux.o" "${CROMO_RT_DIR}/mem_x64_linux.o"
+  COMMENT "Archiving the Cromo runtime for Linux")
+add_custom_command(
+  OUTPUT "${CROMO_RT_DIR}/runtime_linux_blob.inc"
+  COMMAND "${CMAKE_COMMAND}" "-DINPUT=${CROMO_RT_DIR}/libcromo_rt.a" "-DOUTPUT=${CROMO_RT_DIR}/runtime_linux_blob.inc"
+          -P "${CMAKE_SOURCE_DIR}/cmake/embed.cmake"
+  DEPENDS "${CROMO_RT_DIR}/libcromo_rt.a" cmake/embed.cmake
+  COMMENT "Embedding the Cromo runtime for Linux")
+
 # ---- Standard library in Cromo (D97), embedded as text ----
 add_custom_command(
   OUTPUT "${CROMO_RT_DIR}/library_blob.inc"
@@ -80,6 +106,7 @@ add_executable(cromo
   src/libraries.cpp
   src/runtime_blob.cpp
   "${CROMO_RT_DIR}/runtime_blob.inc"
+  "${CROMO_RT_DIR}/runtime_linux_blob.inc"
   "${CROMO_RT_DIR}/library_blob.inc"
 )
 
@@ -97,4 +124,4 @@ llvm_map_components_to_libnames(CROMO_LLVM_LIBS
   Core IRReader Object Passes Support Target TargetParser MC
   X86CodeGen X86AsmParser X86Desc X86Info
 )
-target_link_libraries(cromo PRIVATE lldCOFF lldCommon ${CROMO_LLVM_LIBS})
+target_link_libraries(cromo PRIVATE lldCOFF lldELF lldCommon ${CROMO_LLVM_LIBS})

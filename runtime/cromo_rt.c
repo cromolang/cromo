@@ -1,7 +1,8 @@
 // Bootstrap runtime of Cromo (D58, D93): printing, panics, heap and program exit.
-// Freestanding C without the C library: it talks to Windows through kernel32.dll
-// (D19). It will be rewritten in Cromo `unsafe` when extern (M7), the bitwise
-// operators and fixed-size arrays exist (D37, D93).
+// Freestanding C without the C library (D19): it talks to Windows through
+// kernel32.dll, and to Linux with system calls (D142). CMake compiles it once for
+// each system. It will be rewritten in Cromo `unsafe` when extern (M7), the
+// bitwise operators and fixed-size arrays exist (D37, D93).
 
 typedef unsigned char u8;
 typedef unsigned short u16;
@@ -9,6 +10,12 @@ typedef unsigned int u32;
 typedef int i32;
 typedef unsigned long long u64;
 typedef long long i64;
+
+#define NORETURN __attribute__((noreturn))
+
+void* memcpy(void* dest, const void* src, u64 count);  // in mem_x64.S
+
+#ifdef _WIN32
 
 // ---- Windows API ----
 
@@ -28,6 +35,31 @@ __declspec(dllimport) int WINAPI HeapFree(void* heap, u32 flags, void* memory);
 // The Microsoft x64 ABI requires this symbol when floating point is used (D19).
 int _fltused = 0;
 
+#else
+
+// ---- Linux system calls ----
+
+#define SYS_write 1
+#define SYS_mmap 9
+#define SYS_munmap 11
+#define SYS_mremap 25
+#define SYS_exit_group 231
+#define EINTR 4
+
+static i64 systemCall(i64 number, i64 a, i64 b, i64 c, i64 d, i64 e, i64 f) {
+    register i64 r10 __asm__("r10") = d;
+    register i64 r8 __asm__("r8") = e;
+    register i64 r9 __asm__("r9") = f;
+    i64 result;
+    __asm__ volatile("syscall"
+                     : "=a"(result)
+                     : "a"(number), "D"(a), "S"(b), "d"(c), "r"(r10), "r"(r8), "r"(r9)
+                     : "rcx", "r11", "memory");
+    return result;  // from -4095 to -1 it is an error, -errno
+}
+
+#endif
+
 // ---- Buffered output ----
 
 #define BUFFER_SIZE 4096
@@ -38,6 +70,9 @@ typedef struct {
 } Output;
 
 static Output outputs[2];  // stdout, stderr
+
+#ifdef _WIN32
+
 static u16 wide[BUFFER_SIZE];
 
 static void writeRaw(i32 stream, const u8* data, u32 size) {
@@ -54,6 +89,28 @@ static void writeRaw(i32 stream, const u8* data, u32 size) {
     }
     WriteFile(handle, data, size, &written, 0);
 }
+
+static NORETURN void exitProcess(i32 code) { ExitProcess((u32)code); }
+
+#else
+
+static void writeRaw(i32 stream, const u8* data, u32 size) {
+    while (size > 0) {
+        i64 written = systemCall(SYS_write, stream == 2 ? 2 : 1, (i64)data, size, 0, 0, 0);
+        if (written == -EINTR) continue;
+        if (written <= 0) return;  // nowhere to write: the text is lost, as with WriteFile
+        data += written;
+        size -= (u32)written;
+    }
+}
+
+// The exit code is the lowest byte of `code`, as in C (D145).
+static NORETURN void exitProcess(i32 code) {
+    systemCall(SYS_exit_group, code, 0, 0, 0, 0, 0);
+    __builtin_unreachable();
+}
+
+#endif
 
 static Output* outputOf(i32 stream) { return &outputs[stream == 2 ? 1 : 0]; }
 
@@ -625,10 +682,10 @@ void cromo_print_end(i32 stream, i32 newline) {
     flush(stream);
 }
 
-__declspec(noreturn) void cromo_exit(i32 code) {
+NORETURN void cromo_exit(i32 code) {
     flush(1);
     flush(2);
-    ExitProcess((u32)code);
+    exitProcess(code);
 }
 
 // Where a panic happens: "<file>:<line>:<column>", a constant built by the compiler.
@@ -642,25 +699,25 @@ static void panicStart(void) {
     put(2, (const u8*)"panic: ", 7);
 }
 
-static __declspec(noreturn) void panicEnd(const Where* where) {
+static NORETURN void panicEnd(const Where* where) {
     if (where) {
         put(2, (const u8*)" at ", 4);
         put(2, where->text, where->size);
     }
     put(2, (const u8*)"\n", 1);
     flush(2);
-    ExitProcess(101);
+    exitProcess(101);
 }
 
 // D62: "panic: <reason> at <file>:<line>:<column>" on stderr, exit code 101.
-__declspec(noreturn) void cromo_panic(const u8* message, u64 size, const Where* where) {
+NORETURN void cromo_panic(const u8* message, u64 size, const Where* where) {
     panicStart();
     put(2, message, size);
     panicEnd(where);
 }
 
 // D30: an index out of the bounds of a list.
-__declspec(noreturn) void cromo_panic_index(i64 index, i64 length, const Where* where) {
+NORETURN void cromo_panic_index(i64 index, i64 length, const Where* where) {
     panicStart();
     put(2, (const u8*)"index out of bounds: the index is ", 34);
     cromo_fmt_int(2, (u64)index, 1, 0);
@@ -670,36 +727,142 @@ __declspec(noreturn) void cromo_panic_index(i64 index, i64 length, const Where* 
 }
 
 // D121: an exception that leaves main, with its message; exit code 1.
-__declspec(noreturn) void cromo_uncaught(const u8* message, u64 size) {
+NORETURN void cromo_uncaught(const u8* message, u64 size) {
     flush(1);
     put(2, (const u8*)"uncaught exception: ", 20);
     put(2, message, size);
     put(2, (const u8*)"\n", 1);
     flush(2);
-    ExitProcess(1);
+    exitProcess(1);
 }
 
 // ---- Heap, for list and string (D98) ----
 
-static __declspec(noreturn) void outOfMemory(void) {
+static NORETURN void outOfMemory(void) {
     panicStart();
     put(2, (const u8*)"out of memory", 13);
     panicEnd(0);
 }
 
+#ifdef _WIN32
+
+static void* heapAlloc(u64 size) { return HeapAlloc(GetProcessHeap(), 0, size); }
+static void* heapRealloc(void* memory, u64 size) { return HeapReAlloc(GetProcessHeap(), 0, memory, size); }
+static void heapFree(void* memory) { HeapFree(GetProcessHeap(), 0, memory); }
+
+#else
+
+// A simple allocator on top of mmap, without threads (D43). Every block starts
+// with 16 bytes that hold how many bytes it can contain. The small blocks, up to
+// 4 KB with those 16 bytes, have a size that is a power of two from 32 bytes: they
+// are cut from areas of 1 MB, and the freed ones are kept in a list for each size.
+// The larger blocks have a mapping of their own.
+
+#define PROT_READ 1
+#define PROT_WRITE 2
+#define MAP_PRIVATE 2
+#define MAP_ANONYMOUS 0x20
+#define MREMAP_MAYMOVE 1
+#define HEADER 16
+#define SMALL_LIMIT 4096
+#define SMALL_SIZES 8  // 32, 64, ..., 4096
+#define AREA_SIZE (1u << 20)
+
+typedef struct FreeBlock {
+    struct FreeBlock* next;
+} FreeBlock;
+
+static FreeBlock* freeBlocks[SMALL_SIZES];
+static u8* areaNext;
+static u8* areaEnd;
+
+static u8* mapPages(u64 size) {
+    i64 result = systemCall(SYS_mmap, 0, (i64)size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    return result < 0 && result > -4096 ? 0 : (u8*)result;
+}
+
+static u64 pagesFor(u64 size) { return (size + 4095) & ~(u64)4095; }
+
+static i32 sizeIndex(u64 total) {
+    i32 index = 0;
+    while (((u64)32 << index) < total) ++index;
+    return index;
+}
+
+static u64* headerOf(void* memory) { return (u64*)((u8*)memory - HEADER); }
+
+static void* heapAlloc(u64 size) {
+    u64 total = size + HEADER;
+    u8* block;
+    if (total <= SMALL_LIMIT) {
+        i32 index = sizeIndex(total);
+        total = (u64)32 << index;
+        if (freeBlocks[index]) {
+            block = (u8*)freeBlocks[index];
+            freeBlocks[index] = freeBlocks[index]->next;
+        } else {
+            if ((u64)(areaEnd - areaNext) < total) {  // the rest of the old area, less than 4 KB, is not used
+                areaNext = mapPages(AREA_SIZE);
+                if (!areaNext) return 0;
+                areaEnd = areaNext + AREA_SIZE;
+            }
+            block = areaNext;
+            areaNext += total;
+        }
+    } else {
+        total = pagesFor(total);
+        block = mapPages(total);
+        if (!block) return 0;
+    }
+    *(u64*)block = total - HEADER;
+    return block + HEADER;
+}
+
+static void heapFree(void* memory) {
+    u64 total = *headerOf(memory) + HEADER;
+    if (total <= SMALL_LIMIT) {
+        FreeBlock* block = (FreeBlock*)headerOf(memory);
+        i32 index = sizeIndex(total);
+        block->next = freeBlocks[index];
+        freeBlocks[index] = block;
+    } else {
+        systemCall(SYS_munmap, (i64)headerOf(memory), (i64)total, 0, 0, 0, 0);
+    }
+}
+
+static void* heapRealloc(void* memory, u64 size) {
+    u64 capacity = *headerOf(memory);
+    if (size <= capacity) return memory;
+    if (capacity + HEADER > SMALL_LIMIT) {  // a large block grows with its mapping
+        u64 total = pagesFor(size + HEADER);
+        i64 block = systemCall(SYS_mremap, (i64)headerOf(memory), (i64)(capacity + HEADER), (i64)total, MREMAP_MAYMOVE,
+                               0, 0);
+        if (block < 0 && block > -4096) return 0;
+        *(u64*)block = total - HEADER;
+        return (u8*)block + HEADER;
+    }
+    void* result = heapAlloc(size);
+    if (!result) return 0;
+    memcpy(result, memory, capacity);
+    heapFree(memory);
+    return result;
+}
+
+#endif
+
 void* cromo_alloc(i64 size) {
-    void* memory = size >= 0 ? HeapAlloc(GetProcessHeap(), 0, (u64)size) : 0;
+    void* memory = size >= 0 ? heapAlloc((u64)size) : 0;
     if (!memory) outOfMemory();
     return memory;
 }
 
 void* cromo_realloc(void* memory, i64 size) {
     if (!memory) return cromo_alloc(size);
-    void* result = size >= 0 ? HeapReAlloc(GetProcessHeap(), 0, memory, (u64)size) : 0;
+    void* result = size >= 0 ? heapRealloc(memory, (u64)size) : 0;
     if (!result) outOfMemory();
     return result;
 }
 
 void cromo_free(void* memory) {
-    if (memory) HeapFree(GetProcessHeap(), 0, memory);
+    if (memory) heapFree(memory);
 }

@@ -889,6 +889,25 @@ extern "kernel32" {
 - The DLLs found next to the modules are copied after linking, also when a `.lib` with the same name is used with them. The DLLs of the system folder are not copied.
 - A DLL is copied only if the executable is in another folder and the copy there is missing or different, in size or date. A copy that fails is an error. `--emit-ir` copies nothing.
 
+### D142. Linux by cross-compilation
+*2026-10-29.* `cromo` on Windows also produces executables for Linux x64, with `--target linux`, as Zig does: LLD for ELF is already in `cromo`, and the runtime for Linux is embedded next to the one for Windows. The tests also run in WSL. A `cromo` that runs on Linux comes later.
+
+### D143. On Linux `extern` uses static libraries
+*2026-10-29.* When compiling for Linux, `extern "name"` is the static library `libname.a` next to the module, linked as a `.lib` on Windows (D136). Shared libraries (`.so`) and the C library come later, with a decision of their own; a module that uses the DLLs of Windows stays only for Windows.
+
+### D144. The option `--target`
+*2026-10-29.*
+- `--target windows` or `--target linux`; without it, the program is for Windows, the system on which `cromo` runs.
+- For Linux the executable is named after the source, without extension: `cromo hello.cro --target linux` writes `hello`.
+
+### D145. The executable for Linux
+*2026-10-29.*
+- It is static, at a fixed address, and does not use the dynamic loader: it runs on any Linux x64, because it talks to the kernel only with system calls (`write`, `mmap`, `exit_group`).
+- The exit code is the lowest byte of the value of `main`, as in C: `ret -1` gives 255.
+
+### D146. Where `libname.a` is looked for
+*2026-10-29.* In the folders of the modules that declare the library, in the order in which the modules are loaded, as on Windows (D139). `cromo` does not check the names: a missing function is reported by the linker (D140).
+
 ---
 ---
 
@@ -899,4 +918,5 @@ There are currently no open questions. Still to be defined later, when needed:
 - the interface for making user-defined types printable (D38);
 - fixed-size arrays (`i32[4]`);
 - the content of the standard library;
+- code that differs between Windows and Linux: in M9 the differences are only in the runtime in C, which has a version for each system. Files for each system, as in Go, are one option;
 - passing strings to C: a `string` cannot reach C yet, because its bytes are private to the library. The options are a function of the library that makes a copy ending with a zero, for the modules with `import unsafe` (recommended: the C APIs want that zero, and the string does not change), or letting those modules read `data` and `length`.

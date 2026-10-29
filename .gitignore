@@ -13,3 +13,4 @@ tools/vscode-cromo/dist/
 # Libraries built by tests/run-tests.ps1 for the tests of M8
 tests/m8/modules/*.dll
 tests/m8/modules/*.lib
+tests/m8/modules/*.a

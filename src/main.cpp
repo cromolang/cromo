@@ -30,9 +30,10 @@ namespace {
 
 void printUsage() {
     std::fputs(
-        "usage: cromo <source.cro> [-o <executable>] [--release] [-O0|-O1|-O2|-O3] [--emit-ir]\n"
+        "usage: cromo <source.cro> [-o <executable>] [--target windows|linux] [--release] [-O0|-O1|-O2|-O3] [--emit-ir]\n"
         "\n"
-        "  -o <file>    name of the executable (default: the source name with .exe)\n"
+        "  -o <file>    name of the executable (default: the source name, with .exe for Windows)\n"
+        "  --target     the system of the executable: windows (default) or linux\n"
         "  --release    no overflow checks: integers wrap around (default: debug, with checks)\n"
         "  -O<n>        optimization level (default: -O2)\n"
         "  --emit-ir    print the generated LLVM IR instead of producing the executable\n",
@@ -171,6 +172,16 @@ int main(int argc, char** argv) {
         const char* arg = argv[i];
         if (std::strcmp(arg, "-o") == 0 && i + 1 < argc) {
             options.outputPath = argv[++i];
+        } else if (std::strcmp(arg, "--target") == 0 && i + 1 < argc) {
+            std::string target = argv[++i];  // D142, D144
+            if (target == "windows") {
+                options.target = cromo::Target::Windows;
+            } else if (target == "linux") {
+                options.target = cromo::Target::Linux;
+            } else {
+                std::fprintf(stderr, "cromo: unknown target: %s (windows or linux)\n", target.c_str());
+                return 2;
+            }
         } else if (std::strcmp(arg, "--release") == 0) {
             codegen.release = true;  // D57
         } else if (std::strcmp(arg, "--emit-ir") == 0) {
@@ -193,8 +204,10 @@ int main(int argc, char** argv) {
         return 2;
     }
     if (options.outputPath.empty()) {
-        options.outputPath = std::filesystem::path(inputPath).replace_extension(".exe").string();
+        bool linux = options.target == cromo::Target::Linux;
+        options.outputPath = std::filesystem::path(inputPath).replace_extension(linux ? "" : ".exe").string();
     }
+    codegen.target = options.target;
 
     std::deque<cromo::SourceFile> sources;
     sources.push_back({inputPath, {}});
@@ -210,8 +223,8 @@ int main(int argc, char** argv) {
     cromo::Module module = Loader(sources, diag).load();
     if (diag.hasErrors() || !cromo::check(module, diag) || !cromo::checkMoves(module, diag)) return 1;
 
-    // The libraries of the extern blocks, with their C functions checked in the DLLs (D136, D137).
-    cromo::Libraries libraries = cromo::findLibraries(module, sources, diag);
+    // The libraries of the extern blocks, with their C functions checked in the DLLs (D136, D137, D143).
+    cromo::Libraries libraries = cromo::findLibraries(module, sources, options.target, diag);
     if (diag.hasErrors()) return 1;
     options.archives = libraries.archives;
     options.imports = libraries.imports;

@@ -7,14 +7,18 @@
 #   // expect-stderr: text          text that must appear in the standard error
 #   // expect-error: text           text that must appear among the compiler errors
 #   // expect-warning: text         text that must appear among the compiler warnings
+#   // target: windows              the test is only for that system (windows or linux)
 # Usage: powershell -ExecutionPolicy Bypass -File tests\run-tests.ps1 [-Cromo <path>] [-Filter <text>] [-Flags <options>]
 #   -Flags passes extra options to every compilation, for example -Flags -O0
+#   -Flags '--target linux' compiles for Linux and runs the programs in WSL (D142),
+#   with -Distro to choose the distribution instead of the default one
 # The C libraries in m8\native are built first with the clang of LLVM (D136).
 param(
     [string]$Cromo = (Join-Path $PSScriptRoot '..\build\cromo.exe'),
     [string]$Filter = '',
     [string]$Flags = '',
-    [string]$LlvmRoot = 'C:\software\llvm-23.1.4'
+    [string]$LlvmRoot = 'C:\software\llvm-23.1.4',
+    [string]$Distro = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -44,6 +48,27 @@ Invoke-Tool 'clang.exe' ($cflags + @('--target=i686-pc-windows-msvc', "$native\a
 Invoke-Tool 'lld-link.exe' @('/nologo', '/dll', '/noentry', '/noimplib', '/nodefaultlib', '/machine:x86', "/out:$modules\old32.dll", "$out\adder32.obj")
 Invoke-Tool 'clang.exe' ($cflags + @('--target=x86_64-pc-windows-msvc', "$native\scale.c", '-o', "$out\scale.obj"))
 Invoke-Tool 'llvm-lib.exe' @('/nologo', "/out:$modules\scale.lib", "$out\scale.obj")
+# The same static library for Linux (D143).
+Invoke-Tool 'clang.exe' ($cflags + @('--target=x86_64-unknown-linux-gnu', '-fno-pic', "$native\scale.c", '-o', "$out\scale.o"))
+Remove-Item -Force -ErrorAction SilentlyContinue "$modules\libscale.a"
+Invoke-Tool 'llvm-ar.exe' @('rcs', "$modules\libscale.a", "$out\scale.o")
+
+# The system of an executable: the last --target among the options of cromo.
+function Get-Target([string[]]$Options) {
+    $target = 'windows'
+    for ($i = 0; $i -lt $Options.Count - 1; $i++) {
+        if ($Options[$i] -eq '--target') { $target = $Options[$i + 1] }
+    }
+    $target
+}
+
+# A program for Linux runs in WSL, from the same folder seen as /mnt/c/...
+function Invoke-Linux([string]$Path) {
+    $linuxPath = '/mnt/' + $Path.Substring(0, 1).ToLower() + ($Path.Substring(2) -replace '\\', '/')
+    $arguments = @()
+    if ($Distro) { $arguments += @('-d', $Distro) }
+    Invoke-Program 'wsl.exe' ($arguments + @('-e', $linuxPath))
+}
 
 # Runs a program and returns its exit code, standard output and standard error,
 # read separately and decoded as UTF-8.
@@ -70,6 +95,7 @@ function Invoke-Program([string]$Path, [string[]]$Arguments) {
 
 $passed = 0
 $failed = 0
+$skipped = 0
 foreach ($test in Get-ChildItem $PSScriptRoot -Recurse -Filter *.cro | Sort-Object FullName) {
     $name = $test.FullName.Substring($PSScriptRoot.Length + 1)
     if ($name -split '\\' -contains 'modules') { continue }
@@ -83,6 +109,7 @@ foreach ($test in Get-ChildItem $PSScriptRoot -Recurse -Filter *.cro | Sort-Obje
     $expectStderr = @()
     $expectError = @()
     $expectWarning = @()
+    $only = ''
     foreach ($line in Get-Content $test.FullName -Encoding UTF8) {
         if ($line -match '^\s*//\s*cromo-flags:\s*(.+?)\s*$') { $compileFlags += ($matches[1] -split '\s+') }
         elseif ($line -match '^\s*//\s*expect-exit:\s*(-?\d+)\s*$') { $expectExit = [int64]$matches[1] }
@@ -90,9 +117,15 @@ foreach ($test in Get-ChildItem $PSScriptRoot -Recurse -Filter *.cro | Sort-Obje
         elseif ($line -match '^\s*//\s*expect-stderr:\s*(.+?)\s*$') { $expectStderr += $matches[1] }
         elseif ($line -match '^\s*//\s*expect-error:\s*(.+?)\s*$') { $expectError += $matches[1] }
         elseif ($line -match '^\s*//\s*expect-warning:\s*(.+?)\s*$') { $expectWarning += $matches[1] }
+        elseif ($line -match '^\s*//\s*target:\s*(\w+)\s*$') { $only = $matches[1] }
+    }
+    $target = Get-Target $compileFlags
+    if ($only -and $only -ne $target) {
+        $skipped++
+        continue
     }
 
-    $exe = Join-Path $out ($test.BaseName + '.exe')
+    $exe = Join-Path $out ($test.BaseName + $(if ($target -eq 'linux') { '' } else { '.exe' }))
     $compile = Invoke-Program $Cromo (@($test.FullName, '-o', $exe) + $compileFlags)
     $compileText = $compile.Out + $compile.Err
 
@@ -108,7 +141,13 @@ foreach ($test in Get-ChildItem $PSScriptRoot -Recurse -Filter *.cro | Sort-Obje
     } elseif ($compile.Code -ne 0) {
         $problems += "compilation failed:`n$compileText"
     } else {
-        $run = Invoke-Program $exe @()
+        if ($target -eq 'linux') {
+            $run = Invoke-Linux $exe
+            # Linux keeps only the lowest byte of the exit code (D145).
+            if ($null -ne $expectExit) { $expectExit = $expectExit -band 0xFF }
+        } else {
+            $run = Invoke-Program $exe @()
+        }
         if ($null -ne $expectExit -and $run.Code -ne $expectExit) {
             $problems += "exit code $($run.Code), expected $expectExit"
         }
@@ -133,5 +172,5 @@ foreach ($test in Get-ChildItem $PSScriptRoot -Recurse -Filter *.cro | Sort-Obje
 }
 
 Write-Host ""
-Write-Host "$passed passed, $failed failed"
+Write-Host "$passed passed, $failed failed, $skipped for the other system"
 if ($failed -gt 0) { exit 1 }

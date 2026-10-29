@@ -1,5 +1,5 @@
-// The function of scale.lib, a static C library that run-tests.ps1 builds next
-// to this module (D136).
+// The function of scale.lib and libscale.a, a static C library that
+// run-tests.ps1 builds next to this module for Windows and Linux (D136, D143).
 import unsafe
 
 extern "scale" {

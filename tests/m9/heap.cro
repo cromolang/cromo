@@ -1,0 +1,41 @@
+// expect-output: 200000 19999900000
+// expect-output: 1000 5000 true
+// expect-output: 3000
+// The heap of the runtime, which on Linux is an allocator of its own on top of
+// mmap (D142): small and large blocks, blocks that grow, freed blocks used again.
+i32 main() {
+    // The list grows to 1.6 MB: its block passes from the small sizes to a mapping of its own.
+    list<i64> numbers
+    for (i64 i = 0; i < 200000; i++) {
+        numbers.add(i)
+    }
+    i64 sum = 0
+    for (i64 n in numbers) {
+        sum += n
+    }
+    println("{} {}", numbers.len(), sum)
+
+    // A thousand small strings, made five times: the freed blocks are used again.
+    list<string> words
+    for (i32 round = 0; round < 5; round++) {
+        words.clear()
+        for (i32 i = 0; i < 1000; i++) {
+            string word = "word"
+            word += "!"
+            words.add(move word)
+        }
+    }
+    i64 total = 0
+    for (string word in words) {
+        total += word.len()
+    }
+    println("{} {} {}", words.len(), total, words[999] == "word!")
+
+    // A string that grows one byte at a time, past 4 KB.
+    string text
+    for (i32 i = 0; i < 3000; i++) {
+        text += "x"
+    }
+    println("{}", text.len())
+    ret 0
+}

@@ -1,18 +1,17 @@
 #pragma once
 
 #include "ast.h"
+#include "target.h"
 
 #include <string>
 #include <vector>
 
 namespace cromo {
 
-// Target triple. Only Windows x64 for now (D27).
-inline constexpr const char* kTargetTriple = "x86_64-pc-windows-msvc";
-
 struct CodegenOptions {
     std::vector<std::string> sourcePaths;  // by SourceLocation::file, shown in panic messages (D62)
     bool release = false;    // D57: no overflow checks, integers wrap around
+    Target target = Target::Windows;
 };
 
 // Translates a module already checked by sema into textual LLVM IR (D53).

@@ -16,7 +16,7 @@ The final product is a single executable, `cromo`, which does everything (D28):
   → ownership analysis         default values, moves, exclusivity, destructor insertion
   → LLVM IR emission           text (D53)
   → LLVM, inside cromo         reading the IR, optimization and machine code
-  → LLD, inside cromo          linking with the runtime and with the generated import libraries
+  → LLD, inside cromo          linking with the runtime: COFF for Windows, ELF for Linux (D142)
   → executable
 ```
 
@@ -164,10 +164,10 @@ The tag of an enum is the value of its case, which is its position unless it is 
 ## 4. Toolchain (D28)
 
 - **LLVM and LLD inside `cromo`:** a stable version of LLVM is pinned, because the textual IR format and the API can change between major versions. The tests always run with that version.
-- **Target:** the compiler writes the `target triple`, for example `x86_64-pc-windows-msvc`.
+- **Target:** `--target windows`, the default, or `--target linux` (D142, D144). The compiler writes the `target triple`, `x86_64-pc-windows-msvc` or `x86_64-unknown-linux-gnu`, and `src/target.h` keeps the choice.
 - **Windows (D27):** Microsoft x64 ABI. Linking does not require the Windows SDK: `cromo` writes the import libraries by itself from the list of the functions used, as Zig does, with the code that LLVM already contains (D136).
 - **Without libc (D19):** linking uses a custom entry point and no default libraries. On Windows with `/ENTRY` and `/NODEFAULTLIB`, on Linux with `-nostdlib` and `-static`.
-- **Linux (D27):** at a later stage, with the System V ABI.
+- **Linux (D27, D142):** System V ABI, by cross-compilation from Windows. The ELF driver of LLD, which is in `cromo` with the COFF one, writes a static executable at a fixed address (`-static`, entry point `_start`), without the dynamic loader: it runs on any Linux x64, with or without glibc (D145). The static libraries of the `extern` blocks, `libname.a`, come before the runtime on the command line of the linker, because their C code can call `memcpy` (D143).
 - **Build of the C++ compiler (D53):** C++20 with MSVC, CMake and Ninja, through `build.ps1`. LLVM and LLD come from the official 23.1.4 archive, installed in `C:\software\llvm-23.1.4`.
   - **Static runtime:** the LLVM libraries are Release, with a static C runtime (`/MT`) and without RTTI, so `cromo` uses the same options. This way `cromo.exe` does not require the Visual C++ Redistributable.
   - **zlib, zstd and libxml2:** LLVM was built with these libraries, but the archive does not include them. vcpkg provides them as static libraries (`vcpkg.json`, triplet `x64-windows-static`).
@@ -178,26 +178,28 @@ The tag of an enum is the value of its case, which is its position unless it is 
 
 Neither the C library nor the C++ runtime is used. The runtime and the standard library are written in Cromo, in the `unsafe` dialect (D37), and where needed in assembly or in hand-written LLVM IR. The program talks directly to the operating system:
 - **Windows:** it has no stable system calls, so the functions of `kernel32.dll` are used (`ExitProcess`, `GetStdHandle`, `WriteFile`, `HeapAlloc`/`VirtualAlloc`, `CreateFileW`, …). They are the system API, not libc.
-- **Linux:** direct system calls (`write`, `mmap`, `exit`, …).
+- **Linux:** direct system calls (`write`, `mmap`, `mremap`, `munmap`, `exit_group`), with the `syscall` instruction.
 
 What the runtime must provide:
 - its own **entry point**, which replaces the C runtime startup: it calls `main` and terminates the process with its return value;
 - `cromo_panic(message, where)`: prints the message and terminates the program;
-- **allocator** on top of the system primitives: at first the Windows heap (`HeapAlloc`) is enough, and a simple allocator on top of `mmap` on Linux;
+- **allocator** on top of the system primitives: the Windows heap (`HeapAlloc`), and on Linux a simple allocator of its own on top of `mmap`;
 - **minimal I/O:** writing to stdout and stderr;
 - **number formatting** without libc (D38):
   - integers, in base 10, 16, 2 and 8, are simple;
   - floating-point numbers (`f32`, `f64`) are the most delicate part. They need a dedicated algorithm (for example Ryū) to print the shortest number that reads back identical, and correct rounding when a precision is requested;
-- **symbols that LLVM expects anyway:** `memcpy`, `memmove`, `memset` and `memcmp`, because the optimizer can generate calls to these functions even if the code does not use them. On Windows `__chkstk` is also needed, the stack check for frames larger than 4 KB, and `_fltused`, required when floating-point numbers are used.
+- **symbols that LLVM expects anyway:** `memcpy`, `memmove`, `memset` and `memcmp`, because the optimizer can generate calls to these functions even if the code does not use them. On Windows `__chkstk` is also needed, the stack check for frames larger than 4 KB, and `_fltused`, required when floating-point numbers are used. On Linux LLVM also calls `bcmp`, which is `memcmp`.
 
 Exceptions require nothing from the runtime (D36).
 
 ### The runtime in C (D58, D93)
 Until the bitwise operators and fixed-size arrays exist, the runtime is the freestanding C code in `runtime/`; `extern` (M7) is already there:
-- `cromo_rt.c`: buffered output on stdout and stderr (UTF-8, converted to UTF-16 when writing to a console), the formatting functions called by `print`/`println`, the heap for `list` and `string`, `cromo_exit` and the panics;
-- `mem_x64.S`: `memcpy`, `memset`, `memmove`, `memcmp` and `__chkstk`.
+- `cromo_rt.c`: buffered output on stdout and stderr (UTF-8, converted to UTF-16 when writing to a Windows console), the formatting functions called by `print`/`println`, the heap for `list` and `string`, `cromo_exit` and the panics;
+- `mem_x64.S`: `memcpy`, `memset`, `memmove` and `memcmp`; on Windows `__chkstk`, on Linux `bcmp` and the entry point `_start`, which aligns the stack to 16 bytes and calls `cromo_start`.
 
-CMake compiles them with the clang of the LLVM archive (`-ffreestanding -fno-builtin -nostdlib`), archives them with `llvm-lib` and embeds the library in `cromo.exe` as a byte array (`cmake/embed.cmake`). At link time `cromo` writes it next to the object file and passes it to LLD.
+The two files have a part for each system, chosen with `#ifdef _WIN32` (D142). CMake compiles them twice with the clang of the LLVM archive (`-ffreestanding -fno-builtin -nostdlib`): for Windows it archives them with `llvm-lib` into `cromo_rt.lib`, for Linux with `llvm-ar` into `libcromo_rt.a`. Both libraries are embedded in `cromo.exe` as byte arrays (`cmake/embed.cmake`). At link time `cromo` writes the one of the target next to the object file and passes it to LLD.
+
+The heap on Linux is an allocator without threads (D43). Every block starts with 16 bytes that hold its capacity. The small blocks, up to 4 KB with those 16 bytes, have a size that is a power of two from 32 bytes: they are cut from areas of 1 MB, and the freed ones go to a list for each size, to be used again. The larger blocks have a mapping of their own, which grows with `mremap`.
 
 Floating-point numbers are formatted with big integers, so the digits are always exact: the shortest form uses the algorithm of Steele & White and Burger & Dybvig, and the forms with a precision round the exact value half to even. It was checked against Python on 500 values (random bit patterns, subnormals, extremes, exact ties) in five formats, with no differences.
 
@@ -214,7 +216,7 @@ The generated code calls these functions (all `nounwind`):
 | `cromo_exit(code)` | end of the program, called by `cromo_start` |
 | `cromo_panic(message, len, where)` | panic (D62), exit code 101; `where` points to `{ text, length }` |
 | `cromo_panic_index(index, length, where)` | an index out of bounds (D30) |
-| `cromo_alloc(size)`, `cromo_realloc(p, size)`, `cromo_free(p)` | the heap of the process (`HeapAlloc`); out of memory is a panic |
+| `cromo_alloc(size)`, `cromo_realloc(p, size)`, `cromo_free(p)` | the heap of the process (`HeapAlloc` on Windows); out of memory is a panic |
 | `cromo_uncaught(message, len)` | an exception that leaves `main` (D121), exit code 1 |
 
 `spec` points to a constant `FmtSpec` built by the compiler from the format specification, or is null for `{}`.
@@ -222,7 +224,7 @@ The generated code calls these functions (all `nounwind`):
 ### `memcpy` and `memset` in assembly (D19)
 Implementation for x86-64:
 - **Instructions:** `rep movsb` for `memcpy` and `rep stosb` for `memset`. They are short and, on modern processors (ERMSB), as fast as hand-optimized versions for most sizes.
-- **Calling conventions:** they change between systems, so two variants or some macros are needed. On Windows the arguments arrive in `rcx`, `rdx`, `r8`, on Linux in `rdi`, `rsi`, `rdx`.
+- **Calling conventions:** they change between systems, so the file has two variants. On Windows the arguments arrive in `rcx`, `rdx`, `r8`, and `rdi` and `rsi` must be preserved; on Linux they arrive in `rdi`, `rsi`, `rdx`.
 - **Assembler:** the one integrated in LLVM, with Intel syntax (`.intel_syntax noprefix`). NASM or MASM are not needed.
 
 ## 6. Tests
@@ -235,8 +237,10 @@ Implementation for x86-64:
   // expect-stderr: panic: integer overflow
   // expect-error: 's' has been moved
   // expect-warning: unreachable code
+  // target: windows
   ```
   `tests/run-tests.ps1` compiles and runs each file and compares the result with the expected one; `-Flags -O0` passes extra options to every compilation. With `-Flags --release` the three tests that check the panics of debug mode fail, as expected. The files in a folder named `modules` are imported by the tests, and are not tests themselves. Before the tests the runner builds the C libraries of `tests/m8/native` with the clang of LLVM, next to the modules of `tests/m8`: a DLL, a static library and a DLL for 32 bits. It also sets the error mode of Windows, so that a program that cannot find a DLL ends with an error code instead of opening a window.
+- **Linux:** `-Flags '--target linux'` compiles the tests for Linux and runs them in WSL, in the default distribution or in the one given with `-Distro`; the expected exit code keeps only its lowest byte (D145). `// target: windows` marks the tests that use the DLLs of Windows; the runner also builds `libscale.a` for the static library of `tests/m8`.
 - **IR tests:** a few checks that verify the attributes that matter for the optimizer, for example that a `ref` parameter is really `noalias`.
 - **Later:** differential tests with generated programs.
 
@@ -252,6 +256,7 @@ Each milestone lists the decisions still open that are needed **before** writing
 - **M4** completed on 2026-10-28: generic functions and structs with constraints, deduction of the type arguments, interfaces with `Self`, structs that implement them, static calls through generics and dynamic calls through parameters of interface type. Tests in `tests/m4/`; the choices made for M4 are decisions D84–D92 in [decisions.md](decisions.md).
 - **M5** completed on 2026-10-28: the standard library `library/core.cro` with `list<T>` and `string` written in the `unsafe` dialect, indexing with bounds checking, `for` over the elements, the operators of `string`, `panic`, and the runtime checks of exclusivity between elements. The runtime in C stays (D93). Tests in `tests/m5/`, among them the program of `examples/04_lists.cro`; the choices made for M5 are decisions D93–D103 in [decisions.md](decisions.md).
 - **M6** completed on 2026-10-28: enums with data, methods and type parameters, `switch` on enums, integers and strings, and exceptions with `throw`, `try`, `catch` and `finally`, the interface `Exception` and the struct `Error` of the library. Tests in `tests/m6/`; the choices made for M6 are decisions D104–D125 in [decisions.md](decisions.md).
+- **M9** completed on 2026-10-29: executables for Linux x64 by cross-compilation, with `--target linux`. The runtime in C has a version for Linux, with system calls and an allocator on top of `mmap`, and LLD writes static ELF executables. In `extern` blocks, the static libraries `libname.a`. All the tests that do not use the DLLs of Windows also pass in WSL, at every optimization level. Tests in `tests/m9/`; the choices made for M9 are decisions D142–D146 in [decisions.md](decisions.md).
 - **M8** completed on 2026-10-29: linking without the Windows SDK. `cromo` writes the import libraries of the DLLs, checks the C functions in their export tables, uses a `.lib` next to the module when there is one, and copies the DLLs of the modules next to the executable. Tests in `tests/m8/`; the choices made for M8 are decisions D136–D141 in [decisions.md](decisions.md).
 - **M7** completed on 2026-10-28: modules with `import` of files and folders, `public`, names written with their module when they clash, symbols with the module in front, `import unsafe`, C functions declared in `extern` blocks with their library, `ref` as a C pointer, and the values of the cases of enums. Tests in `tests/m7/`, and the example `examples/05_c_interop.cro`; the choices made for M7 are decisions D126–D135 in [decisions.md](decisions.md).
 
@@ -266,7 +271,7 @@ Each milestone lists the decisions still open that are needed **before** writing
 | **M6** | Exceptions (`try`/`catch`/`finally`) and enums | none: the syntax of enums is D104–D107 |
 | **M7** | Modules and interoperability with C | none: D126–D129 |
 | **M8** | No Windows SDK: import libraries generated by `cromo` | none: D136–D138 |
-| **M9** | Linux | none |
+| **M9** | Linux | none: D142–D143 |
 | **M10** | Compiler written in Cromo that compiles itself (§2) | none |
 
 Generics come before containers because `list<T>` is written in Cromo as a generic struct (D37, D39).

@@ -1,0 +1,13 @@
+// target: linux
+// expect-error: cannot find the library 'nosuchlibrary': there is no libnosuchlibrary.a next to the modules that use it (D143)
+// For Linux an extern block is a static library next to the module (D143).
+import unsafe
+
+extern "nosuchlibrary" {
+    void Nothing()
+}
+
+i32 main() {
+    Nothing()
+    ret 0
+}

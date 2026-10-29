@@ -67,7 +67,7 @@ struct Use {
 
 }  // namespace
 
-Libraries findLibraries(const Module& module, const std::deque<SourceFile>& sources, Diagnostics& diag) {
+Libraries findLibraries(const Module& module, const std::deque<SourceFile>& sources, Target target, Diagnostics& diag) {
     std::vector<Use> uses;
     for (const FunctionDecl& function : module.functions) {
         if (!function.isExtern) continue;
@@ -82,6 +82,21 @@ Libraries findLibraries(const Module& module, const std::deque<SourceFile>& sour
     }
 
     Libraries libraries;
+    if (target == Target::Linux) {  // the linker checks the names (D146)
+        for (const Use& use : uses) {
+            std::string file = "lib" + use.name + ".a";
+            auto folder = std::find_if(use.folders.begin(), use.folders.end(),
+                                       [&](const fs::path& f) { return isFile(f / file); });
+            if (folder != use.folders.end()) {
+                libraries.archives.push_back((*folder / file).string());
+            } else {
+                diag.error(use.functions[0]->loc, "cannot find the library '" + use.name + "': there is no " + file +
+                                                      " next to the modules that use it (D143)");
+            }
+        }
+        return libraries;
+    }
+
     fs::path system = systemFolder();
     for (const Use& use : uses) {
         fs::path archive;

@@ -1,5 +1,6 @@
 // expect-output: 5
 // expect-output: 42
+// target: windows
 // A DLL next to a module (D136). The executable is written to tests/out: it
 // starts only because cromo copies adder.dll there (D138).
 import modules.adder

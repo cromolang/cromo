@@ -3,6 +3,7 @@
 // expect-output: false
 // expect-output: 42
 // expect-output: true
+// target: windows
 // C functions of three system DLLs, linked without the Windows SDK: cromo writes
 // their import libraries (D136).
 import unsafe
