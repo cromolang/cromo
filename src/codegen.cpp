@@ -70,8 +70,15 @@ std::string floatConstant(double value, int bits) {
     return text;
 }
 
-// Structs and arrays larger than 16 bytes are passed and returned through a pointer.
-bool byPointer(Type type) { return type.isAggregate() && sizeOf(type) > 16; }
+// A Mutex, or a value that holds one: other threads write it through its address (D216).
+bool isAddressed(Type type) {
+    type = baseElement(type);
+    return type.isStruct() && type.structDecl->addressed;
+}
+
+// Structs and arrays larger than 16 bytes are passed and returned through a pointer,
+// and so are the values whose address matters (D216).
+bool byPointer(Type type) { return type.isAggregate() && (sizeOf(type) > 16 || isAddressed(type)); }
 
 // A `ref` parameter is always an address; the others are when they are large (D22).
 // A parameter of interface type is always a pair of pointers passed by value (D49).
@@ -309,14 +316,14 @@ public:
         if (freesExceptions_) out << freeExceptionFunction();
         out << globals_.str() << "\n";
         for (const FunctionDecl* function : externs) out << externDeclaration(*function);
-        out << "declare void @cromo_write(i32, ptr, i64) nounwind\n";
-        out << "declare void @cromo_fmt_int(i32, i64, i32, ptr) nounwind\n";
-        out << "declare void @cromo_fmt_f64(i32, double, ptr) nounwind\n";
-        out << "declare void @cromo_fmt_f32(i32, float, ptr) nounwind\n";
-        out << "declare void @cromo_fmt_bool(i32, i32, ptr) nounwind\n";
-        out << "declare void @cromo_fmt_str(i32, ptr, i64, ptr) nounwind\n";
-        out << "declare void @cromo_print_end(i32, i32) nounwind\n";
-        out << "declare void @cromo_format_end(ptr, ptr, ptr) nounwind\n";
+        out << "declare void @cromo_write(i64, ptr, i64) nounwind\n";
+        out << "declare void @cromo_fmt_int(i64, i64, i32, ptr) nounwind\n";
+        out << "declare void @cromo_fmt_f64(i64, double, ptr) nounwind\n";
+        out << "declare void @cromo_fmt_f32(i64, float, ptr) nounwind\n";
+        out << "declare void @cromo_fmt_bool(i64, i32, ptr) nounwind\n";
+        out << "declare void @cromo_fmt_str(i64, ptr, i64, ptr) nounwind\n";
+        out << "declare void @cromo_print_begin() nounwind\n";
+        out << "declare void @cromo_print_end(i64, i32) nounwind\n";
         out << "declare double @cromo_parse_float(ptr, i64, i64) nounwind\n";
         out << "declare i64 @cromo_hash_bytes(ptr, i64) nounwind readonly\n";
         out << "declare i64 @cromo_hash_bits(i64) nounwind readnone\n";
@@ -535,13 +542,19 @@ private:
         Type ret = function.resolvedReturn;
         std::vector<std::string> params;
         if (byPointer(ret)) params.push_back("ptr noalias sret(" + llvmType(ret) + ") %ret");
-        if (function.owner) params.push_back(std::string("ptr noalias ") + (function.isConst ? "readonly " : "") + "%self");
+        if (function.owner && function.owner->addressed) {  // other threads write it too (D216)
+            params.push_back("ptr %self");
+        } else if (function.owner) {
+            params.push_back(std::string("ptr noalias ") + (function.isConst ? "readonly " : "") + "%self");
+        }
         if (function.isLambda) params.push_back("ptr %env");  // the captured data (D183)
         for (size_t i = 0; i < function.paramTypes.size(); ++i) {
             const Param& param = function.params[i];
             Type type = function.paramTypes[i];
             std::string arg = "%arg." + std::to_string(i);
-            if (byAddress(param, type)) {
+            if (byAddress(param, type) && isAddressed(type)) {  // a mutex is written by other threads (D216)
+                params.push_back("ptr " + arg);
+            } else if (byAddress(param, type)) {
                 params.push_back(std::string("ptr noalias ") + (param.mode == ParamMode::Read ? "readonly " : "") + arg);
             } else {
                 params.push_back(llvmType(type) + " " + arg);
@@ -829,7 +842,12 @@ private:
             term("br i1 " + owned + ", label %" + release + ", label %" + done);
             block(release);
             std::string destroy = temp();
+            std::string kept = temp();
+            std::string call = label("release.call");
             inst(destroy + " = load ptr, ptr " + env);
+            inst(kept + " = icmp eq ptr " + destroy + ", null");  // data in a frame that own nothing (D215)
+            term("br i1 " + kept + ", label %" + done + ", label %" + call);
+            block(call);
             inst("call void " + destroy + "(ptr " + env + ")");
             term("br label %" + done);
             block(done);
@@ -1924,6 +1942,50 @@ private:
         case Intrinsic::ArgumentData:
             inst(result + " = call ptr @cromo_arg_data(i64 " + arg(0) + ")");
             return {result, addr};
+        case Intrinsic::ThreadStart: {  // D214
+            Value body = generateExpr(*call.args[0]);
+            std::string code = temp();
+            std::string env = temp();
+            std::string empty = temp();
+            inst(code + " = extractvalue { ptr, ptr } " + body.ref + ", 0");
+            inst(env + " = extractvalue { ptr, ptr } " + body.ref + ", 1");
+            inst(empty + " = icmp eq ptr " + code + ", null");
+            panicIf(empty, "the function is empty: no lambda was given to it (D189)", call.loc);
+            std::string fn = intrinsic("declare ptr @cromo_thread_start(ptr, ptr) nounwind", "@cromo_thread_start");
+            inst(result + " = call ptr " + fn + "(ptr " + code + ", ptr " + env + ")");
+            return {result, addr};
+        }
+        case Intrinsic::ThreadWait: {
+            std::string fn = intrinsic("declare i32 @cromo_thread_wait(ptr) nounwind", "@cromo_thread_wait");
+            std::string ended = temp();
+            inst(ended + " = call i32 " + fn + "(ptr " + arg(0) + ")");
+            inst(result + " = icmp ne i32 " + ended + ", 0");
+            return {result, Type::boolType()};
+        }
+        case Intrinsic::ThreadRethrow: {  // D217: the exception goes on in this thread
+            std::string fn = intrinsic("declare void @cromo_thread_take(ptr, ptr) nounwind", "@cromo_thread_take");
+            inst("call void " + fn + "(ptr " + arg(0) + ", ptr " + raisedSlot() + ")");
+            emitPropagation();
+            return {"", Type::voidType()};
+        }
+        case Intrinsic::ThreadUncaught: {
+            std::string fn = intrinsic("declare void @cromo_thread_uncaught(ptr) noreturn nounwind", "@cromo_thread_uncaught");
+            inst("call void " + fn + "(ptr " + arg(0) + ")");
+            term("unreachable");
+            return {"", Type::voidType()};
+        }
+        case Intrinsic::ThreadFree:
+        case Intrinsic::MutexLock:
+        case Intrinsic::MutexUnlock: {
+            const char* name = call.intrinsic == Intrinsic::ThreadFree ? "@cromo_thread_free"
+                               : call.intrinsic == Intrinsic::MutexLock ? "@cromo_mutex_lock"
+                                                                         : "@cromo_mutex_unlock";
+            std::string fn = intrinsic(std::string("declare void ") + name + "(ptr) nounwind", name);
+            inst("call void " + fn + "(ptr " + arg(0) + ")");
+            return {"", Type::voidType()};
+        }
+        case Intrinsic::SelfAddress:
+            return {"%self", addr};
         case Intrinsic::SystemCall: {  // Linux (D202): an address is passed as an integer
             std::string args;
             for (size_t i = 0; i < 7; ++i) {
@@ -2030,7 +2092,7 @@ private:
         std::string pair = temp();
         inst(half + " = insertvalue { ptr, ptr } undef, ptr " + code + ", 0");
         inst(pair + " = insertvalue { ptr, ptr } " + half + ", ptr " + env + ", 1");
-        if (lambda.onStack && owns) {
+        if (lambda.onStack && owns && !lambda.forThread) {  // the thread owns them (D215)
             std::string place = slot(lambda.type);
             inst("store { ptr, ptr } " + pair + ", ptr " + place);
             temporaries_.push_back(LiveObject{place, lambda.type, nullptr});
@@ -2423,14 +2485,22 @@ private:
         return {result, to};
     }
 
-    // print/println: the format was parsed by sema, so here there are only calls
-    // to the runtime, one per piece (D38).
-    // print and println, or format into `dest` (D200): the arguments are computed
-    // first, so a format inside them is finished before this one starts writing.
+    // print and println, or format into `dest` (D200): the format was parsed by
+    // sema, so here there are only calls to the runtime, one per piece (D38). The
+    // arguments are computed first: a format inside them is finished before this
+    // one starts writing.
     void generatePrint(const PrintExpr& print, const std::string& dest) {
-        std::string stream = "i32 " + std::to_string(print.stream);
+        std::string stream = "i64 " + std::to_string(print.stream);
         std::vector<Value> values;
         for (const ExprPtr& arg : print.args) values.push_back(generateExpr(*arg));
+        if (print.stream == 3) {  // the runtime writes into the string itself, which starts empty
+            storeDefault(dest, print.type);
+            std::string address = temp();
+            inst(address + " = ptrtoint ptr " + dest + " to i64");
+            stream = "i64 " + address;
+        } else {
+            inst("call void @cromo_print_begin()");  // one print at a time among the threads (D214)
+        }
 
         for (const FormatPiece& piece : print.pieces) {
             if (piece.arg < 0) {
@@ -2472,13 +2542,7 @@ private:
                      std::to_string(literal.value.size()) + ", " + spec + ")");
             }
         }
-        if (print.stream == 3) {  // the string takes the memory written
-            const StructDecl& decl = *print.type.structDecl;
-            inst("call void @cromo_format_end(ptr " + listField(dest, decl, "data") + ", ptr " + listField(dest, decl, "length") +
-                 ", ptr " + listField(dest, decl, "capacity") + ")");
-            return;
-        }
-        inst("call void @cromo_print_end(" + stream + ", i32 " + (print.newline ? "1" : "0") + ")");
+        if (print.stream != 3) inst("call void @cromo_print_end(" + stream + ", i32 " + (print.newline ? "1" : "0") + ")");
     }
 
     const CodegenOptions& options_;

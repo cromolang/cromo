@@ -1,0 +1,12 @@
+// In release LLVM must call only the memory functions of the runtime: a loop that
+// counts the bytes of a C string stays a loop, not a call to strlen (D19).
+// cromo-flags: --release
+// expect-output: found true
+import std.fs
+import std.time
+
+i32 main() {
+    list<string> names = fs.listFolder(".")
+    println("found {}", names.len() > 0 && time.utcNow().year > 2000)
+    ret 0
+}

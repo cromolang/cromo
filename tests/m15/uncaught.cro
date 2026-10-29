@@ -1,0 +1,10 @@
+// An exception that no join() takes stops the program (D217).
+// expect-exit: 1
+// expect-stderr: uncaught exception in a thread: lost
+import std.thread
+
+i32 main() {
+    thread.Thread t = thread.Thread([]() { throw Error("lost") })
+    t.start()
+    ret 0
+}

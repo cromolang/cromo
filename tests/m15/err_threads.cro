@@ -1,0 +1,34 @@
+// The checks of the threads of a block (D215).
+// expect-error: 'values' is used by the thread 'a' until a.join() (D215)
+// expect-error: 'names' cannot be modified while the thread 'b' runs (D215)
+// expect-error: 'values' is used by the thread 'a' until a.join() (D215)
+// expect-error: the thread 'other' cannot start: 'values' is used by the thread 'a' until a.join() (D215)
+// expect-error: start() of a thread of a block is written directly in the block that declares 'c' (D215)
+// expect-error: 'a' is a thread of its block, which captures by address: it cannot be moved, assigned, returned, passed with 'ref' or captured (D215)
+// expect-error: a thread whose lambda captures by address belongs to its block: declare it, as thread.Thread t = thread.Thread(...) (D215)
+// expect-error: the thread 'b' is already started (D214)
+import std.thread
+
+void keep(move thread.Thread t) {
+}
+
+i32 main() {
+    list<i64> values
+    list<string> names
+    thread.Thread a = thread.Thread([ref values]() { values.add(1) })
+    thread.Thread b = thread.Thread([names]() { println("{}", names.len()) })
+    a.start()
+    b.start()
+    println("{}", values.len())
+    names.add("x")
+    thread.Thread other = thread.Thread([ref values]() { values.clear() })
+    other.start()
+    thread.Thread c = thread.Thread([ref names]() { names.clear() })
+    if (true) {
+        c.start()
+    }
+    keep(move a)
+    keep(thread.Thread([ref values]() { values.clear() }))
+    b.start()
+    ret 0
+}

@@ -1,0 +1,37 @@
+// format and the heap in several threads at once (D200, D214).
+// expect-output: wrong 0
+import std.thread
+
+i64 check(i64 id) {
+    i64 wrong = 0
+    for (i64 i = 0; i < 20000; i++) {
+        string text = format("thread {} line {} {}", id, i, "end")
+        string expected = "thread "
+        expected += format("{}", id)
+        expected += " line "
+        expected += format("{}", i)
+        expected += " end"
+        if (text != expected) {
+            wrong++
+        }
+    }
+    ret wrong
+}
+
+i32 main() {
+    i64 a = 0
+    i64 b = 0
+    i64 c = 0
+    thread.Thread one = thread.Thread([ref a]() { a = check(1) })
+    thread.Thread two = thread.Thread([ref b]() { b = check(2) })
+    thread.Thread three = thread.Thread([ref c]() { c = check(3) })
+    one.start()
+    two.start()
+    three.start()
+    i64 d = check(4)
+    one.join()
+    two.join()
+    three.join()
+    println("wrong {}", a + b + c + d)
+    ret 0
+}

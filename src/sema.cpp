@@ -39,7 +39,11 @@ std::optional<Intrinsic> findIntrinsic(const std::string& name) {
         {"argumentLength", Intrinsic::ArgumentLength}, {"argumentData", Intrinsic::ArgumentData},
         {"decimalToFloat", Intrinsic::DecimalToFloat}, {"hashBytes", Intrinsic::HashBytes},
         {"systemCall", Intrinsic::SystemCall}, {"environment", Intrinsic::Environment},
-        {"exitProcess", Intrinsic::ExitProcess},
+        {"exitProcess", Intrinsic::ExitProcess}, {"threadStart", Intrinsic::ThreadStart},
+        {"threadWait", Intrinsic::ThreadWait}, {"threadRethrow", Intrinsic::ThreadRethrow},
+        {"threadUncaught", Intrinsic::ThreadUncaught}, {"threadFree", Intrinsic::ThreadFree},
+        {"mutexLock", Intrinsic::MutexLock}, {"mutexUnlock", Intrinsic::MutexUnlock},
+        {"selfAddress", Intrinsic::SelfAddress},
     };
     auto found = intrinsics.find(name);
     if (found == intrinsics.end()) return std::nullopt;
@@ -993,6 +997,20 @@ private:
         auto [size, align] = layoutFields(decl, decl.fields, destruct);
         decl.size = size;
         decl.align = align;
+        // A mutex is written by the threads through its address, also in a const
+        // method; so is what holds one (D216).
+        const StructDecl* generic = decl.generic ? decl.generic : &decl;
+        decl.addressed = generic->name == "Mutex" && fileOf(scopeOf(generic->loc.file)).name == "std.thread";
+        for (const FieldDecl& field : decl.fields) {
+            Type base = baseElement(field.resolved);
+            if (base.isStruct() && base.structDecl->addressed) decl.addressed = true;
+        }
+        for (const EnumCase& item : decl.cases) {
+            for (const FieldDecl& field : item.fields) {
+                Type base = baseElement(field.resolved);
+                if (base.isStruct() && base.structDecl->addressed) decl.addressed = true;
+            }
+        }
         if (decl.isEnum) {
             // A tag, then the data of the current case: the largest case decides
             // the size, the most aligned one where the data start.
@@ -1399,6 +1417,9 @@ private:
         insertTarget_ = true;  // `m[k] = v` adds the key (D197)
         Type type = checkExpr(target, std::nullopt);
         if (type.isError()) return type;
+        if (target->kind == ExprKind::Name && !checkNotBlockThread(*static_cast<NameExpr&>(*target).variable, target->loc)) {
+            return Type::error();
+        }
         if (!isPlace(*target)) {
             diag_->error(target->loc, "only a variable, a field or an element can be assigned");
             return Type::error();
@@ -1410,6 +1431,75 @@ private:
         }
         if (!checkNotBorrowed(*target, target->loc)) return Type::error();
         return type;
+    }
+
+    // ---- Threads of a block (D215) ----
+
+    bool isThreadStruct(const StructDecl& decl) const {
+        return decl.name == "Thread" && fileOf(scopeOf(decl.loc.file)).name == "std.thread";
+    }
+
+    // A thread of a block stays where it is declared, as its lambda (D184).
+    bool checkNotBlockThread(const Variable& variable, SourceLocation loc) {
+        if (!variable.blockThread) return true;
+        diag_->error(loc, "'" + variable.name + "' is a thread of its block, which captures by address: it cannot be moved, "
+                                                "assigned, returned, passed with 'ref' or captured (D215)");
+        return false;
+    }
+
+    // While a thread runs, the block does not touch what it has with `ref` (D215).
+    void checkNotUsedByThread(const Variable& variable, SourceLocation loc) {
+        for (const ThreadBorrow& borrow : threadBorrows_) {
+            if (borrow.exclusive && borrow.captured == &variable) {
+                diag_->error(loc, "'" + variable.name + "' is used by the thread '" + borrow.thread->name + "' until " +
+                                      borrow.thread->name + ".join() (D215)");
+                return;
+            }
+        }
+    }
+
+    // `t.start()` and `t.join()` of a thread of a block: from start() on, what the
+    // thread captures by address is lent to it, as the elements of a `for` (D101).
+    void threadControl(const MethodCallExpr& call) {
+        if (call.object->kind != ExprKind::Name || (call.method != "start" && call.method != "join")) return;
+        const Variable* thread = static_cast<const NameExpr&>(*call.object).variable;
+        if (!thread || !thread->blockThread) return;
+        auto declared = scopes_.back().find(thread->name);
+        if (declared == scopes_.back().end() || declared->second != thread) {
+            diag_->error(call.loc, call.method + "() of a thread of a block is written directly in the block that declares '" +
+                                       thread->name + "' (D215)");
+            return;
+        }
+        if (call.method == "join") {
+            endThread(*thread);
+            return;
+        }
+        for (const ThreadBorrow& borrow : threadBorrows_) {
+            if (borrow.thread == thread) {
+                diag_->error(call.loc, "the thread '" + thread->name + "' is already started (D214)");
+                return;
+            }
+        }
+        for (const Capture& capture : thread->blockThread->captures) {
+            if (!capture.outer || !capture.byAddress) continue;
+            bool exclusive = capture.mode == ParamMode::Ref;
+            for (const ThreadBorrow& borrow : threadBorrows_) {
+                if (borrow.captured != capture.outer || (!exclusive && !borrow.exclusive)) continue;
+                diag_->error(call.loc, "the thread '" + thread->name + "' cannot start: '" + capture.name +
+                                           "' is used by the thread '" + borrow.thread->name + "' until " +
+                                           borrow.thread->name + ".join() (D215)");
+                return;
+            }
+            threadBorrows_.push_back({thread, capture.outer, exclusive});
+            Path path;
+            path.variable = capture.outer;
+            loopBorrows_.push_back({path, "while the thread '" + thread->name + "' runs (D215)", thread});
+        }
+    }
+
+    void endThread(const Variable& thread) {
+        std::erase_if(threadBorrows_, [&](const ThreadBorrow& borrow) { return borrow.thread == &thread; });
+        std::erase_if(loopBorrows_, [&](const LoopBorrow& borrow) { return borrow.thread == &thread; });
     }
 
     // D101: while a `for` goes over the elements of a list, the list cannot be
@@ -1523,6 +1613,7 @@ private:
         }
         if (operand.kind == ExprKind::Name) {
             Variable* variable = static_cast<const NameExpr&>(operand).variable;
+            if (!checkNotBlockThread(*variable, node.loc)) return Type::error();
             switch (variable->kind) {
             case VariableKind::Local:
             case VariableKind::MoveParam:
@@ -1586,6 +1677,10 @@ private:
             Flow next = checkStatement(*statement);
             if (flow == Flow::Continues) flow = next;
         }
+        // The threads of this block end with it (D215).
+        for (const auto& [name, variable] : scopes_.back()) {
+            if (variable->blockThread) endThread(*variable);
+        }
         scopes_.pop_back();
         return flow;
     }
@@ -1632,9 +1727,14 @@ private:
             diag_->error(decl.nameLoc, "a const variable must have a value (D51)");
         }
         if (decl.init && !type.isError()) {
+            threadInit_ = decl.init.get();
             if (coerceValue(decl.init, type)) checkNotCopied(*decl.init, type);
+            threadInit_ = nullptr;
         }
         decl.variable = declare(decl.name, type, decl.nameLoc, decl.isConst);
+        if (decl.variable && decl.init && decl.init->kind == ExprKind::Construct) {
+            decl.variable->blockThread = static_cast<const ConstructExpr&>(*decl.init).blockThread;
+        }
     }
 
     void checkAssign(AssignStmt& assign) {
@@ -1699,6 +1799,7 @@ private:
         }
         Type ignored = checkExpr(statement.expr, std::nullopt);
         (void)ignored;
+        if (statement.expr->kind == ExprKind::MethodCall) threadControl(static_cast<const MethodCallExpr&>(*statement.expr));
         // D102: a panic ends the path, like `ret` (D67).
         bool panics = statement.expr->kind == ExprKind::Call &&
                       static_cast<const CallExpr&>(*statement.expr).intrinsic == Intrinsic::Panic;
@@ -2173,6 +2274,7 @@ private:
         // D23: `ret` of a local variable moves it without writing `move`.
         const Expr& value = *ret.value;
         const Variable* variable = value.kind == ExprKind::Name ? static_cast<const NameExpr&>(value).variable : nullptr;
+        if (variable && !checkNotBlockThread(*variable, value.loc)) return;
         if (variable && (variable->kind == VariableKind::Local || variable->kind == VariableKind::MoveParam)) return;
         checkNotCopied(value, type);
     }
@@ -2226,8 +2328,11 @@ private:
         bool moveAllowed = std::exchange(moveAllowed_, false);
         bool lambdaArgument = std::exchange(lambdaArgument_, false);
         bool insertTarget = std::exchange(insertTarget_, false);
+        bool threadLambda = std::exchange(threadLambda_, false);
         switch (expr->kind) {
-        case ExprKind::Lambda: return checkLambda(static_cast<LambdaExpr&>(*expr), lambdaArgument);
+        case ExprKind::Lambda:
+            static_cast<LambdaExpr&>(*expr).forThread = threadLambda;
+            return checkLambda(static_cast<LambdaExpr&>(*expr), lambdaArgument || threadLambda);
         case ExprKind::CallValue: return checkCallValue(expr);
         case ExprKind::IntLiteral: return checkIntLiteral(static_cast<IntLiteralExpr&>(*expr), expected);
         case ExprKind::FloatLiteral: return checkFloatLiteral(static_cast<FloatLiteralExpr&>(*expr), expected);
@@ -2303,6 +2408,7 @@ private:
         auto& name = static_cast<NameExpr&>(*expr);
         if (Variable* variable = lookup(name.name)) {
             name.variable = variable;
+            checkNotUsedByThread(*variable, name.loc);
             return variable->type;
         }
         if (ownFieldIndex(name.name) >= 0) {
@@ -2457,6 +2563,10 @@ private:
             auto& ref = static_cast<RefExpr&>(*arg);
             Type found = checkExpr(ref.operand, std::nullopt);
             if (found.isError()) return false;
+            if (ref.operand->kind == ExprKind::Name &&
+                !checkNotBlockThread(*static_cast<NameExpr&>(*ref.operand).variable, ref.loc)) {
+                return false;
+            }
             if (!isPlace(*ref.operand)) {
                 diag_->error(ref.loc, "only a variable or a field can be passed with 'ref' (D82)");
                 return false;
@@ -2601,7 +2711,9 @@ private:
                 auto qualified = std::make_unique<CallExpr>(call.loc, call.method);
                 qualified->module = std::move(module);
                 qualified->args = std::move(call.args);
+                bool declared = threadInit_ == expr.get();  // `thread.Thread(...)` (D215)
                 expr = std::move(qualified);
+                if (declared) threadInit_ = expr.get();
                 return checkCall(expr);
             }
         }
@@ -3091,6 +3203,26 @@ private:
             result = i64;
             break;
         case Intrinsic::Environment: params = {{ParamMode::Read, "index", i64}}; result = addr; break;
+        case Intrinsic::ThreadStart:  // D214
+            params = {{ParamMode::Read, "body", Type::functionType(internSignature({}, {}, Type::voidType()))}};
+            result = addr;
+            break;
+        case Intrinsic::ThreadWait: params = {{ParamMode::Read, "thread", addr}}; result = Type::boolType(); break;
+        case Intrinsic::ThreadRethrow:  // D217: whatever the thread threw
+            params = {{ParamMode::Read, "thread", addr}};
+            noteThrow(nullptr, call.loc);
+            break;
+        case Intrinsic::ThreadUncaught:
+        case Intrinsic::ThreadFree:
+        case Intrinsic::MutexLock:
+        case Intrinsic::MutexUnlock: params = {{ParamMode::Read, "address", addr}}; break;
+        case Intrinsic::SelfAddress:  // D216: the object of the method, written by other threads too
+            if (!current_->owner) {
+                diag_->error(call.loc, "selfAddress() is used in a method");
+                return Type::error();
+            }
+            result = addr;
+            break;
         case Intrinsic::ExitProcess: params = {{ParamMode::Read, "code", Type::intType(32, true)}}; break;
         case Intrinsic::None: break;
         }
@@ -3263,6 +3395,8 @@ private:
                 continue;
             }
             capture.outer = outer;
+            checkNotBlockThread(*outer, capture.loc);
+            checkNotUsedByThread(*outer, capture.loc);
             NameExpr place(capture.loc, capture.name);
             place.variable = outer;
             place.type = outer->type;
@@ -3297,7 +3431,8 @@ private:
         auto outerRegions = std::move(regions_);
         hiddenScopes_.push_back(&outerScopes);
 
-        function.symbol = symbolFor(lambda.loc, "lambda." + std::to_string(module_.lambdas.size()));
+        // A counter of its own: a lambda inside another is checked before the outer one is listed.
+        function.symbol = symbolFor(lambda.loc, "lambda." + std::to_string(nextLambda_++));
         function.isAbstract = outerFunction->isAbstract;
         resolveSignature(function);
         current_ = &function;
@@ -3342,7 +3477,9 @@ private:
         regions_ = std::move(outerRegions);
 
         module_.lambdas.push_back(&lambda);
-        lambda.onStack = asArgument;
+        // Given to a thread, only the data of a lambda that captures by address stay
+        // in the frame; the others go with the thread, on the heap (D215).
+        lambda.onStack = lambda.forThread ? lambda.borrows : asArgument;
         if (lambda.borrows && !asArgument) {
             diag_->error(lambda.loc, "this lambda captures by address (with 'ref', or reading a value that is not simple): "
                                      "it can only be passed as an argument; capture with 'move' to keep it (D184)");
@@ -3607,6 +3744,8 @@ private:
     // `Student("Anna")`: calls the constructor; without one, `Point()` is the default value (D71).
     Type checkConstruct(ExprPtr& expr, StructDecl* decl) {
         auto& call = static_cast<CallExpr&>(*expr);
+        bool declared = std::exchange(threadInit_, nullptr) == expr.get();
+        bool thread = isThreadStruct(*decl) && call.args.size() == 1 && call.args[0]->kind == ExprKind::Lambda;
         auto construct = std::make_unique<ConstructExpr>(call.loc, decl);
         construct->args = std::move(call.args);
         expr = std::move(construct);
@@ -3621,8 +3760,17 @@ private:
             }
             use(decl->constructor, node.loc);
             noteCall(decl->constructor, node.loc);
-            if (!checkArgs(node.args, *decl->constructor, "the constructor of " + decl->name, node.loc, &node.overlaps)) {
-                return Type::error();
+            threadLambda_ = thread;  // D215: the lambda of a thread may capture by address
+            bool ok = checkArgs(node.args, *decl->constructor, "the constructor of " + decl->name, node.loc, &node.overlaps);
+            threadLambda_ = false;
+            if (!ok) return Type::error();
+            if (thread && node.args[0]->kind == ExprKind::Lambda && static_cast<LambdaExpr&>(*node.args[0]).borrows) {
+                if (!declared) {
+                    diag_->error(node.loc, "a thread whose lambda captures by address belongs to its block: declare it, as "
+                                           "thread.Thread t = thread.Thread(...) (D215)");
+                    return Type::error();
+                }
+                node.blockThread = static_cast<const LambdaExpr*>(node.args[0].get());
             }
         } else if (!node.args.empty()) {
             diag_->error(node.loc, decl->name + " has no constructor: " + decl->name + "() gives its default value (D71)");
@@ -3928,7 +4076,17 @@ private:
     struct LoopBorrow {
         Path path;
         std::string reason;
+        const Variable* thread = nullptr;  // lent to a thread of a block (D215)
     };
+    struct ThreadBorrow {
+        const Variable* thread;
+        const Variable* captured;
+        bool exclusive;  // with `ref`: the block cannot even read it
+    };
+    std::vector<ThreadBorrow> threadBorrows_;
+    bool threadLambda_ = false;           // the next lambda checked is given to a thread (D215)
+    int nextLambda_ = 0;                  // for the symbols of the lambdas
+    const Expr* threadInit_ = nullptr;    // the value of the declaration being checked
     std::vector<LoopBorrow> loopBorrows_;  // also the values of `switch` whose data are named (D125)
     std::vector<size_t> switchLoops_;      // for each enclosing `switch`, how many loops enclose it (D116)
 

@@ -1,0 +1,100 @@
+// Threads of a block and free threads (D214, D215).
+// expect-output: sorted 1 2 3 4 | 5 6 7 8
+// expect-output: 0
+// expect-output: sum 500500 and 1500500
+// expect-output: free 42
+// expect-output: moved 7
+// expect-output: list 3 done 6
+import std.thread
+
+void sort(ref list<i64> values) {
+    for (i64 i = 0; i < values.len(); i++) {
+        for (i64 j = i + 1; j < values.len(); j++) {
+            if (values[j] < values[i]) {
+                i64 kept = values[i]
+                values[i] = values[j]
+                values[j] = kept
+            }
+        }
+    }
+}
+
+i64 total(list<i64> values, i64 from, i64 to) {
+    i64 sum = 0
+    for (i64 i = from; i < to; i++) {
+        sum += values[i]
+    }
+    ret sum
+}
+
+thread.Thread worker(i64 value) {
+    list<i64> data
+    data.add(value)
+    thread.Thread t = thread.Thread([move data]() {
+        println("moved {}", data[0])
+    })
+    ret t
+}
+
+i32 main() {
+    list<i64> left
+    left.add(4)
+    left.add(2)
+    left.add(3)
+    left.add(1)
+    list<i64> right
+    right.add(8)
+    right.add(6)
+    right.add(5)
+    right.add(7)
+    thread.Thread a = thread.Thread([ref left]() { sort(ref left) })
+    thread.Thread b = thread.Thread([ref right]() { sort(ref right) })
+    a.start()
+    b.start()
+    a.join()
+    b.join()
+    println("sorted {} {} {} {} | {} {} {} {}", left[0], left[1], left[2], left[3], right[0], right[1], right[2], right[3])
+
+    // Two threads read the same list, each with its own result.
+    list<i64> numbers
+    for (i64 i = 1; i <= 2000; i++) {
+        numbers.add(i)
+    }
+    i64 low = 0
+    i64 high = 0
+    thread.Thread first = thread.Thread([numbers, ref low]() { low = total(numbers, 0, 1000) })
+    thread.Thread second = thread.Thread([numbers, ref high]() { high = total(numbers, 1000, 2000) })
+    first.start()
+    second.start()
+    println("{}", numbers.len() - 2000)
+    first.join()
+    second.join()
+    println("sum {} and {}", low, high)
+
+    // A free thread owns what it captures, and can be kept and moved.
+    i64 answer = 42
+    thread.Thread free = thread.Thread([answer]() { println("free {}", answer) })
+    free.start()
+    free.join()
+    thread.Thread kept = worker(7)
+    kept.start()
+    kept.join()
+
+    list<thread.Thread> pool
+    for (i64 i = 1; i <= 3; i++) {
+        pool.add(thread.Thread([i]() {
+            i64 square = i * i
+            square -= square
+        }))
+    }
+    for (ref thread.Thread t in pool) {
+        t.start()
+    }
+    i64 joined = 0
+    for (ref thread.Thread t in pool) {
+        t.join()
+        joined += 1
+    }
+    println("list {} done {}", pool.len(), joined + 3)
+    ret 0
+}

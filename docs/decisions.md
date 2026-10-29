@@ -1184,6 +1184,55 @@ extern "kernel32" {
 ### D213. Cromo, and cromolang on the web
 *2026-10-29.* It completes D1. The language stays Cromo, and its command `cromo`. On the web, where *cromo* is a common word and close to Chrome, its name is **cromolang**: the domain `cromolang.org`, the accounts and the searches, as Go does with *golang* and Zig with `ziglang.org`. The site is in `site/`, with the logo: the tile of chromium, element 24, Cr.
 
+### D214. Threads: an object to start and to wait for
+*2026-10-29.* It resolves the open point of D149. The module `std.thread` has `Thread`, made from a lambda (D183), started with `start()` and waited for with `join()`, as in Java and close to `std::thread` of C++:
+```
+thread.Thread t = thread.Thread([ref left]() { sort(ref left) })
+t.start()
+sort(ref right)
+t.join()
+```
+
+### D215. Threads of a block and free threads
+*2026-10-29.* A thread whose lambda captures with `ref`, or reads an object without copying it, is a thread of its block, as that lambda (D184): it cannot be moved, returned or kept, and at the end of the block it is waited for. While it runs, from `start()` to `join()` or to the end of the block, the block cannot use what the thread has with `ref`, nor modify what it reads: the rule of the elements of a `for` (D101), checked by the compiler, so that two threads never write the same data. A thread that captures only with `move`, or values of simple types, is free: it owns its data, it can be moved and kept in lists, and it lives beyond its block.
+
+### D216. Mutex
+*2026-10-29.* `thread.Mutex<T>` holds its data, which are reached only while it is locked, inside a lambda: `total.lock([](ref i64 t) { t += 1 })`. Several threads of a block can read the same mutex, and `lock` gives `ref` to its data. In M15 it is the only means of synchronization: shared values with an atomic counter, channels and atomic integers can come later.
+
+### D217. The exceptions of a thread
+*2026-10-29.* An exception that leaves the lambda of a thread is thrown again by `join()`, as `std::future` of C++. A thread whose exception is never taken by `join()` stops the program, as an exception that leaves `main` (D121): its destructor waits for it but cannot throw (D113). A panic stops the whole program (D62).
+
+### D218. Threads of a block: where they are declared, started and joined
+*2026-10-29.*
+- It is declared as a variable whose value is `thread.Thread(...)` with the lambda written there: `thread.Thread t = thread.Thread([ref v]() { ... })`.
+- `t.start()` and `t.join()` are statements written directly in the block that declares `t`, not inside an `if` or a loop: so the compiler knows where the thread runs.
+- It cannot be moved, assigned, returned, passed with `ref` or captured.
+- Two threads can read the same variable at the same time; one that has it with `ref` excludes the others, and the start of the second is an error.
+
+### D219. Starting and joining a thread: the panics and the stack
+*2026-10-29.*
+- `start()` twice, `join()` before `start()` and `join()` twice are a panic; for a thread of a block, a second `start()` in its block is already a compile error.
+- A thread that is never started does nothing, and its destructor does not wait.
+- The stack of a thread is that of the main thread: 1 MB on Windows, 8 MB on Linux, with a guard page.
+
+### D220. Mutex: default value, copies, recursion and exceptions
+*2026-10-29.*
+- Its default value is unlocked, with the default value of its data: `thread.Mutex<i64> counter` is ready.
+- It cannot be copied; it can be moved while no thread uses it.
+- `lock` is not recursive: locking again the same mutex inside its lambda blocks the thread forever.
+- If the lambda of `lock` throws, the data stay in the mutex and the mutex is unlocked, then the exception goes on.
+
+### D221. Printing among threads, and their uncaught exceptions
+*2026-10-29.*
+- Each `print` and `println` writes its whole line: two threads never mix their pieces. `format` writes into its own string, without waiting for the others.
+- A panic in a thread waits for a print in progress, then stops the program.
+- An exception never taken by `join()` stops the program with `uncaught exception in a thread: <message>` and exit code 1.
+
+### D222. Threads and the compiler: built-in functions and values passed by address
+*2026-10-29.*
+- New built-in functions of the `unsafe` dialect, for `std.thread`: `threadStart`, `threadWait`, `threadRethrow`, `threadUncaught`, `threadFree`, `mutexLock`, `mutexUnlock` and `selfAddress`.
+- A `Mutex`, and every value that holds one, is always passed by address, and the compiler does not tell LLVM that a call leaves it unchanged: other threads write it.
+
 ---
 ---
 
@@ -1192,7 +1241,6 @@ extern "kernel32" {
 The points still to be defined, each when its milestone needs it (D152):
 - the interface for making user-defined types printable (D38);
 - the content of the standard library;
-- the model of threads (D149). Recommended: threads that end with the block that starts them, and can therefore use its variables with `ref`, as the scoped threads of Rust; a shared value with an atomic counter for the threads that live long; the data of a mutex reached with an anonymous function;
 - the model of I/O for servers (D150). Recommended: blocking calls on threads first, then lightweight tasks under the same API, as the virtual threads of Java; no `async`/`await`, which splits the functions in two kinds;
 - the TLS library (D150). Recommended: mbedTLS, compiled without libc and included in `cromo` like the runtime, with the root certificates of the system. The alternatives are OpenSSL, which needs libc, SChannel on Windows with another library on Linux, or TLS written in Cromo;
 - `cromo update` (D153): where the new versions are published, and how a download is checked before `cromo` replaces itself. Recommended: a signature of each version, checked with a public key contained in `cromo`, and on Windows the running `cromo.exe` renamed before the new one is written;

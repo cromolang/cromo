@@ -1,0 +1,28 @@
+// The exception of a thread is thrown again by join() (D217).
+// expect-output: caught: bad input 7
+// expect-output: after
+// expect-output: second ok
+import std.thread
+
+void parse(i64 value) {
+    if (value == 7) {
+        throw Error(format("bad input {}", value))
+    }
+}
+
+i32 main() {
+    i64 input = 7
+    thread.Thread t = thread.Thread([input]() { parse(input) })
+    t.start()
+    try {
+        t.join()
+    } catch (Exception e) {
+        println("caught: {}", e.message())
+    }
+    println("after")
+    thread.Thread fine = thread.Thread([]() { parse(1) })
+    fine.start()
+    fine.join()
+    println("second ok")
+    ret 0
+}

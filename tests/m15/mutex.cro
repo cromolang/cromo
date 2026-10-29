@@ -1,0 +1,45 @@
+// A mutex shared by the threads of a block (D215, D216).
+// expect-output: count 400000
+// expect-output: words 3 apple 2
+import std.thread
+
+void count(thread.Mutex<i64> counter) {
+    for (i64 i = 0; i < 100000; i++) {
+        counter.lock([](ref i64 value) { value += 1 })
+    }
+}
+
+i32 main() {
+    thread.Mutex<i64> counter
+    thread.Thread a = thread.Thread([counter]() { count(counter) })
+    thread.Thread b = thread.Thread([counter]() { count(counter) })
+    thread.Thread c = thread.Thread([counter]() { count(counter) })
+    a.start()
+    b.start()
+    c.start()
+    count(counter)
+    a.join()
+    b.join()
+    c.join()
+    counter.lock([](ref i64 value) { println("count {}", value) })
+
+    thread.Mutex<map<string, i32>> words
+    thread.Thread one = thread.Thread([words]() {
+        words.lock([](ref map<string, i32> m) {
+            m["apple"] += 1
+            m["pear"] += 1
+        })
+    })
+    thread.Thread two = thread.Thread([words]() {
+        words.lock([](ref map<string, i32> m) {
+            m["apple"] += 1
+            m["plum"] += 1
+        })
+    })
+    one.start()
+    two.start()
+    one.join()
+    two.join()
+    words.lock([](ref map<string, i32> m) { println("words {} apple {}", m.len(), m["apple"]) })
+    ret 0
+}

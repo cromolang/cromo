@@ -602,7 +602,34 @@ i32 main() {
 - Next to `fs.cro` a module can have `fs_windows.cro` and `fs_linux.cro`: only the file of the system the program is compiled for is used, and it shares the names of the module, also the private ones (D202). It holds for the library and for the programs.
 - In the modules with `import unsafe`, `s.cstring()` gives the address of a copy of the string ending with a zero, for the C functions, until the end of the statement (D204).
 
-## 18. Still to be written
+## 18. Threads (D214–D217)
 
-- Threads with synchronization (D149, milestone M15).
+```cromo
+import std.thread
+
+i32 main() {
+    list<i64> left = ...
+    list<i64> right = ...
+    thread.Thread t = thread.Thread([ref left]() { sort(ref left) })
+    t.start()
+    sort(ref right)          // at the same time as t
+    t.join()                 // waits; an exception of t is thrown here
+    merge(left, right)
+
+    thread.Mutex<i64> total
+    thread.Thread a = thread.Thread([total]() { total.lock([](ref i64 n) { n += 1 }) })
+    thread.Thread b = thread.Thread([total]() { total.lock([](ref i64 n) { n += 2 }) })
+    a.start()
+    b.start()
+    ret 0                    // a and b are waited for at the end of the block
+}
+```
+
+- `thread.Thread` is made from a lambda, started with `start()` and waited for with `join()` (D214).
+- A thread whose lambda captures by address is a thread of its block: it is waited for at the end of the block, and while it runs the block cannot use what the thread has with `ref`, nor modify what it reads (D215). The compiler checks it, so two threads never write the same data. A thread that captures only with `move` is free: it can be kept in a list and outlive its block.
+- The data of a `thread.Mutex<T>` are reached only inside `lock`, which gives them with `ref` to one thread at a time (D216).
+- `join()` throws again the exception of the thread; an exception that no `join()` takes stops the program (D217).
+
+## 19. Still to be written
+
 - The rest of the standard library: networking, TLS, HTTP and JSON (M16–M18).

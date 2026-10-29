@@ -3,6 +3,7 @@
 #include "codegen.h"
 #include "runtime_blob.h"
 
+#include <llvm/Analysis/TargetLibraryInfo.h>
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/LegacyPassManager.h>
 #include <llvm/IR/Module.h>
@@ -51,6 +52,16 @@ void optimize(llvm::Module& module, llvm::TargetMachine& machine, int level) {
     llvm::FunctionAnalysisManager functions;
     llvm::CGSCCAnalysisManager cgscc;
     llvm::ModuleAnalysisManager modules;
+
+    // D19: there is no C library. LLVM may call only the functions of mem_x64.S,
+    // and must not turn a loop into strlen, as it would in fs_linux.cro.
+    llvm::TargetLibraryInfoImpl library(machine.getTargetTriple());
+    library.disableAllFunctions();
+    for (llvm::LibFunc kept : {llvm::LibFunc_memcpy, llvm::LibFunc_memmove, llvm::LibFunc_memset, llvm::LibFunc_memcmp}) {
+        library.setAvailable(kept);
+    }
+    if (machine.getTargetTriple().isOSLinux()) library.setAvailable(llvm::LibFunc_bcmp);
+    functions.registerPass([&] { return llvm::TargetLibraryAnalysis(library); });
 
     llvm::PassBuilder builder(&machine);
     builder.registerModuleAnalyses(modules);

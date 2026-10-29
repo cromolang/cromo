@@ -1,0 +1,77 @@
+// The module std.thread (D214-D217): threads and mutexes. The threads of the
+// system are in the runtime; the compiler keeps a thread whose lambda captures by
+// address in its block, and checks what the block does while it runs (D215).
+import unsafe
+
+// A thread made from a lambda, started with start() and waited for with join().
+public struct Thread {
+    func() body
+    addr record  // of the runtime, from start() on
+    bool joined
+
+    public Thread(move func() work) {
+        body = move work
+    }
+
+    // A thread still running is waited for; an exception that no join() took
+    // stops the program (D217).
+    ~Thread() {
+        if (!started()) {
+            ret
+        }
+        if (!joined && threadWait(record)) {
+            threadUncaught(record)
+        }
+        threadFree(record)
+    }
+
+    public void start() {
+        if (started()) {
+            panic("the thread is already started (D214)")
+        }
+        record = threadStart(body)
+    }
+
+    // Waits for the end of the thread, and throws again its exception (D217).
+    public void join() {
+        if (!started()) {
+            panic("the thread is not started: call start() first (D214)")
+        }
+        if (joined) {
+            panic("the thread is already joined (D214)")
+        }
+        joined = true
+        if (threadWait(record)) {
+            threadRethrow(record)
+        }
+    }
+
+    bool started() const {
+        addr none
+        ret record != none
+    }
+}
+
+// The data of a mutex are reached only while it is locked, in a lambda (D216).
+public struct Mutex<T> {
+    u64 state  // the lock of the system, free at zero: the first field
+    T data
+
+    ~Mutex() {
+    }
+
+    // const: the threads of a block read the same mutex (D215), and the lock gives
+    // them `ref` to the data one at a time.
+    public void lock(func(ref T) body) const {
+        addr me = selfAddress()
+        mutexLock(me)
+        addr place = offset(me, 8)  // the data, after the lock
+        T value = take<T>(place)
+        try {
+            body(ref value)
+        } finally {
+            put<T>(place, move value)
+            mutexUnlock(me)
+        }
+    }
+}

@@ -1,0 +1,54 @@
+// Example 9: threads and a mutex.
+//
+// Decided: threads started with start() and waited for with join() (D214),
+//          threads of a block and free threads (D215, D218), Mutex (D216,
+//          D220), the exceptions of a thread (D217)
+import std.thread
+
+// The sum of a part of the numbers.
+i64 sum(list<i64> numbers, i64 from, i64 to) {
+    i64 total = 0
+    for (i64 i = from; i < to; i++) {
+        total += numbers[i]
+    }
+    ret total
+}
+
+i32 main() {
+    list<i64> numbers
+    for (i64 i = 1; i <= 1000000; i++) {
+        numbers.add(i)
+    }
+
+    // Threads of a block: both read numbers, each writes its own result.
+    i64 low = 0
+    i64 high = 0
+    thread.Thread first = thread.Thread([numbers, ref low]() { low = sum(numbers, 0, 500000) })
+    thread.Thread second = thread.Thread([numbers, ref high]() { high = sum(numbers, 500000, 1000000) })
+    first.start()
+    second.start()
+    first.join()
+    second.join()
+    println("sum {}", low + high)
+
+    // A mutex shared by threads: its data are reached only inside lock.
+    thread.Mutex<map<string, i32>> visits
+    thread.Thread a = thread.Thread([visits]() { visits.lock([](ref map<string, i32> m) { m["home"] += 1 }) })
+    thread.Thread b = thread.Thread([visits]() { visits.lock([](ref map<string, i32> m) { m["home"] += 1 }) })
+    a.start()
+    b.start()
+    a.join()
+    b.join()
+    visits.lock([](ref map<string, i32> m) { println("home {}", m["home"]) })
+
+    // A free thread owns what it captures; its exception comes back with join().
+    string name = "data.txt"
+    thread.Thread loader = thread.Thread([move name]() { throw Error(format("cannot load {}", name)) })
+    loader.start()
+    try {
+        loader.join()
+    } catch (Exception e) {
+        println("{}", e.message())
+    }
+    ret 0
+}

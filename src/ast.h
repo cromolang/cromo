@@ -60,6 +60,8 @@ struct Variable {
     int id = 0;                  // unique within the function, used in the IR name
     int captureIndex = -1;       // Captured: its place in the data of the lambda
     bool captureByAddress = false;  // Captured: the data hold its address, not its value
+    // A thread of its block (D215): the lambda it runs.
+    const struct LambdaExpr* blockThread = nullptr;
 };
 
 // ---- Expressions ----
@@ -141,6 +143,7 @@ struct BinaryExpr : Expr {
 enum class Intrinsic {
     None, Panic, Alloc, Resize, Free, SizeOf, Offset, Take, Put, Destroy, CopyAt, CopyMemory, CompareMemory, CheckIndex,
     ArgumentCount, ArgumentLength, ArgumentData, DecimalToFloat, HashBytes, SystemCall, Environment, ExitProcess,
+    ThreadStart, ThreadWait, ThreadRethrow, ThreadUncaught, ThreadFree, MutexLock, MutexUnlock, SelfAddress,
     HashNumber,  // `x.hash()` of a number or a bool (D198): made by the compiler, not named
 };
 
@@ -232,6 +235,7 @@ struct ConstructExpr : Expr {
     const struct StructDecl* decl;
     std::vector<ExprPtr> args;
     OverlapChecks overlaps;
+    const struct LambdaExpr* blockThread = nullptr;  // `thread.Thread(lambda)` capturing by address (D215)
 };
 
 // The object a method works on. It cannot be written in the source (D70).
@@ -561,6 +565,7 @@ struct StructDecl {
     std::unique_ptr<FunctionDecl> generatedCopy;  // created when `copy()` is used (D35)
     std::vector<const InterfaceDecl*> implements;
     bool needsDestruction = false;
+    bool addressed = false;  // a Mutex, or holds one: other threads write it, it never moves in a call (D216)
     int size = 0;
     int align = 1;
     int payloadOffset = 0;  // of an enum: where the data of the cases start, after the tag
@@ -613,6 +618,7 @@ struct LambdaExpr : Expr {
     // Set by sema.
     bool borrows = false;   // it captures by address: only as an argument (D184)
     bool onStack = false;   // passed as an argument: its data live in the frame of the caller
+    bool forThread = false; // given to a thread (D215): its data stay in the frame, owned by the thread
     const FunctionDecl* enclosing = nullptr;
     std::vector<std::unique_ptr<NameExpr>> capturePlaces;  // the captures by address, for exclusivity (D22)
 };
