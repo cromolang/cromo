@@ -4,29 +4,34 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Cromo programming language (cromolang) — native code, familiar syntax, no pointers</title>
-<meta name="description" content="Cromo (cromolang) is a compiled programming language with the syntax of C and C++, RAII, ownership checked by the compiler and no garbage collector. One executable compiles and links, for Windows and Linux.">
-<meta name="theme-color" content="#0a0d13">
+<meta name="description" content="Cromo (cromolang) is a compiled programming language with the syntax of C and C++, RAII, ownership checked by the compiler and no garbage collector. One command compiles and links, for Windows and Linux, and one line installs it.">
+<meta name="theme-color" content="#f6f8fb">
 <link rel="icon" href="logo-mark.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
 <style>
 :root {
-  --bg: #0a0d13;
-  --bg-2: #0d1118;
-  --surface: #121722;
-  --surface-2: #171d2a;
-  --border: #212a3a;
-  --border-2: #2b3548;
-  --text: #e7ebf2;
-  --muted: #98a3b6;
-  --dim: #66728a;
-  --accent: #5ee7ff;
-  --accent-2: #8f86ff;
-  --ok: #7ee2a8;
-  --warn: #ffcb6b;
-  --error: #ff7a8a;
-  --chrome: linear-gradient(100deg, #f4f7fb 0%, #aab5c4 28%, #ffffff 46%, #8792a3 66%, #dfe5ec 100%);
+  --bg: #f6f8fb;
+  --bg-2: #ffffff;
+  --surface: #ffffff;
+  --surface-2: #eef2f6;
+  --border: #e1e6ed;
+  --border-2: #cfd7e2;
+  --text: #121826;
+  --muted: #4d596b;
+  --dim: #7a8597;
+  --ink: #141b28;
+  --accent: #0a8fae;
+  --accent-rgb: 10, 143, 174;
+  --accent-2: #6553e0;
+  --ok: #12925c;
+  --warn: #b7700b;
+  --error: #d23a4f;
+  --chrome: linear-gradient(100deg, #151c29 0%, #5a6678 32%, #98a3b2 47%, #3b4556 66%, #151c29 100%);
+  --code-bg: #ffffff;
+  --term-bg: #f3f6f9;
+  --shadow: 0 1px 2px rgba(16, 24, 40, 0.04), 0 10px 30px rgba(16, 24, 40, 0.06);
   --radius: 14px;
   --mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
   --sans: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -44,17 +49,17 @@ body {
   overflow-x: hidden;
 }
 a { color: inherit; text-decoration: none; }
-code { font-family: var(--mono); font-size: 0.9em; color: #cfe9ff; background: rgba(94, 231, 255, 0.08); border: 1px solid rgba(94, 231, 255, 0.14); padding: 0.05em 0.35em; border-radius: 6px; white-space: nowrap; }
+code { font-family: var(--mono); font-size: 0.9em; color: #0b5d72; background: rgba(var(--accent-rgb), 0.07); border: 1px solid rgba(var(--accent-rgb), 0.18); padding: 0.05em 0.35em; border-radius: 6px; white-space: nowrap; }
 .wrap { width: 100%; max-width: 1180px; margin: 0 auto; padding: 0 24px; }
 
 /* The grid of the background, faded at the edges */
 .backdrop {
   position: absolute; inset: 0 0 auto 0; height: 980px; pointer-events: none; z-index: 0;
   background:
-    radial-gradient(600px 380px at 75% 22%, rgba(94, 231, 255, 0.13), transparent 70%),
-    radial-gradient(520px 360px at 15% 10%, rgba(143, 134, 255, 0.12), transparent 70%),
-    linear-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px) 0 0 / 40px 40px,
-    linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px) 0 0 / 40px 40px;
+    radial-gradient(600px 380px at 75% 22%, rgba(var(--accent-rgb), 0.10), transparent 70%),
+    radial-gradient(520px 360px at 15% 10%, rgba(101, 83, 224, 0.07), transparent 70%),
+    linear-gradient(rgba(20, 27, 40, 0.05) 1px, transparent 1px) 0 0 / 40px 40px,
+    linear-gradient(90deg, rgba(20, 27, 40, 0.05) 1px, transparent 1px) 0 0 / 40px 40px;
   -webkit-mask-image: linear-gradient(to bottom, #000 40%, transparent);
   mask-image: linear-gradient(to bottom, #000 40%, transparent);
 }
@@ -62,9 +67,9 @@ code { font-family: var(--mono); font-size: 0.9em; color: #cfe9ff; background: r
 /* Navigation */
 header.nav {
   position: sticky; top: 0; z-index: 10;
-  background: rgba(10, 13, 19, 0.72);
+  background: rgba(246, 248, 251, 0.82);
   backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid var(--border);
 }
 .nav .wrap { display: flex; align-items: center; gap: 28px; height: 64px; }
 .brand { display: flex; align-items: center; gap: 10px; }
@@ -74,7 +79,7 @@ header.nav {
 .nav-right { margin-left: auto; display: flex; align-items: center; gap: 12px; }
 .pill {
   font: 500 12px/1 var(--mono); color: var(--accent);
-  border: 1px solid rgba(94, 231, 255, 0.35); background: rgba(94, 231, 255, 0.07);
+  border: 1px solid rgba(var(--accent-rgb), 0.35); background: rgba(var(--accent-rgb), 0.07);
   padding: 7px 10px; border-radius: 999px; white-space: nowrap;
 }
 
@@ -85,15 +90,16 @@ header.nav {
   border: 1px solid var(--border-2); background: var(--surface); color: var(--text);
   transition: transform 0.15s ease, border-color 0.15s ease, background 0.15s ease;
 }
-.btn:hover { transform: translateY(-1px); border-color: #3a4660; }
-.btn.primary { background: var(--chrome); color: #0b0f17; border-color: transparent; box-shadow: 0 8px 30px rgba(170, 190, 215, 0.18); }
+.btn:hover { transform: translateY(-1px); border-color: #b4bfcd; }
+.btn.primary { background: var(--ink); color: #ffffff; border-color: var(--ink); box-shadow: 0 8px 24px rgba(20, 27, 40, 0.18); }
+.btn.primary:hover { background: #222c3d; }
 .btn.small { padding: 9px 13px; font-size: 14px; }
 
 /* Hero */
 .hero { position: relative; z-index: 1; padding: 84px 0 40px; }
 .hero .wrap { display: grid; grid-template-columns: 0.92fr 1.08fr; gap: 48px; align-items: center; }
 .eyebrow { display: inline-flex; align-items: center; gap: 10px; font: 500 13px/1 var(--mono); color: var(--muted); margin-bottom: 22px; }
-.eyebrow .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 12px var(--ok); }
+.eyebrow .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 4px rgba(18, 146, 92, 0.14); }
 h1 { font: 700 clamp(40px, 5.6vw, 66px)/1.03 var(--display); letter-spacing: -0.03em; margin: 0 0 22px; }
 .chrome { background: var(--chrome); -webkit-background-clip: text; background-clip: text; color: transparent; }
 .lead { font-size: 18.5px; color: var(--muted); max-width: 540px; margin: 0 0 30px; }
@@ -104,24 +110,24 @@ h1 { font: 700 clamp(40px, 5.6vw, 66px)/1.03 var(--display); letter-spacing: -0.
 
 /* Windows with code and terminals */
 .window {
-  background: linear-gradient(180deg, #121825, #0e131c);
+  background: var(--code-bg);
   border: 1px solid var(--border); border-radius: var(--radius);
-  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.02) inset;
+  box-shadow: 0 2px 4px rgba(16, 24, 40, 0.04), 0 24px 60px rgba(16, 24, 40, 0.10);
   overflow: hidden; min-width: 0;
 }
-.window-bar { display: flex; align-items: center; gap: 8px; padding: 11px 14px; border-bottom: 1px solid var(--border); background: rgba(255, 255, 255, 0.015); }
-.window-bar i { width: 11px; height: 11px; border-radius: 50%; background: #2a3242; }
+.window-bar { display: flex; align-items: center; gap: 8px; padding: 11px 14px; border-bottom: 1px solid var(--border); background: #f7f9fb; }
+.window-bar i { width: 11px; height: 11px; border-radius: 50%; background: #d5dbe3; }
 .window-bar i:nth-child(1) { background: #ff5f57; } .window-bar i:nth-child(2) { background: #febc2e; } .window-bar i:nth-child(3) { background: #28c840; }
 .window-bar .title { margin-left: 8px; font: 12.5px/1 var(--mono); color: var(--muted); }
 .window-bar .title b { color: var(--text); font-weight: 500; }
-pre { margin: 0; padding: 18px 20px; overflow-x: auto; font: 13.5px/1.62 var(--mono); color: #c8d1df; tab-size: 4; }
+pre { margin: 0; padding: 18px 20px; overflow-x: auto; font: 13.5px/1.62 var(--mono); color: #263142; tab-size: 4; }
 pre code { all: unset; font: inherit; white-space: pre; }
-pre, .lsp-demo { scrollbar-width: thin; scrollbar-color: #2b3548 transparent; }
+pre, .lsp-demo, .table-wrap { scrollbar-width: thin; scrollbar-color: #c3ccd8 transparent; }
 pre::-webkit-scrollbar, .lsp-demo::-webkit-scrollbar { height: 8px; }
-pre::-webkit-scrollbar-thumb, .lsp-demo::-webkit-scrollbar-thumb { background: #2b3548; border-radius: 8px; }
+pre::-webkit-scrollbar-thumb, .lsp-demo::-webkit-scrollbar-thumb { background: #c3ccd8; border-radius: 8px; }
 pre::-webkit-scrollbar-track, .lsp-demo::-webkit-scrollbar-track { background: transparent; }
-.term { border-top: 1px solid var(--border); background: #0a0e15; }
-.term pre { padding: 14px 20px; font-size: 13px; color: #b9c4d6; }
+.term { border-top: 1px solid var(--border); background: var(--term-bg); }
+.term pre { padding: 14px 20px; font-size: 13px; color: #3a4556; }
 .prompt { color: var(--ok); user-select: none; }
 .cmd { color: var(--text); }
 .out-dim { color: var(--dim); }
@@ -130,17 +136,17 @@ pre::-webkit-scrollbar-track, .lsp-demo::-webkit-scrollbar-track { background: t
 .hero .window { transform: perspective(1400px) rotateY(-4deg) rotateX(2deg); }
 
 /* The colors of the code */
-.tk-k { color: #82aaff; }
-.tk-s { color: #c3e88d; }
-.tk-n { color: #f78c6c; }
-.tk-c { color: #5f6b80; font-style: italic; }
-.tk-t { color: #5ee7d0; }
-.tk-f { color: #ffcb6b; }
-.tk-o { color: #89ddff; }
+.tk-k { color: #2c56c9; }
+.tk-s { color: #2a7d3a; }
+.tk-n { color: #c2410c; }
+.tk-c { color: #8a94a3; font-style: italic; }
+.tk-t { color: #0b7f93; }
+.tk-f { color: #7a3fd1; }
+.tk-o { color: #0f6b85; }
 
 /* Numbers */
 .stats { position: relative; z-index: 1; padding: 34px 0 10px; }
-.stats-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 1px; background: var(--border); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.stats-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 1px; background: var(--border); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; box-shadow: var(--shadow); }
 .stat { background: var(--bg-2); padding: 22px 22px 20px; }
 .stat b { display: block; font: 700 30px/1.1 var(--display); letter-spacing: -0.02em; }
 .stat span { font-size: 13.5px; color: var(--muted); }
@@ -154,14 +160,14 @@ h2 { font: 700 clamp(30px, 3.6vw, 42px)/1.1 var(--display); letter-spacing: -0.0
 /* Features */
 .features { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
 .card {
-  background: linear-gradient(180deg, var(--surface), var(--bg-2));
-  border: 1px solid var(--border); border-radius: var(--radius); padding: 22px;
+  background: var(--surface);
+  border: 1px solid var(--border); border-radius: var(--radius); padding: 22px; box-shadow: var(--shadow);
   transition: border-color 0.2s ease, transform 0.2s ease;
 }
-.card:hover { border-color: #33405a; transform: translateY(-2px); }
+.card:hover { border-color: #c3ccd8; transform: translateY(-2px); }
 .card .icon {
   width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center; margin-bottom: 16px;
-  background: rgba(94, 231, 255, 0.08); border: 1px solid rgba(94, 231, 255, 0.2); color: var(--accent);
+  background: rgba(var(--accent-rgb), 0.08); border: 1px solid rgba(var(--accent-rgb), 0.22); color: var(--accent);
 }
 .card h3 { font: 600 17px/1.3 var(--display); margin: 0 0 8px; }
 .card p { margin: 0; color: var(--muted); font-size: 14.5px; line-height: 1.58; }
@@ -180,7 +186,8 @@ h2 { font: 700 clamp(30px, 3.6vw, 42px)/1.1 var(--display); letter-spacing: -0.0
   border: 1px solid var(--border); border-radius: 9px; padding: 10px 14px; cursor: pointer;
 }
 .tab:hover { color: var(--text); }
-.tab[aria-selected="true"] { color: #0b0f17; background: var(--chrome); border-color: transparent; }
+.tab { background: var(--surface); }
+.tab[aria-selected="true"] { color: #ffffff; background: var(--ink); border-color: var(--ink); }
 .panel[hidden] { display: none; }
 .panel .window { transform: none; }
 
@@ -188,29 +195,53 @@ h2 { font: 700 clamp(30px, 3.6vw, 42px)/1.1 var(--display); letter-spacing: -0.0
 .tools { display: grid; grid-template-columns: 1.15fr 0.85fr; gap: 20px; align-items: stretch; }
 .vscode { display: flex; flex-direction: column; gap: 14px; }
 .vscode .card { flex: 1; }
-.lsp-demo { font: 13px/1.6 var(--mono); background: #0a0e15; border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; margin-top: 14px; color: #c8d1df; overflow-x: auto; white-space: pre; }
+.lsp-demo { font: 13px/1.6 var(--mono); background: var(--term-bg); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; margin-top: 14px; color: #263142; overflow-x: auto; white-space: pre; }
 .squiggle { text-decoration: underline wavy var(--error); text-underline-offset: 3px; }
-.hover-box { display: inline-block; margin-top: 6px; padding: 6px 10px; border: 1px solid var(--border-2); border-radius: 8px; background: var(--surface-2); color: var(--text); }
+.hover-box { display: inline-block; margin-top: 6px; padding: 6px 10px; border: 1px solid var(--border-2); border-radius: 8px; background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
+
+/* Benchmarks */
+.bench { display: grid; grid-template-columns: 0.8fr 1.2fr; gap: 20px; align-items: start; }
+.bench .card { min-width: 0; }
+.bench .card:hover { transform: none; border-color: var(--border); }
+.bench h3 { font: 600 17px/1.3 var(--display); margin: 0 0 4px; }
+.bench .note { color: var(--dim); font-size: 13.5px; margin: 0 0 18px; }
+.bars { display: grid; gap: 10px; margin-bottom: 26px; }
+.bars:last-child { margin-bottom: 0; }
+.bar { display: grid; grid-template-columns: 112px 1fr 44px; gap: 12px; align-items: center; font: 13px/1 var(--mono); color: var(--muted); }
+.bar i { display: block; height: 12px; border-radius: 6px; background: #cfd7e2; }
+.bar b { font-weight: 500; color: var(--text); text-align: right; }
+.bar.cromo { color: var(--text); }
+.bar.cromo i { background: linear-gradient(90deg, var(--accent), #12b5d6); }
+.table-wrap { overflow-x: auto; }
+table.times { width: 100%; border-collapse: collapse; font: 13px/1.4 var(--mono); }
+.times th, .times td { padding: 9px 10px; text-align: right; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.times th { font: 600 12px/1.3 var(--mono); color: var(--dim); }
+.times th:first-child, .times td:first-child { text-align: left; color: var(--text); }
+.times td { color: var(--muted); }
+.times .cromo { background: rgba(var(--accent-rgb), 0.06); color: var(--text); }
+.times td.best { color: var(--ok); font-weight: 600; }
+.times tr:last-child td { border-bottom: 0; }
+.bench-foot { margin-top: 14px; color: var(--dim); font-size: 13px; }
 
 /* Roadmap */
 .roadmap { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
-.phase { border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-2); padding: 22px; }
+.phase { border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-2); padding: 22px; box-shadow: var(--shadow); }
 .phase h3 { display: flex; align-items: center; justify-content: space-between; font: 600 17px var(--display); margin: 0 0 16px; }
 .badge { font: 500 11.5px/1 var(--mono); padding: 6px 9px; border-radius: 999px; border: 1px solid; }
-.badge.done { color: var(--ok); border-color: rgba(126, 226, 168, 0.35); background: rgba(126, 226, 168, 0.07); }
-.badge.next { color: var(--warn); border-color: rgba(255, 203, 107, 0.35); background: rgba(255, 203, 107, 0.07); }
-.badge.later { color: var(--accent-2); border-color: rgba(143, 134, 255, 0.4); background: rgba(143, 134, 255, 0.08); }
+.badge.done { color: var(--ok); border-color: rgba(18, 146, 92, 0.35); background: rgba(18, 146, 92, 0.07); }
+.badge.next { color: var(--warn); border-color: rgba(183, 112, 11, 0.35); background: rgba(183, 112, 11, 0.07); }
+.badge.later { color: var(--accent-2); border-color: rgba(101, 83, 224, 0.35); background: rgba(101, 83, 224, 0.07); }
 .steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
 .steps li { display: grid; grid-template-columns: 46px 1fr; gap: 10px; font-size: 14.5px; color: var(--muted); }
 .steps li b { font: 500 12.5px/1.75 var(--mono); color: var(--text); }
 .progress-label { display: flex; justify-content: space-between; gap: 12px; font: 12.5px var(--mono); color: var(--dim); }
 .progress { height: 6px; border-radius: 999px; background: var(--surface-2); overflow: hidden; margin: 8px 0 18px; }
-.progress div { height: 100%; width: 79%; background: var(--chrome); }
+.progress div { height: 100%; width: 95%; background: linear-gradient(90deg, var(--accent), var(--accent-2)); }
 
 /* Get started */
-.start { margin-top: 96px; border: 1px solid var(--border); border-radius: 20px; padding: 44px; background: radial-gradient(500px 240px at 85% 0%, rgba(94, 231, 255, 0.1), transparent 70%), linear-gradient(180deg, var(--surface), var(--bg-2)); display: grid; grid-template-columns: 1fr 1fr; gap: 36px; align-items: center; }
+.start { margin-top: 96px; border: 1px solid var(--border); border-radius: 20px; padding: 44px; box-shadow: var(--shadow); background: radial-gradient(500px 240px at 85% 0%, rgba(var(--accent-rgb), 0.08), transparent 70%), var(--surface); display: grid; grid-template-columns: 1fr 1fr; gap: 36px; align-items: center; }
 .downloads { display: grid; gap: 10px; }
-.download { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 16px; border: 1px dashed var(--border-2); border-radius: 12px; color: var(--muted); font-size: 14.5px; }
+.download { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 16px; border: 1px dashed var(--border-2); border-radius: 12px; color: var(--muted); font-size: 14.5px; background: var(--bg); }
 .download b { color: var(--text); font-weight: 500; }
 .download .soon { font: 500 12px var(--mono); color: var(--dim); }
 
@@ -231,7 +262,7 @@ footer a:hover { color: var(--text); }
   .stat:nth-child(n+4) { grid-column: span 3; }
 }
 @media (max-width: 900px) {
-  .split, .tools, .start { grid-template-columns: 1fr; }
+  .split, .tools, .start, .bench { grid-template-columns: 1fr; }
   .roadmap { grid-template-columns: 1fr; }
   .nav-links { display: none; }
   .start { padding: 28px; }
@@ -242,6 +273,7 @@ footer a:hover { color: var(--text); }
   .stats-grid { grid-template-columns: 1fr 1fr; }
   .stat, .stat:nth-child(n+4) { grid-column: span 1; }
   .stat:last-child { grid-column: span 2; }
+  .bar { grid-template-columns: 96px 1fr 40px; }
   pre { font-size: 12.5px; padding: 16px; }
   .pill { display: none; }
   section { padding-top: 72px; }
@@ -258,37 +290,28 @@ footer a:hover { color: var(--text); }
 <header class="nav">
   <div class="wrap">
     <a class="brand" href="#" aria-label="Cromo, home">
-      <svg height="30" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 232 64">
+      <svg height="30" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 228 64">
   <defs>
-    <linearGradient id="nav-chrome" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#f8fafd"/>
-      <stop offset="0.3" stop-color="#b3bdca"/>
-      <stop offset="0.47" stop-color="#f1f4f8"/>
-      <stop offset="0.66" stop-color="#8691a2"/>
-      <stop offset="1" stop-color="#d9dfe7"/>
+    <linearGradient id="nav-orbit" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1b2230"/>
+      <stop offset="0.38" stop-color="#5d697b"/>
+      <stop offset="0.52" stop-color="#9ba6b5"/>
+      <stop offset="0.72" stop-color="#465164"/>
+      <stop offset="1" stop-color="#171d29"/>
     </linearGradient>
-    <linearGradient id="nav-edge" x1="0" y1="0" x2="0" y2="1">
+    <radialGradient id="nav-nucleus" cx="0.35" cy="0.3" r="0.75">
       <stop offset="0" stop-color="#ffffff"/>
-      <stop offset="1" stop-color="#3e4757"/>
-    </linearGradient>
-    <linearGradient id="nav-word" gradientUnits="userSpaceOnUse" x1="74" y1="20" x2="228" y2="48">
-      <stop offset="0" stop-color="#f4f7fb"/>
-      <stop offset="0.35" stop-color="#b9c3d0"/>
-      <stop offset="0.55" stop-color="#ffffff"/>
-      <stop offset="0.8" stop-color="#9aa5b5"/>
-      <stop offset="1" stop-color="#e3e8ef"/>
-    </linearGradient>
+      <stop offset="0.35" stop-color="#cfd6df"/>
+      <stop offset="0.8" stop-color="#7c8797"/>
+      <stop offset="1" stop-color="#4b5565"/>
+    </radialGradient>
   </defs>
-  <rect x="2" y="2" width="60" height="60" rx="12" fill="url(#nav-chrome)" stroke="url(#nav-edge)" stroke-width="1.5"/>
-  <g fill="none" stroke="#1a2130" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M9.6 11.6a2.5 2.5 0 0 1 5 0c0 2-5 3.4-5 5.6h5"/>
-    <path d="M21.6 17.2V8.8l-4.4 6h6"/>
+  <g transform="translate(32 32) rotate(-28)">
+    <path d="M23.84 -5.16A27 11 0 1 0 23.84 5.16" fill="none" stroke="url(#nav-orbit)" stroke-width="4" stroke-linecap="round"/>
+    <circle cx="23.84" cy="5.16" r="3.6" fill="#0ea5c6"/>
   </g>
-  <g fill="none" stroke="#111722" stroke-width="5.6" stroke-linecap="round">
-    <path d="M32.2 32.6A11 11 0 1 0 32.2 47.4"/>
-    <path d="M41.5 33.2V50.6M41.5 40.4A8.6 8.6 0 0 1 50.6 33.4"/>
-  </g>
-  <g fill="none" stroke="url(#nav-word)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round">
+  <circle cx="32" cy="32" r="9" fill="url(#nav-nucleus)" stroke="#3a4454" stroke-width="1"/>
+  <g fill="none" stroke="#151b26" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" transform="translate(-4 0)">
     <path d="M96.4 26.9A11 11 0 1 0 96.4 41.1"/>
     <path d="M108 23V45M108 31.5A9 9 0 0 1 117.5 23.5"/>
     <circle cx="140" cy="34" r="11"/>
@@ -302,10 +325,11 @@ footer a:hover { color: var(--text); }
       <a href="#ownership">Ownership</a>
       <a href="#examples">Examples</a>
       <a href="#tooling">Tooling</a>
+      <a href="#benchmarks">Benchmarks</a>
       <a href="#roadmap">Roadmap</a>
     </nav>
     <div class="nav-right">
-      <span class="pill">v0.14 · preview</span>
+      <span class="pill">v0.17 · preview</span>
       <a class="btn small" href="#start">Get started</a>
     </div>
   </div>
@@ -317,14 +341,14 @@ footer a:hover { color: var(--text); }
       <div>
         <div class="eyebrow"><span class="dot"></span>A systems language in development · Windows &amp; Linux x64</div>
         <h1>Native code.<br>Familiar syntax.<br><span class="chrome">No pointers.</span></h1>
-        <p class="lead">Cromo is a compiled language with the syntax of C and C++, <strong>RAII</strong> and <strong>ownership checked by the compiler</strong>, and no garbage collector. A single executable, <code>cromo</code>, compiles and links your program — the goal is to be <strong>simpler than Rust</strong>.</p>
+        <p class="lead">Cromo is a compiled language with the syntax of C and C++, <strong>RAII</strong> and <strong>ownership checked by the compiler</strong>, and no garbage collector. One command, <code>cromo</code>, compiles and links your program — the goal is to be <strong>simpler than Rust</strong>.</p>
         <div class="cta">
           <a class="btn primary" href="#start">Get started
             <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h9M8.5 4.5 12 8l-3.5 3.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
           </a>
           <a class="btn" href="#examples">See the code</a>
         </div>
-        <div class="facts"><span>LLVM backend</span><span>no libc, no SDK</span><span>cross-compiles to Linux</span><span>VS Code support</span></div>
+        <div class="facts"><span>LLVM backend</span><span>as fast as C++</span><span>no libc, no SDK</span><span>cross-compiles to Linux</span><span>VS Code support</span></div>
       </div>
       <div class="window">
         <div class="window-bar"><i></i><i></i><i></i><span class="title"><b>timer.cro</b> — RAII, maps and bitwise operators</span></div>
@@ -363,11 +387,11 @@ sum: 120 µs</pre></div>
 
   <div class="stats" aria-label="Cromo in numbers">
     <div class="wrap"><div class="stats-grid">
-      <div class="stat"><b>1</b><span>executable: compiler, linker, runtime and library</span></div>
+      <div class="stat"><b>1</b><span>command: compiler, linker, formatter and language server</span></div>
       <div class="stat"><b>0</b><span>dependencies: no libc, no Windows SDK</span></div>
       <div class="stat"><b>32 KB</b><span>for a hello world, statically linked</span></div>
       <div class="stat"><b>2</b><span>targets: Windows and Linux x64</span></div>
-      <div class="stat"><b>212</b><span>design decisions, all written down</span></div>
+      <div class="stat"><b>250</b><span>design decisions, all written down</span></div>
     </div></div>
   </div>
 
@@ -394,8 +418,8 @@ sum: 120 µs</pre></div>
         </div>
         <div class="card">
           <div class="icon"><svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2.5 16.5 6v8L10 17.5 3.5 14V6zM3.5 6 10 9.5 16.5 6M10 9.5v8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg></div>
-          <h3>One file, no SDK</h3>
-          <p><code>cromo</code> carries LLVM, the LLD linker, the runtime and the library. No Visual Studio, no libc: programs start in kilobytes.</p>
+          <h3>No SDK, no libc</h3>
+          <p><code>cromo</code> carries LLVM and the LLD linker; the runtime and the library come with it. No Visual Studio, no libc: programs start in kilobytes.</p>
         </div>
         <div class="card">
           <div class="icon"><svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><rect x="2.5" y="4" width="15" height="10" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M7 17h6M6 8l2 1.5L6 11m4 0h3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
@@ -634,7 +658,7 @@ Hello, world!
 <span class="prompt">$ </span><span class="cmd">cromo fmt .</span>                 <span class="out-dim"># one style, no options</span>
 <span class="prompt">$ </span><span class="cmd">cromo lsp</span>                   <span class="out-dim"># for the editors</span>
 <span class="prompt">$ </span><span class="cmd">cromo version</span>
-cromo 0.14.0 (LLVM 23.1.4)</pre>
+cromo 0.17.0 (LLVM 23.1.4)</pre>
         </div>
         <div class="vscode">
           <div class="card">
@@ -649,30 +673,82 @@ cromo 0.14.0 (LLVM 23.1.4)</pre>
     </div>
   </section>
 
+  <section id="benchmarks">
+    <div class="wrap">
+      <div class="kicker">Benchmarks</div>
+      <h2>As fast as C++, <span class="chrome">measured</span></h2>
+      <p class="section-lead">Eleven small programs — allocation, recursion, floating point, strings, hash maps, threads — written in Cromo, C++, Go and Rust, compiled with the usual optimizations and run on the same machine. Every version of <code>cromo</code> is measured against the previous ones and against the references.</p>
+      <div class="bench">
+        <div class="card">
+          <h3>Run time</h3>
+          <p class="note">Geometric mean, relative to g++ -O2. Lower is faster.</p>
+          <div class="bars">
+            <div class="bar"><span>clang++ 18</span><i style="width:81%"></i><b>0.95</b></div>
+            <div class="bar cromo"><span>cromo 0.16</span><i style="width:84%"></i><b>0.98</b></div>
+            <div class="bar"><span>g++ 14</span><i style="width:85%"></i><b>1.00</b></div>
+            <div class="bar"><span>rustc 1.96</span><i style="width:87%"></i><b>1.02</b></div>
+            <div class="bar"><span>go 1.22</span><i style="width:100%"></i><b>1.17</b></div>
+          </div>
+          <h3>Compile time</h3>
+          <p class="note">Geometric mean, relative to g++ -O2.</p>
+          <div class="bars">
+            <div class="bar"><span>go 1.22</span><i style="width:36%"></i><b>0.36</b></div>
+            <div class="bar"><span>rustc 1.96</span><i style="width:42%"></i><b>0.42</b></div>
+            <div class="bar cromo"><span>cromo 0.16</span><i style="width:63%"></i><b>0.63</b></div>
+            <div class="bar"><span>clang++ 18</span><i style="width:89%"></i><b>0.89</b></div>
+            <div class="bar"><span>g++ 14</span><i style="width:100%"></i><b>1.00</b></div>
+          </div>
+        </div>
+        <div class="card">
+          <h3>Run time of each program, in milliseconds</h3>
+          <p class="note">The median of 5 runs; the fastest of each row is green.</p>
+          <div class="table-wrap">
+            <table class="times">
+              <thead><tr><th>benchmark</th><th class="cromo">cromo 0.16</th><th>g++ 14</th><th>clang++ 18</th><th>go 1.22</th><th>rustc 1.96</th></tr></thead>
+              <tbody>
+                <tr><td>binarytrees</td><td class="cromo">999</td><td class="best">956</td><td>968</td><td>1434</td><td>1713</td></tr>
+                <tr><td>bits</td><td class="cromo best">435</td><td>520</td><td>500</td><td>715</td><td>502</td></tr>
+                <tr><td>collatz</td><td class="cromo">529</td><td>746</td><td class="best">522</td><td>844</td><td>524</td></tr>
+                <tr><td>fib</td><td class="cromo">561</td><td class="best">360</td><td>503</td><td>1116</td><td>608</td></tr>
+                <tr><td>mandelbrot</td><td class="cromo">832</td><td>820</td><td class="best">812</td><td>831</td><td>843</td></tr>
+                <tr><td>shapes</td><td class="cromo">481</td><td class="best">470</td><td>489</td><td>753</td><td>491</td></tr>
+                <tr><td>sort</td><td class="cromo">540</td><td>582</td><td>592</td><td>611</td><td class="best">486</td></tr>
+                <tr><td>spectralnorm</td><td class="cromo">513</td><td class="best">503</td><td>515</td><td>515</td><td>521</td></tr>
+                <tr><td>strings</td><td class="cromo">757</td><td>452</td><td class="best">440</td><td>691</td><td>475</td></tr>
+                <tr><td>threads</td><td class="cromo best">111</td><td>112</td><td class="best">111</td><td>113</td><td>112</td></tr>
+                <tr><td>wordcount</td><td class="cromo">599</td><td>1181</td><td>685</td><td class="best">346</td><td>705</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      <p class="bench-foot">AMD Ryzen 9 5950X, Ubuntu 20.04 in WSL 2; <code>cromo build --release --target linux</code>, <code>g++ -O2</code>, <code>clang++ -O2</code>, <code>go build</code>, <code>rustc -C opt-level=3</code>. Each program prints a checksum, and all the versions must print the same. The sources and the script are in <code>bench/</code>.</p>
+    </div>
+  </section>
+
   <section id="roadmap">
     <div class="wrap">
       <div class="kicker">Roadmap</div>
       <h2>Built in the open, <span class="chrome">one milestone at a time</span></h2>
-      <p class="section-lead">Every choice is decided first and written down with its reasons, then implemented with tests on Windows and Linux. Fifteen milestones, M0 to M14, are done.</p>
-      <div class="progress-label"><span>M0 – M14 done</span><span>15 of 19 numbered milestones</span></div>
+      <p class="section-lead">Every choice is decided first and written down with its reasons, then implemented with tests on Windows and Linux. Eighteen milestones, M0 to M17, are done.</p>
+      <div class="progress-label"><span>M0 – M17 done</span><span>18 of 19 numbered milestones</span></div>
       <div class="progress" aria-hidden="true"><div></div></div>
       <div class="roadmap">
         <div class="phase">
-          <h3>Done <span class="badge done">M0 – M14</span></h3>
+          <h3>Done <span class="badge done">M0 – M17</span></h3>
           <ul class="steps">
             <li><b>M0–2</b><span>LLVM backend, numbers, control flow, structs, RAII</span></li>
             <li><b>M3–6</b><span>Ownership, generics, interfaces, lists, strings, enums, exceptions</span></li>
             <li><b>M7–10</b><span>Modules, C interop without the SDK, Linux, <code>build</code> and <code>run</code></span></li>
             <li><b>M11–13</b><span>Formatter, language server, anonymous functions</span></li>
             <li><b>M14</b><span>Arrays, maps, bytes, files, time, code for each system</span></li>
+            <li><b>M15–16</b><span>Threads and mutexes; TCP, UDP and DNS without libc</span></li>
+            <li><b>M17</b><span>TLS for clients and servers, and cryptography</span></li>
           </ul>
         </div>
         <div class="phase">
-          <h3>Next <span class="badge next">M15 – M18</span></h3>
+          <h3>Next <span class="badge next">M18</span></h3>
           <ul class="steps">
-            <li><b>M15</b><span>Threads and synchronization</span></li>
-            <li><b>M16</b><span>Networking: TCP, UDP and DNS without libc</span></li>
-            <li><b>M17</b><span>TLS, cryptography and an HTTPS client</span></li>
             <li><b>M18</b><span>HTTP server and client, JSON</span></li>
           </ul>
         </div>
@@ -680,7 +756,7 @@ cromo 0.14.0 (LLVM 23.1.4)</pre>
           <h3>Later <span class="badge later">self-hosting</span></h3>
           <ul class="steps">
             <li><b>tasks</b><span>Lightweight tasks under the same API as threads</span></li>
-            <li><b>update</b><span><code>cromo update</code>, with signed releases</span></li>
+            <li><b>install</b><span>The one-line installer and <code>cromo update</code>, with signed archives</span></li>
             <li><b>last</b><span>The compiler written in Cromo, compiling itself</span></li>
           </ul>
         </div>
@@ -693,7 +769,14 @@ cromo 0.14.0 (LLVM 23.1.4)</pre>
       <div>
         <div class="kicker">Get started</div>
         <h2 style="margin-bottom:12px">Hello, world</h2>
-        <p class="section-lead" style="margin-bottom:18px">Cromo is in development: the first public release will be a single <code>cromo</code> executable to download, nothing to install next to it.</p>
+        <p class="section-lead" style="margin-bottom:18px">Cromo is in development. The first public release will install with one line, for your user and without administrator rights: <code>cromo</code>, the library and the VS Code extension, in <code>~/.cromo</code>.</p>
+        <div class="window" style="margin-bottom:16px">
+          <div class="window-bar"><i></i><i></i><i></i><span class="title"><b>install</b></span></div>
+          <pre><span class="out-dim"># Windows, in PowerShell</span>
+<span class="prompt">&gt; </span><span class="cmd">irm https://cromolang.org/install.ps1 | iex</span>
+<span class="out-dim"># Linux</span>
+<span class="prompt">$ </span><span class="cmd">curl -sSf https://cromolang.org/install.sh | sh</span></pre>
+        </div>
         <div class="window">
           <div class="window-bar"><i></i><i></i><i></i><span class="title"><b>hello.cro</b></span></div>
           <pre><code class="cromo">i32 main() {
@@ -703,7 +786,7 @@ cromo 0.14.0 (LLVM 23.1.4)</pre>
         </div>
       </div>
       <div class="downloads">
-        <div class="download"><span><b>Windows x64</b> · cromo.exe</span><span class="soon">coming soon</span></div>
+        <div class="download"><span><b>Windows x64</b> · archive and <code>install.ps1</code></span><span class="soon">coming soon</span></div>
         <div class="download"><span><b>Linux x64</b> · from Windows today, <code>--target linux</code></span><span class="soon">coming soon</span></div>
         <div class="download"><span><b>VS Code</b> · cromo-lang extension</span><span class="soon">coming soon</span></div>
         <div class="download"><span><b>Specification</b> · language, compiler, decisions</span><span class="soon">draft</span></div>
@@ -716,28 +799,26 @@ cromo 0.14.0 (LLVM 23.1.4)</pre>
   <div class="wrap">
     <div class="brand"><svg height="26" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
   <defs>
-    <linearGradient id="foot-chrome" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#f8fafd"/>
-      <stop offset="0.3" stop-color="#b3bdca"/>
-      <stop offset="0.47" stop-color="#f1f4f8"/>
-      <stop offset="0.66" stop-color="#8691a2"/>
-      <stop offset="1" stop-color="#d9dfe7"/>
+    <linearGradient id="foot-orbit" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1b2230"/>
+      <stop offset="0.38" stop-color="#5d697b"/>
+      <stop offset="0.52" stop-color="#9ba6b5"/>
+      <stop offset="0.72" stop-color="#465164"/>
+      <stop offset="1" stop-color="#171d29"/>
     </linearGradient>
-    <linearGradient id="foot-edge" x1="0" y1="0" x2="0" y2="1">
+    <radialGradient id="foot-nucleus" cx="0.35" cy="0.3" r="0.75">
       <stop offset="0" stop-color="#ffffff"/>
-      <stop offset="1" stop-color="#3e4757"/>
-    </linearGradient>
+      <stop offset="0.35" stop-color="#cfd6df"/>
+      <stop offset="0.8" stop-color="#7c8797"/>
+      <stop offset="1" stop-color="#4b5565"/>
+    </radialGradient>
   </defs>
-  <rect x="2" y="2" width="60" height="60" rx="12" fill="url(#foot-chrome)" stroke="url(#foot-edge)" stroke-width="1.5"/>
-  <g fill="none" stroke="#1a2130" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M9.6 11.6a2.5 2.5 0 0 1 5 0c0 2-5 3.4-5 5.6h5"/>
-    <path d="M21.6 17.2V8.8l-4.4 6h6"/>
+  <g transform="translate(32 32) rotate(-28)">
+    <path d="M23.84 -5.16A27 11 0 1 0 23.84 5.16" fill="none" stroke="url(#foot-orbit)" stroke-width="4" stroke-linecap="round"/>
+    <circle cx="23.84" cy="5.16" r="3.6" fill="#0ea5c6"/>
   </g>
-  <g fill="none" stroke="#111722" stroke-width="5.6" stroke-linecap="round">
-    <path d="M32.2 32.6A11 11 0 1 0 32.2 47.4"/>
-    <path d="M41.5 33.2V50.6M41.5 40.4A8.6 8.6 0 0 1 50.6 33.4"/>
-  </g>
-</svg><span>Cromo is Italian for chromium, element 24: the metal that keeps steel from rusting.</span></div>
+  <circle cx="32" cy="32" r="9" fill="url(#foot-nucleus)" stroke="#3a4454" stroke-width="1"/>
+</svg><span>Cromo is Italian for chromium: the metal that keeps steel from rusting.</span></div>
     <div class="links">
       <a href="#features">Features</a>
       <a href="#examples">Examples</a>
