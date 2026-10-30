@@ -1,0 +1,74 @@
+// The module std.gzip (D367): the format of gzip (RFC 1952), whose deflate (RFC
+// 1951) is in the runtime (runtime/gzip). compress finds the repeats in a window
+// of 32 KB and writes them with the fixed codes of deflate; decompress reads any
+// gzip, also of several members.
+import unsafe
+
+extern "cromo" {
+    addr cromo_gzip_compress(addr data, i64 size, addr result)
+    addr cromo_gzip_decompress(addr data, i64 size, i64 limit, addr result)  // null: the problem in result
+}
+
+public list<u8> compress(list<u8> data) {
+    addr input = raw(data)
+    addr size = alloc(8)
+    addr out = cromo_gzip_compress(input, data.len(), size)
+    list<u8> result = fromRaw(out, copyAt<i64>(size))
+    free(input)
+    free(size)
+    free(out)
+    ret result
+}
+
+// Throws when the data are not gzip, or are damaged.
+public list<u8> decompress(list<u8> data) {
+    ret decompressUpTo(data, 9223372036854775807)
+}
+
+// As decompress, but throws when the result would be larger than `limit`: for data
+// that come from the network, which can be small and become huge.
+public list<u8> decompressUpTo(list<u8> data, i64 limit) {
+    addr input = raw(data)
+    addr size = alloc(8)
+    addr out = cromo_gzip_decompress(input, data.len(), limit, size)
+    i64 count = copyAt<i64>(size)
+    free(input)
+    free(size)
+    addr none
+    if (out == none) {
+        switch (count) {
+            case -1 {
+                throw Error("cannot decompress: the data are not gzip")
+            }
+            case -3 {
+                throw Error("cannot decompress: the data are damaged, their check does not match")
+            }
+            case -4 {
+                throw Error(format("cannot decompress: the data are larger than {} bytes", limit))
+            }
+            default {
+                throw Error("cannot decompress: the data of gzip are damaged or cut")
+            }
+        }
+    }
+    list<u8> result = fromRaw(out, count)
+    free(out)
+    ret result
+}
+
+addr raw(list<u8> bytes) {
+    addr data = alloc(bytes.len() + 1)
+    for (i64 i = 0; i < bytes.len(); i++) {
+        put<u8>(offset(data, i), bytes[i])
+    }
+    ret data
+}
+
+list<u8> fromRaw(addr data, i64 size) {
+    list<u8> bytes
+    bytes.reserve(size)
+    for (i64 i = 0; i < size; i++) {
+        bytes.add(copyAt<u8>(offset(data, i)))
+    }
+    ret bytes
+}

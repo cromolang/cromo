@@ -1,0 +1,59 @@
+// JSON of the enums with data (D365), with the name of a case changed by an
+// attribute, of the fixed arrays and of a u64 above the i64.
+// expect-output: {"shapes":[{"circle":{"radius":2.5}},{"Rect":{"w":1.0,"h":2.0}},"Empty"],"color":[255,0,7],"id":18446744073709551615}
+// expect-output: true
+// expect-output: cannot decode JSON: at color: expected an array of 3 elements, found 2
+// expect-output: cannot decode JSON: at shapes[0].Rect.w: expected a number, found a string
+// expect-output: cannot decode JSON: at shapes[0]: expected one of circle, Rect, Empty, found "Square"
+// expect-output: cannot decode JSON: at shapes[0]: expected an object with one member, the case, found an object
+// expect-output: 18446744073709551615 18446744073709552000
+// expect-output: [[1,2],[3,4]]
+import std.json
+
+enum Shape {
+    [[json("circle")]]
+    Circle(f64 radius)
+    Rect(f64 w, f64 h)
+    Empty
+}
+
+struct Drawing {
+    list<Shape> shapes
+    i32[3] color
+    u64 id
+}
+
+void tryDecode(string text) {
+    try {
+        json.decode<Drawing>(text)
+    } catch (Exception e) {
+        println("{}", e.message())
+    }
+}
+
+i32 main() {
+    Drawing d
+    d.shapes.add(Shape.Circle(2.5))
+    d.shapes.add(Shape.Rect(1.0, 2.0))
+    d.shapes.add(Shape.Empty)
+    d.color[0] = 255
+    d.color[2] = 7
+    d.id = 18446744073709551615
+    string text = json.encode(d)
+    println("{}", text)
+    Drawing back = json.decode<Drawing>(text)
+    println("{}", json.encode(back) == text)
+    tryDecode("{\"color\": [1, 2]}")
+    tryDecode("{\"shapes\": [{\"Rect\": {\"w\": \"x\"}}]}")
+    tryDecode("{\"shapes\": [\"Square\"]}")
+    tryDecode("{\"shapes\": [{\"Rect\": {}, \"Empty\": {}}]}")
+    json.Value v = json.parse("18446744073709551615")
+    println("{} {}", json.encode(v), v.asFloat())
+    i64[2][2] grid
+    grid[0][0] = 1
+    grid[0][1] = 2
+    grid[1][0] = 3
+    grid[1][1] = 4
+    println("{}", json.encode(json.decode<i64[2][2]>(json.encode(grid))))
+    ret 0
+}

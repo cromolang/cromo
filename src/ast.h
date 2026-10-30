@@ -575,6 +575,8 @@ struct EnumCase {
     SourceLocation loc;
     std::vector<FieldDecl> fields;
     ExprPtr valueExpr;  // `Red = 1`, in an enum without data
+    std::vector<Attribute> attributes;  // `[[json("circle")]]` (D365)
+    std::string jsonName;               // set by sema: its name in JSON
     int size = 0;   // set by sema: the layout of the data, as a struct
     int align = 1;
     int64_t value = 0;  // set by sema: the tag, its position unless written

@@ -712,6 +712,7 @@ private:
             EnumCase copy;
             copy.name = item.name;
             copy.loc = item.loc;
+            copy.attributes = item.attributes;
             if (item.valueExpr) copy.valueExpr = clone(*item.valueExpr);
             for (const FieldDecl& field : item.fields) copy.fields.push_back(clone(field));
             instance->cases.push_back(std::move(copy));
@@ -1077,8 +1078,22 @@ private:
         }
         if (!computed.empty()) makeDefaultFunction(decl, computed);
 
-        // The cases of an enum, with their data (D104).
+        // The cases of an enum, with their data (D104) and their names in JSON (D365).
+        std::set<std::string> caseNames;
         for (EnumCase& item : decl.cases) {
+            item.jsonName = item.name;
+            for (const Attribute& attribute : item.attributes) {
+                bool named = attribute.name == "json" && attribute.args.size() == 1 && attribute.args[0].isText &&
+                             !attribute.args[0].text.empty();
+                if (named) {
+                    item.jsonName = attribute.args[0].text;
+                } else {
+                    diag_->error(attribute.loc, "a case has only the attribute json(\"name\"), its name in JSON (D365)");
+                }
+            }
+            if (!caseNames.insert(item.jsonName).second) {
+                diag_->error(item.loc, "another case of " + decl.name + " has the name '" + item.jsonName + "' in JSON (D365)");
+            }
             if (fieldNames.count(item.name)) diag_->error(item.loc, "case '" + item.name + "' is already defined in " + decl.name);
             fieldNames[item.name] = nullptr;
             std::map<std::string, bool> dataNames;
@@ -3850,6 +3865,7 @@ private:
             return place + " has type " + type.name() + (reason.empty() ? "" : " (" + reason + ")");
         };
         if (type.isBool() || type.isNumeric() || type.isError()) return "";
+        if (type.isArray()) return jsonProblem(type.array->element, place.empty() ? "an element" : place + "[i]", visiting);
         if (type.isParam()) {
             const auto& constraints = type.param->interfaces;
             if (std::find(constraints.begin(), constraints.end(), dataInterface_) != constraints.end()) return "";
@@ -3863,8 +3879,17 @@ private:
             if (decl.typeArgs[0] != stringType()) return bad("the keys of JSON are strings");
             return jsonProblem(decl.typeArgs[1], place.empty() ? "a value" : place + "[key]", visiting);
         }
-        if (decl.isEnum) return withoutData(decl) ? "" : bad("an enum with data");
         if (!visiting.insert(&decl).second) return "";  // already being checked: it contains a list of itself
+        if (decl.isEnum) {  // D365: the data of each case
+            for (const EnumCase& item : decl.cases) {
+                for (const FieldDecl& field : item.fields) {
+                    std::string problem =
+                        jsonProblem(field.resolved, (place.empty() ? decl.name : place) + "." + item.name + "." + field.name, visiting);
+                    if (!problem.empty()) return problem;
+                }
+            }
+            return "";
+        }
         for (const FieldDecl& field : decl.fields) {
             if (field.jsonName.empty()) continue;  // json(skip)
             std::string problem = jsonProblem(field.resolved, (place.empty() ? decl.name : place) + "." + field.name, visiting);
@@ -3933,13 +3958,14 @@ private:
             name[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(name[0])));
             return library(prefix + name);
         }
+        if (type.isArray()) return generatedArrayJson(write, type, loc);
         if (type.isStruct()) {
             const StructDecl& decl = *type.structDecl;
             if (&decl == stringDecl_) return library(prefix + "String");
             if (isJsonValue(type)) return library(prefix + "Value");
             if (isList(type)) return generic(prefix + "List", elementOf(type));
             if (isMap(type) && decl.typeArgs[0] == stringType()) return generic(prefix + "Map", decl.typeArgs[1]);
-            if (!isMap(type) && (!decl.isEnum || withoutData(decl))) return generatedJson(write, decl, loc);
+            if (!isMap(type)) return generatedJson(write, decl, loc);
         }
         diag_->error(loc, "values of type " + type.name() + " cannot be converted to JSON (D251): " + jsonProblem(type));
         return nullptr;
@@ -3996,12 +4022,68 @@ private:
         return result;
     }
 
-    // An object with a member for each field, or the name of the case of an enum.
+    // An array of JSON, with the elements of a fixed array (D196): generated for each
+    // type of array, as for a struct.
+    FunctionDecl* generatedArrayJson(bool write, Type type, SourceLocation loc) {
+        std::string key = std::string(write ? "write " : "read ") + type.name();
+        auto found = arrayJsonFunctions_.find(key);
+        if (found != arrayJsonFunctions_.end()) return found->second;
+        TypeBindings bindings = {{"T", type}, {"E", type.array->element}};
+        std::string count = std::to_string(type.array->count);
+        std::string text;
+        if (write) {
+            text = "void write(ref Writer w, T value) {\nw.beginArray()\nfor (E item in value) {\njsonWrite<E>(ref w, item)\n}\n"
+                   "w.endArray()\n}\n";
+        } else {
+            text = "T read(Value v) {\nT result\nswitch (v) {\ncase Array(list<Value> items) {\nif (items.len() != " + count +
+                   ") {\nthrow wrongLength(" + count + ", items.len())\n}\nfor (i64 i = 0; i < " + count +
+                   "; i++) {\ntry {\nresult[i] = jsonRead<E>(items[i])\n} catch (Mismatch e) {\nthrow e.at(i)\n}\n}\n}\n"
+                   "case Null {\n}\ndefault {\nthrow mismatch(\"an array\", v)\n}\n}\nret result\n}\n";
+        }
+        SourceFile& source = generatedSources_.emplace_back(SourceFile{"<json>", text});
+        Module parsed = parse(tokenize(source, loc.file, *diag_), *diag_);
+        if (parsed.functions.size() != 1) {
+            diag_->error(loc, "internal error: the conversion to JSON of " + type.name() + " does not parse");
+            return nullptr;
+        }
+        auto function = std::make_unique<FunctionDecl>(std::move(parsed.functions[0]));
+        function->typeBindings = std::move(bindings);
+        function->convertsJson = true;
+        function->symbol = symbolFor(loc, std::string(write ? "write." : "read.") + type.name());
+        FunctionDecl* result = function.get();
+        module_.functionInstances.push_back(std::move(function));
+        arrayJsonFunctions_[key] = result;
+        {
+            BindingsScope scope(bindings_, &result->typeBindings);
+            resolveSignature(*result);
+        }
+        schedule(*result, result, false, type.name(), loc);
+        return result;
+    }
+
+    // An object with a member for each field; for an enum the name of a case
+    // without data, or an object whose member is the case with its data (D365).
     static std::string jsonWriter(const StructDecl& decl, TypeBindings& bindings) {
         std::string text = "void write(ref Writer w, T value) {\n";
         if (decl.isEnum) {
             text += "switch (value) {\n";
-            for (const EnumCase& item : decl.cases) text += "case " + item.name + " {\nw.writeText(" + quoted(item.name) + ")\n}\n";
+            for (size_t c = 0; c < decl.cases.size(); ++c) {
+                const EnumCase& item = decl.cases[c];
+                if (item.fields.empty()) {
+                    text += "case " + item.name + " {\nw.writeText(" + quoted(item.jsonName) + ")\n}\n";
+                    continue;
+                }
+                std::string pattern;
+                std::string body = "w.beginObject()\nw.key(" + quoted(item.jsonName) + ")\nw.beginObject()\n";
+                for (size_t i = 0; i < item.fields.size(); ++i) {
+                    std::string param = "D" + std::to_string(c) + "_" + std::to_string(i);
+                    std::string name = "d" + std::to_string(i);
+                    bindings.emplace_back(param, item.fields[i].resolved);
+                    pattern += (i ? ", " : "") + param + " " + name;
+                    body += "w.key(" + quoted(item.fields[i].name) + ")\njsonWrite<" + param + ">(ref w, " + name + ")\n";
+                }
+                text += "case " + item.name + "(" + pattern + ") {\n" + body + "w.endObject()\nw.endObject()\n}\n";
+            }
             text += "}\n";
         } else {
             text += "w.beginObject()\n";
@@ -4023,15 +4105,52 @@ private:
     // null gives the default value (D257).
     static std::string jsonReader(const StructDecl& decl, TypeBindings& bindings) {
         std::string text = "T read(Value v) {\n";
-        if (decl.isEnum) {
+        if (decl.isEnum && withoutData(decl)) {
             std::string names;
             text += "if (v.isNull()) {\nT first\nret first\n}\n";  // D257
             text += "string name = readString(v)\nswitch (name) {\n";
             for (const EnumCase& item : decl.cases) {
-                text += "case " + quoted(item.name) + " {\nret T." + item.name + "\n}\n";
-                names += (names.empty() ? "" : ", ") + item.name;
+                text += "case " + quoted(item.jsonName) + " {\nret T." + item.name + "\n}\n";
+                names += (names.empty() ? "" : ", ") + item.jsonName;
             }
             return text + "}\nthrow unknownCase(name, " + quoted(names) + ")\n}\n";
+        }
+        if (decl.isEnum) {  // D365: a text for a case without data, an object of one member for the others
+            std::string names;
+            std::string bare;
+            std::string objects;
+            for (size_t c = 0; c < decl.cases.size(); ++c) {
+                const EnumCase& item = decl.cases[c];
+                names += (names.empty() ? "" : ", ") + item.jsonName;
+                if (item.fields.empty()) {
+                    bare += "case " + quoted(item.jsonName) + " {\nret T." + item.name + "\n}\n";
+                    continue;
+                }
+                std::string declarations;
+                std::string members;
+                std::string args;
+                for (size_t i = 0; i < item.fields.size(); ++i) {
+                    std::string param = "D" + std::to_string(c) + "_" + std::to_string(i);
+                    std::string name = "d" + std::to_string(i);
+                    bindings.emplace_back(param, item.fields[i].resolved);
+                    declarations += param + " " + name + "\n";
+                    members += "case " + quoted(item.fields[i].name) + " {\ntry {\n" + name + " = jsonRead<" + param +
+                               ">(item.value)\n} catch (Mismatch e) {\nthrow e.inside(" + quoted(item.fields[i].name) +
+                               ").inside(" + quoted(item.jsonName) + ")\n}\n}\n";
+                    args += (i ? ", move " : "move ") + name;
+                }
+                objects += "case " + quoted(item.jsonName) + " {\n" + declarations + "switch (members[0].value) {\n" +
+                           "case Object(list<Member> data) {\nfor (Member item in data) {\nswitch (item.name) {\n" + members +
+                           "}\n}\n}\ncase Null {\n}\ndefault {\nthrow mismatch(\"an object\", members[0].value).inside(" +
+                           quoted(item.jsonName) + ")\n}\n}\nret T." + item.name + "(" + args + ")\n}\n";
+            }
+            text += "if (v.isNull()) {\nT first\nret first\n}\n";  // D257
+            text += "switch (v) {\ncase Text(string name) {\nswitch (name) {\n" + bare + "}\nthrow unknownCase(name, " +
+                    quoted(names) + ")\n}\ncase Object(list<Member> members) {\nif (members.len() != 1) {\n"
+                    "throw mismatch(\"an object with one member, the case\", v)\n}\nswitch (members[0].name) {\n" + objects +
+                    "}\nthrow unknownCase(members[0].name, " + quoted(names) + ")\n}\ndefault {\n"
+                    "throw mismatch(\"a text or an object, a case\", v)\n}\n}\n}\n";
+            return text;
         }
         std::string cases;
         for (size_t i = 0; i < decl.fields.size(); ++i) {
@@ -5214,6 +5333,7 @@ private:
     // conversions generated for structs and enums, with their texts.
     const InterfaceDecl* dataInterface_ = nullptr;
     std::map<std::pair<bool, const StructDecl*>, FunctionDecl*> jsonFunctions_;
+    std::map<std::string, FunctionDecl*> arrayJsonFunctions_;  // of the fixed arrays, by type
     const InterfaceDecl* debugInterface_ = nullptr;
     std::map<std::string, FunctionDecl*> debugFunctions_;  // the writers of the form of debug (D319)
     std::deque<SourceFile> generatedSources_;

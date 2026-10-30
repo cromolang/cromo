@@ -65,7 +65,7 @@ i32 main() {
         deep += "["
     }
     read(deep)
-    decode("{\"big\": 18000000000000000000}")
+    decode("{\"big\": 20000000000000000000}")  // above the u64 (D369)
     decode("{\"tiny\": 500}")
     decode("{\"tiny\": 1.0}")
     decode("{\"grid\": [[1, 2], [3, \"x\"]]}")

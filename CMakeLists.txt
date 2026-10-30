@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16...3.20)  # 3.16 in WSL for cromo for Linux, without the runtime
-project(cromo VERSION 0.26.0 LANGUAGES CXX)  # 0.milestone.fix (D157)
+project(cromo VERSION 0.27.0 LANGUAGES CXX)  # 0.milestone.fix (D157)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -73,12 +73,13 @@ file(MAKE_DIRECTORY "${CROMO_RT_DIR}")
 
 # ---- TLS and cryptography (D233, D236) ----
 # mbedTLS and Monocypher (third_party), with the pieces of the C library that they
-# use and the glue of std.net and std.crypto (runtime/tls), compiled like the
+# use and the glue of std.net and std.crypto (runtime/tls), with gzip for std.gzip
+# and std.http (runtime/gzip, D367), compiled like the
 # runtime and added to its archives: a program links only the objects it uses.
 # Only runtime/libc is searched for the headers of C, not the Windows SDK.
 file(GLOB CROMO_TLS_THIRD_PARTY CONFIGURE_DEPENDS
      "${CMAKE_SOURCE_DIR}/third_party/mbedtls/library/*.c" "${CMAKE_SOURCE_DIR}/third_party/monocypher/*.c")
-file(GLOB CROMO_TLS_GLUE CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/runtime/tls/*.c")
+file(GLOB CROMO_TLS_GLUE CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/runtime/tls/*.c" "${CMAKE_SOURCE_DIR}/runtime/gzip/*.c")
 file(GLOB CROMO_TLS_HEADERS CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/runtime/tls/*.h" "${CMAKE_SOURCE_DIR}/runtime/libc/*.h")
 set(CROMO_TLS_FLAGS -nostdlibinc -isystem "${CMAKE_SOURCE_DIR}/runtime/libc" "-I${CMAKE_SOURCE_DIR}/runtime/tls"
     "-I${CMAKE_SOURCE_DIR}/third_party/mbedtls/include" "-I${CMAKE_SOURCE_DIR}/third_party/monocypher"

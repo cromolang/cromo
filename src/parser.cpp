@@ -508,6 +508,8 @@ private:
     }
 
     bool parseEnumMember(StructDecl& decl) {
+        std::vector<Attribute> attributes;  // of a case (D365)
+        if (!parseAttributes(attributes)) return false;
         std::optional<SourceLocation> publicLoc;
         if (check(TokenKind::KwPublic)) publicLoc = advance().loc;
         if (check(TokenKind::Tilde) ||
@@ -517,6 +519,10 @@ private:
         }
         size_t afterType = skipType(0);
         if (afterType && peek(afterType).kind == TokenKind::Identifier) {  // a method
+            if (!attributes.empty()) {
+                diag_.error(attributes[0].loc, "in an enum an attribute is written only before a case (D365)");
+                return false;
+            }
             auto method = parseFunction(true);
             if (!method) return false;
             method->kind = FunctionKind::Method;
@@ -535,6 +541,7 @@ private:
         EnumCase item;
         item.name = peek().text;
         item.loc = advance().loc;
+        item.attributes = std::move(attributes);
         if (check(TokenKind::LParen)) {
             FunctionDecl data;  // the data are written like parameters (D104)
             if (!parseParams(data)) return false;

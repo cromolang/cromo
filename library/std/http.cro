@@ -1,10 +1,13 @@
-// The module std.http (D252-D254): HTTP/1.1 over the connections of std.net,
-// with TLS for https (D235). A server gives every request to one function, each
-// connection on a task (D252, D270); the client opens a connection for each
-// request (D254).
+// The module std.http (D252-D254, D366-D368): HTTP/1.1 over the connections of
+// std.net, with TLS for https (D235). A server gives every request to one function,
+// each connection on a task (D252, D270), and a request can become a WebSocket.
+// The functions of the client open a connection for each request (D254); an
+// http.Client keeps them, for each host. The client asks for gzip and decompresses.
+import std.gzip
 import std.net
 import std.thread
 import std.time
+import std.websocket
 
 // ---- Headers ----
 
@@ -95,8 +98,27 @@ public struct Request {
     public string query  // the server: "full=1"
     public Headers headers
     public list<u8> body
-    list<Header> params  // of the last pattern of matches()
-    string version       // "HTTP/1.1"
+    list<Header> params        // of the last pattern of matches()
+    string version             // "HTTP/1.1"
+    net.Connection connection  // the server: lent to the request while the handler runs (D368)
+    bool upgraded              // the server: the connection became a WebSocket
+
+    // The server: the request becomes a WebSocket, which `work` uses until it
+    // returns, on the task of the connection; then the WebSocket and the connection
+    // end. A request that is not one of WebSocket gets the status 400.
+    public void webSocket(func(ref websocket.Socket) work) {
+        string key = headers.get("sec-websocket-key")
+        upgraded = true
+        if (method != "GET" || !sameName(headers.get("upgrade"), "websocket") || key.len() == 0) {
+            connection.write(("HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").bytes())
+            ret
+        }
+        string head = "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
+            format("Sec-WebSocket-Accept: {}\r\n\r\n", websocket.acceptKey(key))
+        connection.write(head.bytes())
+        websocket.Socket socket = websocket.accepted(move connection)
+        work(ref socket)
+    }
 
     // A request for the client: the method and the whole URL.
     public Request(string verb, string address) {
@@ -225,6 +247,7 @@ public struct Response {
     public i32 status = 200
     public Headers headers
     public list<u8> body
+    bool closes  // the client: the connection cannot carry another request
 
     // The body as text: an exception if it is not UTF-8.
     public string text() const {
@@ -334,14 +357,21 @@ void serveConnection(ref net.Connection connection, const func(ref Request, ref 
             respond(ref connection, req, res, false)
             ret
         }
+        req.connection = move connection
         try {
             handler(ref req, ref res)
         } catch (Exception e) {
-            eprintln("http: {} {}: {}", req.method, req.path, e.message())
-            Response failed
-            failed.status = 500
-            res = move failed
+            if (!req.upgraded) {  // a WebSocket ends as it can
+                eprintln("http: {} {}: {}", req.method, req.path, e.message())
+                Response failed
+                failed.status = 500
+                res = move failed
+            }
         }
+        if (req.upgraded) {
+            ret
+        }
+        connection = move req.connection
         bool keep = keepAlive(req) && !sameName(res.headers.get("connection"), "close")
         respond(ref connection, req, res, keep)
         if (!keep) {
@@ -652,46 +682,158 @@ public Response post(string url, string body, string type) {
 // redirects. A status of error is a response, not an exception; an exception is
 // a failure of the network or a response that is not HTTP.
 public Response send(Request req) {
-    string method = req.method.copy()
-    string url = req.url.copy()
-    Headers headers = req.headers.copy()
-    list<u8> body = req.body.copy()
-    for (i64 hops = 0;; hops++) {
-        Response res = exchange(method, url, headers, body)
-        bool redirect = res.status == 301 || res.status == 302 || res.status == 303 || res.status == 307 ||
-            res.status == 308
-        if (!redirect || !res.headers.has("location")) {
-            ret res
+    Client once
+    once.single = true
+    ret once.send(req)
+}
+
+// A connection kept open for the next request to its host.
+struct Kept {
+    string key  // "https://example.com"
+    net.Connection connection
+}
+
+// D366: a client that keeps the connections open, for each host, to use them for
+// the next requests. Several tasks can use the same client: they read it.
+public struct Client {
+    thread.Mutex<list<Kept>> idle
+    bool single  // the functions of the module: a connection for each request (D254)
+
+    public Response get(string url) const {
+        ret send(Request("GET", url))
+    }
+
+    public Response post(string url, string body, string type) const {
+        Request req = Request("POST", url)
+        req.headers.set("Content-Type", type)
+        req.write(body)
+        ret send(req)
+    }
+
+    // As http.send, on the connections of the client.
+    public Response send(Request req) const {
+        string method = req.method.copy()
+        string url = req.url.copy()
+        Headers headers = req.headers.copy()
+        list<u8> body = req.body.copy()
+        for (i64 hops = 0;; hops++) {
+            Response res = exchange(method, url, headers, body)
+            bool redirect = res.status == 301 || res.status == 302 || res.status == 303 || res.status == 307 ||
+                res.status == 308
+            if (!redirect || !res.headers.has("location")) {
+                ret res
+            }
+            if (hops == 10) {
+                throw Error(format("cannot get {}: more than 10 redirects", req.url))
+            }
+            string next = resolve(url, res.headers.get("location"))
+            if (res.status == 303 || ((res.status == 301 || res.status == 302) && method != "GET" && method != "HEAD")) {
+                method = "GET"
+                body.clear()
+                headers.remove("content-type")
+            }
+            if (parseUrl(next).authority() != parseUrl(url).authority()) {  // the credentials stay with their host
+                headers.remove("authorization")
+                headers.remove("cookie")
+            }
+            url = move next
         }
-        if (hops == 10) {
-            throw Error(format("cannot get {}: more than 10 redirects", req.url))
+    }
+
+    // A request and its response, on a connection kept by the client or on a new one.
+    // A kept connection that the server has closed meanwhile fails before the response
+    // starts: then the request goes once more, on a new connection.
+    Response exchange(string method, string url, Headers headers, list<u8> body) const {
+        Url target = parseUrl(url)
+        string key = target.key()
+        net.Connection connection
+        bool kept = !single && takeKept(key, ref connection)
+        if (!kept) {
+            connection = open(target)
         }
-        string next = resolve(url, res.headers.get("location"))
-        if (res.status == 303 || ((res.status == 301 || res.status == 302) && method != "GET" && method != "HEAD")) {
-            method = "GET"
-            body.clear()
-            headers.remove("content-type")
+        Incoming input
+        Response res
+        try {
+            res = talk(ref connection, ref input, single, target, method, headers, body)
+        } catch (Exception e) {
+            if (!kept || input.data.len() > 0) {
+                throw
+            }
+            connection = open(target)
+            Incoming fresh
+            res = talk(ref connection, ref fresh, single, target, method, headers, body)
         }
-        if (parseUrl(next).authority() != parseUrl(url).authority()) {  // the credentials stay with their host
-            headers.remove("authorization")
-            headers.remove("cookie")
+        if (!single && !res.closes) {
+            keep(key, move connection)
         }
-        url = move next
+        ret res
+    }
+
+    // The most recent connection kept for the host.
+    bool takeKept(string key, ref net.Connection connection) const {
+        bool found = false
+        idle.lock([key, ref found, ref connection](ref list<Kept> items) {
+            for (i64 i = items.len() - 1; i >= 0; i--) {
+                if (items[i].key == key) {
+                    Kept item = items.remove(i)
+                    connection = move item.connection
+                    found = true
+                    ret
+                }
+            }
+        })
+        ret found
+    }
+
+    // At most 8 connections for each host: the oldest go.
+    void keep(string key, move net.Connection connection) const {
+        Kept kept
+        kept.key = key.copy()
+        kept.connection = move connection
+        idle.lock([key, ref kept](ref list<Kept> items) {
+            i64 count = 0
+            for (Kept item in items) {
+                if (item.key == key) {
+                    count++
+                }
+            }
+            for (i64 i = 0; i < items.len() && count >= 8; i++) {
+                if (items[i].key == key) {
+                    items.remove(i)
+                    count--
+                    i--
+                }
+            }
+            addKept(ref items, ref kept)
+        })
     }
 }
 
-Response exchange(string method, string url, Headers headers, list<u8> body) {
-    Url target = parseUrl(url)
+// The lambda of the mutex can run again: it cannot move what it captures (D183).
+void addKept(ref list<Kept> items, ref Kept kept) {
+    items.add(move kept)
+}
+
+net.Connection open(Url target) {
     net.Connection connection
     if (target.secure) {
         connection = net.connectTls(target.host, target.port)
     } else {
         connection = net.connect(target.host, target.port)
     }
+    ret connection
+}
+
+Response talk(ref net.Connection connection, ref Incoming input, bool single, Url target, string method, Headers headers,
+    list<u8> body) {
     connection.timeout(30000)
     string head = format("{} {} HTTP/1.1\r\nHost: {}\r\n", method, target.path, target.authority())
     if (!headers.has("user-agent")) {
         head += "User-Agent: cromo\r\n"
+    }
+    bool compressed = !headers.has("accept-encoding")  // D367: the client decompresses by itself
+    if (compressed) {
+        head += "Accept-Encoding: gzip\r\n"
     }
     for (Header item in headers.items) {
         if (sameName(item.name, "host") || sameName(item.name, "content-length") || sameName(item.name, "connection")) {
@@ -702,23 +844,32 @@ Response exchange(string method, string url, Headers headers, list<u8> body) {
     if (body.len() > 0 || method == "POST" || method == "PUT" || method == "PATCH") {
         head += format("Content-Length: {}\r\n", body.len())
     }
-    head += "Connection: close\r\n\r\n"
+    if (single) {
+        head += "Connection: close\r\n"
+    }
+    head += "\r\n"
     list<u8> out
     appendText(ref out, head)
     for (u8 b in body) {
         out.add(b)
     }
     connection.write(out)
-    Incoming input
     try {
         for {
             Response res = readResponse(ref connection, ref input, method)
-            if (res.status >= 200) {
-                ret res
+            if (res.status < 200) {
+                continue
             }
+            res.closes = res.closes || input.available() > 0
+            if (compressed && sameName(res.headers.get("content-encoding"), "gzip")) {
+                res.body = gzip.decompressUpTo(res.body, maxBody())
+                res.headers.remove("content-encoding")
+                res.headers.set("Content-Length", format("{}", res.body.len()))
+            }
+            ret res
         }
     } catch (TooLarge e) {
-        throw Error(format("cannot read the response of {}: {}", url, e.message()))
+        throw Error(format("cannot read the response of {}: {}", target.text(), e.message()))
     }
 }
 
@@ -747,7 +898,13 @@ Response readResponse(ref net.Connection connection, ref Incoming input, string 
             res.headers.add(lines[i].slice(0, colon), trim(lines[i].slice(colon + 1, lines[i].len())))
         }
     }
+    // The connection carries another request when the server keeps it and the end
+    // of the body is known.
+    string said = res.headers.get("connection")
+    res.closes = sameName(said, "close") || (words[0] == "HTTP/1.0" && !sameName(said, "keep-alive"))
     if (res.status >= 200 && res.status != 204 && res.status != 304 && method != "HEAD") {
+        bool known = res.headers.has("content-length") || sameName(res.headers.get("transfer-encoding"), "chunked")
+        res.closes = res.closes || !known
         res.body = readBody(ref connection, ref input, res.headers, true)
     }
     ret res
@@ -759,6 +916,18 @@ struct Url {
     string host  // without the brackets of IPv6
     i32 port
     string path  // with the query, without the fragment: "/a?b=1"
+
+    // The connections to the same key can carry each other's requests (D366).
+    string key() const {
+        if (secure) {
+            ret "https://" + authority()
+        }
+        ret "http://" + authority()
+    }
+
+    string text() const {
+        ret key() + path
+    }
 
     // As in the header Host: the port only when it is not that of the scheme.
     string authority() const {

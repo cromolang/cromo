@@ -1,0 +1,109 @@
+// WebSocket (D368): a handler of the server turns the request into one, a client
+// opens one; texts, bytes in frames of every size of length, and the close from
+// both sides.
+// expect-output: echo hello
+// expect-output: bytes 3 70000 300
+// expect-output: closed by the client: 1000
+// expect-output: the server saw 4 messages and the close 1000
+// expect-output: closed by the server: 1000
+// expect-output: not a WebSocket: true
+import std.http
+import std.os
+import std.thread
+import std.time
+import std.websocket
+
+i32 main() {
+    http.Server server = http.listen("127.0.0.1", 0)
+    i32 port = server.port()
+    thread.Mutex<string> log
+    thread.Thread t = thread.Thread([server, log]() {
+        server.serve([log](ref http.Request req, ref http.Response res) {
+            if (req.matches("GET /echo")) {
+                req.webSocket([log](ref websocket.Socket ws) {
+                    i64 count = 0
+                    try {
+                        for {
+                            switch (ws.receive()) {
+                                case Text(string text) {
+                                    ws.send("echo " + text)
+                                }
+                                case Binary(list<u8> bytes) {
+                                    ws.sendBytes(bytes)
+                                }
+                            }
+                            count++
+                        }
+                    } catch (websocket.Closed e) {
+                        string line = format("the server saw {} messages and the close {}", count, e.code)
+                        log.lock([line](ref string l) { l = line.copy() })
+                    }
+                })
+            } else if (req.matches("GET /bye")) {
+                req.webSocket([](ref websocket.Socket ws) {
+                    ws.close()
+                })
+            } else {
+                res.write("plain")
+            }
+        })
+    })
+    t.start()
+
+    websocket.Socket ws = websocket.connect(format("ws://127.0.0.1:{}/echo", port))
+    ws.send("hello")
+    switch (ws.receive()) {
+        case Text(string text) {
+            println("{}", text)
+        }
+        default {
+            println("not a text")
+        }
+    }
+    string sizes = "bytes"
+    for (i64 size in [i64(3), 70000, 300]) {
+        list<u8> data
+        for (i64 i = 0; i < size; i++) {
+            data.add(u8(i % 251))
+        }
+        ws.sendBytes(data)
+        switch (ws.receive()) {
+            case Binary(list<u8> bytes) {
+                sizes += format(" {}", bytes.len())
+            }
+            default {
+                sizes += " ?"
+            }
+        }
+    }
+    println("{}", sizes)
+    ws.close()
+    try {
+        ws.receive()
+    } catch (websocket.Closed e) {
+        println("closed by the client: {}", e.code)
+    }
+    for (i64 i = 0; i < 200; i++) {
+        string seen = ""
+        log.lock([ref seen](ref string l) { seen = l.copy() })
+        if (seen.len() > 0) {
+            println("{}", seen)
+            break
+        }
+        time.msleep(10)
+    }
+
+    websocket.Socket other = websocket.connect(format("ws://127.0.0.1:{}/bye", port))
+    try {
+        other.receive()
+    } catch (websocket.Closed e) {
+        println("closed by the server: {}", e.code)
+    }
+    try {
+        websocket.connect(format("ws://127.0.0.1:{}/plain", port))
+    } catch (Exception e) {
+        println("not a WebSocket: {}", e.message().contains("200"))
+    }
+    os.exit(0)
+    ret 0
+}

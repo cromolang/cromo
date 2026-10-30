@@ -1,0 +1,50 @@
+// std.gzip (D367): compress and decompress, the blocks of deflate with dynamic
+// codes of another gzip, the limit, and the errors.
+// expect-output: 123458 bytes, packed to less than 2000: true, back the same: true
+// expect-output: empty 0
+// expect-output: dynamic The quick brown fox jumps over the lazy dog. Pack my box with
+// expect-output: cannot decompress: the data are not gzip
+// expect-output: cannot decompress: the data are larger than 100 bytes
+// expect-output: cannot decompress: the data of gzip are damaged or cut
+import std.crypto
+import std.gzip
+
+i32 main() {
+    string text = ""
+    for (i64 i = 0; i < 2000; i++) {
+        text += format("line {} of the text, with some words repeated again and again\n", i % 37)
+    }
+    list<u8> data = text.bytes()
+    list<u8> packed = gzip.compress(data)
+    list<u8> back = gzip.decompress(packed)
+    println("{} bytes, packed to less than 2000: {}, back the same: {}", data.len(), packed.len() < 2000, string(back) == text)
+    list<u8> empty
+    println("empty {}", gzip.decompress(gzip.compress(empty)).len())
+    // Made by gzip -9: a block with dynamic codes.
+    list<u8> other = crypto.fromHex("1f8b08000000000002038d8f4b12c2201044afd2ee2dcee1d22a7381413e4109181220707a27890770ddaf5fcf0" +
+        "ca3c69cddf30d99620d3071c32b4f9f05b1e88495634fbd41452b7027e6a606c95075eb08e38ae6a8eb00efe61c1377ed22708b15456f2e58df7e" +
+        "7a456645d732d1720c5c30b0fb10b08e4936764aea4ccf926f028fcfe8c2866820fd3e3f674a6bbf32a5acde8f29b18ac3f5e71b204b2e882f81a" +
+        "864e0f9000000")
+    string sentence = string(gzip.decompress(other))
+    println("dynamic {}", sentence.slice(0, 61))
+    try {
+        gzip.decompress(data)
+    } catch (Exception e) {
+        println("{}", e.message())
+    }
+    try {
+        gzip.decompressUpTo(packed, 100)
+    } catch (Exception e) {
+        println("{}", e.message())
+    }
+    list<u8> cut
+    for (i64 i = 0; i < packed.len() / 2; i++) {
+        cut.add(packed[i])
+    }
+    try {
+        gzip.decompress(cut)
+    } catch (Exception e) {
+        println("{}", e.message())
+    }
+    ret 0
+}

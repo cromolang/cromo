@@ -17,6 +17,7 @@ public enum Value {
     Null
     Bool(bool value)
     Int(i64 value)
+    UInt(u64 value)  // an integer above the i64, up to 2^64 - 1
     Float(f64 value)
     Text(string value)
     Array(list<Value> items)
@@ -59,6 +60,9 @@ public enum Value {
     public f64 asFloat() const {
         switch {
             case Int(i64 n) {
+                ret f64(n)
+            }
+            case UInt(u64 n) {
                 ret f64(n)
             }
             case Float(f64 x) {
@@ -208,6 +212,9 @@ public enum Value {
                 ret "a bool"
             }
             case Int {
+                ret "an integer"
+            }
+            case UInt {
                 ret "an integer"
             }
             case Float {
@@ -519,6 +526,9 @@ void writeValue(ref Writer w, Value v) {
         case Int(i64 n) {
             w.writeInt(n)
         }
+        case UInt(u64 n) {
+            w.writeUnsigned(n)
+        }
         case Float(f64 x) {
             w.writeFloat(format("{}", x))
         }
@@ -643,6 +653,13 @@ Mismatch mismatch(string expected, Value found) {
     ret result
 }
 
+// A fixed array of JSON has all its elements (D196).
+Mismatch wrongLength(i64 expected, i64 found) {
+    Mismatch result
+    result.problem = format("expected an array of {} elements, found {}", expected, found)
+    ret result
+}
+
 Mismatch unknownCase(string name, string names) {
     Mismatch result
     result.problem = format("expected one of {}, found \"{}\"", names, name)
@@ -729,13 +746,23 @@ u32 readU32(Value v) {
 }
 
 u64 readU64(Value v) {
-    ret u64(readRange(v, 0, 9223372036854775807, "u64"))
+    switch (v) {
+        case UInt(u64 n) {
+            ret n
+        }
+        default {
+            ret u64(readRange(v, 0, 9223372036854775807, "u64"))
+        }
+    }
 }
 
 // A float field takes also an integer (D255).
 f64 readF64(Value v) {
     switch (v) {
         case Int(i64 n) {
+            ret f64(n)
+        }
+        case UInt(u64 n) {
             ret f64(n)
         }
         case Float(f64 x) {
@@ -1135,6 +1162,12 @@ Value parseNumber(string text, ref i64 at) {
         try {
             ret Value.Int(i64(number))
         } catch (Error e) {
+        }
+        if (text[start] != '-') {  // above the i64: a u64 keeps all its digits
+            try {
+                ret Value.UInt(u64(number))
+            } catch (Error e) {
+            }
         }
     }
     try {

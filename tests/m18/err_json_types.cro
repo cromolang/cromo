@@ -7,9 +7,6 @@
 // expect-error: T can be converted to JSON only with a constraint: write <T : json.Data> (D52, D251)
 // expect-error: values of type Config cannot be converted to JSON (D251): Config.log.flush has type func()
 // expect-error: values of type Stats cannot be converted to JSON (D251): Stats.byId has type map<i64, i64> (the keys of JSON are strings)
-// expect-error: values of type Drawing cannot be converted to JSON (D251): Drawing.shapes[i] has type Shape (an enum with data)
-// expect-error: values of type Shape cannot be converted to JSON (D251): an enum with data
-// expect-error: values of type i32[3] cannot be converted to JSON (D251): it has no form in JSON
 import std.json
 
 enum Shape {

@@ -633,7 +633,7 @@ i32 main() {
 }
 ```
 
-- The core (`list`, `string`, `map`, `format`, `join`, the numbers from text) is visible everywhere; `std.fs`, `std.time`, `std.os`, `std.process`, `std.thread`, `std.net`, `std.crypto`, `std.json` and `std.http` are imported (D201). The functions of the first three are in D211.
+- The core (`list`, `string`, `map`, `format`, `join`, the numbers from text) is visible everywhere; `std.fs`, `std.time`, `std.os`, `std.process`, `std.thread`, `std.net`, `std.crypto`, `std.json`, `std.http`, `std.gzip` and `std.websocket` are imported (D201). The functions of the first three are in D211.
 - `std.fs` has also `isFile`, `isLink`, `size`, `modified` (the seconds from 1970), `rename`, `copy`, `createFolders` with the folders above, `removeAll`, which never follows a link, and the parts of a path: `joinPath`, `parent`, `fileName` and `extension`.
 - Next to `fs.cro` a module can have `fs_windows.cro` and `fs_linux.cro`: only the file of the system the program is compiled for is used, and it shares the names of the module, also the private ones (D202). It holds for the library and for the programs.
 - In the modules with `import unsafe`, `s.cstring()` gives the address of a copy of the string ending with a zero, for the C functions, until the end of the statement (D204).
@@ -786,7 +786,7 @@ bool valid = crypto.ed25519Verify(crypto.ed25519PublicKey(secret), data, signatu
 - Ed25519 signs (`ed25519PublicKey`, `ed25519Sign`, `ed25519Verify`) and X25519 exchanges keys (`x25519PublicKey`, `x25519`); the private keys are 32 random bytes.
 - A key of the wrong size is an exception.
 
-## 21. JSON (D251, D255–D257, D264–D266)
+## 21. JSON (D251, D255–D257, D264–D266, D365, D369–D371)
 
 ```cromo
 import std.json
@@ -810,13 +810,14 @@ switch (v.get("items").at(0)) {
 }
 ```
 
-- `json.encode`, `json.pretty` and `json.decode<T>` work on the numbers, `bool`, `string`, `json.Value`, `list<T>` and `map<string, T>` of them, the enums without data, written as the name of their case, and the structs whose fields can be converted: the compiler generates the conversion of a struct the first time it is needed, as `copy()`, without a declaration (D251). A field that cannot be converted is a compile error that names it: `Config.log.flush has type func()`. A generic writes `<T : json.Data>`.
+- `json.encode`, `json.pretty` and `json.decode<T>` work on the numbers, `bool`, `string`, `json.Value`, `list<T>`, `map<string, T>` and the fixed arrays of them, the enums, and the structs whose fields can be converted: the compiler generates the conversion of a struct the first time it is needed, as `copy()`, without a declaration (D251). A field that cannot be converted is a compile error that names it: `Config.log.flush has type func()`. A generic writes `<T : json.Data>`.
 - An object has a member for each field, in their order, also the private ones; the keys of a map are written in order. A member that is missing, or `null`, leaves the default value (D257); a member without a field is ignored.
 - `[[json("name")]]` before a field gives it another name in JSON, `[[json(skip)]]` leaves it out: the attributes are written with the syntax of C++11 (D256).
-- `json.Value` is an enum: `Null`, `Bool`, `Int(i64)`, `Float(f64)`, `Text`, `Array`, `Object`, with the members in their order. Its methods read it (`asInt`, `asFloat`, `asText`, `get`, `at`, `has`, `keys`, `len`, `isNull`) and build it (`json.object()`, `json.array()`, `set`, `add`); `json.fromValue<T>` and `json.toValue` convert it.
+- A case of an enum without data is its name, `"Empty"`; one with data is an object whose only member is the case, `{"Circle": {"radius": 2.5}}`, as serde. `[[json("circle")]]` before a case changes its name (D365, D371). A fixed array is an array of JSON with exactly its elements (D370).
+- `json.Value` is an enum: `Null`, `Bool`, `Int(i64)`, `UInt(u64)` for the integers above the `i64` (D369), `Float(f64)`, `Text`, `Array`, `Object`, with the members in their order. Its methods read it (`asInt`, `asFloat`, `asText`, `get`, `at`, `has`, `keys`, `len`, `isNull`) and build it (`json.object()`, `json.array()`, `set`, `add`); `json.fromValue<T>` and `json.toValue` convert it.
 - The errors are exceptions that say where: `cannot read JSON: line 3, column 7: expected ',' or '}'`, `cannot decode JSON: at users[2].age: expected an integer, found a string`.
 
-## 22. HTTP (D252–D254, D258–D263, D270)
+## 22. HTTP, gzip and WebSocket (D252–D254, D258–D263, D270, D366–D368, D372–D374)
 
 ```cromo
 import std.http
@@ -844,6 +845,29 @@ User u = json.decode<User>(r.text())
 - The handler chooses the route with patterns: `req.matches("GET /users/{id}")`, then `req.param("id")`; `{rest...}` takes the rest of the path, and GET takes also HEAD. `req.queryValue("page")` reads the query. An exception of the handler gives the status 500.
 - `http.get(url)`, `http.post(url, body, type)` and `http.send(request)` open a connection for each request, with TLS for `https`, and follow the redirects (D254). A status of error is a response; an exception is a failure of the network.
 - `Request` and `Response` have `headers`, compared without case, `body`, `text()`, and `write`, `writeJson` and `writeBytes`, which also set the `Content-Type`.
+- `http.Client client` has `get`, `post` and `send`, and keeps up to 8 connections for each host, to use them for the next requests, also from several tasks; a kept connection that the server closed meanwhile is replaced, and the request goes again (D366, D372).
+- The client asks for gzip and decompresses the body by itself, when the request does not name an `Accept-Encoding` (D367, D373). `std.gzip` has `compress`, `decompress` and `decompressUpTo(data, limit)`, for data that come from the network.
+
+```cromo
+http.serve("0.0.0.0", 8080, [](ref http.Request req, ref http.Response res) {
+    if (req.matches("GET /chat")) {
+        req.webSocket([](ref websocket.Socket ws) {
+            for {
+                switch (ws.receive()) {           // throws websocket.Closed at the end
+                    case Text(string text) { ws.send("echo " + text) }
+                    case Binary(list<u8> bytes) { ws.sendBytes(bytes) }
+                }
+            }
+        })
+    }
+})
+
+websocket.Socket ws = websocket.connect("wss://example.com/chat")
+ws.send("hello")
+```
+
+- `req.webSocket(work)` answers 101 and gives the WebSocket to `work`, which runs inside the handler, on the task of the connection, and can read what the handler reads; a request that is not one of WebSocket gets 400 (D368, D374). `websocket.connect(url)` opens one, with TLS for `wss`.
+- `send(text)`, `sendBytes(bytes)`, and `receive()`, which gives a `websocket.Message`, `Text` or `Binary`, joins the fragments, answers the pings and throws `websocket.Closed`, with `code` and `reason`, once the other side has closed or the connection has ended (1006). `close()` sends the close and waits for the answer. Without `timeout(ms)` a WebSocket waits as long as it takes; a message is at most 16 MB (D374).
 
 ## 23. Tests (D349–D356)
 

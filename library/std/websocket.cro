@@ -1,0 +1,360 @@
+// The module std.websocket (D368): WebSocket (RFC 6455) over the connections of
+// std.net, with TLS for wss. A client opens one with connect(url); a handler of
+// std.http turns its request into one with res.webSocket(...). Both send and
+// receive texts and bytes; the pings are answered by receive().
+import std.crypto
+import std.net
+
+// A message: a text, or bytes.
+public enum Message {
+    Text(string text)
+    Binary(list<u8> bytes)
+}
+
+// The other side closed the WebSocket, or the connection ended: what receive()
+// throws then, with the code of the close (1000 is a normal end, 1006 a connection
+// that ended without one).
+public struct Closed : Exception {
+    public i32 code
+    public string reason
+
+    public string message() const {
+        if (reason.len() > 0) {
+            ret format("the WebSocket is closed: {} {}", code, reason)
+        }
+        ret format("the WebSocket is closed: {}", code)
+    }
+}
+
+public struct Socket {
+    net.Connection connection
+    list<u8> pending  // read from the connection, not yet used
+    i64 at
+    bool client   // its frames are masked
+    bool closing  // the close is sent
+    i32 code      // of the close received, 0 before
+
+    public void send(string text) {
+        sendFrame(1, text.bytes())
+    }
+
+    public void sendBytes(list<u8> bytes) {
+        sendFrame(2, bytes)
+    }
+
+    // A timeout for each read and write, as for a connection (D225); without one,
+    // receive() waits as long as it takes.
+    public void timeout(i64 milliseconds) {
+        connection.timeout(milliseconds)
+    }
+
+    // The next message; the fragments of a message are joined, the pings answered.
+    // Throws Closed once the other side has closed.
+    public Message receive() {
+        if (code != 0) {
+            throw closed(code, "")
+        }
+        list<u8> message
+        i32 kind = 0
+        for {
+            u8 first = byte(0)
+            u8 second = byte(1)
+            i32 opcode = i32(first & 15)
+            bool last = (first & 128) != 0
+            i64 length = i64(second & 127)
+            i64 head = 2
+            if (length == 126) {
+                length = i64(byte(2)) << 8 | i64(byte(3))
+                head = 4
+            } else if (length == 127) {
+                length = 0
+                for (i64 i = 0; i < 8; i++) {
+                    length = length << 8 | i64(byte(2 + i))
+                }
+                head = 10
+            }
+            if (length < 0 || length + message.len() > maxMessage()) {
+                throw Error("cannot receive: the message of the WebSocket is too large")
+            }
+            bool masked = (second & 128) != 0
+            list<u8> mask
+            if (masked) {
+                for (i64 i = 0; i < 4; i++) {
+                    mask.add(byte(head + i))
+                }
+                head += 4
+            }
+            fill(head + length)
+            list<u8> payload
+            payload.reserve(length)
+            for (i64 i = 0; i < length; i++) {
+                u8 b = pending[at + head + i]
+                if (masked) {
+                    b = b ^ mask[i % 4]
+                }
+                payload.add(b)
+            }
+            at += head + length
+            if (opcode >= 8) {  // a control frame, between the fragments too
+                control(opcode, payload)
+                continue
+            }
+            if (opcode == 1 || opcode == 2) {
+                kind = opcode
+            } else if (opcode != 0 || kind == 0) {
+                throw Error(format("cannot receive: the frame {} of the WebSocket is not valid", opcode))
+            }
+            for (u8 b in payload) {
+                message.add(b)
+            }
+            if (last) {
+                if (kind == 1) {
+                    ret Message.Text(string(message))
+                }
+                ret Message.Binary(move message)
+            }
+        }
+    }
+
+    // Sends the close, and waits for that of the other side.
+    public void close() {
+        if (!closing) {
+            list<u8> payload
+            payload.add(3)  // 1000, a normal end
+            payload.add(232)
+            sendFrame(8, payload)
+            closing = true
+        }
+        try {
+            for (code == 0) {
+                receive()
+            }
+        } catch (Closed e) {
+        }
+        connection.close()
+    }
+
+    void control(i32 opcode, list<u8> payload) {
+        if (opcode == 9) {  // ping: the pong with the same data
+            sendFrame(10, payload)
+            ret
+        }
+        if (opcode != 8) {  // pong
+            ret
+        }
+        code = 1005  // a close without a code
+        string reason = ""
+        if (payload.len() >= 2) {
+            code = i32(payload[0]) << 8 | i32(payload[1])
+            list<u8> text
+            for (i64 i = 2; i < payload.len(); i++) {
+                text.add(payload[i])
+            }
+            reason = string(text)
+        }
+        if (!closing) {  // the answer to a close
+            closing = true
+            list<u8> answer
+            if (payload.len() >= 2) {
+                answer.add(payload[0])
+                answer.add(payload[1])
+            }
+            try {
+                sendFrame(8, answer)
+            } catch (Exception e) {
+            }
+        }
+        throw closed(code, reason)
+    }
+
+    void sendFrame(i32 opcode, list<u8> payload) {
+        if (closing && opcode != 8) {
+            throw closed(code, "")
+        }
+        list<u8> frame
+        frame.reserve(payload.len() + 14)
+        frame.add(u8(128 | opcode))
+        u8 maskBit = 0
+        if (client) {
+            maskBit = 128
+        }
+        i64 length = payload.len()
+        if (length < 126) {
+            frame.add(maskBit | u8(length))
+        } else if (length < 65536) {
+            frame.add(maskBit | 126)
+            frame.add(u8(length >> 8))
+            frame.add(u8(length & 255))
+        } else {
+            frame.add(maskBit | 127)
+            for (i64 i = 7; i >= 0; i--) {
+                frame.add(u8((length >> (8 * i)) & 255))
+            }
+        }
+        if (client) {  // RFC 6455: a client masks its frames
+            list<u8> mask = crypto.random(4)
+            for (u8 b in mask) {
+                frame.add(b)
+            }
+            for (i64 i = 0; i < length; i++) {
+                frame.add(payload[i] ^ mask[i % 4])
+            }
+        } else {
+            for (u8 b in payload) {
+                frame.add(b)
+            }
+        }
+        connection.write(frame)
+    }
+
+    // The byte at `offset` from the first not used, reading as needed.
+    u8 byte(i64 offset) {
+        fill(offset + 1)
+        ret pending[at + offset]
+    }
+
+    void fill(i64 count) {
+        if (at > 0 && pending.len() - at < count) {  // the bytes used go
+            list<u8> rest
+            for (i64 i = at; i < pending.len(); i++) {
+                rest.add(pending[i])
+            }
+            pending = move rest
+            at = 0
+        }
+        for (pending.len() - at < count) {
+            list<u8> bytes = connection.read(65536)
+            if (bytes.len() == 0) {
+                code = 1006
+                throw closed(1006, "the connection ended")
+            }
+            for (u8 b in bytes) {
+                pending.add(b)
+            }
+        }
+    }
+}
+
+i64 maxMessage() {
+    ret 16777216
+}
+
+Closed closed(i32 code, string reason) {
+    Closed result
+    result.code = code
+    result.reason = reason.copy()
+    ret result
+}
+
+// Opens a WebSocket: ws://host:port/path, or wss:// with TLS.
+public Socket connect(string url) {
+    bool secure = startsWith(url, "wss://")
+    if (!secure && !startsWith(url, "ws://")) {
+        throw Error(format("cannot open the WebSocket '{}': the URL does not start with ws:// or wss://", url))
+    }
+    i64 start = 5
+    i32 port = 80
+    if (secure) {
+        start = 6
+        port = 443
+    }
+    i64 end = start
+    for (end < url.len() && url[end] != '/' && url[end] != '?' && url[end] != '#') {
+        end++
+    }
+    string authority = url.slice(start, end)
+    string path = url.slice(end, url.len())
+    i64 hash = path.find("#")
+    if (hash >= 0) {
+        path = path.slice(0, hash)
+    }
+    if (path.len() == 0 || path[0] == '?') {
+        path = "/" + path
+    }
+    string host = authority.copy()
+    i64 colon = authority.findLast(":")
+    i64 bracket = authority.findLast("]")
+    if (colon > bracket) {
+        host = authority.slice(0, colon)
+        port = i32(authority.slice(colon + 1, authority.len()))
+    }
+    if (host.startsWith("[") && host.endsWith("]")) {
+        host = host.slice(1, host.len() - 1)
+    }
+
+    Socket socket
+    socket.client = true
+    if (secure) {
+        socket.connection = net.connectTls(host, port)
+    } else {
+        socket.connection = net.connect(host, port)
+    }
+    socket.connection.timeout(30000)
+    string key = crypto.base64(crypto.random(16))
+    string request = format("GET {} HTTP/1.1\r\nHost: {}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n", path, authority) +
+        format("Sec-WebSocket-Key: {}\r\nSec-WebSocket-Version: 13\r\nUser-Agent: cromo\r\n\r\n", key)
+    socket.connection.write(request.bytes())
+
+    // The answer of the server: 101, and the key that proves it read ours.
+    i64 headEnd = -1
+    for (headEnd < 0) {
+        list<u8> bytes = socket.connection.read(16384)
+        if (bytes.len() == 0) {
+            throw Error(format("cannot open the WebSocket {}: the server ended the connection", url))
+        }
+        for (u8 b in bytes) {
+            socket.pending.add(b)
+        }
+        if (socket.pending.len() > 65536) {
+            throw Error(format("cannot open the WebSocket {}: the answer is too large", url))
+        }
+        headEnd = findEnd(socket.pending)
+    }
+    list<u8> headBytes
+    for (i64 i = 0; i < headEnd; i++) {
+        headBytes.add(socket.pending[i])
+    }
+    socket.at = headEnd + 4
+    list<string> lines = string(headBytes).split("\r\n")
+    if (!lines[0].startsWith("HTTP/1.1 101")) {
+        throw Error(format("cannot open the WebSocket {}: the server answered '{}'", url, lines[0]))
+    }
+    string accepted = ""
+    for (string line in lines) {
+        i64 at = line.find(":")
+        if (at > 0 && line.slice(0, at).lower() == "sec-websocket-accept") {
+            accepted = line.slice(at + 1, line.len()).trim()
+        }
+    }
+    if (accepted != acceptKey(key)) {
+        throw Error(format("cannot open the WebSocket {}: the server did not accept it", url))
+    }
+    socket.connection.timeout(-1)
+    ret socket
+}
+
+// For std.http: a connection whose request the server has answered with 101.
+public Socket accepted(move net.Connection connection) {
+    Socket socket
+    socket.connection = move connection
+    socket.connection.timeout(-1)
+    ret socket
+}
+
+// The answer to the key of a request: Sec-WebSocket-Accept (RFC 6455).
+public string acceptKey(string key) {
+    ret crypto.base64(crypto.sha1((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").bytes()))
+}
+
+i64 findEnd(list<u8> bytes) {
+    for (i64 i = 0; i + 3 < bytes.len(); i++) {
+        if (bytes[i] == '\r' && bytes[i + 1] == '\n' && bytes[i + 2] == '\r' && bytes[i + 3] == '\n') {
+            ret i
+        }
+    }
+    ret -1
+}
+
+bool startsWith(string text, string start) {
+    ret text.lower().startsWith(start)
+}

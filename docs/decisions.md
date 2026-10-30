@@ -1758,6 +1758,36 @@ lines.close()
 ### D364. The structs inside first
 *2026-10-30.* The default value of a struct takes first the default values of the structs in its fields, in their order, then its own initial values, in the order of the fields.
 
+### D365. The enums with data in JSON
+*2026-10-30.* The case is the key of an object that holds its data, as serde of Rust by default: `Circle(f64 radius)` is `{"Circle": {"radius": 2.5}}`, and a case without data stays a text, `"Empty"`, as the enums without data. `[[json("circle")]]` before a case changes its name in JSON, as for a field (D256).
+
+### D366. `http.Client` reuses the connections
+*2026-10-30.* It completes D254. `http.Client client` has `get`, `post` and `send`, and keeps the connections open for each host, to use them again for the next requests, also from several tasks. `http.get` and the other functions keep a connection for each request.
+
+### D367. gzip: the client, and the module std.gzip
+*2026-10-30.* The client asks for gzip and decompresses the responses by itself. `std.gzip` has `compress` and `decompress` for the programs; the server does not compress by itself: a handler can, with std.gzip.
+
+### D368. WebSocket, server and client
+*2026-10-30.* A handler of the server turns its request into a WebSocket, a client opens one with a URL; both send and receive texts and bytes, answer the pings, and close.
+
+### D369. `json.Value.UInt` for the integers above the i64
+*2026-10-30.* It completes D255. An integer of JSON between 2^63 and 2^64 - 1 is `UInt(u64)`, so that a `u64` field reads all its digits; `asFloat` reads it too, `asInt` does not.
+
+### D370. A fixed array in JSON
+*2026-10-30.* An array of JSON with exactly the elements of the array (D196), each converted as its type; another length is an error that says both.
+
+### D371. Reading an enum with data
+*2026-10-30.* A text names a case without data; an object must have exactly one member, the case, whose data are read as the fields of a struct: a missing member, or `null`, leaves the default value (D257). A `null` in place of the enum gives its first case.
+
+### D372. The connections of `http.Client`
+*2026-10-30.* It details D366. At most 8 idle connections for each host, the oldest go first. A kept connection that fails before any byte of the response arrives, closed by the server meanwhile, is replaced by a new one, and the request goes again, also a POST: the server has not received it.
+
+### D373. The details of gzip
+*2026-10-30.* It details D367. The client sends `Accept-Encoding: gzip` only when the request names none, and then gives the body decompressed, without `Content-Encoding`; the decompressed body has the limit of the bodies (16 MB). `std.gzip.compress` writes the fixed codes of deflate, about a fifth larger than `gzip -9`, and `decompressUpTo(data, limit)` is for the data of the network.
+
+### D374. The details of WebSocket
+*2026-10-30.* It details D368. `req.webSocket(work)` runs `work` inside the handler, on the task of the connection, so that it can read what the handler reads, as a mutex; a request that is not one of WebSocket gets 400. `receive()` gives a `websocket.Message`, `Text` or `Binary`, joins the fragments and answers the pings, and throws `websocket.Closed`, with `code` and `reason`, after a close or when the connection ends (1006); `close()` sends 1000 and waits for the answer. Without `timeout(ms)` a WebSocket waits as long as it takes; a message is at most 16 MB.
+
 ---
 
 ## Open

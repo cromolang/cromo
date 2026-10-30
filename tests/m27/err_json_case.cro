@@ -1,0 +1,15 @@
+// The attribute of a case gives only its name in JSON (D365).
+// expect-error: a case has only the attribute json("name"), its name in JSON (D365)
+// expect-error: another case of Mode has the name 'fast' in JSON (D365)
+enum Mode {
+    [[json(skip)]]
+    Slow
+    [[json("fast")]]
+    Quick
+    [[json("fast")]]
+    Rapid
+}
+
+i32 main() {
+    ret 0
+}

@@ -1,0 +1,118 @@
+// http.Client keeps the connections for the next requests to the same host (D366);
+// http.get opens one for each request (D254). The client asks for gzip and
+// decompresses the body by itself (D367).
+// expect-output: client 3 times ok
+// expect-output: connections 1
+// expect-output: get 2 times ok
+// expect-output: connections 3
+// expect-output: gzip asked, the same text: true, encoding left: false
+import std.gzip
+import std.http
+import std.net
+import std.os
+import std.thread
+
+// The end of the head of a request among the bytes, or -1.
+i64 headEnd(list<u8> bytes) {
+    for (i64 i = 0; i + 3 < bytes.len(); i++) {
+        if (bytes[i] == '\r' && bytes[i + 1] == '\n' && bytes[i + 2] == '\r' && bytes[i + 3] == '\n') {
+            ret i
+        }
+    }
+    ret -1
+}
+
+// A server of a few lines, which answers each request of a connection in turn.
+void serveOne(ref net.Connection c) {
+    list<u8> pending
+    for {
+        i64 end = headEnd(pending)
+        for (end < 0) {
+            list<u8> bytes = c.read(4096)
+            if (bytes.len() == 0) {
+                ret
+            }
+            for (u8 b in bytes) {
+                pending.add(b)
+            }
+            end = headEnd(pending)
+        }
+        list<u8> rest
+        for (i64 i = end + 4; i < pending.len(); i++) {
+            rest.add(pending[i])
+        }
+        pending = move rest
+        c.write("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok".bytes())
+    }
+}
+
+i64 count(thread.Mutex<i64> connections) {
+    i64 n = 0
+    connections.lock([ref n](ref i64 c) { n = c })
+    ret n
+}
+
+string repeated() {
+    string text = ""
+    for (i64 i = 0; i < 100; i++) {
+        text += "the same words again and again "
+    }
+    ret text
+}
+
+i32 main() {
+    net.Listener listener = net.listen("127.0.0.1", 0)
+    string base = format("http://127.0.0.1:{}", listener.port())
+    thread.Mutex<i64> connections
+    thread.Thread raw = thread.Thread([listener, connections]() {
+        thread.Group served
+        for {
+            net.Connection c = listener.accept()
+            connections.lock([](ref i64 n) { n++ })
+            served.start([move c]() {
+                try {
+                    serveOne(ref c)
+                } catch (Exception e) {
+                }
+            })
+        }
+    })
+    raw.start()
+
+    http.Client client
+    i64 good = 0
+    for (i64 i = 0; i < 3; i++) {
+        http.Response r = client.get(base + "/a")
+        if (r.status == 200 && r.text() == "ok") {
+            good++
+        }
+    }
+    println("client {} times ok", good)
+    println("connections {}", count(connections))
+    good = 0
+    for (i64 i = 0; i < 2; i++) {
+        if (http.get(base + "/b").text() == "ok") {
+            good++
+        }
+    }
+    println("get {} times ok", good)
+    println("connections {}", count(connections))
+
+    http.Server server = http.listen("127.0.0.1", 0)
+    string zipped = format("http://127.0.0.1:{}/text", server.port())
+    thread.Thread web = thread.Thread([server]() {
+        server.serve([](ref http.Request req, ref http.Response res) {
+            if (req.headers.get("accept-encoding") == "gzip") {
+                res.writeBytes(gzip.compress(repeated().bytes()), "text/plain")
+                res.headers.set("Content-Encoding", "gzip")
+            } else {
+                res.write("not asked")
+            }
+        })
+    })
+    web.start()
+    http.Response r = http.get(zipped)
+    println("gzip asked, the same text: {}, encoding left: {}", r.text() == repeated(), r.headers.has("content-encoding"))
+    os.exit(0)
+    ret 0
+}
