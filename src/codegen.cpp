@@ -1643,6 +1643,25 @@ private:
             emitCall(*decl.constructor, dest, expr.type, construct.args, "", expr.loc, &construct.overlaps);
             return;
         }
+        case ExprKind::ListLiteral: {
+            // `[a, b, c]` (D308): reserve(), then add() of each element. If an element
+            // throws, the list made so far is destroyed with the temporaries.
+            const auto& list = static_cast<const ListLiteralExpr&>(expr);
+            storeDefault(dest, expr.type);
+            size_t made = temporaries_.size();
+            temporaries_.push_back(LiveObject{dest, expr.type, nullptr});
+            emitCall(*list.reserve, dest, expr.type, list.count, "", expr.loc);
+            // emitCall takes the arguments of a call: each element, one at a time.
+            auto& elements = const_cast<std::vector<ExprPtr>&>(list.elements);
+            for (ExprPtr& element : elements) {
+                std::vector<ExprPtr> args;
+                args.push_back(std::move(element));
+                emitCall(*list.add, dest, expr.type, args, "", expr.loc);
+                element = std::move(args[0]);
+            }
+            temporaries_.erase(temporaries_.begin() + static_cast<std::ptrdiff_t>(made));
+            return;
+        }
         case ExprKind::Call: {
             const auto& call = static_cast<const CallExpr&>(expr);
             if (call.intrinsic != Intrinsic::None) {
@@ -2243,6 +2262,8 @@ private:
             return {"", Type::voidType()};
         case ExprKind::Lambda:
             return createLambda(static_cast<const LambdaExpr&>(expr));
+        case ExprKind::ListLiteral:
+            return load(addressOf(expr), expr.type);
         case ExprKind::CallValue:
             if (expr.type.isAggregate()) return load(addressOf(expr), expr.type);
             return callValue(static_cast<const CallValueExpr&>(expr), "");

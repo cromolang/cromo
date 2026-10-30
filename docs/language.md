@@ -556,7 +556,7 @@ i32 main() {
 - Function values are moved and not copied; an empty one, as a variable without a value, is a panic when called (D189).
 - A parameter `const func(...)` receives a function that does not modify what it captures, as a lambda of C++ without `mutable`: a lambda without `ref` captures, a named function, or a function value. Several threads can call it at once, as the handler of `http.serve` (D253). A thread cannot call a parameter `func` that is not `const`.
 
-## 16. Arrays, maps and bytes (D196–D200)
+## 16. Arrays, maps, lists, text and bytes (D196–D200, D304–D317)
 
 ```cromo
 i32[4] scores                    // four i32, all 0, where the variable is
@@ -577,11 +577,19 @@ list<u8> bytes = word.bytes()
 string again = string(bytes)     // throws when the bytes are not UTF-8
 string part = word.slice(0, 3)   // the bytes from 0 to 3, 3 excluded
 string line = format("{} is {}", "anna", a)
+
+list<string> names = ["anna", "bruno"]      // a literal of a list
+list<string> fields = " a, b ,c ".trim().split(",")
+i64 at = line.find("is")                    // -1 if it is missing
+string shout = line.upper().replace(" ", "_")
+string all = join(names, ", ")
 ```
 
 - An array is a value, as a struct: it is copied when its elements are simple, otherwise moved; `a[i]` is checked (D30). `i32[3][4]` is three arrays of four (D206).
 - A `map` is a hash table. Its keys are the numbers, `bool`, `string` and the structs that implement `Key` with `u64 hash() const` and `bool equals(Self other) const` (D198).
 - `format` writes into a string as `println` writes on the screen (D200).
+- `[a, b, c]` makes a list: the type of its elements is the one expected, or the one of the first element, and an empty `[]` needs the type expected. The elements are given to the list as to `add()`: a variable that is not simple is written `move x`, or copied (D308).
+- The functions of text are methods of `string` (D304): `find`, `findFrom`, `findLast`, `contains`, `startsWith`, `endsWith`, `split`, `trim`, `trimStart`, `trimEnd`, `replace`, `upper`, `lower`, `repeat`, and `join(parts, separator)`. The indices are in bytes, and a text not found is -1 (D305); `upper` and `lower` change only the letters of ASCII (D306).
 
 ## 17. The modules of the library (D201–D203)
 
@@ -599,9 +607,25 @@ i32 main() {
 }
 ```
 
-- The core (`list`, `string`, `map`, `format`, the numbers from text) is visible everywhere; `std.fs`, `std.time`, `std.os`, `std.thread`, `std.net`, `std.crypto`, `std.json` and `std.http` are imported (D201). The functions of the first three are in D211.
+- The core (`list`, `string`, `map`, `format`, `join`, the numbers from text) is visible everywhere; `std.fs`, `std.time`, `std.os`, `std.process`, `std.thread`, `std.net`, `std.crypto`, `std.json` and `std.http` are imported (D201). The functions of the first three are in D211.
+- `std.fs` has also `isFile`, `isLink`, `size`, `modified` (the seconds from 1970), `rename`, `copy`, `createFolders` with the folders above, `removeAll`, which never follows a link, and the parts of a path: `joinPath`, `parent`, `fileName` and `extension`.
 - Next to `fs.cro` a module can have `fs_windows.cro` and `fs_linux.cro`: only the file of the system the program is compiled for is used, and it shares the names of the module, also the private ones (D202). It holds for the library and for the programs.
 - In the modules with `import unsafe`, `s.cstring()` gives the address of a copy of the string ending with a zero, for the C functions, until the end of the statement (D204).
+
+```cromo
+import std.process
+
+process.Output r = process.run("git", ["status", "--short"])
+println("{} {}", r.code, r.out)
+
+process.Process p = process.start("sort", [])
+p.write("b\na\n")
+p.closeInput()
+println("{}", p.readAll())
+p.wait()
+```
+
+- `process.run` waits for the end of the program and gives its exit code, its output and its errors; `process.start` gives a `Process` with `write`, `closeInput`, `read`, `readAll`, `wait` and `kill`, whose errors go where the ones of this program go (D307). A program is found in the folders of `PATH`. An exit code other than 0 is a value; a program that cannot start is an exception.
 
 ## 18. Threads and tasks (D214–D217, D269–D284)
 

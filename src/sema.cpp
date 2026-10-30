@@ -135,7 +135,8 @@ bool isConstantLiteral(const Expr& expr) {
 bool isTemporary(const Expr& expr) {
     return expr.kind == ExprKind::Construct || expr.kind == ExprKind::Call || expr.kind == ExprKind::MethodCall ||
            expr.kind == ExprKind::StringLiteral || expr.kind == ExprKind::EnumCase || expr.kind == ExprKind::Lambda ||
-           expr.kind == ExprKind::CallValue || expr.kind == ExprKind::Print;  // format gives a new string
+           expr.kind == ExprKind::CallValue || expr.kind == ExprKind::Print ||  // format gives a new string
+           expr.kind == ExprKind::ListLiteral;
 }
 
 // A variable, or a field or an element (D35) of a variable or of the object of a method.
@@ -2452,6 +2453,7 @@ private:
             static_cast<LambdaExpr&>(*expr).group = groupLambda;
             return checkLambda(static_cast<LambdaExpr&>(*expr), lambdaArgument || threadLambda || groupLambda);
         case ExprKind::CallValue: return checkCallValue(expr);
+        case ExprKind::ListLiteral: return checkListLiteral(static_cast<ListLiteralExpr&>(*expr), expected);
         case ExprKind::IntLiteral: return checkIntLiteral(static_cast<IntLiteralExpr&>(*expr), expected);
         case ExprKind::FloatLiteral: return checkFloatLiteral(static_cast<FloatLiteralExpr&>(*expr), expected);
         case ExprKind::BoolLiteral: return Type::boolType();
@@ -2917,6 +2919,70 @@ private:
         groupLambda_ = nullptr;
         if (!ok) return Type::error();
         return method->resolvedReturn;
+    }
+
+    // `[a, b, c]` (D308): a new list, with the type of the elements expected or else
+    // the one of the first; each element is given to it as to add(move T).
+    Type checkListLiteral(ListLiteralExpr& list, std::optional<Type> expected) {
+        if (!listDecl_) {
+            diag_->error(list.loc, "the standard library has no list");
+            return Type::error();
+        }
+        Type element = Type::error();
+        bool checkedFirst = false;
+        if (expected && isList(*expected)) {
+            element = expected->structDecl->typeArgs[0];
+        } else if (!list.elements.empty()) {
+            moveAllowed_ = list.elements[0]->kind == ExprKind::Move;
+            element = checkExpr(list.elements[0], std::nullopt);
+            if (element.isError()) return Type::error();
+            if (element.isUntyped() || element.isVoid()) {
+                diag_->error(list.elements[0]->loc, "the type of the elements cannot be deduced: write the type of the list, "
+                                                    "as list<i64> values = [1, 2], or of the first element, as [i64(1), 2] "
+                                                    "(D55, D308)");
+                return Type::error();
+            }
+            checkedFirst = true;
+        } else {
+            diag_->error(list.loc, "the type of an empty list cannot be deduced: write it, as list<i64> values = [] (D308)");
+            return Type::error();
+        }
+        StructDecl* decl = instantiateStruct(*listDecl_, {element}, list.loc);
+        if (!decl) return Type::error();
+        FunctionDecl* add = decl->methods.at("add");
+        FunctionDecl* reserve = decl->methods.at("reserve");
+        for (FunctionDecl* method : {add, reserve}) {
+            use(method, list.loc);
+            noteCall(method, list.loc);
+        }
+        bool ok = true;
+        for (size_t i = 0; i < list.elements.size(); ++i) {
+            ExprPtr& value = list.elements[i];
+            if (value->kind == ExprKind::Ref) {
+                diag_->error(value->loc, "an element of a list is given to it, not passed with 'ref' (D308)");
+                ok = false;
+                continue;
+            }
+            if (!(i == 0 && checkedFirst) && !coerceValue(value, element)) {
+                ok = false;
+                continue;
+            }
+            // As the argument of add(move T): a variable gives its value only with `move` (D23).
+            const Expr* given = value.get();
+            if (given->kind == ExprKind::Conversion) given = static_cast<const ConversionExpr&>(*given).operand.get();
+            if (isPlace(*given) && needsDestruction(given->type)) {
+                diag_->error(given->loc, "an element of a list is given to it: write 'move " + placeText(*given) +
+                                             "', or copy it (D23, D308)");
+                ok = false;
+            }
+        }
+        list.add = add;
+        list.reserve = reserve;
+        auto count = std::make_unique<IntLiteralExpr>(list.loc, list.elements.size(), false);
+        count->type = Type::intType(64, true);
+        list.count.clear();
+        list.count.push_back(std::move(count));
+        return ok ? Type::structType(decl) : Type::error();
     }
 
     // `s.cstring()` (D204): the address of a copy that ends with a zero, a

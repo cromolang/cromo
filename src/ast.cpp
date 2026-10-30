@@ -108,6 +108,12 @@ ExprPtr cloneExpr(const Expr& expr) {
         to->args = cloneAll(from.args);
         return to;
     }
+    case ExprKind::ListLiteral: {
+        const auto& from = static_cast<const ListLiteralExpr&>(expr);
+        auto to = std::make_unique<ListLiteralExpr>(from.loc);
+        to->elements = cloneAll(from.elements);
+        return to;
+    }
     }
     return nullptr;
 }

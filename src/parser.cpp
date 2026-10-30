@@ -1425,11 +1425,36 @@ private:
         return lambda;
     }
 
+    // At '[': a lambda when the matching ']' is followed by '(' (D183), a list
+    // literal otherwise (D308).
+    bool lambdaAhead() const {
+        int depth = 0;
+        for (size_t ahead = 0;; ++ahead) {
+            const Token& token = peek(ahead);
+            if (token.kind == TokenKind::EndOfFile) return false;
+            if (token.kind == TokenKind::LBracket) ++depth;
+            if (token.kind == TokenKind::RBracket && --depth == 0) return peek(ahead + 1).kind == TokenKind::LParen;
+        }
+    }
+
+    // list := '[' [expr {',' expr} [',']] ']'   (D308)
+    ExprPtr parseListLiteral() {
+        auto list = std::make_unique<ListLiteralExpr>(advance().loc);
+        while (!check(TokenKind::RBracket)) {
+            ExprPtr element = parseExpression();
+            if (!element) return nullptr;
+            list->elements.push_back(std::move(element));
+            if (!match(TokenKind::Comma)) break;
+        }
+        if (!expect(TokenKind::RBracket, "to close the list")) return nullptr;
+        return list;
+    }
+
     ExprPtr parsePrimary() {
         const Token& token = peek();
         switch (token.kind) {
         case TokenKind::LBracket:
-            return parseLambda();
+            return lambdaAhead() ? parseLambda() : parseListLiteral();
         case TokenKind::IntegerLiteral:
             advance();
             return std::make_unique<IntLiteralExpr>(token.loc, token.intValue, false);

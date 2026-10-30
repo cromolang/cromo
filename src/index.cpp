@@ -323,6 +323,7 @@ private:
             break;
         }
         case ExprKind::TypeRef: typeName(static_cast<const TypeRefExpr&>(*node).name); break;
+        case ExprKind::ListLiteral: exprs(static_cast<const ListLiteralExpr&>(*node).elements); break;
         case ExprKind::Lambda: {
             const auto& lambda = static_cast<const LambdaExpr&>(*node);
             for (const Capture& capture : lambda.captures) variable(capture.outer, capture.loc);

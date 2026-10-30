@@ -1,0 +1,8 @@
+// An empty separator of split() is a panic (D304).
+// expect-exit: 101
+// expect-stderr: the separator of split() is empty (D304)
+i32 main() {
+    list<string> parts = "a,b".split("")
+    println("{}", parts.len())
+    ret 0
+}

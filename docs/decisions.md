@@ -1536,6 +1536,62 @@ for {
 ### D303. Making the archives
 *2026-10-30.* `tools/package.ps1` writes `dist/` with the layout of the site (D285), so that publishing is copying it. It stops if the two builds of `cromo` are not of the version of `CMakeLists.txt`; without `-Key` it warns that the manifest is not signed, which `cromo update` would refuse.
 
+### D304. The functions of text are methods of `string`
+*2026-10-30.* `s.find("x")`, `s.split(",")`, `s.trim()`, `s.replace("a", "b")` and the others are methods of `string`, in the core of the library, without an import, as `len()` and `slice()` (D200); as in C++, Java and C#.
+```
+string line = "  a,b , c  "
+list<string> parts = line.trim().split(",")
+i64 at = line.find("b")
+```
+
+### D305. A text that is not found is -1
+*2026-10-30.* `find()` gives the index in bytes of the first occurrence, or -1 if there is none, as `Index` of Go and `IndexOf` of Java and C#; `contains()` says whether there is one. There are no optionals (D47), and a search that finds nothing is not an error.
+
+### D306. `upper()` and `lower()` change only ASCII
+*2026-10-30.* As `toupper` of C: only A-Z and a-z change, and the rest of UTF-8 stays as it is. No tables of Unicode in the runtime; it is enough for the protocols and the formats.
+
+### D307. `std.process`: `run()` and `start()`
+*2026-10-30.* `process.run(program, args)` waits for the end of the program and gives its exit code, its standard output and its standard error. `process.start(program, args)` gives a `Process`, with `write()` to its standard input, `closeInput()`, `read()` from its standard output, `wait()` and `kill()`, for the programs that run long. An exit code other than 0 is a value; a program that cannot start is an exception.
+```
+process.Output r = process.run("git", ["status"])
+println("{} {}", r.code, r.out)
+```
+
+### D308. The literals of a list: `[a, b, c]`
+*2026-10-30.* As in Python, Go and C#. The type of the elements is the one expected, or else the one of the first element; an empty `[]` needs the type expected. The elements are given to the list as to `add()`: a value that needs it is moved or copied (D23). The parser tells it from a lambda, `[captures](...)`, whose `]` is always followed by `(`.
+```
+list<string> args = ["status", "--short"]
+list<i64> primes = [2, 3, 5, 7]
+list<f64> empty = []
+```
+
+### D309. The panics of the functions of text
+*2026-10-30.* It details D304. `split("")`, `replace("", ...)` and `repeat()` of a negative count are a panic, as an index out of a string (D30); `find("")` is 0.
+
+### D310. What `trim()` removes
+*2026-10-30.* The spaces of ASCII: space, tab, line feed, vertical tab, form feed and carriage return; `trimStart()` and `trimEnd()` only at one end.
+
+### D311. More searching, and `join`
+*2026-10-30.* Besides `find`, `findFrom(part, from)` and `findLast(part)`. `join(parts, separator)` is a function of the core, not a method of a list, which would hold only for `list<string>`.
+
+### D312. The details of `std.fs`
+*2026-10-30.* `modified()` gives the seconds from 1970-01-01 UTC. `copy()` writes over the target, `rename()` replaces it. `createFolders()` makes the folders above too. `removeAll()` never follows a link, and does nothing when the path does not exist. `extension()` has its point, and is `""` for `.profile`. `joinPath()` uses the separator of the system; on Windows both `/` and `\` separate.
+
+### D313. The output and the end of a `Process`
+*2026-10-30.* It details D307. The errors of a program from `start()` go where the errors of this program go. The destructor of a `Process` closes its input and its output, then waits for its end. `run()` reads the errors on a thread of its own, so that a program that fills one pipe does not wait for ever.
+
+### D314. The output of a program as text
+*2026-10-30.* The bytes that are not UTF-8 become U+FFFD, since a program can write in the code page of a console; `string(bytes)` stays strict (D200).
+
+### D315. SIGPIPE on Linux
+*2026-10-30.* From the first program started, SIGPIPE is ignored: writing to a program that has ended is an exception, not a signal that ends this one. The children have SIGPIPE as by default.
+
+### D316. Programs on Windows
+*2026-10-30.* A child inherits only its three pipes (`PROC_THREAD_ATTRIBUTE_HANDLE_LIST`), so that a program started at the same time by another thread does not keep them open. `kill()` ends it with the code 1. The arguments are quoted with the rules of the C runtime of Microsoft, and Windows finds the program in `PATH`, adding `.exe`.
+
+### D317. The details of the literals of a list
+*2026-10-30.* It details D308. A comma is allowed after the last element, and the elements can stand on several lines; an element with `ref` is an error.
+
 ---
 
 ## Open

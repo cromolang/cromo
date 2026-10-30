@@ -322,6 +322,9 @@ private:
             noteRaise();
             break;
         }
+        case ExprKind::ListLiteral:
+            for (const ExprPtr& element : static_cast<const ListLiteralExpr&>(expr).elements) visit(*element);
+            break;
         }
     }
 

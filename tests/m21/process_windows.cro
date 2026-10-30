@@ -1,0 +1,63 @@
+// Other programs on Windows (D307): run() with the output, the errors and the
+// exit code, start() with the input, kill(), the quotes of the arguments, a
+// program that does not exist, and programs started by two threads at once.
+// target: windows
+// expect-output: [hello] [oops] 3
+// expect-output: a,b,c
+// expect-output: code 0
+// expect-output: killed 1
+// expect-output: cannot start 'no-such-program-xyz': no such program
+// expect-output: "a b" "c\"d" e
+// expect-output: cannot write to the program: it does not read its input any more
+// expect-output: parallel 20
+import std.process
+import std.thread
+
+i64 echoes(string word) {
+    i64 right = 0
+    for (i64 i = 0; i < 10; i++) {
+        if (process.run("cmd", ["/c", "echo " + word]).out == word + "\r\n") {
+            right++
+        }
+    }
+    ret right
+}
+
+i32 main() {
+    process.Output r = process.run("cmd", ["/c", "echo hello& echo oops 1>&2& exit 3"])
+    println("[{}] [{}] {}", r.out.trim(), r.err.trim(), r.code)
+    process.Process p = process.start("sort", [])
+    p.write("b\r\na\r\nc\r\n")
+    p.closeInput()
+    println("{}", p.readAll().trim().replace("\r\n", ","))
+    println("code {}", p.wait())
+    process.Process sleeper = process.start("ping", ["-n", "30", "127.0.0.1"])
+    sleeper.kill()
+    println("killed {}", sleeper.wait())
+    try {
+        process.run("no-such-program-xyz", [])
+    } catch (Exception e) {
+        println("{}", e.message())
+    }
+    // cmd shows its command line as it is: the quotes that cromo wrote.
+    println("{}", process.run("cmd", ["/c", "echo", "a b", "c\"d", "e"]).out.trim())
+    process.Process done = process.start("cmd", ["/c", "exit 0"])
+    done.wait()
+    try {
+        for (i64 i = 0; i < 2000; i++) {
+            done.write("lots of text that nobody reads\r\n")
+        }
+    } catch (Exception e) {
+        println("{}", e.message())
+    }
+    i64 one = 0
+    i64 two = 0
+    thread.Thread first = thread.Thread([ref one]() { one = echoes("one") })
+    thread.Thread second = thread.Thread([ref two]() { two = echoes("two") })
+    first.start()
+    second.start()
+    first.join()
+    second.join()
+    println("parallel {}", one + two)
+    ret 0
+}

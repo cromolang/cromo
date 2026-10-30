@@ -1,0 +1,29 @@
+// The functions of text of string (D304-D306): searching, splitting, trimming,
+// replacing, ASCII cases, repeating and joining; the indices are in bytes.
+// expect-output: [a] [b ] [ c] 3
+// expect-output: 4 -1 10 6 0
+// expect-output: true true false true
+// expect-output: [a,b , c  ] [  a,b , c] []
+// expect-output: a + b + c|x
+// expect-output: CITTà OK Àbc def
+// expect-output: ababab []
+// expect-output: x, y, z|
+// expect-output: 1 [] 3 [a] [] [b]
+// expect-output: 3
+i32 main() {
+    string line = "  a,b , c  "
+    list<string> parts = line.trim().split(",")
+    println("[{}] [{}] [{}] {}", parts[0], parts[1], parts[2], parts.len())
+    println("{} {} {} {} {}", line.find("b"), line.find("z"), line.findLast(" "), line.findFrom(",", 5), line.find(""))
+    println("{} {} {} {}", line.contains(" c"), line.startsWith("  a"), line.endsWith("x"), line.endsWith("  "))
+    println("[{}] [{}] [{}]", line.trimStart(), line.trimEnd(), " \t\r\n".trim())
+    println("{}|{}", "a-b-c".replace("-", " + "), "x".replace("y", "z"))
+    println("{} {}", "Città ok".upper(), "ÀBC Def".lower())
+    println("{} [{}]", "ab".repeat(3), "ab".repeat(0))
+    println("{}|{}", join(["x", "y", "z"], ", "), join([], "-"))
+    list<string> empty = "".split(",")
+    list<string> pieces = "a,,b".split(",")
+    println("{} [{}] {} [{}] [{}] [{}]", empty.len(), empty[0], pieces.len(), pieces[0], pieces[1], pieces[2])
+    println("{}", "€uro€".find("uro"))
+    ret 0
+}

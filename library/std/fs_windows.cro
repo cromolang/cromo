@@ -12,6 +12,9 @@ extern "kernel32" {
     i32 RemoveDirectoryW(addr name)
     i32 CreateDirectoryW(addr name, addr security)
     u32 GetFileAttributesW(addr name)
+    i32 GetFileAttributesExW(addr name, i32 level, addr data)
+    i32 MoveFileExW(addr from, addr to, u32 flags)
+    i32 CopyFileW(addr from, addr to, i32 failIfExists)
     i64 FindFirstFileW(addr pattern, addr data)
     i32 FindNextFileW(i64 find, addr data)
     i32 FindClose(i64 find)
@@ -92,6 +95,75 @@ public bool exists(string path) {
 public bool isFolder(string path) {
     u32 bits = attributes(path)
     ret bits != 0xFFFFFFFF && bits & 0x10 != 0  // FILE_ATTRIBUTE_DIRECTORY
+}
+
+public bool isFile(string path) {
+    u32 bits = attributes(path)
+    ret bits != 0xFFFFFFFF && bits & 0x10 == 0
+}
+
+public bool isLink(string path) {
+    u32 bits = attributes(path)
+    ret bits != 0xFFFFFFFF && bits & 0x400 != 0  // FILE_ATTRIBUTE_REPARSE_POINT
+}
+
+public i64 size(string path) {
+    addr data = information(path, "read the size of")
+    i64 bytes = i64(copyAt<u32>(offset(data, 28))) << 32 | i64(copyAt<u32>(offset(data, 32)))
+    free(data)
+    ret bytes
+}
+
+// From the units of 100 ns since 1601 of Windows.
+public i64 modified(string path) {
+    addr data = information(path, "read the date of")
+    i64 time = i64(copyAt<u32>(offset(data, 24))) << 32 | i64(copyAt<u32>(offset(data, 20)))  // ftLastWriteTime
+    free(data)
+    ret (time - 116444736000000000) / 10000000
+}
+
+public void rename(string from, string to) {
+    addr source = wide(from)
+    addr target = wide(to)
+    i32 done = MoveFileExW(source, target, 3)  // MOVEFILE_REPLACE_EXISTING | MOVEFILE_COPY_ALLOWED
+    free(target)
+    free(source)
+    if (done == 0) {
+        throw failure("rename", from, GetLastError())
+    }
+}
+
+public void copy(string from, string to) {
+    addr source = wide(from)
+    addr target = wide(to)
+    i32 done = CopyFileW(source, target, 0)
+    free(target)
+    free(source)
+    if (done == 0) {
+        throw failure("copy", from, GetLastError())
+    }
+}
+
+public bool isSeparator(u8 c) {
+    ret c == '/' || c == '\\'
+}
+
+public string separator() {
+    ret "\\"
+}
+
+// WIN32_FILE_ATTRIBUTE_DATA, to be freed.
+addr information(string path, string action) {
+    addr name = wide(path)
+    addr data = alloc(36)
+    i32 done = GetFileAttributesExW(name, 0, data)  // GetFileExInfoStandard
+    free(name)
+    if (done == 0) {
+        u32 code = GetLastError()
+        free(data)
+        throw failure(action, path, code)
+    }
+    ret data
 }
 
 public void remove(string path) {

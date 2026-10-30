@@ -1,0 +1,243 @@
+// The module std.process (D307): other programs, with their standard input,
+// output and error. The calls of the system are in process_windows.cro and
+// process_linux.cro (D202), with:
+//   void launch(ref Process p, string program, list<string> args, bool errors)
+//       starts the program, with pipes for its input and output, and for its
+//       errors too when `errors`; otherwise it writes them where this program does
+//   i64 readSome(i64 pipe, addr data, i64 most)   0 at the end
+//   void writeAll(i64 pipe, addr data, i64 size)
+//   void closePipe(i64 pipe)
+//   i32 waitProcess(i64 id)                       the exit code, 128 + a signal on Linux
+//   void killProcess(i64 id)
+// A program is found as the shell finds it: in the folders of PATH when its name
+// has no folder.
+import std.thread
+import unsafe
+
+// What run() gives: the exit code, and the standard output and error as text.
+public struct Output {
+    public i32 code
+    public string out
+    public string err
+}
+
+// A program that runs, from start(). Its destructor closes its input and output
+// and waits for its end.
+public struct Process {
+    i64 id = -1     // Windows: the handle of the process; Linux: its pid
+    i64 input = -1  // the pipes, or -1
+    i64 output = -1
+    i64 errors = -1
+    bool waited
+    i32 code
+
+    ~Process() {
+        closeInput()
+        closeOutput()
+        if (id >= 0 && !waited) {
+            wait()
+        }
+    }
+
+    public void write(string text) {
+        if (input < 0) {
+            throw Error("cannot write to the program: its input is closed (D307)")
+        }
+        writeAll(input, text.cstring(), text.len())
+    }
+
+    public void writeBytes(list<u8> bytes) {
+        if (input < 0) {
+            throw Error("cannot write to the program: its input is closed (D307)")
+        }
+        addr data = alloc(bytes.len())
+        for (i64 i = 0; i < bytes.len(); i++) {
+            put<u8>(offset(data, i), bytes[i])
+        }
+        try {
+            writeAll(input, data, bytes.len())
+        } finally {
+            free(data)
+        }
+    }
+
+    // The end of its input, which many programs wait for before they answer.
+    public void closeInput() {
+        if (input >= 0) {
+            closePipe(input)
+            input = -1
+        }
+    }
+
+    // Up to `most` bytes of its output, as soon as some arrive: empty at the end.
+    public list<u8> read(i64 most) {
+        list<u8> bytes
+        if (output < 0) {
+            ret bytes
+        }
+        addr data = alloc(most)
+        try {
+            i64 count = readSome(output, data, most)
+            bytes.reserve(count)
+            for (i64 i = 0; i < count; i++) {
+                bytes.add(copyAt<u8>(offset(data, i)))
+            }
+        } finally {
+            free(data)
+        }
+        ret bytes
+    }
+
+    // All its output, to its end.
+    public string readAll() {
+        if (output < 0) {
+            ret ""
+        }
+        ret text(readEverything(output))
+    }
+
+    // Waits for its end, and gives its exit code; again, the same code.
+    public i32 wait() {
+        if (!waited) {
+            code = waitProcess(id)
+            waited = true
+        }
+        ret code
+    }
+
+    // Ends it at once; wait() then gives its code.
+    public void kill() {
+        if (id >= 0 && !waited) {
+            killProcess(id)
+        }
+    }
+
+    void closeOutput() {
+        if (output >= 0) {
+            closePipe(output)
+            output = -1
+        }
+        if (errors >= 0) {
+            closePipe(errors)
+            errors = -1
+        }
+    }
+}
+
+// Runs a program to its end, with its output and its errors (D307). A code other
+// than 0 is a value; a program that cannot start is an exception.
+public Output run(string program, list<string> args) {
+    Process p
+    launch(ref p, program, args, true)
+    p.closeInput()
+    // The errors are read at the same time as the output: a program that fills
+    // one of the two pipes would otherwise wait for ever.
+    i64 pipe = p.errors
+    list<u8> errors
+    thread.Thread reader = thread.Thread([pipe, ref errors]() { errors = readEverything(pipe) })
+    reader.start()
+    list<u8> out = readEverything(p.output)
+    reader.join()
+    Output result
+    result.code = p.wait()
+    result.out = text(out)
+    result.err = text(errors)
+    ret result
+}
+
+// Starts a program, which runs while this one writes to it and reads from it
+// (D307). Its errors go where the errors of this program go.
+public Process start(string program, list<string> args) {
+    Process p
+    launch(ref p, program, args, false)
+    ret p
+}
+
+list<u8> readEverything(i64 pipe) {
+    list<u8> bytes
+    addr data = alloc(65536)
+    try {
+        for {
+            i64 count = readSome(pipe, data, 65536)
+            if (count == 0) {
+                break
+            }
+            bytes.reserve(bytes.len() + count)
+            for (i64 i = 0; i < count; i++) {
+                bytes.add(copyAt<u8>(offset(data, i)))
+            }
+        }
+    } finally {
+        free(data)
+    }
+    ret bytes
+}
+
+// The bytes as text, with U+FFFD in place of what is not UTF-8: the output of a
+// program can be in the code page of a console.
+string text(list<u8> bytes) {
+    try {
+        ret string(bytes)
+    } catch (Exception e) {
+    }
+    list<u8> fixed
+    i64 i = 0
+    for (i < bytes.len()) {
+        i64 size = characterSize(bytes, i)
+        if (size == 0) {
+            fixed.add(0xEF)
+            fixed.add(0xBF)
+            fixed.add(0xBD)
+            i++
+            continue
+        }
+        for (i64 k = 0; k < size; k++) {
+            fixed.add(bytes[i + k])
+        }
+        i += size
+    }
+    ret string(fixed)
+}
+
+// The size of the character of UTF-8 at `i`, or 0 if it is not one.
+i64 characterSize(list<u8> bytes, i64 i) {
+    u8 first = bytes[i]
+    i64 size = 1
+    u32 point = u32(first)
+    u32 least = 0
+    if (first < 0x80) {
+        ret 1
+    } else if (first & 0xE0 == 0xC0) {
+        size = 2
+        point = u32(first & 0x1F)
+        least = 0x80
+    } else if (first & 0xF0 == 0xE0) {
+        size = 3
+        point = u32(first & 0x0F)
+        least = 0x800
+    } else if (first & 0xF8 == 0xF0) {
+        size = 4
+        point = u32(first & 0x07)
+        least = 0x10000
+    } else {
+        ret 0
+    }
+    if (i + size > bytes.len()) {
+        ret 0
+    }
+    for (i64 k = 1; k < size; k++) {
+        u8 next = bytes[i + k]
+        if (next & 0xC0 != 0x80) {
+            ret 0
+        }
+        point = point << 6 | u32(next & 0x3F)
+    }
+    if (point < least || (point >= 0xD800 && point <= 0xDFFF) || point > 0x10FFFF) {
+        ret 0
+    }
+    ret size
+}
+
+Error startError(string program, string reason) {
+    ret Error(format("cannot start '{}': {}", program, reason))
+}

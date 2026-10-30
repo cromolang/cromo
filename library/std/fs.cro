@@ -1,11 +1,19 @@
-// The module std.fs (D201): files read and written whole, and folders. An error
-// is an exception whose message has the path and the reason. The system calls
-// are in fs_windows.cro and fs_linux.cro (D202), with:
+// The module std.fs (D201): files read and written whole, folders and paths. An
+// error is an exception whose message has the path and the reason. The system
+// calls are in fs_windows.cro and fs_linux.cro (D202), with:
 //   bool exists(string path)
+//   bool isFile(string path)
 //   bool isFolder(string path)
-//   void remove(string path)           a file, or an empty folder
+//   bool isLink(string path)           a symbolic link, or a junction of Windows
+//   i64 size(string path)              of a file, in bytes
+//   i64 modified(string path)          the seconds from 1970-01-01 UTC
+//   void remove(string path)           a file, a link, or an empty folder
 //   void createFolder(string path)
 //   list<string> listFolder(string path)  the names in the folder, in no order
+//   void rename(string from, string to)   replaces `to` if it is a file
+//   void copy(string from, string to)     a file, over `to` if it exists
+//   bool isSeparator(u8 c)             / and, on Windows, \
+//   string separator()
 import unsafe
 
 public list<u8> readBytes(string path) {
@@ -50,6 +58,90 @@ public void writeText(string path, string text) {
 // Adds the text at the end of the file, which is created if it does not exist.
 public void appendText(string path, string text) {
     storeFile(path, text.cstring(), text.len(), true)
+}
+
+// A folder with the ones above it that are missing, as mkdir -p.
+public void createFolders(string path) {
+    if (isFolder(path)) {
+        ret
+    }
+    string above = parent(path)
+    if (above.len() > 0 && above != path) {
+        createFolders(above)
+    }
+    createFolder(path)
+}
+
+// A file, or a folder with all that it holds. A link is removed itself, never
+// what it points to. Nothing happens if the path does not exist.
+public void removeAll(string path) {
+    if (!isLink(path) && isFolder(path)) {
+        for (string name in listFolder(path)) {
+            removeAll(joinPath(path, name))
+        }
+    } else if (!exists(path) && !isLink(path)) {
+        ret
+    }
+    remove(path)
+}
+
+// The two paths with the separator of the system between them: "a" and "b.txt"
+// give "a/b.txt", or a\b.txt on Windows.
+public string joinPath(string first, string second) {
+    if (first.len() == 0) {
+        ret second.copy()
+    }
+    if (isSeparator(first[first.len() - 1])) {
+        ret first + second
+    }
+    ret first + separator() + second
+}
+
+// The folder of a path: "a/b/c.txt" gives "a/b", "c.txt" gives "", "/c" gives "/".
+public string parent(string path) {
+    i64 end = path.len()
+    for (end > 1 && isSeparator(path[end - 1])) {
+        end--
+    }
+    i64 at = end - 1
+    for (at >= 0 && !isSeparator(path[at])) {
+        at--
+    }
+    if (at < 0) {
+        ret ""
+    }
+    i64 keep = at
+    for (keep > 0 && isSeparator(path[keep - 1])) {
+        keep--
+    }
+    if (keep == 0 || (keep == 2 && path[1] == ':')) {  // the root: "/", or "C:\" on Windows
+        ret path.slice(0, at + 1)
+    }
+    ret path.slice(0, keep)
+}
+
+// The last name of a path: "a/b/c.txt" gives "c.txt".
+public string fileName(string path) {
+    i64 end = path.len()
+    for (end > 0 && isSeparator(path[end - 1])) {
+        end--
+    }
+    i64 at = end - 1
+    for (at >= 0 && !isSeparator(path[at])) {
+        at--
+    }
+    ret path.slice(at + 1, end)
+}
+
+// The extension of the name, with its point: "c.tar.gz" gives ".gz", "notes"
+// and ".profile" give "".
+public string extension(string path) {
+    string name = fileName(path)
+    i64 point = name.findLast(".")
+    if (point <= 0) {
+        ret ""
+    }
+    ret name.slice(point, name.len())
 }
 
 Error fileError(string action, string path, string reason) {

@@ -1,0 +1,48 @@
+// The files and the folders of std.fs: folders with their parents, copying,
+// renaming, the size and the date, removing all, and the parts of a path.
+// expect-output: true 5 false
+// expect-output: true true false
+// expect-output: 2 one.txt three.txt
+// expect-output: removed true
+// expect-output: [a/b] [c.txt] [.gz] [] []
+// expect-output: [] [/] [x/] [b]
+// expect-output: cannot read the size of 'missing.txt': no such file or folder
+import std.fs
+
+i32 main() {
+    string base = "m21-fs-test"
+    fs.removeAll(base)
+    fs.createFolders(fs.joinPath(fs.joinPath(base, "a"), "b"))
+    fs.writeText(fs.joinPath(base, "one.txt"), "hello")
+    fs.copy(fs.joinPath(base, "one.txt"), fs.joinPath(base, "two.txt"))
+    fs.rename(fs.joinPath(base, "two.txt"), fs.joinPath(base, "three.txt"))
+    string three = fs.joinPath(base, "three.txt")
+    println("{} {} {}", fs.isFile(three), fs.size(three), fs.exists(fs.joinPath(base, "two.txt")))
+    println("{} {} {}", fs.isFolder(fs.joinPath(base, "a")), fs.modified(three) > 1700000000, fs.isLink(three))
+    list<string> files
+    for (string name in fs.listFolder(base)) {
+        if (fs.isFile(fs.joinPath(base, name))) {
+            files.add(name.copy())
+        }
+    }
+    string first = files[0].copy()
+    string second = files[1].copy()
+    if (first > second) {
+        string swap = first.copy()
+        first = second.copy()
+        second = swap.copy()
+    }
+    println("{} {} {}", files.len(), first, second)
+    fs.removeAll(base)
+    fs.removeAll(base)
+    println("removed {}", !fs.exists(base))
+    println("[{}] [{}] [{}] [{}] [{}]", fs.parent("a/b/c.txt"), fs.fileName("a/b/c.txt"), fs.extension("a/b/c.tar.gz"),
+        fs.extension(".profile"), fs.extension("notes"))
+    println("[{}] [{}] [{}] [{}]", fs.parent("c.txt"), fs.parent("/c"), fs.joinPath("x/", ""), fs.fileName("a/b/"))
+    try {
+        fs.size("missing.txt")
+    } catch (Exception e) {
+        println("{}", e.message())
+    }
+    ret 0
+}

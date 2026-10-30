@@ -1,0 +1,239 @@
+// std.process on Windows (D202): CreateProcessW with pipes, which the program
+// inherits alone (PROC_THREAD_ATTRIBUTE_HANDLE_LIST): a program started at the same
+// time by another thread does not keep them open.
+import unsafe
+
+extern "kernel32" {
+    i32 CreatePipe(ref i64 read, ref i64 write, addr attributes, u32 size)
+    i32 SetHandleInformation(i64 handle, u32 mask, u32 flags)
+    i32 CreateProcessW(addr application, addr line, addr process, addr thread, i32 inherit, u32 flags, addr environment,
+        addr folder, addr startup, addr information)
+    i32 InitializeProcThreadAttributeList(addr list, u32 count, u32 flags, ref u64 size)
+    i32 UpdateProcThreadAttribute(addr list, u32 flags, u64 attribute, addr value, u64 size, addr previous, addr returned)
+    void DeleteProcThreadAttributeList(addr list)
+    i32 ReadFile(i64 file, addr data, u32 size, ref u32 done, addr overlapped)
+    i32 WriteFile(i64 file, addr data, u32 size, ref u32 done, addr overlapped)
+    i32 CloseHandle(i64 handle)
+    u32 WaitForSingleObject(i64 handle, u32 milliseconds)
+    i32 GetExitCodeProcess(i64 process, ref u32 code)
+    i32 TerminateProcess(i64 process, u32 code)
+    u32 GetLastError()
+    i64 GetStdHandle(u32 which)
+    i64 GetCurrentProcess()
+    i32 DuplicateHandle(i64 sourceProcess, i64 source, i64 targetProcess, ref i64 target, u32 access, i32 inherit,
+        u32 options)
+    i32 MultiByteToWideChar(u32 page, u32 flags, addr text, i32 size, addr wide, i32 wideSize)
+}
+
+void launch(ref Process p, string program, list<string> args, bool errors) {
+    addr none
+    addr security = alloc(24)  // SECURITY_ATTRIBUTES, inheritable
+    put<u32>(security, 24)
+    put<addr>(offset(security, 8), none)
+    put<i32>(offset(security, 16), 1)
+    i64 childInput = -1
+    i64 childOutput = -1
+    i64 childErrors = -1
+    i64 parentInput = -1
+    i64 parentOutput = -1
+    i64 parentErrors = -1
+    CreatePipe(ref childInput, ref parentInput, security, 0)
+    CreatePipe(ref parentOutput, ref childOutput, security, 0)
+    if (errors) {
+        CreatePipe(ref parentErrors, ref childErrors, security, 0)
+    } else {
+        // The errors of this program, as an inheritable copy.
+        i64 own = GetStdHandle(0xFFFFFFF4)  // STD_ERROR_HANDLE
+        if (own != 0 && own != -1) {
+            DuplicateHandle(GetCurrentProcess(), own, GetCurrentProcess(), ref childErrors, 0, 1, 2)  // SAME_ACCESS
+        }
+    }
+    free(security)
+    // The ends of this program are not inherited.
+    for (i64 pipe in [parentInput, parentOutput, parentErrors]) {
+        if (pipe != -1) {
+            SetHandleInformation(pipe, 1, 0)  // HANDLE_FLAG_INHERIT
+        }
+    }
+
+    // STARTUPINFOEXW: the three handles, and the list of the handles to inherit.
+    list<i64> inherited = [childInput, childOutput]
+    if (childErrors != -1) {
+        inherited.add(childErrors)
+    }
+    addr handles = alloc(inherited.len() * 8)
+    for (i64 i = 0; i < inherited.len(); i++) {
+        put<i64>(offset(handles, i * 8), inherited[i])
+    }
+    u64 size = 0
+    InitializeProcThreadAttributeList(none, 1, 0, ref size)
+    addr attributes = alloc(i64(size))
+    InitializeProcThreadAttributeList(attributes, 1, 0, ref size)
+    UpdateProcThreadAttribute(attributes, 0, 0x20002, handles, u64(inherited.len() * 8), none, none)  // HANDLE_LIST
+    addr startup = alloc(112)
+    for (i64 i = 0; i < 112; i++) {
+        put<u8>(offset(startup, i), 0)
+    }
+    put<u32>(startup, 112)
+    put<u32>(offset(startup, 60), 0x100)  // STARTF_USESTDHANDLES
+    put<i64>(offset(startup, 80), childInput)
+    put<i64>(offset(startup, 88), childOutput)
+    if (childErrors != -1) {
+        put<i64>(offset(startup, 96), childErrors)
+    }
+    put<addr>(offset(startup, 104), attributes)
+    addr information = alloc(24)  // PROCESS_INFORMATION
+
+    string line = quote(program)
+    for (string arg in args) {
+        line += " " + quote(arg)
+    }
+    addr wideLine = wide(line)
+    // Without the name of the application, Windows looks for the program as the
+    // shell does, in the folders of PATH, and adds .exe.
+    i32 started = CreateProcessW(none, wideLine, none, none, 1, 0x80000, none, none, startup, information)  // EXTENDED_STARTUPINFO_PRESENT
+    u32 problem = GetLastError()
+    free(wideLine)
+    DeleteProcThreadAttributeList(attributes)
+    free(attributes)
+    free(handles)
+    free(startup)
+    for (i64 pipe in inherited) {
+        CloseHandle(pipe)
+    }
+    if (started == 0) {
+        free(information)
+        for (i64 pipe in [parentInput, parentOutput, parentErrors]) {
+            if (pipe != -1) {
+                CloseHandle(pipe)
+            }
+        }
+        throw startError(program, reason(problem))
+    }
+    p.id = copyAt<i64>(information)
+    CloseHandle(copyAt<i64>(offset(information, 8)))  // the thread
+    free(information)
+    p.input = parentInput
+    p.output = parentOutput
+    p.errors = parentErrors
+}
+
+// 0 at the end, when the program has closed its side.
+i64 readSome(i64 pipe, addr data, i64 most) {
+    addr none
+    u32 done = 0
+    if (ReadFile(pipe, data, u32(chunk(most)), ref done, none) == 0) {
+        u32 code = GetLastError()
+        if (code == 109) {  // ERROR_BROKEN_PIPE
+            ret 0
+        }
+        throw Error(format("cannot read from the program: error {}", code))
+    }
+    ret i64(done)
+}
+
+void writeAll(i64 pipe, addr data, i64 size) {
+    addr none
+    i64 total = 0
+    for (total < size) {
+        u32 done = 0
+        if (WriteFile(pipe, offset(data, total), u32(chunk(size - total)), ref done, none) == 0) {
+            u32 code = GetLastError()
+            if (code == 232 || code == 109) {  // ERROR_NO_DATA, ERROR_BROKEN_PIPE
+                throw Error("cannot write to the program: it does not read its input any more")
+            }
+            throw Error(format("cannot write to the program: error {}", code))
+        }
+        total += i64(done)
+    }
+}
+
+void closePipe(i64 pipe) {
+    CloseHandle(pipe)
+}
+
+i32 waitProcess(i64 id) {
+    WaitForSingleObject(id, 0xFFFFFFFF)
+    u32 code = 0
+    GetExitCodeProcess(id, ref code)
+    CloseHandle(id)
+    ret i32(code)
+}
+
+void killProcess(i64 id) {
+    TerminateProcess(id, 1)
+}
+
+// An argument in a command line, so that the program reads it back as it is,
+// with the rules of the C runtime of Microsoft.
+string quote(string arg) {
+    bool plain = arg.len() > 0
+    for (i64 i = 0; i < arg.len(); i++) {
+        u8 c = arg[i]
+        if (c == ' ' || c == '\t' || c == '"') {
+            plain = false
+        }
+    }
+    if (plain) {
+        ret arg.copy()
+    }
+    string out = "\""
+    i64 backslashes = 0
+    for (i64 i = 0; i < arg.len(); i++) {
+        u8 c = arg[i]
+        if (c == '\\') {
+            backslashes++
+            continue
+        }
+        if (c == '"') {
+            out += "\\".repeat(backslashes * 2 + 1)
+        } else {
+            out += "\\".repeat(backslashes)
+        }
+        backslashes = 0
+        out += arg.slice(i, i + characterLength(c))
+        i += characterLength(c) - 1
+    }
+    out += "\\".repeat(backslashes * 2)
+    ret out + "\""
+}
+
+i64 characterLength(u8 first) {
+    if (first < 0x80) {
+        ret 1
+    } else if (first & 0xE0 == 0xC0) {
+        ret 2
+    } else if (first & 0xF0 == 0xE0) {
+        ret 3
+    }
+    ret 4
+}
+
+string reason(u32 code) {
+    if (code == 2 || code == 3) {
+        ret "no such program"
+    } else if (code == 5) {
+        ret "access denied"
+    } else if (code == 193) {
+        ret "it is not a program for this system"
+    }
+    ret format("error {}", code)
+}
+
+i64 chunk(i64 size) {
+    if (size > 0x40000000) {
+        ret 0x40000000
+    }
+    ret size
+}
+
+// The text in UTF-16 with a zero at the end, for Windows: to be freed.
+addr wide(string text) {
+    addr none
+    i32 n = i32(text.len())
+    i32 size = MultiByteToWideChar(65001, 0, text.cstring(), n, none, 0) + 1
+    addr buffer = alloc(i64(size) * 2)
+    i32 written = MultiByteToWideChar(65001, 0, text.cstring(), n, buffer, size)
+    put<u16>(offset(buffer, i64(written) * 2), 0)
+    ret buffer
+}

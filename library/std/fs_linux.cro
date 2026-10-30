@@ -1,5 +1,5 @@
-// std.fs on Linux (D202): the system calls open, read, write, close, stat,
-// unlink, rmdir, mkdir and getdents64.
+// std.fs on Linux (D202): the system calls open, read, write, close, stat, lstat,
+// unlink, rmdir, mkdir, rename and getdents64.
 import unsafe
 
 // The bytes of a file, in memory to be freed, and how many they are.
@@ -68,6 +68,97 @@ public bool exists(string path) {
 public bool isFolder(string path) {
     i64 bits = mode(path)
     ret bits >= 0 && bits & 0xF000 == 0x4000  // S_IFDIR
+}
+
+public bool isFile(string path) {
+    i64 bits = mode(path)
+    ret bits >= 0 && bits & 0xF000 == 0x8000  // S_IFREG
+}
+
+public bool isLink(string path) {
+    addr info = alloc(144)
+    i64 status = systemCall(6, path.cstring(), info, 0, 0, 0, 0)  // lstat
+    i64 bits = i64(copyAt<u32>(offset(info, 24)))
+    free(info)
+    ret status >= 0 && bits & 0xF000 == 0xA000  // S_IFLNK
+}
+
+public i64 size(string path) {
+    ret statField(path, 48, "read the size of")  // st_size
+}
+
+public i64 modified(string path) {
+    ret statField(path, 88, "read the date of")  // st_mtime
+}
+
+public void rename(string from, string to) {
+    i64 status = systemCall(82, from.cstring(), to.cstring(), 0, 0, 0, 0)
+    if (status < 0) {
+        throw failure("rename", from, status)
+    }
+}
+
+// The bytes, 64 KB at a time; the new file has the permissions 0644.
+public void copy(string from, string to) {
+    i64 source = systemCall(2, from.cstring(), 0x80000, 0, 0, 0, 0)  // O_RDONLY | O_CLOEXEC
+    if (source < 0) {
+        throw failure("copy", from, source)
+    }
+    i64 target = systemCall(2, to.cstring(), 0x80000 | 0x40 | 0x200 | 1, 420, 0, 0, 0)  // O_CREAT|O_TRUNC|O_WRONLY
+    if (target < 0) {
+        systemCall(3, source, 0, 0, 0, 0, 0)
+        throw failure("copy to", to, target)
+    }
+    addr buffer = alloc(65536)
+    try {
+        for {
+            i64 count = systemCall(0, source, buffer, 65536, 0, 0, 0)
+            if (count == -4) {
+                continue
+            }
+            if (count < 0) {
+                throw failure("copy", from, count)
+            }
+            if (count == 0) {
+                break
+            }
+            i64 done = 0
+            for (done < count) {
+                i64 written = systemCall(1, target, offset(buffer, done), count - done, 0, 0, 0)
+                if (written == -4) {
+                    continue
+                }
+                if (written < 0) {
+                    throw failure("copy to", to, written)
+                }
+                done += written
+            }
+        }
+    } finally {
+        free(buffer)
+        systemCall(3, source, 0, 0, 0, 0, 0)
+        systemCall(3, target, 0, 0, 0, 0, 0)
+    }
+}
+
+public bool isSeparator(u8 c) {
+    ret c == '/'
+}
+
+public string separator() {
+    ret "/"
+}
+
+// A field of 8 bytes of struct stat.
+i64 statField(string path, i64 at, string action) {
+    addr info = alloc(144)
+    i64 status = systemCall(4, path.cstring(), info, 0, 0, 0, 0)  // stat
+    i64 value = copyAt<i64>(offset(info, at))
+    free(info)
+    if (status < 0) {
+        throw failure(action, path, status)
+    }
+    ret value
 }
 
 public void remove(string path) {

@@ -198,6 +198,160 @@ public struct string : Key {
         ret result
     }
 
+    // The index in bytes of the first `part`, or -1 without it (D304, D305).
+    public i64 find(string part) const {
+        ret findFrom(part, 0)
+    }
+
+    // The first `part` at `from` or after, or -1.
+    public i64 findFrom(string part, i64 from) const {
+        checkIndex(from, length + 1)
+        if (part.length == 0) {
+            ret from
+        }
+        u8 first = copyAt<u8>(part.data)
+        for (i64 i = from; i <= length - part.length; i++) {
+            if (copyAt<u8>(offset(data, i)) == first && compareMemory(offset(data, i), part.data, part.length) == 0) {
+                ret i
+            }
+        }
+        ret -1
+    }
+
+    // The last `part`, or -1.
+    public i64 findLast(string part) const {
+        for (i64 i = length - part.length; i >= 0; i--) {
+            if (compareMemory(offset(data, i), part.data, part.length) == 0) {
+                ret i
+            }
+        }
+        ret -1
+    }
+
+    public bool contains(string part) const {
+        ret find(part) >= 0
+    }
+
+    public bool startsWith(string prefix) const {
+        ret prefix.length <= length && compareMemory(data, prefix.data, prefix.length) == 0
+    }
+
+    public bool endsWith(string suffix) const {
+        ret suffix.length <= length && compareMemory(offset(data, length - suffix.length), suffix.data, suffix.length) == 0
+    }
+
+    // The pieces between the separators: "a,,b" gives "a", "" and "b". An empty
+    // separator is a panic.
+    public list<string> split(string separator) const {
+        if (separator.length == 0) {
+            panic("the separator of split() is empty (D304)")
+        }
+        list<string> pieces
+        i64 start = 0
+        i64 at = findFrom(separator, 0)
+        for (at >= 0) {
+            pieces.add(slice(start, at))
+            start = at + separator.length
+            at = findFrom(separator, start)
+        }
+        pieces.add(slice(start, length))
+        ret pieces
+    }
+
+    // Without the spaces at the two ends: space, tab, the ends of line, vertical
+    // tab and form feed of ASCII.
+    public string trim() const {
+        i64 start = spacesBefore()
+        if (start == length) {  // only spaces
+            ret ""
+        }
+        ret slice(start, length - spacesAfter())
+    }
+
+    public string trimStart() const {
+        ret slice(spacesBefore(), length)
+    }
+
+    public string trimEnd() const {
+        ret slice(0, length - spacesAfter())
+    }
+
+    // Every `old` becomes `new`. An empty `old` is a panic.
+    public string replace(string old, string new) const {
+        if (old.length == 0) {
+            panic("the text to replace is empty (D304)")
+        }
+        string result
+        result.reserve(length)
+        i64 start = 0
+        i64 at = findFrom(old, 0)
+        for (at >= 0) {
+            result.appendBytes(offset(data, start), at - start)
+            result.append(new)
+            start = at + old.length
+            at = findFrom(old, start)
+        }
+        result.appendBytes(offset(data, start), length - start)
+        ret result
+    }
+
+    // The letters a-z become A-Z; the rest of UTF-8 stays as it is (D306).
+    public string upper() const {
+        ret mapLetters('a', 'z', -32)
+    }
+
+    // The letters A-Z become a-z (D306).
+    public string lower() const {
+        ret mapLetters('A', 'Z', 32)
+    }
+
+    // The text `count` times.
+    public string repeat(i64 count) const {
+        if (count < 0) {
+            panic(format("repeat() of a negative count, {} (D304)", count))
+        }
+        string result
+        result.reserve(length * count)
+        for (i64 i = 0; i < count; i++) {
+            result.appendBytes(data, length)
+        }
+        ret result
+    }
+
+    i64 spacesBefore() const {
+        i64 n = 0
+        for (n < length && isSpace(copyAt<u8>(offset(data, n)))) {
+            n++
+        }
+        ret n
+    }
+
+    i64 spacesAfter() const {
+        i64 n = 0
+        for (n < length && isSpace(copyAt<u8>(offset(data, length - 1 - n)))) {
+            n++
+        }
+        ret n
+    }
+
+    string mapLetters(u8 from, u8 to, i32 shift) const {
+        string result
+        result.appendBytes(data, length)
+        for (i64 i = 0; i < length; i++) {
+            u8 c = copyAt<u8>(offset(result.data, i))
+            if (c >= from && c <= to) {
+                put<u8>(offset(result.data, i), u8(i32(c) + shift))
+            }
+        }
+        ret result
+    }
+
+    void appendBytes(addr bytes, i64 count) {
+        reserve(length + count)
+        copyMemory(offset(data, length), bytes, count)
+        length += count
+    }
+
     // True at the end, and where a character starts: not on a byte 10xxxxxx.
     bool startsCharacter(i64 index) const {
         ret index == length || copyAt<u8>(offset(data, index)) & 0xC0 != 0x80
@@ -225,6 +379,24 @@ public struct string : Key {
         result.length = length
         ret result
     }
+}
+
+// The parts one after the other, with `separator` between them (D304).
+public string join(list<string> parts, string separator) {
+    string result
+    for (i64 i = 0; i < parts.len(); i++) {
+        if (i > 0) {
+            result.append(separator)
+        }
+        result.append(parts[i])
+    }
+    ret result
+}
+
+// The spaces that trim() removes: space, tab, line feed, vertical tab, form feed
+// and carriage return.
+bool isSpace(u8 c) {
+    ret c == ' ' || (c >= 9 && c <= 13)
 }
 
 // The arguments of the program, the name of the program first, for

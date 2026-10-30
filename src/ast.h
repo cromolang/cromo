@@ -70,7 +70,7 @@ struct Variable {
 
 enum class ExprKind {
     IntLiteral, FloatLiteral, BoolLiteral, StringLiteral, Name, Unary, Binary, Call, Conversion, Print,
-    Field, MethodCall, Construct, Self, Move, Ref, Copy, Index, EnumCase, TypeRef, Lambda, CallValue,
+    Field, MethodCall, Construct, Self, Move, Ref, Copy, Index, EnumCase, TypeRef, Lambda, CallValue, ListLiteral,
 };
 
 struct Expr {
@@ -646,6 +646,17 @@ struct LambdaExpr : Expr {
     const Variable* group = nullptr;  // given to start() of a group (D273): its data on the heap
     const FunctionDecl* enclosing = nullptr;
     std::vector<std::unique_ptr<NameExpr>> capturePlaces;  // the captures by address, for exclusivity (D22)
+};
+
+// `[a, b, c]` (D308): a new list, whose elements are given to it as to add().
+struct ListLiteralExpr : Expr {
+    explicit ListLiteralExpr(SourceLocation l) : Expr(ExprKind::ListLiteral, l) {}
+
+    std::vector<ExprPtr> elements;
+    // Set by sema: the methods of the list that make it, and the count for reserve().
+    const FunctionDecl* reserve = nullptr;
+    const FunctionDecl* add = nullptr;
+    std::vector<ExprPtr> count;
 };
 
 // The call of a function value: `less(a, b)`, `handler.run(x)` on a field (D186).

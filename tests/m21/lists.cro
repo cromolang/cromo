@@ -1,0 +1,62 @@
+// The literals of a list (D308): the type expected or the one of the first
+// element, nested lists, structs, values moved in, and lambdas that still start
+// with '['.
+// expect-output: 2 --short 4 0
+// expect-output: 10
+// expect-output: n1 n2 three
+// expect-output: moved
+// expect-output: 5 0
+// expect-output: 9
+// expect-output: 3 2
+// expect-output: lambda
+// expect-output: 2 3 5
+struct Point {
+    i64 x
+    i64 y
+}
+
+i64 total(list<i64> values) {
+    i64 sum = 0
+    for (i64 v in values) {
+        sum += v
+    }
+    ret sum
+}
+
+string name(i64 i) {
+    ret format("n{}", i)
+}
+
+list<i64> primes() {
+    ret [2, 3, 5]
+}
+
+i32 main() {
+    list<string> args = ["status", "--short"]
+    list<i64> small = [2, 3, 5, 7]
+    list<f64> empty = []
+    println("{} {} {} {}", args.len(), args[1], small.len(), empty.len())
+    println("{}", total([1, 2, 3, 4]))
+    list<string> made = [name(1), name(2), "three"]
+    println("{} {} {}", made[0], made[1], made[2])
+    string kept = "moved"
+    list<string> taken = [move kept, "x"]
+    println("{}", taken[0])
+    list<list<i64>> grid = [[1, 2], [3, 4, 5], []]
+    println("{} {}", grid[1][2], grid[2].len())
+    list<Point> points = [Point(), Point()]
+    points[1].x = 9
+    println("{}", points[1].x)
+    list<bool> flags = [
+        true,
+        false,
+        true,
+    ]
+    list<i64> inferred = [i64(1), 2]
+    println("{} {}", flags.len(), inferred[1])
+    func() f = []() { println("lambda") }
+    f()
+    list<i64> p = primes()
+    println("{} {} {}", p[0], p[1], p[2])
+    ret 0
+}
