@@ -74,7 +74,7 @@ bool convertsLosslessly(Type from, Type to) {
 // A function value owns its captured data (D184).
 bool needsDestruction(Type type) {
     if (type.isArray()) return needsDestruction(type.array->element);
-    return type.isParam() || type.isFunction() || (type.isStruct() && type.structDecl->needsDestruction);
+    return type.isParam() || type.isFunction() || type.isInterface() || (type.isStruct() && type.structDecl->needsDestruction);
 }
 
 const ArrayInfo* internArray(Type element, int64_t count) {

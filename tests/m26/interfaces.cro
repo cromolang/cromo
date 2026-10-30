@@ -1,0 +1,145 @@
+// The values of an interface everywhere (D357): variables, fields, values
+// returned, move parameters, list<Shape> and map<string, Shape>. The object moves
+// to the heap and is destroyed with its value; it is not copied (D358).
+// expect-output: area 12.56
+// expect-output: grown 50.24
+// expect-output: total 13.56
+// expect-output: borrowed true
+// expect-output: list circle square circle
+// expect-output: biggest 9
+// expect-output: scene circle 3.14
+// expect-output: map 4
+// expect-output: bye box 1
+// expect-output: kept 2
+// expect-output: bye box 2
+// expect-output: replaced
+// expect-output: bye box 3
+interface Shape {
+    f64 area() const
+    string name() const
+    void grow(f64 factor)
+}
+
+struct Circle : Shape {
+    f64 r
+
+    public Circle(f64 radius) {
+        r = radius
+    }
+
+    public f64 area() const {
+        ret 3.14 * r * r
+    }
+
+    public string name() const {
+        ret "circle"
+    }
+
+    public void grow(f64 factor) {
+        r *= factor
+    }
+}
+
+struct Square : Shape {
+    f64 side
+
+    public f64 area() const {
+        ret side * side
+    }
+
+    public string name() const {
+        ret "square"
+    }
+
+    public void grow(f64 factor) {
+        side *= factor
+    }
+}
+
+// A struct with a destructor: its object is destroyed with the value of the interface.
+struct Box : Shape {
+    i64 id
+
+    ~Box() {
+        println("bye box {}", id)
+    }
+
+    public f64 area() const {
+        ret 0.0
+    }
+
+    public string name() const {
+        ret "box"
+    }
+
+    public void grow(f64 factor) {
+    }
+}
+
+struct Scene {
+    Shape main = Circle(1.0)
+    list<Shape> others
+}
+
+Shape make(i64 kind) {
+    if (kind == 0) {
+        ret Circle(1.0)
+    }
+    Square s
+    s.side = f64(kind)
+    ret s
+}
+
+Box boxed(i64 id) {
+    Box b
+    b.id = id
+    ret b
+}
+
+f64 sum(Shape a, Shape b) {
+    ret a.area() + b.area()
+}
+
+void keep(move Shape s, ref list<Shape> into) {
+    into.add(move s)
+}
+
+i32 main() {
+    Shape s = Circle(2.0)
+    println("area {}", s.area())
+    s.grow(2.0)
+    println("grown {}", s.area())
+    Square unit
+    unit.side = 1.0
+    println("total {}", sum(Circle(2.0), unit))
+    println("borrowed {}", sum(unit, make(0)) > 4.0)
+
+    list<Shape> shapes = [Circle(1.0), make(3), make(0)]
+    string names = "list"
+    i64 biggest = 0
+    for (i64 i = 0; i < shapes.len(); i++) {
+        names += " " + shapes[i].name()
+        if (shapes[i].area() > shapes[biggest].area()) {
+            biggest = i
+        }
+    }
+    println("{}", names)
+    println("biggest {}", shapes[biggest].area())
+
+    Scene scene
+    println("scene {} {}", scene.main.name(), scene.main.area())
+
+    map<string, Shape> named
+    named["a"] = make(2)
+    println("map {}", named["a"].area())
+
+    Shape first = boxed(1)
+    first = Circle(1.0)  // the box goes now
+    list<Shape> kept
+    keep(boxed(2), ref kept)
+    println("kept {}", kept.len() + 1)
+    kept.clear()
+    Shape third = boxed(3)
+    println("replaced")
+    ret 0
+}

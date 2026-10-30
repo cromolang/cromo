@@ -118,7 +118,8 @@ bool isUntypedLiteral(const Expr& expr) {
     }
 }
 
-// A literal, possibly negative: the only initial value a field can have for now (D73).
+// A literal, possibly negative: an initial value of a field that the constant of the
+// default value holds (D73, D360).
 bool isConstantLiteral(const Expr& expr) {
     switch (expr.kind) {
     case ExprKind::IntLiteral:
@@ -138,7 +139,8 @@ bool isTemporary(const Expr& expr) {
     return expr.kind == ExprKind::Construct || expr.kind == ExprKind::Call || expr.kind == ExprKind::MethodCall ||
            expr.kind == ExprKind::StringLiteral || expr.kind == ExprKind::EnumCase || expr.kind == ExprKind::Lambda ||
            expr.kind == ExprKind::CallValue || expr.kind == ExprKind::Print ||  // format gives a new string
-           expr.kind == ExprKind::ListLiteral;
+           expr.kind == ExprKind::ListLiteral ||
+           (expr.kind == ExprKind::Conversion && expr.type.isInterface());  // a new value of an interface (D357)
 }
 
 // A variable, or a field or an element (D35) of a variable or of the object of a method.
@@ -317,6 +319,13 @@ public:
         }
         checkBodies(instances_);  // it grows while the instances ask for others
         computeThrows();
+        // D360: a default value is made in many places, none of which expects an exception.
+        for (const auto& [function, loc] : defaultFields_) {
+            if (function->canThrow && !function->isAbstract) {
+                diag_->error(loc, "the initial value of a field cannot throw an exception: it is computed wherever the "
+                                  "default value is made (D360)");
+            }
+        }
     }
 
 private:
@@ -958,21 +967,55 @@ private:
                 diag_->error(name.loc, "'" + type->name() + "' cannot be a type argument");
                 return false;
             }
-            if (type->isInterface()) {
-                diag_->error(name.loc, "an interface cannot be a type argument until list<" + type->name() + "> (D91)");
-                return false;
-            }
+            if (!checkNotInterface(*type, name.loc, "a type argument")) return false;
             out.push_back(*type);
         }
         return true;
     }
 
-    // D49, D91: an interface is only the type of a read or `ref` parameter.
+    // D357: an interface is a type as the others, but one that uses Self is only a
+    // constraint (D84).
     bool checkNotInterface(Type type, SourceLocation loc, const std::string& what) {
-        if (!type.isInterface()) return true;
-        diag_->error(loc, what + " cannot have the interface type " + type.name() + ": use a generic, <T : " + type.name() +
-                              "> (D49)");
+        if (!type.isInterface() || !type.interfaceDecl->usesSelf) return true;
+        diag_->error(loc, what + " cannot be of " + type.name() + ", which uses Self: it can only be a constraint, <T : " +
+                              type.name() + "> (D84)");
         return false;
+    }
+
+    // D360: the initial values of the fields that are not literals become the body of
+    // `void Struct..default(ref Struct value)`, `value.field = init` in the order of
+    // the fields, which codegen calls after writing the constant part of the default
+    // value. Its parameter has a name that cannot be written, and the function has no
+    // object: an initial value cannot read the other fields.
+    void makeDefaultFunction(StructDecl& decl, std::vector<FieldDecl*>& fields) {
+        static const char* self = "the value";
+        auto function = std::make_unique<FunctionDecl>();
+        function->name = decl.name + ".default";
+        function->loc = decl.loc;
+        function->symbol = decl.symbol + "..default";
+        function->returnType = TypeName{"void", decl.loc};
+        function->resolvedReturn = Type::voidType();
+        function->isAbstract = decl.isAbstract;
+        function->typeBindings = decl.typeBindings;
+        Param param;
+        param.mode = ParamMode::Ref;
+        param.name = self;
+        param.loc = decl.loc;
+        function->params.push_back(param);
+        function->paramTypes.push_back(Type::structType(&decl));
+        function->body.open = decl.loc;
+        function->body.close = decl.loc;
+        for (FieldDecl* field : fields) {
+            SourceLocation loc = field->init->loc;
+            auto target = std::make_unique<FieldExpr>(loc, std::make_unique<NameExpr>(loc, self), field->name);
+            auto assign = std::make_unique<AssignStmt>(loc, std::move(target), AssignOp::Assign);
+            assign->value = std::move(field->init);
+            function->body.statements.push_back(std::move(assign));
+            defaultFields_.push_back({function.get(), loc});
+        }
+        decl.defaultFunction = function.get();
+        instances_.push_back({function.get(), nullptr, false, ""});
+        module_.functionInstances.push_back(std::move(function));
     }
 
     // `[[json("user_id")]]` and `[[json(skip)]]` before a field (D256).
@@ -1009,6 +1052,7 @@ private:
         BindingsScope scope(bindings_, &decl.typeBindings);
         std::map<std::string, const FieldDecl*> fieldNames;
         std::set<std::string> jsonNames;
+        std::vector<FieldDecl*> computed;  // initial values that are not literals (D360)
         for (FieldDecl& field : decl.fields) {
             if (fieldNames.count(field.name)) {
                 diag_->error(field.loc, "field '" + field.name + "' is already defined in " + decl.name);
@@ -1025,15 +1069,13 @@ private:
             }
             if (!checkNotInterface(field.resolved, field.type.loc, "a field")) field.resolved = Type::error();
             if (!field.init || field.resolved.isError()) continue;
-            if (field.resolved.isStruct()) {
-                diag_->error(field.init->loc, "a field of type " + field.resolved.name() +
-                                                  " cannot have an initial value yet (D73)");
-            } else if (!isConstantLiteral(*field.init)) {
-                diag_->error(field.init->loc, "for now the initial value of a field must be a literal (D73)");
+            if (!field.resolved.isStruct() && !field.resolved.isInterface() && isConstantLiteral(*field.init)) {
+                coerce(field.init, field.resolved);  // in the constant of the default value
             } else {
-                coerce(field.init, field.resolved);
+                computed.push_back(&field);
             }
         }
+        if (!computed.empty()) makeDefaultFunction(decl, computed);
 
         // The cases of an enum, with their data (D104).
         for (EnumCase& item : decl.cases) {
@@ -1275,11 +1317,7 @@ private:
                 diag_->error(param.type.loc, "a parameter cannot be void");
                 type = Type::error();
             }
-            if (type.isInterface() && param.mode == ParamMode::Move) {
-                diag_->error(param.type.loc, "a 'move' parameter cannot have the interface type " + type.name() +
-                                                 ": the size of the object is not known (D91)");
-                type = Type::error();
-            } else if (type.isInterface() && type.interfaceDecl->usesSelf) {
+            if (type.isInterface() && type.interfaceDecl->usesSelf) {
                 diag_->error(param.type.loc, type.name() + " uses Self, so it can only be a constraint: <T : " + type.name() +
                                                  "> (D84)");
                 type = Type::error();
@@ -1765,6 +1803,7 @@ private:
     // A struct can be copied if it has copy(), or if the compiler can generate it (D35).
     bool canCopy(Type type) const {
         if (type.isFunction()) return false;  // it owns its captured data (D184)
+        if (type.isInterface()) return false;  // its type is not known (D358)
         if (type.isArray()) return !needsDestruction(type);  // only arrays of simple values
         if (!type.isStruct()) return true;
         const StructDecl& decl = *type.structDecl;
@@ -2624,13 +2663,21 @@ private:
     // ---- Expressions ----
 
     // Checks `expr` and makes it of type `target`, adding a lossless conversion if needed (D33).
-    bool coerce(ExprPtr& expr, Type target) {
+    // `borrow`: for a read parameter, a struct becomes an interface where it is.
+    bool coerce(ExprPtr& expr, Type target, bool borrow = false) {
         Type type = checkExpr(expr, target);
         if (type.isError() || target.isError()) return false;
         if (type == target) return true;
         if (target.isInterface()) {
-            if (satisfies(type, target.interfaceDecl)) {  // passed with its method table (D49)
+            if (satisfies(type, target.interfaceDecl)) {
                 useMethodsFor(type, *target.interfaceDecl, expr->loc);
+                if (borrow) return true;  // passed with its method table (D49)
+                // D357: a new value of the interface, with the struct on the heap, copied
+                // or moved as into a variable of its own type.
+                if (!checkNotCopied(*expr, type)) return false;
+                SourceLocation loc = expr->loc;
+                ExprPtr inner = std::move(expr);
+                expr = std::make_unique<ConversionExpr>(loc, std::move(inner), target, false);
                 return true;
             }
             diag_->error(expr->loc, type.name() + " does not implement " + target.name() + " (D49)");
@@ -2769,10 +2816,24 @@ private:
             diag_->error(name.loc, "'" + name.name + "' is a module: write " + name.name + ".name (D126)");
         } else if (hiddenByLambda(name.name)) {
             diag_->error(name.loc, "'" + name.name + "' is not captured: write it between the [] of the lambda (D183)");
+        } else if (readsOtherField(name.name)) {
+            diag_->error(name.loc, "the initial value of a field cannot read the field '" + name.name + "' (D360)");
         } else {
             diag_->error(name.loc, "unknown name '" + name.name + "'");
         }
         return Type::error();
+    }
+
+    // In the default function of a struct (D360): a name that is one of its fields.
+    bool readsOtherField(const std::string& name) const {
+        for (const auto& [function, loc] : defaultFields_) {
+            if (function != current_) continue;
+            const StructDecl& decl = *function->paramTypes[0].structDecl;
+            for (const FieldDecl& field : decl.fields) {
+                if (field.name == name) return true;
+            }
+        }
+        return false;
     }
 
     // A variable of the functions around a lambda, which its body sees only if captured.
@@ -2904,7 +2965,7 @@ private:
                 return false;
             }
             lambdaArgument_ = arg->kind == ExprKind::Lambda;  // it may capture by address (D184)
-            return coerce(arg, type);
+            return coerce(arg, type, true);
         case ParamMode::Ref: {
             if (arg->kind != ExprKind::Ref) {
                 diag_->error(arg->loc, name + " is 'ref': write 'ref' before the argument (D22)");
@@ -5133,6 +5194,7 @@ private:
     bool insertTarget_ = false;  // the next Index checked is the target of an assignment
     Diagnostics* diag_;
     bool requireMain_;
+    std::vector<std::pair<FunctionDecl*, SourceLocation>> defaultFields_;  // the initial values computed (D360)
 
     std::vector<ModuleScope> modules_;  // by SourceLocation::file
     std::set<std::tuple<int, int, int>> ambiguous_;  // where an ambiguous name was reported

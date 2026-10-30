@@ -366,7 +366,7 @@ struct Circle : Shape {
 - **Static calls, with generics** (`T : Shape`): the type is known and there is no cost.
 - **Interface-typed parameters** (`void draw(Shape f)`): always allowed, because they are passed by reference without allocating anything.
 - **Objects of different types together:** only inside a `list` of interfaces (`list<Shape>`), where each element is allocated on the heap with its method table. The allocation is already provided for by D11.
-- **Interface-typed variables and fields:** not allowed in the first version, because they would require a hidden allocation. A generic is used instead.
+- **Interface-typed variables and fields:** not allowed in the first version, because they would require a hidden allocation. A generic is used instead. *Changed by D357: they are allowed, with the allocation.*
 
 ### D50. Modules: files and visibility
 *2026-10-28.*
@@ -505,7 +505,7 @@ A non-`void` function must end with a terminating statement: a `ret`, an `if` wi
 *2026-10-28.* Inside a method, `f()` refers to a method of the same struct if there is one, otherwise to a free function. The name closest to the code wins, as with the fields (D70) and as in C++.
 
 ### D73. Initial values of fields are literals
-*2026-10-28.* For now the initial value of a field (D51) must be a literal: a number, `true`, `false` or a character. The default value of a struct is then a constant known by the compiler. Expressions and constructor calls will come later.
+*2026-10-28.* For now the initial value of a field (D51) must be a literal: a number, `true`, `false` or a character. The default value of a struct is then a constant known by the compiler. Expressions and constructor calls will come later. *Replaced by D360.*
 
 ### D74. Memory layout of structs
 *2026-10-28.* The fields stay in the order in which they are declared, with the natural alignment of C. This keeps the layout predictable and compatible with C (D42).
@@ -602,7 +602,7 @@ An interface lists method signatures: no fields, no method bodies, no constructo
 *2026-10-28.*
 - They are read parameters, on which only `const` methods can be called (D24), or `ref` parameters; `move` is not allowed, because the size of the object is not known.
 - A struct is converted implicitly to an interface it declares.
-- An interface cannot be the type of a variable, a field or a return value (D49), nor a type argument, until `list<Shape>` (M5).
+- An interface cannot be the type of a variable, a field or a return value (D49), nor a type argument, until `list<Shape>` (M5). *Changed by D357: it can, and a `move` parameter can be of an interface.*
 
 ### D92. Generic structs
 *2026-10-28.*
@@ -1733,6 +1733,30 @@ lines.close()
 
 ### D356. The names of the tests, and what cromo test takes
 *2026-10-30.* A test of the program is named as its function, one of an imported module after the module, as `modules.geometry.areaOfSquare`. `cromo test` takes the options of `cromo run` (`--release`, `-O`) and runs the tests on the system where it runs; a program does not need `main` to be tested.
+
+### D357. The values of an interface everywhere
+*2026-10-30.* It changes D49 and D91. A variable, a field, a value returned, a `move` parameter, the elements of `list<Shape>` and the values of `map<string, Shape>` can be of an interface. `Shape s = Circle(2.0)` moves the circle to the heap, with the table of its methods, and the destructor of `s` frees it: a hidden allocation, as those of `list` and `string`. A struct becomes the value of an interface as it would become a variable of its own type: copied when it can be copied, otherwise with `move`. A read or `ref` parameter of an interface takes a struct as before, without allocating, and also the value of an interface.
+
+### D358. The value of an interface is not copied
+*2026-10-30.* It moves, with `move` or as the value of `ret`, as a struct that needs destruction (D75): copying it would need its type.
+
+### D359. No way back to the type, for now
+*2026-10-30.* Only the methods of the interface are called on its value; when the type is needed, a generic or an enum does it.
+
+### D360. The initial value of a field is any expression
+*2026-10-30.* It replaces D73. `list<string> names = ["a"]`, `i64 size = 4 * 1024`, the calls of functions and constructors: the expression is computed each time the default value of the struct is made, in the order of the fields, and it cannot read the other fields.
+
+### D361. The default value of an interface is empty
+*2026-10-30.* `Shape s` without a value, a field after `move` (D78) and a new value of a map have the empty value of the interface: calling a method on it is a panic, `the value of Shape is empty: it was moved, or never given`, as an index out of range (D30). So every type keeps its default value (D48).
+
+### D362. A field moved away has the default of its type
+*2026-10-30.* After `move obj.names` the field has the default of its type, an empty list, not its initial value (D78, D360): a move computes nothing and allocates nothing.
+
+### D363. The initial value of a field cannot throw
+*2026-10-30.* The default value of a struct is made in many places, a declaration without a value, a constructor, a new value of a map, none of which expects an exception: an initial value that can throw is an error.
+
+### D364. The structs inside first
+*2026-10-30.* The default value of a struct takes first the default values of the structs in its fields, in their order, then its own initial values, in the order of the fields.
 
 ---
 

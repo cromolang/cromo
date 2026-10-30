@@ -180,7 +180,7 @@ struct File {
 The shape of the struct (fields, constructor `Name(...)`, destructor `~Name()`, methods) is decided (D20).
 - A struct has at most one constructor (D69). Without a constructor, `Point()` gives the default value (D71).
 - Inside methods, constructor and destructor, the fields are used by name; there is no `this`, and a local variable or parameter cannot have the name of a field (D70). A call `f()` refers first to a method of the same struct, then to a free function (D72).
-- For now the initial value of a field is a literal (D73).
+- The initial value of a field is any expression, `list<string> names = ["a"]`, `i64 size = 4 * 1024`, a call: it is computed each time the default value of the struct is made, in the order of the fields, after the structs inside it; it cannot read the other fields, nor throw an exception (D360, D363, D364). A field moved away has the default of its type (D78, D362).
 - The fields are laid out in memory in the order of declaration, with the alignment of C (D74).
 - A destructor is never called by hand (D68).
 - Until `move` arrives, a struct that needs destruction is not copied: it is created directly in its variable, returned with `ret` of a local variable, or replaced with a new object (D75).
@@ -433,7 +433,7 @@ struct Point {
 println("{} {:>10} {:?}", p, p, p)   // (1, 2)     (1, 2) Point { x: 1, y: 2 }
 ```
 
-## 12. Interfaces and generics (D39, D40, D92, D324, D325)
+## 12. Interfaces and generics (D39, D40, D92, D324, D325, D357–D361)
 
 There is no inheritance: polymorphism goes through interfaces. The syntax of interfaces (D49) and of generic constraints (D52) is decided. Inside an interface, `Self` is the type that implements it (D84).
 
@@ -464,14 +464,13 @@ void printArea(Shape f) {
     println("{:.2f}", f.area())
 }
 
-list<Shape> shapes = list<Shape>()   // objects of different types in the same list
-shapes.add(Circle(1.0))
-shapes.add(Square(2.0))
+list<Shape> shapes = [Circle(1.0), Square(2.0)]   // objects of different types in the same list
+Shape biggest = Circle(3.0)                         // the circle moves to the heap
 ```
 
-- Interface-typed parameters are always allowed: they are passed by reference, without allocating anything.
-- Objects of different types can be together only in a `list` of interfaces, where each element is allocated on the heap with its method table.
-- Variables and fields of interface type are not allowed in the first version: a generic is used instead.
+- A read or `ref` parameter of an interface takes a struct where it is, by reference, without allocating anything, and also the value of an interface (D49).
+- The value of an interface can be a variable, a field, a value returned, a `move` parameter, an element of a list or a value of a map: a struct becomes one by moving to the heap with its method table, copied when it can be copied, otherwise with `move`, and its value destroys it (D357). It is not copied, only moved (D358), and only the methods of the interface are called on it (D359).
+- The default value of an interface is empty: a method called on it is a panic, `the value of Shape is empty: it was moved, or never given` (D361).
 - Calling a generic function, the type arguments are deduced from the arguments: `doubleArea(c)`. They are written when they cannot be deduced, `zero<i64>()` (D86). A generic struct is always written with its type arguments: `Pair<i32, f64>`.
 - A generic is checked once, at its definition: on a `T` only the methods of its constraints can be called (D52). Whether a `T` can be copied is checked for each type it is used with (D85).
 - An interface that uses `Self` can only be a constraint: `T max<T : Comparable>(T a, T b)` (D84).

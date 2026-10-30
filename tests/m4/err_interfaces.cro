@@ -1,7 +1,4 @@
-// expect-error: a variable cannot have the interface type Shape: use a generic, <T : Shape> (D49)
 // expect-error: Comparable uses Self, so it can only be a constraint: <T : Comparable> (D84)
-// expect-error: a 'move' parameter cannot have the interface type Shape: the size of the object is not known (D91)
-// expect-error: a return value cannot have the interface type Shape: use a generic, <T : Shape> (D49)
 // expect-error: Empty does not implement 'area' of Shape: add 'f64 area() const' (D90)
 // expect-error: 'area' does not match the interface Shape: it must be 'f64 area() const' (D90)
 // expect-error: 'Point' is not an interface: a struct can only implement interfaces (D40)

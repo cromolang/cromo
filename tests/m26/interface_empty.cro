@@ -1,0 +1,26 @@
+// The default value of an interface is empty: a method on it is a panic (D361).
+// expect-output: moved
+// expect-exit: 101
+// expect-stderr: the value of Shape is empty: it was moved, or never given (D361)
+interface Shape {
+    f64 area() const
+}
+
+struct Unit : Shape {
+    public f64 area() const {
+        ret 1.0
+    }
+}
+
+struct Holder {
+    Shape shape
+}
+
+i32 main() {
+    Holder h
+    h.shape = Unit()
+    Shape taken = move h.shape
+    println("moved")
+    println("{}", taken.area() + h.shape.area())
+    ret 0
+}

@@ -1,0 +1,46 @@
+// The checks of the values of an interface (D357, D358) and of the initial values
+// of the fields (D360).
+// expect-error: values of type Shape are not copied implicitly (D23): write 'move a'
+// expect-error: a variable cannot be of Ordered, which uses Self: it can only be a constraint, <T : Ordered> (D84)
+// expect-error: values of type Holder are not copied implicitly (D23)
+// expect-error: the initial value of a field cannot throw an exception: it is computed wherever the default value is made (D360)
+// expect-error: the initial value of a field cannot read the field 'first' (D360)
+interface Shape {
+    f64 area() const
+}
+
+interface Ordered {
+    bool less(Self other) const
+}
+
+struct Unit : Shape {
+    public f64 area() const {
+        ret 1.0
+    }
+}
+
+struct Holder {
+    Shape shape
+}
+
+i64 parse() {
+    throw Error("no")
+}
+
+struct Risky {
+    i64 n = parse()
+}
+
+struct Pair {
+    i64 first = 1
+    i64 second = first + 1
+}
+
+i32 main() {
+    Shape a = Unit()
+    Shape b = a
+    Ordered o
+    Holder h
+    Holder copy = h
+    ret 0
+}

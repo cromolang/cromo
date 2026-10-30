@@ -1,0 +1,62 @@
+// The initial value of a field is any expression (D360), computed each time the
+// default value is made, in the order of the fields, also inside other structs,
+// in arrays and before a constructor; a field moved away has the default of its
+// type (D78).
+// expect-output: next
+// expect-output: names 2 size 4096 label cfg1 counted 7
+// expect-output: next
+// expect-output: outer 2 3
+// expect-output: next
+// expect-output: next
+// expect-output: array 2
+// expect-output: routes / 80
+// expect-output: next
+// expect-output: again 0 2
+// expect-output: generic 6
+i64 next() {
+    println("next")
+    ret 7
+}
+
+struct Config {
+    list<string> names = ["a", "b"]
+    i64 size = 4 * 1024
+    string label = format("cfg{}", i64(1))
+    i64 counted = next()
+}
+
+struct Outer {
+    Config config
+    i64 n = 3
+}
+
+struct Server {
+    list<string> routes = ["/"]
+    i64 port
+
+    public Server(i64 p) {
+        port = p
+    }
+}
+
+struct Counter<T> {
+    list<T> items
+    i64 limit = 2 * 3
+}
+
+i32 main() {
+    Config c
+    println("names {} size {} label {} counted {}", c.names.len(), c.size, c.label, c.counted)
+    Outer o
+    println("outer {} {}", o.config.names.len(), o.n)
+    Config[2] pair
+    println("array {}", pair.len())
+    Server s = Server(80)
+    println("routes {} {}", s.routes[0], s.port)
+    Config d = Config()
+    list<string> taken = move d.names
+    println("again {} {}", d.names.len(), taken.len())
+    Counter<string> counter
+    println("generic {}", counter.limit)
+    ret 0
+}

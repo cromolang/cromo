@@ -213,6 +213,7 @@ bool zeroDefault(Type type) {
 
 std::string defaultConstant(Type type) {
     if (type.isFunction()) return "zeroinitializer";  // no code: calling it is a panic
+    if (type.isInterface()) return "zeroinitializer";  // empty: calling a method is a panic (D361)
     if (type.isArray()) {  // D196: every element has its default value
         if (zeroDefault(type)) return "zeroinitializer";
         std::string element = llvmType(type.array->element) + " " + defaultConstant(type.array->element);
@@ -231,6 +232,8 @@ std::string defaultConstant(Type type) {
     for (size_t i = 0; i < decl.fields.size(); ++i) {
         const FieldDecl& field = decl.fields[i];
         if (i) out += ", ";
+        // Only the literals are left in the fields: sema moves the other initial values
+        // into the default function of the struct (D360).
         out += llvmType(field.resolved) + " " +
                (field.init ? literalConstant(*field.init, field.resolved) : defaultConstant(field.resolved));
     }
@@ -328,6 +331,7 @@ public:
         }
 
         if (freesExceptions_) out << freeExceptionFunction();
+        out << releaseBodies_;
         out << globals_.str() << "\n";
         for (const FunctionDecl* function : externs) out << externDeclaration(*function);
         out << "declare void @cromo_write(i64, ptr, i64) nounwind\n";
@@ -673,16 +677,66 @@ private:
         block(ok);
     }
 
-    // Writes the default value of a type. A large value is not written as one
-    // constant, which LLVM would split into a store for each element.
+    // Writes the default value of a type: its constant, then the initial values of
+    // the fields that are computed (D360).
     void storeDefault(const std::string& address, Type type) {
+        storeConstant(address, type);
+        if (computedDefault(type)) fillDefault(address, type);
+    }
+
+    // A large value is not written as one constant, which LLVM would split into a
+    // store for each element.
+    void storeConstant(const std::string& address, Type type) {
         if (sizeOf(type) > 64 && zeroDefault(type)) {
             std::string fn = intrinsic("declare void @llvm.memset.p0.i64(ptr, i8, i64, i1)", "@llvm.memset.p0.i64");
             inst("call void " + fn + "(ptr " + address + ", i8 0, i64 " + std::to_string(sizeOf(type)) + ", i1 false)");
         } else if (type.isArray() && sizeOf(type) > 64) {
-            forEachElement(address, type, false, [&](const std::string& element) { storeDefault(element, type.array->element); });
+            forEachElement(address, type, false, [&](const std::string& element) { storeConstant(element, type.array->element); });
         } else {
             inst("store " + llvmType(type) + " " + defaultConstant(type) + ", ptr " + address);
+        }
+    }
+
+    // A struct with initial values that are not literals, or that holds one (D360).
+    bool computedDefault(Type type) {
+        if (type.isArray()) return computedDefault(type.array->element);
+        if (!type.isStruct()) return false;
+        const StructDecl& decl = *type.structDecl;
+        auto found = computedDefaults_.find(&decl);
+        if (found != computedDefaults_.end()) return found->second;
+        computedDefaults_[&decl] = false;  // a struct does not hold itself (D11)
+        bool computed = decl.defaultFunction != nullptr;
+        const std::vector<FieldDecl>& fields = decl.isEnum ? decl.cases[0].fields : decl.fields;
+        for (const FieldDecl& field : fields) computed = computedDefault(field.resolved) || computed;
+        computedDefaults_[&decl] = computed;
+        return computed;
+    }
+
+    // The structs inside first, then the initial values of the struct, in the order
+    // of its fields.
+    void fillDefault(const std::string& address, Type type) {
+        if (type.isArray()) {
+            forEachElement(address, type, false, [&](const std::string& element) { fillDefault(element, type.array->element); });
+            return;
+        }
+        const StructDecl& decl = *type.structDecl;
+        if (decl.isEnum) {  // the first case, with the defaults of its data (D111)
+            const EnumCase& item = decl.cases[0];
+            for (size_t i = 0; i < item.fields.size(); ++i) {
+                if (computedDefault(item.fields[i].resolved)) {
+                    fillDefault(caseField(enumPayload(address, decl), decl, item, i), item.fields[i].resolved);
+                }
+            }
+            return;
+        }
+        for (size_t i = 0; i < decl.fields.size(); ++i) {
+            if (computedDefault(decl.fields[i].resolved)) {
+                fillDefault(fieldAddress(address, decl, static_cast<int>(i)), decl.fields[i].resolved);
+            }
+        }
+        if (decl.defaultFunction) {
+            const FunctionDecl& function = *decl.defaultFunction;
+            inst("call void " + symbolOf(function) + "(ptr " + address + (tracksCaller(function) ? ", ptr null" : "") + ")");
         }
     }
 
@@ -1167,6 +1221,30 @@ private:
             block(done);
             return;
         }
+        if (type.isInterface()) {
+            // D357: the object, if there is one, through the release at the end of its table.
+            std::string value = temp();
+            std::string object = temp();
+            std::string owned = temp();
+            std::string release = label("release");
+            std::string done = label("released");
+            inst(value + " = load { ptr, ptr }, ptr " + address);
+            inst(object + " = extractvalue { ptr, ptr } " + value + ", 0");
+            inst(owned + " = icmp ne ptr " + object + ", null");
+            term("br i1 " + owned + ", label %" + release + ", label %" + done);
+            block(release);
+            std::string table = temp();
+            std::string entry = temp();
+            std::string function = temp();
+            inst(table + " = extractvalue { ptr, ptr } " + value + ", 1");
+            inst(entry + " = getelementptr inbounds ptr, ptr " + table + ", i64 " +
+                 std::to_string(type.interfaceDecl->methods.size()));
+            inst(function + " = load ptr, ptr " + entry);
+            inst("call void " + function + "(ptr " + object + ")");
+            term("br label %" + done);
+            block(done);
+            return;
+        }
         inst("call void " + dropSymbol(*type.structDecl) + "(ptr " + address + ")");
     }
 
@@ -1452,7 +1530,7 @@ private:
         }
         case StmtKind::Expr: {
             const Expr& expr = *static_cast<const ExprStmt&>(statement).expr;
-            if (expr.type.isAggregate() || expr.type.isFunction()) {
+            if (expr.type.isAggregate() || expr.type.isFunction() || expr.type.isInterface()) {
                 addressOf(expr);  // a temporary, destroyed below
             } else {
                 generateExpr(expr);
@@ -1520,7 +1598,7 @@ private:
         }
         Value value = generateExpr(*assign.value);
         std::string address = addressOf(*assign.target);
-        if (type.isFunction()) {  // the old value gives back its data (D184)
+        if (type.isFunction() || type.isInterface()) {  // the old value gives back what it owns (D184, D357)
             const Variable* variable =
                 assign.target->kind == ExprKind::Name ? static_cast<const NameExpr&>(*assign.target).variable : nullptr;
             dropVariable(address, type, variable);
@@ -1549,7 +1627,8 @@ private:
             generateStructInto(*ret.value, dest);
             if (!byPointer(type)) result = dest;
         } else if (ret.value) {
-            if (type.isFunction() && ret.value->kind == ExprKind::Name) moved = static_cast<const NameExpr&>(*ret.value).variable;
+            bool owned = type.isFunction() || type.isInterface();
+            if (owned && ret.value->kind == ExprKind::Name) moved = static_cast<const NameExpr&>(*ret.value).variable;
             result = generateExpr(*ret.value).ref;
         }
 
@@ -1902,7 +1981,7 @@ private:
 
     // Builds the value of a struct expression directly in `dest`, which then owns it.
     void generateStructInto(const Expr& expr, const std::string& dest) {
-        if (expr.type.isFunction()) {  // a pair of values, not in memory
+        if (expr.type.isFunction() || expr.type.isInterface()) {  // a pair of values, not in memory
             Value value = generateExpr(expr);
             inst("store { ptr, ptr } " + value.ref + ", ptr " + dest);
             return;
@@ -2041,23 +2120,53 @@ private:
         std::string table = temp();
         std::string entry = temp();
         std::string target = temp();
+        std::string empty = temp();
         inst(object + " = extractvalue { ptr, ptr } " + pair.ref + ", 0");
+        inst(empty + " = icmp eq ptr " + object + ", null");
+        panicIf(empty, "the value of " + iface.name + " is empty: it was moved, or never given (D361)", call.loc);
         inst(table + " = extractvalue { ptr, ptr } " + pair.ref + ", 1");
         inst(entry + " = getelementptr inbounds ptr, ptr " + table + ", i64 " + std::to_string(index));
         inst(target + " = load ptr, ptr " + entry);
         return emitCall(*call.function, object, Type::error(), call.args, dest, call.loc, &call.overlaps, target);
     }
 
-    // The method table of a struct for an interface, emitted the first time it is used.
+    // The method table of a struct for an interface, emitted the first time it is
+    // used: the methods, then the release of an object on the heap (D357).
     std::string methodTable(const StructDecl& decl, const InterfaceDecl& iface) {
         std::string name = llvmName('@', "vtable." + decl.symbol + "." + iface.symbol);
         if (!tables_.insert(name).second) return name;
-        globals_ << name << " = private unnamed_addr constant [" << iface.methods.size() << " x ptr] [";
+        globals_ << name << " = private unnamed_addr constant [" << iface.methods.size() + 1 << " x ptr] [";
         for (size_t i = 0; i < iface.methods.size(); ++i) {
-            globals_ << (i ? ", " : "") << "ptr " << methodSymbol(decl, iface.methods[i].name);
+            globals_ << "ptr " << methodSymbol(decl, iface.methods[i].name) << ", ";
         }
-        globals_ << "]\n";
+        globals_ << "ptr " << releaseFunction(decl) << "]\n";
         return name;
+    }
+
+    // Destroys an object on the heap, the value of an interface, and frees it (D357).
+    std::string releaseFunction(const StructDecl& decl) {
+        std::string name = llvmName('@', decl.symbol + "..release");
+        if (!releases_.insert(name).second) return name;
+        Type type = Type::structType(&decl);
+        std::string body = "define private void " + name + "(ptr %object) " + functionAttributes() + " {\nentry:\n";
+        if (needsDestruction(type)) body += "  call void " + dropSymbol(decl) + "(ptr %object)\n";
+        body += "  call void @cromo_free(ptr %object)\n  ret void\n}\n\n";
+        releaseBodies_ += body;
+        return name;
+    }
+
+    // `Shape s = Circle(2.0)` (D357): the struct moves to the heap, with its table.
+    Value boxValue(const ConversionExpr& conversion) {
+        Type type = conversion.operand->type;
+        std::string object = temp();
+        inst(object + " = call ptr @cromo_alloc(i64 " + std::to_string(std::max(sizeOf(type), 1)) + ")");
+        generateStructInto(*conversion.operand, object);
+        std::string table = methodTable(*type.structDecl, *conversion.type.interfaceDecl);
+        std::string first = temp();
+        std::string pair = temp();
+        inst(first + " = insertvalue { ptr, ptr } undef, ptr " + object + ", 0");
+        inst(pair + " = insertvalue { ptr, ptr } " + first + ", ptr " + table + ", 1");
+        return {pair, conversion.type};
     }
 
     // Calls a function, a method (with `self`) or a constructor (with `self` set
@@ -2155,6 +2264,9 @@ private:
             if (address) *address = place;
             return place;
         };
+        if (type.isInterface() && param.mode == ParamMode::Move) {
+            return "{ ptr, ptr } " + generateExpr(expr).ref;  // the callee owns it (D357)
+        }
         if (type.isInterface()) {
             // The object by address, with the method table of its struct (D49).
             const Expr& value = param.mode == ParamMode::Ref ? *static_cast<const RefExpr&>(expr).operand : expr;
@@ -2629,6 +2741,7 @@ private:
         }
         case ExprKind::Conversion: {
             const auto& conversion = static_cast<const ConversionExpr&>(expr);
+            if (expr.type.isInterface()) return boxValue(conversion);  // D357
             if (expr.type.isStruct()) return load(addressOf(expr), expr.type);  // `Color(n)` (D135)
             if (conversion.operand->type.isStruct()) {
                 // `i32(color)`: the value of the case (D135).
@@ -2652,7 +2765,8 @@ private:
         case ExprKind::Move:
         case ExprKind::Copy:
             if (expr.type.isAggregate()) return load(addressOf(expr), expr.type);
-            if (expr.kind == ExprKind::Move && expr.type.isFunction()) {  // the value changes owner (D184)
+            if (expr.kind == ExprKind::Move && (expr.type.isFunction() || expr.type.isInterface())) {
+                // The value changes owner (D184, D357).
                 const auto& move = static_cast<const MoveExpr&>(expr);
                 std::string address = addressOf(*move.operand);
                 Value value = load(address, expr.type);
@@ -3054,6 +3168,9 @@ private:
     std::map<std::string, std::string> wheres_;  // panic locations already emitted
     std::set<std::string> intrinsics_;
     std::set<std::string> tables_;  // method tables already emitted
+    std::set<std::string> releases_;  // the releases of the objects of interfaces (D357)
+    std::string releaseBodies_;
+    std::map<const StructDecl*, bool> computedDefaults_;  // D360
     const FunctionDecl* function_ = nullptr;
     std::vector<std::string> addresses_;            // by Variable::id
     std::vector<std::string> flags_;                // drop flags (D77), by Variable::id

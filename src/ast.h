@@ -603,6 +603,9 @@ struct StructDecl {
     FunctionDecl* destructor = nullptr;
     std::map<std::string, FunctionDecl*> methods;
     std::unique_ptr<FunctionDecl> generatedCopy;  // created when `copy()` is used (D35)
+    // D360: the initial values of the fields that are not literals, `value.field = init`,
+    // computed each time the default value is made; owned by Module::functionInstances.
+    FunctionDecl* defaultFunction = nullptr;
     std::vector<const InterfaceDecl*> implements;
     bool needsDestruction = false;
     bool addressed = false;  // a Mutex, a Channel, an Atomic, or holds one: other threads write it, it never moves in a call (D216)

@@ -5,7 +5,6 @@
 // expect-error: Pair is generic: write its type arguments, Pair<...>(...) (D92)
 // expect-error: '+' does not work on values of type T: no interface provides it yet (D87)
 // expect-error: T has no method named 'area': only the methods of its constraints can be called (D52)
-// expect-error: an interface cannot be a type argument until list<Named> (D91)
 // expect-error: a constraint must be an interface, found 'Point' (D52)
 // expect-error: 'zero' is not generic: it has no type arguments
 interface Comparable {

@@ -2,7 +2,6 @@
 // expect-error: field 'x' is already defined in Twice
 // expect-error: 'x' is already a field of Clash
 // expect-error: struct 'Loop' contains itself through field 'next'
-// expect-error: the initial value of a field must be a literal (D73)
 // expect-error: a destructor has no parameters
 struct Twice {
     i32 x
