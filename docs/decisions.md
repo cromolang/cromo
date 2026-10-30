@@ -1710,6 +1710,30 @@ lines.close()
 ### D348. On Windows the DWARF stays in the executables without `--release`
 *2026-10-30.* The table of the stack traces is made from the DWARF, the PDB from CodeView. Without the DWARF a small executable built without `--release` was taken for malware by Bitdefender, which quarantined it and then blocked its path; with it, never, and neither the executables of `--release`, which have neither. So it stays, about as large as the code, which the debuggers of Windows ignore; `--release` has none.
 
+### D349. A test is a function with `[[test]]`
+*2026-10-30.* `[[test]] void sumsTheList() { ... }`: the syntax of the attributes is already there (D256), so there is no new keyword. A test takes no parameters and returns nothing; `cromo build` leaves it out, `cromo test` runs it.
+
+### D350. The tests are in the file of the code and in `_test.cro` files
+*2026-10-30.* A test can stay next to the code it checks, in the same file, or in a file `geometry_test.cro` next to the module, which is part of it and sees its private names, as the files of a system (D202). Only `cromo test` compiles the `_test.cro` files.
+
+### D351. `assert(condition)`
+*2026-10-30.* A built-in function, as `panic`: when the condition is false it stops with a panic that writes the condition as written and, for a comparison, the values of its sides, `assertion failed: total == 7 (total is 6)`, with the stack trace (D339). One function, that the compiler helps, instead of a family of checks.
+
+### D352. Each test in a process of its own
+*2026-10-30.* `cromo test` builds one executable with all the tests and starts it once for each test, in parallel on every processor: a panic or a stack overflow stops only its test. A static executable starts in about a millisecond.
+
+### D353. What assert shows
+*2026-10-30.* The values of the sides of a comparison of numbers or bools, each computed once, except the literals: `assertion failed: next(ref c) == 5 (next(ref c) is 2)`. For any other condition, the condition as written. `assert` works in any function, also with `--release`, as `panic`.
+
+### D354. What cromo test writes
+*2026-10-30.* A line for each test in the order of the files, `ok    name` or `FAIL  name`, then for a failed test what it wrote, indented, and its exit code when it is neither a panic nor an exception; at the end `3 passed, 1 failed`, without times, so that the output repeats. The output of the tests that pass is not shown. The exit code is 1 when a test failed; a test has no time limit for now.
+
+### D355. Choosing the tests
+*2026-10-30.* `cromo test shapes.cro area` runs the tests whose name contains `area`, or any of the names written after the file.
+
+### D356. The names of the tests, and what cromo test takes
+*2026-10-30.* A test of the program is named as its function, one of an imported module after the module, as `modules.geometry.areaOfSquare`. `cromo test` takes the options of `cromo run` (`--release`, `-O`) and runs the tests on the system where it runs; a program does not need `main` to be tested.
+
 ---
 
 ## Open

@@ -1,0 +1,11 @@
+// cromo build leaves out the file build_ignores_test.cro and runs main (D349, D350).
+// expect-output: main
+[[test]]
+void unused() {
+    assert(i64(1) + 1 == 2)
+}
+
+i32 main() {
+    println("main")
+    ret 0
+}

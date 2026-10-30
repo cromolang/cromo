@@ -1671,6 +1671,24 @@ static void crashStart(void) {
 // Called first by cromo_start (codegen.cpp).
 void cromo_runtime_start(void) { crashStart(); }
 
+i64 cromo_arg_count(void);
+i64 cromo_arg_length(i64 index);
+const u8* cromo_arg_data(i64 index);
+
+// D352: the executable of cromo test runs the test whose number is its first
+// argument; -1 without it.
+i64 cromo_test_index(void) {
+    if (cromo_arg_count() < 2) return -1;
+    const u8* digits = cromo_arg_data(1);
+    i64 length = cromo_arg_length(1);
+    i64 index = 0;
+    for (i64 i = 0; i < length; ++i) {
+        if (digits[i] < '0' || digits[i] > '9' || index > 100000000) return -1;
+        index = index * 10 + (digits[i] - '0');
+    }
+    return length > 0 ? index : -1;
+}
+
 // ---- Conditions: a thread of the system sleeps until another calls it ----
 
 typedef struct {

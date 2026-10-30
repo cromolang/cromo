@@ -1,0 +1,8 @@
+// A module with its tests in geometry_test.cro (D350).
+public f64 areaOfSquare(f64 side) {
+    ret side * side
+}
+
+i64 twice(i64 n) {
+    ret 2 * n
+}

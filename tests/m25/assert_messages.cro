@@ -1,0 +1,12 @@
+// The message of assert for a condition that is not a comparison, and for both
+// sides of one (D351).
+// expect-exit: 101
+// expect-stderr: panic: assertion failed: a < b (a is 5, b is 3)
+i32 main(list<string> args) {
+    bool small = args.len() < 5
+    assert(small && args.len() > 0)
+    i64 a = 5
+    i64 b = args.len() + 2
+    assert(a < b)
+    ret 0
+}

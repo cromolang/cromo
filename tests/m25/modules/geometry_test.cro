@@ -1,0 +1,10 @@
+// The tests of geometry.cro: a part of its module, which sees its private names (D350).
+[[test]]
+void areaOfSquare4() {
+    assert(areaOfSquare(2.0) == 4.0)
+}
+
+[[test]]
+void privateTwice() {
+    assert(twice(21) == 42)
+}

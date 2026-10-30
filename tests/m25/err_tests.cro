@@ -1,0 +1,29 @@
+// The checks of the tests (D349) and of assert (D351).
+// expect-error: a test takes no parameters and returns nothing: [[test]] void value() (D349)
+// expect-error: a test takes no parameters and returns nothing: [[test]] void withArgument() (D349)
+// expect-error: unknown attribute 'tset': a function has only [[test]] (D349)
+// expect-error: a test cannot be generic: cromo test calls it as it is (D349)
+// expect-error: assert takes one condition: assert(total == 7) (D351)
+// expect-error: the condition must be a bool, found
+[[test]]
+i64 value() {
+    ret 1
+}
+
+[[test]]
+void withArgument(i64 n) {
+}
+
+[[tset]]
+void typo() {
+}
+
+[[test]]
+void generic<T>() {
+}
+
+i32 main() {
+    assert(true, false)
+    assert(1)
+    ret 0
+}

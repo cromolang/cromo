@@ -138,6 +138,8 @@ struct BinaryExpr : Expr {
     ExprPtr lhs;
     ExprPtr rhs;
     Type operandType;  // set by sema: the common type of the two operands
+    size_t opBegin = 0;  // the bytes of a comparison operator in the source, for assert (D351)
+    size_t opEnd = 0;
 };
 
 // Functions built into the compiler: `panic` (D102) and, in the standard library
@@ -147,6 +149,7 @@ enum class Intrinsic {
     ArgumentCount, ArgumentLength, ArgumentData, DecimalToFloat, HashBytes, SystemCall, Environment, ExitProcess,
     ThreadStart, ThreadWait, ThreadRethrow, ThreadUncaught, ThreadFree, MutexLock, MutexUnlock, SelfAddress, EqualAt,
     TaskStart, GroupStart,  // D269, D273
+    Assert,                 // D351: `assert(condition)`, a built-in function as panic
     AtomicLoad, AtomicStore, AtomicAdd, AtomicExchange, AtomicCompareExchange,  // D328
     JsonWrite, JsonRead,  // std.json (D251): for a real type, a call of the function that converts it
     DebugWrite,           // the form of debug (D319): for a real type, a call of the function that writes it
@@ -170,6 +173,14 @@ struct CallExpr : Expr {
     Intrinsic intrinsic = Intrinsic::None;
     Type typeArg;                      // of the intrinsics with a type argument: `sizeOf<T>()`
     OverlapChecks overlaps;
+    // `assert(total == 7)` (D351): the bytes between the parentheses, set by the
+    // parser; the condition as written and the sides of a comparison whose values
+    // are shown, set by sema.
+    size_t textBegin = 0;
+    size_t textEnd = 0;
+    std::string assertText;
+    std::string leftText;
+    std::string rightText;
 };
 
 // Conversion to `type`: written as `f64(x)`, or inserted by sema when it is lossless (D33).
@@ -485,6 +496,21 @@ enum class FunctionKind { Free, Method, Constructor, Destructor };
 
 struct StructDecl;
 
+// An argument of an attribute: a text, as "user_id", or a name, as skip (D256).
+struct AttributeArg {
+    bool isText = false;
+    std::string text;
+    SourceLocation loc;
+};
+
+// An attribute written before a field, with the syntax of C++11 (D256):
+// `[[json("user_id")]]`, or before a function, `[[test]]` (D349).
+struct Attribute {
+    std::string name;
+    SourceLocation loc;
+    std::vector<AttributeArg> args;
+};
+
 struct FunctionDecl {
     FunctionKind kind = FunctionKind::Free;
     TypeName returnType;
@@ -500,6 +526,8 @@ struct FunctionDecl {
     bool isLambda = false;        // the body of a lambda, or the signature of a function type (D183)
     std::vector<TypeParam> typeParams;  // a generic function (D39)
     Block body;
+    std::vector<Attribute> attributes;  // `[[test]]` (D349)
+    bool isTest = false;                // set by sema
 
     // Set by sema.
     std::string symbol;           // its name in the IR, with its module in front
@@ -527,21 +555,6 @@ struct InterfaceDecl {
     std::vector<FunctionDecl> methods;  // public with the interface
     bool usesSelf = false;  // set by sema: then it can only be a constraint (D84)
     std::string symbol;     // set by sema
-};
-
-// An argument of an attribute: a text, as "user_id", or a name, as skip (D256).
-struct AttributeArg {
-    bool isText = false;
-    std::string text;
-    SourceLocation loc;
-};
-
-// An attribute written before a field, with the syntax of C++11 (D256):
-// `[[json("user_id")]]`.
-struct Attribute {
-    std::string name;
-    SourceLocation loc;
-    std::vector<AttributeArg> args;
 };
 
 struct FieldDecl {

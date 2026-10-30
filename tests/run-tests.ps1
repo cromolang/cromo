@@ -1,6 +1,7 @@
 # Behavior tests: compiles every .cro under tests/ and checks the result against
 # the directives written in its comments. The files in a folder named `modules`
-# are imported by the tests, and are not tests themselves (D50). The files in a
+# are imported by the tests, and are not tests themselves (D50); neither are the
+# files name_test.cro, parts of the module name.cro for cromo test (D350). The files in a
 # folder named `formatting` are cases of cromo fmt (D161): x.cro must become
 # x.formatted.cro, which must not change again; without x.formatted.cro, cromo
 # fmt must refuse x.cro. The files in a folder named `lsp` are opened in cromo
@@ -13,6 +14,7 @@
 #   // cromo-flags: --release       extra options for cromo
 #   // expect-exit: 42              exit code of the program
 #   // expect-output: text          one line of standard output (repeatable, exact match)
+#   // expect-output-contains: text text that must appear in the standard output
 #   // expect-stderr: text          text that must appear in the standard error
 #   // expect-error: text           text that must appear among the compiler errors
 #   // expect-warning: text         text that must appear among the compiler warnings
@@ -20,7 +22,9 @@
 #   // program-arg: text           an argument of the program (repeatable, exact)
 #   // program-env: NAME=value     a variable of the environment of the program
 #                                  (repeatable); {dir} is the folder of the test
-#   // cromo-command: run          compiles and runs with cromo run, instead of build
+#   // cromo-command: run          compiles and runs with cromo run, instead of build;
+#                                  test runs cromo test, the program arguments being
+#                                  the names of the tests
 # Usage: powershell -ExecutionPolicy Bypass -File tests\run-tests.ps1 [-Cromo <path>] [-Filter <text>] [-Flags <options>]
 #   -Flags passes extra options to every compilation, for example -Flags -O0
 #   -Flags '--target linux' compiles for Linux and runs the programs in WSL (D142),
@@ -147,6 +151,7 @@ foreach ($test in Get-ChildItem $PSScriptRoot -Recurse -Filter *.cro | Sort-Obje
     $name = $test.FullName.Substring($PSScriptRoot.Length + 1)
     $folders = $name -split '\\'
     if ($folders -contains 'modules' -or $folders -contains 'formatting' -or $folders -contains 'lsp') { continue }
+    if ($test.BaseName.EndsWith('_test')) { continue }
     if ($Filter -and -not $name.Contains($Filter)) { continue }
 
     # Not $flags: names are case-insensitive, it would overwrite the -Flags parameter.
@@ -154,6 +159,7 @@ foreach ($test in Get-ChildItem $PSScriptRoot -Recurse -Filter *.cro | Sort-Obje
     if ($Flags) { $compileFlags += ($Flags -split '\s+') }
     $expectExit = $null
     $expectOutput = @()
+    $expectContains = @()
     $expectStderr = @()
     $expectError = @()
     $expectWarning = @()
@@ -164,6 +170,7 @@ foreach ($test in Get-ChildItem $PSScriptRoot -Recurse -Filter *.cro | Sort-Obje
     foreach ($line in Get-Content $test.FullName -Encoding UTF8) {
         if ($line -match '^\s*//\s*cromo-flags:\s*(.+?)\s*$') { $compileFlags += ($matches[1] -split '\s+') }
         elseif ($line -match '^\s*//\s*expect-exit:\s*(-?\d+)\s*$') { $expectExit = [int64]$matches[1] }
+        elseif ($line -match '^\s*//\s*expect-output-contains:\s?(.*?)\s*$') { $expectContains += $matches[1] }
         elseif ($line -match '^\s*//\s*expect-output:\s?(.*)$') { $expectOutput += $matches[1] }
         elseif ($line -match '^\s*//\s*expect-stderr:\s*(.+?)\s*$') { $expectStderr += $matches[1] }
         elseif ($line -match '^\s*//\s*expect-error:\s*(.+?)\s*$') { $expectError += $matches[1] }
@@ -186,6 +193,9 @@ foreach ($test in Get-ChildItem $PSScriptRoot -Recurse -Filter *.cro | Sort-Obje
     if ($command -eq 'run') {
         # cromo run compiles and runs: its result is the one of the program (D156).
         $compile = Invoke-Program $Cromo (@('run') + $compileFlags + @($test.FullName, '--') + $programArgs)
+    } elseif ($command -eq 'test') {
+        # cromo test compiles and runs the tests: its result is theirs (D352).
+        $compile = Invoke-Program $Cromo (@('test') + $compileFlags + @($test.FullName) + $programArgs)
     } else {
         $compile = Invoke-Program $Cromo (@('build', $test.FullName, '-o', $exe) + $compileFlags)
     }
@@ -200,10 +210,10 @@ foreach ($test in Get-ChildItem $PSScriptRoot -Recurse -Filter *.cro | Sort-Obje
         foreach ($e in $expectError) {
             if (-not $compileText.Contains($e)) { $problems += "missing error: $e" }
         }
-    } elseif ($compile.Code -ne 0 -and $command -ne 'run') {
+    } elseif ($compile.Code -ne 0 -and $command -eq 'build') {
         $problems += "compilation failed:`n$compileText"
     } else {
-        if ($command -eq 'run') {
+        if ($command -ne 'build') {
             $run = $compile
         } elseif ($target -eq 'linux') {
             $run = Invoke-Linux $exe $programArgs $programEnv
@@ -219,6 +229,9 @@ foreach ($test in Get-ChildItem $PSScriptRoot -Recurse -Filter *.cro | Sort-Obje
             $expected = $expectOutput -join "`n"
             $actual = $run.Out.TrimEnd("`n")
             if ($actual -ne $expected) { $problems += "output:`n$actual`nexpected:`n$expected" }
+        }
+        foreach ($e in $expectContains) {
+            if (-not $run.Out.Contains($e)) { $problems += "missing in the output: $e`noutput was: $($run.Out)" }
         }
         foreach ($e in $expectStderr) {
             if (-not $run.Err.Contains($e)) { $problems += "missing in stderr: $e`nstderr was: $($run.Err)" }

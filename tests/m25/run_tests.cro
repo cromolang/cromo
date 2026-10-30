@@ -1,0 +1,57 @@
+// cromo test (D349-D352): the tests of the file, of its run_tests_test.cro and of
+// geometry_test.cro of an imported module, each in a process of its own, so that
+// a panic, an exception and a stack overflow stop only their test.
+// cromo-command: test
+// target: windows
+// expect-exit: 1
+// expect-output-contains: ok    addsNumbers
+// expect-output-contains: FAIL  failsOnPurpose
+// expect-output-contains:       panic: assertion failed: total == 7 (total is 6)
+// expect-output-contains:           at failsOnPurpose (
+// expect-output-contains: FAIL  throws
+// expect-output-contains:       uncaught exception: bad input
+// expect-output-contains: FAIL  overflows
+// expect-output-contains:       panic: stack overflow
+// expect-output-contains: ok    fromTestFile
+// expect-output-contains: ok    modules.geometry.areaOfSquare4
+// expect-output-contains: ok    modules.geometry.privateTwice
+// expect-output-contains: 4 passed, 3 failed
+import modules.geometry
+
+i64 sum(list<i64> values) {
+    i64 total = 0
+    for (i64 v in values) {
+        total += v
+    }
+    ret total
+}
+
+i64 down(i64 n) {
+    ret down(n + 1) + 1
+}
+
+[[test]]
+void addsNumbers() {
+    assert(sum([1, 2, 3]) == 6)
+    println("this line is not shown: the test passes")
+}
+
+[[test]]
+void failsOnPurpose() {
+    i64 total = sum([1, 2, 3])
+    assert(total == 7)
+}
+
+[[test]]
+void throws() {
+    throw Error("bad input")
+}
+
+[[test]]
+void overflows() {
+    println("{}", down(0))
+}
+
+i32 main() {
+    ret 0
+}

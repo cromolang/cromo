@@ -846,6 +846,33 @@ User u = json.decode<User>(r.text())
 - `http.get(url)`, `http.post(url, body, type)` and `http.send(request)` open a connection for each request, with TLS for `https`, and follow the redirects (D254). A status of error is a response; an exception is a failure of the network.
 - `Request` and `Response` have `headers`, compared without case, `body`, `text()`, and `write`, `writeJson` and `writeBytes`, which also set the `Content-Type`.
 
-## 23. Still to be written
+## 23. Tests (D349–D356)
+
+```cromo
+// shapes.cro
+f64 area(f64 side) {
+    ret side * side
+}
+
+[[test]]
+void areaOfASquare() {
+    assert(area(2.0) == 4.0)
+}
+```
+
+```
+> cromo test shapes.cro
+ok    areaOfASquare
+FAIL  areaOfTheUnit
+      panic: assertion failed: total == 7 (total is 6) at shapes_test.cro:9:5
+          at areaOfTheUnit (shapes_test.cro:9)
+1 passed, 1 failed
+```
+
+- A test is a function `[[test]] void name()`, without parameters (D349). It can be in the file of the code, or in a file `shapes_test.cro` next to it, which is a part of the module and sees its private names (D350); `cromo build` leaves them out.
+- `assert(condition)` is a built-in function, as `panic`: when the condition is false it stops with a panic that writes the condition as written and, for a comparison of numbers or bools, the values of its sides that are not literals, each computed once (D351, D353). It works in any function, also with `--release`.
+- `cromo test [file.cro] [names]` builds one executable with the tests of the program and of its modules, and runs each in a process of its own, as many at a time as the processors: a panic, an exception or a stack overflow stops only its test (D352). It writes `ok` or `FAIL` for each test, in the order of the files, with the output of the tests that failed, and the count; its exit code is 1 if one failed (D354). The names after the file choose the tests whose name contains one of them (D355). The tests of a module are named after it: `geometry.areaOfSquare` (D356).
+
+## 24. Still to be written
 
 - The rest of the standard library.

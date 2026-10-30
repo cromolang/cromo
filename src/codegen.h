@@ -13,6 +13,7 @@ struct CodegenOptions {
     std::vector<std::string> debugPaths;   // by SourceLocation::file: the full paths, for a debugger (D338)
     bool release = false;    // D57: no overflow checks, integers wrap around; D338: only the lines
     bool optimized = true;
+    bool tests = false;      // D352: the entry point runs the test given by its number, not main
     Target target = hostTarget();
 };
 

@@ -31,7 +31,7 @@ bool isPrintFunction(const std::string& name) {
 }
 
 // The functions that every program can call without declaring them (D38, D102).
-bool isBuiltinFunction(const std::string& name) { return isPrintFunction(name) || name == "panic"; }
+bool isBuiltinFunction(const std::string& name) { return isPrintFunction(name) || name == "panic" || name == "assert"; }
 
 // The built-in functions of the `unsafe` dialect, only in the standard library (D98).
 std::optional<Intrinsic> findIntrinsic(const std::string& name) {
@@ -1302,6 +1302,10 @@ private:
             }
         }
 
+        for (FunctionDecl& function : module_.functions) {
+            if (!function.attributes.empty()) readTestAttribute(function);
+        }
+
         auto main = modules_[0].functions.find("main");
         if (!requireMain_ && main == modules_[0].functions.end()) return;
         if (main == modules_[0].functions.end() || main->second->isExtern) {
@@ -1325,6 +1329,30 @@ private:
             diag_->error(function.params[0].loc, "main has no parameters, or one with the arguments of the program: "
                                                  "list<string> args (D154)");
         }
+    }
+
+    // `[[test]] void name()` (D349): what cromo test runs.
+    void readTestAttribute(FunctionDecl& function) {
+        for (const Attribute& attribute : function.attributes) {
+            if (attribute.name != "test" || !attribute.args.empty()) {
+                diag_->error(attribute.loc, "unknown attribute '" + attribute.name + "': a function has only [[test]] (D349)");
+                return;
+            }
+        }
+        if (function.attributes.size() > 1) {
+            diag_->error(function.attributes[1].loc, "the function '" + function.name + "' already has [[test]] (D349)");
+            return;
+        }
+        if (!function.typeParams.empty()) {
+            diag_->error(function.loc, "a test cannot be generic: cromo test calls it as it is (D349)");
+            return;
+        }
+        if (!function.params.empty() || !function.resolvedReturn.isVoid()) {
+            diag_->error(function.loc, "a test takes no parameters and returns nothing: [[test]] void " + function.name +
+                                           "() (D349)");
+            return;
+        }
+        function.isTest = true;
     }
 
     // D129: the types that a C function can take and return.
@@ -2016,6 +2044,51 @@ private:
         bool panics = statement.expr->kind == ExprKind::Call &&
                       static_cast<const CallExpr&>(*statement.expr).intrinsic == Intrinsic::Panic;
         return panics ? Flow::Returns : Flow::Continues;
+    }
+
+    // `assert(condition)` (D351): a panic when it is false, with the condition as
+    // written and, for a comparison of numbers or bools, the sides that are not
+    // literals, whose values codegen shows.
+    Type checkAssert(CallExpr& call) {
+        call.intrinsic = Intrinsic::Assert;
+        call.typeArg = stringType();  // of the message
+        if (call.args.size() != 1 || !call.typeArgs.empty()) {
+            diag_->error(call.loc, "assert takes one condition: assert(total == 7) (D351)");
+            checkIgnored(call.args);
+            return Type::error();
+        }
+        checkCondition(call.args[0]);
+        const std::string& source = diag_->text(call.loc.file);
+        auto text = [&](size_t begin, size_t end) {
+            if (end > source.size() || begin >= end) return std::string();
+            std::string part = source.substr(begin, end - begin);
+            size_t first = part.find_first_not_of(" \t\r\n");
+            size_t last = part.find_last_not_of(" \t\r\n");
+            return first == std::string::npos ? std::string() : part.substr(first, last - first + 1);
+        };
+        call.assertText = text(call.textBegin, call.textEnd);
+        if (call.assertText.empty()) call.assertText = "the condition";
+        const Expr& condition = *call.args[0];
+        if (condition.kind != ExprKind::Binary) return Type::voidType();
+        const auto& binary = static_cast<const BinaryExpr&>(condition);
+        Type type = binary.operandType;
+        bool compared = binary.op >= BinaryOp::Eq && binary.op <= BinaryOp::Ge && binary.opEnd > 0;
+        if (!compared || !(type.isNumeric() || type.isBool())) return Type::voidType();
+        if (!isLiteral(*binary.lhs)) call.leftText = text(call.textBegin, binary.opBegin);
+        if (!isLiteral(*binary.rhs)) call.rightText = text(binary.opEnd, call.textEnd);
+        return Type::voidType();
+    }
+
+    static bool isLiteral(const Expr& expr) {
+        switch (expr.kind) {
+        case ExprKind::IntLiteral:
+        case ExprKind::FloatLiteral:
+        case ExprKind::BoolLiteral:
+        case ExprKind::StringLiteral: return true;
+        case ExprKind::Unary: return isLiteral(*static_cast<const UnaryExpr&>(expr).operand);  // -1
+        case ExprKind::Conversion: return isLiteral(*static_cast<const ConversionExpr&>(expr).operand);
+        default: return false;
+        }
     }
 
     void checkCondition(ExprPtr& condition) {
@@ -4377,6 +4450,7 @@ private:
             if (std::optional<Type> target = findBuiltinType(call.callee)) return checkConversion(expr, *target);
             if (isPrintFunction(call.callee)) return checkPrint(expr);
             if (call.callee == "panic") return checkIntrinsic(call, Intrinsic::Panic);
+            if (call.callee == "assert") return checkAssert(call);
         }
         if (!qualified && isUnsafe(call.loc)) {
             if (std::optional<Intrinsic> intrinsic = findIntrinsic(call.callee)) return checkIntrinsic(call, *intrinsic);

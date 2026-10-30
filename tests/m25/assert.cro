@@ -1,0 +1,29 @@
+// assert (D351): the condition as written and the values of the sides of a
+// comparison that are not literals, computed once.
+// expect-output: passed
+// expect-output: popped 1
+// expect-exit: 101
+// expect-stderr: panic: assertion failed: next(ref counter) == 5 (next(ref counter) is 2)
+// expect-stderr:     at check (
+i64 next(ref i64 counter) {
+    counter++
+    ret counter
+}
+
+void check(ref i64 counter) {
+    assert(next(ref counter) == 1)
+    println("popped {}", counter)
+    assert(next(ref counter) == 5)
+}
+
+i32 main() {
+    bool ready = true
+    f64 half = 0.5
+    assert(ready)
+    assert(half * 2.0 == 1.0)
+    assert(i64(3) > 2)
+    println("passed")
+    i64 counter = 0
+    check(ref counter)
+    ret 0
+}

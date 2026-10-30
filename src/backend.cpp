@@ -484,6 +484,12 @@ bool buildExecutable(const std::string& irText, const std::string& moduleName, c
     }
 
     optimize(*module, *machine, options.optLevel);
+    // D339: the table of the stack traces counts from cromo_code, at the start of
+    // .text: every function stays there, also those that LLVM finds cold and would
+    // move to .text.unlikely.
+    for (llvm::Function& function : *module) {
+        if (!function.isDeclaration()) function.setSection(".text");
+    }
 
     bool linux = options.target == Target::Linux;
     std::string objectPath = options.outputPath + (linux ? ".o" : ".obj");

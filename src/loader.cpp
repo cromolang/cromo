@@ -62,8 +62,9 @@ std::string withoutSuffix(const std::string& stem, Target target, bool& own, boo
 // addresses.
 class Loader {
 public:
-    Loader(std::deque<SourceFile>& sources, Diagnostics& diag, Target target, const std::map<std::string, std::string>* overlay)
-        : sources_(sources), diag_(diag), target_(target), overlay_(overlay) {
+    Loader(std::deque<SourceFile>& sources, Diagnostics& diag, Target target, const std::map<std::string, std::string>* overlay,
+           bool tests)
+        : sources_(sources), diag_(diag), target_(target), overlay_(overlay), tests_(tests) {
         fs::path main = fs::absolute(sources[0].path);
         root_ = main.parent_path();
         loaded_[fs::weakly_canonical(main)] = 0;
@@ -73,6 +74,7 @@ public:
     Module load() {
         parseFile(kLibraryFile);
         parseFile(0);
+        loadTests(fs::absolute(sources_[0].path), names_[0], 0);
         // The list of files grows while their imports are loaded.
         for (size_t i = 0; i < sources_.size(); ++i) {
             for (size_t k = 0; k < program_.files[i].imports.size(); ++k) {
@@ -118,6 +120,7 @@ private:
             fs::path own = root_ / relative;
             own += std::string(systemSuffix(target_)) + ".cro";
             if (fs::is_regular_file(own, ec)) loadFile(own, dotted, import.loc, index);
+            loadTests(file, dotted, index);
             return {index};
         }
         if (isFolder) {
@@ -126,6 +129,7 @@ private:
             std::map<std::string, std::vector<fs::path>> modules;
             for (const fs::directory_entry& entry : fs::directory_iterator(folder, ec)) {
                 if (!entry.is_regular_file() || entry.path().extension() != ".cro") continue;
+                if (isTestFile(entry.path())) continue;  // with its module, by loadTests (D350)
                 bool own, other;
                 std::string name = withoutSuffix(entry.path().stem().string(), target_, own, other);
                 if (!other) modules[name].push_back(entry.path());
@@ -138,6 +142,7 @@ private:
                 });
                 int first = loadFile(paths[0], dotted + "." + name, import.loc);
                 for (size_t i = 1; i < paths.size(); ++i) loadFile(paths[i], dotted + "." + name, import.loc, first);
+                loadTests(folder / (name + ".cro"), dotted + "." + name, first);
                 files.push_back(first);
             }
             return files;
@@ -145,6 +150,22 @@ private:
         diag_.error(import.loc, "cannot find the module " + dotted + ": there is no " + shown + ".cro or folder " + shown +
                                     " next to " + fs::path(sources_[0].path).filename().string() + " (D130)");
         return {};
+    }
+
+    static bool isTestFile(const fs::path& path) {
+        std::string stem = path.stem().string();
+        return stem.size() > 5 && stem.compare(stem.size() - 5, 5, "_test") == 0;
+    }
+
+    // D350: `geometry_test.cro` is a part of the module of `geometry.cro`, only for
+    // cromo test.
+    void loadTests(const fs::path& file, const std::string& name, int index) {
+        if (!tests_ || isTestFile(file)) return;
+        fs::path tests = file.parent_path() / (file.stem().string() + "_test.cro");
+        std::error_code ec;
+        if (fs::is_regular_file(tests, ec) || (overlay_ && overlay_->count(sourceKey(tests.string())))) {
+            loadFile(tests, name, SourceLocation{1, 1, index}, index);
+        }
     }
 
     int loadFile(const fs::path& path, const std::string& name, SourceLocation at, int part = -1) {
@@ -225,6 +246,7 @@ private:
     Diagnostics& diag_;
     Target target_;
     const std::map<std::string, std::string>* overlay_;
+    bool tests_;
     fs::path root_;
     std::map<fs::path, int> loaded_;
     std::vector<std::string> names_;  // of the modules, by file
@@ -234,8 +256,8 @@ private:
 }  // namespace
 
 Module loadProgram(std::deque<SourceFile>& sources, Diagnostics& diag, Target target,
-                   const std::map<std::string, std::string>* overlay) {
-    return Loader(sources, diag, target, overlay).load();
+                   const std::map<std::string, std::string>* overlay, bool tests) {
+    return Loader(sources, diag, target, overlay, tests).load();
 }
 
 }  // namespace cromo

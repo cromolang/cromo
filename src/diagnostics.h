@@ -43,6 +43,9 @@ public:
     void warning(SourceLocation loc, const std::string& message);
 
     bool hasErrors() const { return errorCount_ > 0; }
+
+    // The text of a source file, for the conditions of assert (D351).
+    const std::string& text(int file) const { return files_[file]->text; }
     int errorCount() const { return errorCount_; }
 
     // While muted nothing is reported or counted: sema uses it to check an

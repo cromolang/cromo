@@ -1,0 +1,5 @@
+// The tests of run_tests.cro in a file of their own (D350).
+[[test]]
+void fromTestFile() {
+    assert(sum([4]) == 4)
+}

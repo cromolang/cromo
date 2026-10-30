@@ -1,0 +1,10 @@
+// An attribute goes before a field or a function (D256, D349).
+// expect-error: an attribute is written before a field, or [[test]] before a function (D256, D349)
+[[test]]
+struct Point {
+    i64 x
+}
+
+i32 main() {
+    ret 0
+}

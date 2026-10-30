@@ -21,8 +21,9 @@ std::string sourceKey(const std::string& path);
 // (sources[1]) and every module they import (D50, D130), with the files of the
 // system it is compiled for (D202). `sources` is a deque: Diagnostics keeps their
 // addresses. The texts of `overlay`, by sourceKey, replace the files on the disk:
-// the documents of the editor not yet saved (D173).
+// the documents of the editor not yet saved (D173). With `tests` each module also
+// has its file `name_test.cro`, when there is one (D350).
 Module loadProgram(std::deque<SourceFile>& sources, Diagnostics& diag, Target target,
-                   const std::map<std::string, std::string>* overlay = nullptr);
+                   const std::map<std::string, std::string>* overlay = nullptr, bool tests = false);
 
 }  // namespace cromo

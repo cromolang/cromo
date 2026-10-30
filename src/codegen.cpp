@@ -316,7 +316,11 @@ public:
             out << generateFunction(*function);
             if (function->name == "main" && function->loc.file == 0 && !function->generic) mainFunction = function;
         }
-        if (mainFunction) out << entryPoint(*mainFunction);
+        if (options_.tests) {
+            out << testEntryPoint(testFunctions(module));
+        } else if (mainFunction) {
+            out << entryPoint(*mainFunction);
+        }
         for (const LambdaExpr* lambda : module.lambdas) {
             if (lambda->function->isAbstract || !lambda->function->bodyChecked) continue;
             out << lambdaData(*lambda);
@@ -347,6 +351,7 @@ public:
         out << "declare void @cromo_uncaught(ptr, i64, ptr) noreturn nounwind cold\n";
         out << "declare ptr @cromo_exception_new(i64) nounwind\n";
         out << "declare void @cromo_runtime_start() nounwind\n";
+        if (options_.tests) out << "declare i64 @cromo_test_index() nounwind\n";
         out << "declare void @cromo_exception_free(ptr) nounwind\n";
         out << "declare i64 @cromo_arg_count() nounwind\n";
         out << "declare i64 @cromo_arg_length(i64) nounwind\n";
@@ -1039,6 +1044,72 @@ private:
             out << "done:\n";
         }
         out << "  call void @cromo_exit(i32 " << code << ")\n";
+        out << "  unreachable\n";
+        out << "}\n\n";
+        return out.str();
+    }
+
+    // The tests of the program, in the order of cromo test (main.cpp): those of its
+    // files, not of the library (D349, D350).
+    static std::vector<const FunctionDecl*> testFunctions(const Module& module) {
+        std::vector<const FunctionDecl*> tests;
+        for (const FunctionDecl& function : module.functions) {
+            if (function.isTest && !module.files[function.loc.file].isLibrary) tests.push_back(&function);
+        }
+        return tests;
+    }
+
+    // D352: the executable of cromo test runs one test, by its number in the first
+    // argument; an exception that leaves it stops the program as for main (D121).
+    std::string testEntryPoint(const std::vector<const FunctionDecl*>& tests) {
+        std::ostringstream out;
+        SourceLocation loc = tests.empty() ? SourceLocation{} : tests[0]->loc;
+        std::string start = subprogramNode("cromo_start", loc);
+        std::string dbg = ", !dbg " + metadata("!DILocation(line: " + std::to_string(loc.line) + ", scope: " + start + ")");
+        out << "define void @cromo_start() noreturn " << functionAttributes() << " !dbg " << start << " {\n";
+        out << "entry:\n";
+        out << "  %raised = alloca { ptr, ptr }\n";
+        out << "  store { ptr, ptr } zeroinitializer, ptr %raised\n";
+        out << "  call void @cromo_runtime_start()" << dbg << "\n";
+        out << "  %index = call i64 @cromo_test_index()" << dbg << "\n";
+        out << "  switch i64 %index, label %none [";
+        for (size_t i = 0; i < tests.size(); ++i) out << " i64 " << i << ", label %test." << i;
+        out << " ]\n";
+        for (size_t i = 0; i < tests.size(); ++i) {
+            const FunctionDecl& test = *tests[i];
+            out << "test." << i << ":\n";
+            out << "  call void " << symbolOf(test) << "(" << (test.canThrow ? "ptr %raised" : "") << ")" << dbg << "\n";
+            out << "  br label %done\n";
+        }
+        out << "done:\n";
+        if (exceptionInterface_) {
+            const FunctionDecl& message = exceptionInterface_->methods[0];
+            const StructDecl& text = *message.resolvedReturn.structDecl;
+            out << "  %object = load ptr, ptr %raised\n";
+            out << "  %threw = icmp ne ptr %object, null\n";
+            out << "  br i1 %threw, label %uncaught, label %passed\n";
+            out << "uncaught:\n";
+            out << "  %descriptorAddress = getelementptr inbounds { ptr, ptr }, ptr %raised, i32 0, i32 1\n";
+            out << "  %descriptor = load ptr, ptr %descriptorAddress\n";
+            out << "  %tableAddress = getelementptr inbounds { ptr, ptr }, ptr %descriptor, i32 0, i32 1\n";
+            out << "  %table = load ptr, ptr %tableAddress\n";
+            out << "  %method = load ptr, ptr %table\n";
+            out << "  %text = alloca " << structName(text) << "\n";
+            out << "  call void %method(ptr %text, ptr %object)" << dbg << "\n";
+            out << "  %dataAddress = getelementptr inbounds " << structName(text) << ", ptr %text, i32 0, i32 "
+                << fieldIndexOf(text, "data") << "\n";
+            out << "  %data = load ptr, ptr %dataAddress\n";
+            out << "  %lengthAddress = getelementptr inbounds " << structName(text) << ", ptr %text, i32 0, i32 "
+                << fieldIndexOf(text, "length") << "\n";
+            out << "  %length = load i64, ptr %lengthAddress\n";
+            out << "  call void @cromo_uncaught(ptr %data, i64 %length, ptr %object)" << dbg << "\n";
+            out << "  unreachable\n";
+            out << "passed:\n";
+        }
+        out << "  call void @cromo_exit(i32 0)\n";
+        out << "  unreachable\n";
+        out << "none:\n";  // no test with that number: cromo test asks only for those it knows
+        out << "  call void @cromo_exit(i32 2)\n";
         out << "  unreachable\n";
         out << "}\n\n";
         return out.str();
@@ -2153,6 +2224,9 @@ private:
         auto arg = [&](size_t i) { return generateExpr(*call.args[i]).ref; };
         std::string result = temp();
         switch (call.intrinsic) {
+        case Intrinsic::Assert:
+            generateAssert(call);
+            return {"", Type::voidType()};
         case Intrinsic::Panic: {
             std::string message = addressOf(*call.args[0]);
             const StructDecl& decl = *call.args[0]->type.structDecl;
@@ -2620,14 +2694,18 @@ private:
             return arithmetic(binary.op, lhs, rhs, binary.loc);
         }
 
-        Type type = binary.operandType;
+        return compare(binary.op, binary.operandType, lhs, rhs);
+    }
+
+    // A comparison of two values already computed.
+    Value compare(BinaryOp op, Type type, const Value& lhs, const Value& rhs) {
         if (type.isStruct()) {  // enums without data: their tags (D112)
             std::string left = temp();
             std::string right = temp();
             std::string result = temp();
             inst(left + " = extractvalue " + llvmType(type) + " " + lhs.ref + ", 1");
             inst(right + " = extractvalue " + llvmType(type) + " " + rhs.ref + ", 1");
-            inst(result + " = icmp " + (binary.op == BinaryOp::Eq ? "eq" : "ne") + " i32 " + left + ", " + right);
+            inst(result + " = icmp " + (op == BinaryOp::Eq ? "eq" : "ne") + " i32 " + left + ", " + right);
             return {result, Type::boolType()};
         }
         std::string predicate;
@@ -2635,7 +2713,7 @@ private:
             static const std::map<BinaryOp, std::string> floats = {
                 {BinaryOp::Eq, "oeq"}, {BinaryOp::Ne, "une"}, {BinaryOp::Lt, "olt"},
                 {BinaryOp::Le, "ole"}, {BinaryOp::Gt, "ogt"}, {BinaryOp::Ge, "oge"}};
-            predicate = "fcmp " + floats.at(binary.op);
+            predicate = "fcmp " + floats.at(op);
         } else {
             bool isSigned = type.isInt() && type.isSigned;
             static const std::map<BinaryOp, std::string> signedOps = {
@@ -2644,7 +2722,7 @@ private:
             static const std::map<BinaryOp, std::string> unsignedOps = {
                 {BinaryOp::Eq, "eq"}, {BinaryOp::Ne, "ne"}, {BinaryOp::Lt, "ult"},
                 {BinaryOp::Le, "ule"}, {BinaryOp::Gt, "ugt"}, {BinaryOp::Ge, "uge"}};
-            predicate = "icmp " + (isSigned ? signedOps : unsignedOps).at(binary.op);
+            predicate = "icmp " + (isSigned ? signedOps : unsignedOps).at(op);
         }
         std::string result = temp();
         inst(result + " = " + predicate + " " + llvmType(type) + " " + lhs.ref + ", " + rhs.ref);
@@ -2847,6 +2925,80 @@ private:
         return {result, to};
     }
 
+    // A number or a bool to a stream, or to a string being formatted (D38).
+    void writeNumber(const std::string& stream, const Value& value, const std::string& spec) {
+        Type type = value.type;
+        if (type.isInt()) {
+            std::string wide = value.ref;
+            if (type.bits < 64) {
+                wide = temp();
+                inst(wide + " = " + (type.isSigned ? "sext " : "zext ") + llvmType(type) + " " + value.ref + " to i64");
+            }
+            inst("call void @cromo_fmt_int(" + stream + ", i64 " + wide + ", i32 " + (type.isSigned ? "1" : "0") + ", " + spec +
+                 ")");
+        } else if (type.isFloat()) {
+            const char* fn = type.bits == 32 ? "@cromo_fmt_f32" : "@cromo_fmt_f64";
+            inst(std::string("call void ") + fn + "(" + stream + ", " + llvmType(type) + " " + value.ref + ", " + spec + ")");
+        } else {
+            std::string wide = temp();
+            inst(wide + " = zext i1 " + value.ref + " to i32");
+            inst("call void @cromo_fmt_bool(" + stream + ", i32 " + wide + ", " + spec + ")");
+        }
+    }
+
+    void writeText(const std::string& stream, const std::string& text) {
+        if (text.empty()) return;
+        inst("call void @cromo_write(" + stream + ", ptr " + stringConstant(text) + ", i64 " + std::to_string(text.size()) + ")");
+    }
+
+    // `assert(condition)` (D351): on false a panic, "assertion failed: total == 7
+    // (total is 6)", made as a format. The sides of a comparison are computed once.
+    void generateAssert(const CallExpr& call) {
+        const Expr& condition = *call.args[0];
+        const BinaryExpr* comparison = nullptr;
+        Value holds;
+        Value left;
+        Value right;
+        if (!call.leftText.empty() || !call.rightText.empty()) {
+            comparison = static_cast<const BinaryExpr*>(&condition);
+            left = generateExpr(*comparison->lhs);
+            right = generateExpr(*comparison->rhs);
+            holds = compare(comparison->op, comparison->operandType, left, right);
+        } else {
+            holds = generateCondition(condition);
+        }
+        std::string fail = label("assert.fail");
+        std::string ok = label("assert.ok");
+        term("br i1 " + holds.ref + ", label %" + ok + ", label %" + fail);
+        block(fail);
+        Type text = call.typeArg;
+        std::string message = slot(text);
+        storeDefault(message, text);
+        std::string address = temp();
+        inst(address + " = ptrtoint ptr " + message + " to i64");
+        std::string stream = "i64 " + address;
+        writeText(stream, "assertion failed: " + call.assertText);
+        if (comparison) {
+            writeText(stream, " (");
+            if (!call.leftText.empty()) {
+                writeText(stream, call.leftText + " is ");
+                writeNumber(stream, left, "ptr null");
+            }
+            if (!call.leftText.empty() && !call.rightText.empty()) writeText(stream, ", ");
+            if (!call.rightText.empty()) {
+                writeText(stream, call.rightText + " is ");
+                writeNumber(stream, right, "ptr null");
+            }
+            writeText(stream, ")");
+        }
+        const StructDecl& decl = *text.structDecl;
+        Value data = load(listField(message, decl, "data"), Type::addrType());
+        Value length = load(listField(message, decl, "length"), Type::intType(64, true));
+        inst("call void @cromo_panic(ptr " + data.ref + ", i64 " + length.ref + ", ptr " + where(call.loc) + ")");
+        term("unreachable");
+        block(ok);
+    }
+
     // print and println, or format into `dest` (D200): the format was parsed by
     // sema, so here there are only calls to the runtime, one per piece (D38). The
     // arguments are computed first: a format inside them is finished before this
@@ -2874,21 +3026,8 @@ private:
             std::string spec = "ptr " + (piece.hasSpec ? specConstant(piece.spec) : std::string("null"));
             const Value& value = values[piece.arg];
             Type type = value.type;
-            if (type.isInt()) {
-                std::string wide = value.ref;
-                if (type.bits < 64) {
-                    wide = temp();
-                    inst(wide + " = " + (type.isSigned ? "sext " : "zext ") + llvmType(type) + " " + value.ref + " to i64");
-                }
-                inst("call void @cromo_fmt_int(" + stream + ", i64 " + wide + ", i32 " + (type.isSigned ? "1" : "0") + ", " +
-                     spec + ")");
-            } else if (type.isFloat()) {
-                const char* fn = type.bits == 32 ? "@cromo_fmt_f32" : "@cromo_fmt_f64";
-                inst(std::string("call void ") + fn + "(" + stream + ", " + llvmType(type) + " " + value.ref + ", " + spec + ")");
-            } else if (type.isBool()) {
-                std::string wide = temp();
-                inst(wide + " = zext i1 " + value.ref + " to i32");
-                inst("call void @cromo_fmt_bool(" + stream + ", i32 " + wide + ", " + spec + ")");
+            if (type.isNumeric() || type.isBool()) {
+                writeNumber(stream, value, spec);
             } else if (type.isStruct()) {  // a string (D100)
                 const StructDecl& decl = *type.structDecl;
                 std::string data = temp();

@@ -1,0 +1,15 @@
+// The names after the file choose the tests that contain them (D352).
+// cromo-command: test
+// target: windows
+// program-arg: second
+// expect-output: ok    second
+// expect-output: 1 passed, 0 failed
+[[test]]
+void first() {
+    assert(false)
+}
+
+[[test]]
+void second() {
+    assert(true)
+}

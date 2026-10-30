@@ -1,0 +1,5 @@
+// Only cromo test compiles this file: for cromo build its error does not exist.
+[[test]]
+void broken() {
+    i64 x = "not a number"
+}

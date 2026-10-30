@@ -24,6 +24,7 @@
 #include <map>
 #include <set>
 #include <string>
+#include <thread>
 #include <vector>
 
 #ifdef _WIN32
@@ -33,6 +34,7 @@
 #include <io.h>
 #include <windows.h>
 #else
+#include <fcntl.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #endif
@@ -46,6 +48,9 @@ void printUsage(FILE* out) {
         "\n"
         "commands (D151):\n"
         "  build      compiles file.cro, or main.cro of this folder, into an executable\n"
+        "  test       runs the [[test]] functions of file.cro, or of main.cro of this folder, and\n"
+        "             of the files name_test.cro of its modules; the names after the file choose\n"
+        "             the tests that contain them\n"
         "  run        compiles and runs the program; its arguments come after --\n"
         "  fmt        formats the .cro files, by default of this folder and its subfolders;\n"
         "             --check only lists the ones to format, - formats the standard input\n"
@@ -72,6 +77,8 @@ struct Compilation {
     cromo::BackendOptions options;
     cromo::CodegenOptions codegen;
     bool emitIr = false;
+    std::vector<std::string> filters;  // cromo test: the names of the tests to run (D352)
+    std::vector<std::string> tests;    // cromo test: the names of the tests, by their number
 };
 
 // Compiles the program and writes the executable. Returns the exit code of cromo.
@@ -100,8 +107,17 @@ int build(Compilation& compilation) {
     }
     cromo::Diagnostics diag(sources[0]);
     diag.addFile(sources[1]);
-    cromo::Module module = cromo::loadProgram(sources, diag, options.target);
-    if (diag.hasErrors() || !cromo::check(module, diag) || !cromo::checkMoves(module, diag)) return 1;
+    bool tests = codegen.tests;
+    cromo::Module module = cromo::loadProgram(sources, diag, options.target, nullptr, tests);
+    if (diag.hasErrors() || !cromo::check(module, diag, !tests) || !cromo::checkMoves(module, diag)) return 1;
+    if (tests) {  // in the order of the entry point of the tests (codegen.cpp)
+        std::string program = module.files[0].name + ".";
+        for (const cromo::FunctionDecl& function : module.functions) {
+            if (!function.isTest || module.files[function.loc.file].isLibrary) continue;
+            bool own = function.symbol.compare(0, program.size(), program) == 0;
+            compilation.tests.push_back(own ? function.symbol.substr(program.size()) : function.symbol);
+        }
+    }
 
     // The libraries of the extern blocks, with their C functions checked in the DLLs (D136, D137, D143).
     cromo::Libraries libraries = cromo::findLibraries(module, sources, options.target, diag);
@@ -140,10 +156,11 @@ int build(Compilation& compilation) {
 // (excluded). Returns false, after printing why, if they are wrong.
 bool readOptions(const std::vector<std::string>& args, size_t first, size_t last, bool run, Compilation& compilation) {
     cromo::BackendOptions& options = compilation.options;
-    const char* command = run ? "run" : "build";
+    bool test = compilation.codegen.tests;
+    const char* command = test ? "test" : run ? "run" : "build";
     for (size_t i = first; i < last; ++i) {
         const std::string& arg = args[i];
-        if ((arg == "-o" || arg == "--emit-ir" || arg == "--target") && run) {
+        if ((arg == "-o" || arg == "--emit-ir" || arg == "--target") && (run || test)) {
             std::fprintf(stderr, "cromo: %s is an option of cromo build (D159)\n", arg.c_str());
             return false;
         }
@@ -165,8 +182,10 @@ bool readOptions(const std::vector<std::string>& args, size_t first, size_t last
             compilation.emitIr = true;
         } else if (arg.size() == 3 && arg[0] == '-' && arg[1] == 'O' && arg[2] >= '0' && arg[2] <= '3') {
             options.optLevel = arg[2] - '0';
-        } else if (arg[0] != '-' && compilation.inputPath.empty()) {
+        } else if (arg[0] != '-' && compilation.inputPath.empty() && (!test || fs::path(arg).extension() == ".cro")) {
             compilation.inputPath = arg;
+        } else if (arg[0] != '-' && test) {
+            compilation.filters.push_back(arg);  // a part of the names of the tests to run
         } else {
             std::fprintf(stderr, "cromo: unknown option of cromo %s: %s\n\n", command, arg.c_str());
             printUsage(stderr);
@@ -423,6 +442,211 @@ int run(Compilation& compilation, const std::vector<std::string>& programArgs) {
 
 #endif
 
+// ---- cromo test (D349-D352) ----
+
+// A test to run, and what it left.
+struct TestRun {
+    std::string name;
+    size_t index = 0;   // its number for the executable of the tests
+    fs::path output;    // its standard output and error
+    int code = 0;
+    bool done = false;
+};
+
+std::string readFile(const fs::path& path) {
+    std::ifstream in(path, std::ios::binary);
+    return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+}
+
+// "ok    name", or "FAIL  name" and what the test wrote, indented.
+void reportTest(const TestRun& run) {
+    if (run.code == 0) {
+        std::printf("ok    %s\n", run.name.c_str());
+        return;
+    }
+    std::printf("FAIL  %s\n", run.name.c_str());
+    std::string text = readFile(run.output);
+    size_t start = 0;
+    while (start < text.size()) {
+        size_t end = text.find('\n', start);
+        if (end == std::string::npos) end = text.size();
+        std::string line = text.substr(start, end - start);
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        std::printf("      %s\n", line.c_str());
+        start = end + 1;
+    }
+    if (run.code != 101 && run.code != 1) {  // not a panic, not an exception: say how it ended
+        std::printf("      the test ended with the exit code %d\n", run.code);
+    }
+}
+
+#ifdef _WIN32
+
+// Starts the executable of the tests for one test, its output to a file.
+HANDLE startTest(const fs::path& exe, const TestRun& run) {
+    SECURITY_ATTRIBUTES inherit{sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};
+    HANDLE output = CreateFileW(run.output.wstring().c_str(), GENERIC_WRITE, FILE_SHARE_READ, &inherit, CREATE_ALWAYS,
+                                FILE_ATTRIBUTE_NORMAL, nullptr);
+    HANDLE input = CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, &inherit, OPEN_EXISTING, 0, nullptr);
+    if (output == INVALID_HANDLE_VALUE || input == INVALID_HANDLE_VALUE) return nullptr;
+    std::wstring line = quoteArgument(exe.wstring()) + L" " + std::to_wstring(run.index);
+    STARTUPINFOW startup{};
+    startup.cb = sizeof startup;
+    startup.dwFlags = STARTF_USESTDHANDLES;
+    startup.hStdInput = input;
+    startup.hStdOutput = output;
+    startup.hStdError = output;
+    PROCESS_INFORMATION process{};
+    BOOL started = CreateProcessW(nullptr, line.data(), nullptr, nullptr, TRUE, 0, nullptr, nullptr, &startup, &process);
+    CloseHandle(output);  // the test has its own: the next one must not inherit it
+    CloseHandle(input);
+    if (!started) return nullptr;
+    CloseHandle(process.hThread);
+    return process.hProcess;
+}
+
+// D352: each test in its own process, as many at a time as the processors.
+void runTests(const fs::path& exe, std::vector<TestRun>& runs) {
+    size_t width = std::min<size_t>(std::max(1u, std::thread::hardware_concurrency()), MAXIMUM_WAIT_OBJECTS);
+    std::vector<HANDLE> running;
+    std::vector<size_t> which;
+    size_t next = 0;
+    size_t shown = 0;
+    while (shown < runs.size()) {
+        while (next < runs.size() && running.size() < width) {
+            HANDLE process = startTest(exe, runs[next]);
+            if (!process) {
+                runs[next].code = -1;
+                runs[next].done = true;
+            } else {
+                running.push_back(process);
+                which.push_back(next);
+            }
+            ++next;
+        }
+        if (!running.empty()) {
+            DWORD signaled = WaitForMultipleObjects(static_cast<DWORD>(running.size()), running.data(), FALSE, INFINITE);
+            size_t slot = signaled - WAIT_OBJECT_0;
+            if (slot < running.size()) {
+                DWORD exitCode = 1;
+                GetExitCodeProcess(running[slot], &exitCode);
+                CloseHandle(running[slot]);
+                runs[which[slot]].code = static_cast<int>(exitCode);
+                runs[which[slot]].done = true;
+                running.erase(running.begin() + slot);
+                which.erase(which.begin() + slot);
+            }
+        }
+        while (shown < runs.size() && runs[shown].done) reportTest(runs[shown++]);  // in the order of the file
+        std::fflush(stdout);
+    }
+}
+
+#else
+
+pid_t startTest(const fs::path& exe, const TestRun& run) {
+    std::string program = exe.string();
+    std::string index = std::to_string(run.index);
+    std::string output = run.output.string();
+    std::fflush(nullptr);
+    pid_t child = fork();
+    if (child == 0) {
+        int file = open(output.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        int nothing = open("/dev/null", O_RDONLY);
+        if (file < 0 || nothing < 0) _exit(127);
+        dup2(nothing, 0);
+        dup2(file, 1);
+        dup2(file, 2);
+        char* argv[] = {program.data(), index.data(), nullptr};
+        execv(argv[0], argv);
+        _exit(127);
+    }
+    return child;
+}
+
+void runTests(const fs::path& exe, std::vector<TestRun>& runs) {
+    size_t width = std::max(1u, std::thread::hardware_concurrency());
+    std::map<pid_t, size_t> running;
+    size_t next = 0;
+    size_t shown = 0;
+    while (shown < runs.size()) {
+        while (next < runs.size() && running.size() < width) {
+            pid_t child = startTest(exe, runs[next]);
+            if (child < 0) {
+                runs[next].code = -1;
+                runs[next].done = true;
+            } else {
+                running[child] = next;
+            }
+            ++next;
+        }
+        if (!running.empty()) {
+            int status = 0;
+            pid_t child = waitpid(-1, &status, 0);
+            auto found = running.find(child);
+            if (found != running.end()) {
+                TestRun& run = runs[found->second];
+                run.code = WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status);
+                run.done = true;
+                running.erase(found);
+            }
+        }
+        while (shown < runs.size() && runs[shown].done) reportTest(runs[shown++]);
+        std::fflush(stdout);
+    }
+}
+
+#endif
+
+// D349-D352: builds the tests of the program in a temporary folder, runs each in
+// its own process and says which failed. Returns 0 when all passed.
+int testCommand(Compilation& compilation) {
+    std::error_code ec;
+#ifdef _WIN32
+    std::string id = std::to_string(GetCurrentProcessId());
+    const char* extension = ".exe";
+#else
+    std::string id = std::to_string(getpid());
+    const char* extension = "";
+#endif
+    fs::path folder = fs::temp_directory_path(ec) / ("cromo-test-" + id);
+    fs::create_directories(folder, ec);
+    if (ec) {
+        std::fprintf(stderr, "cromo: cannot create the folder %s: %s\n", folder.string().c_str(), ec.message().c_str());
+        return 1;
+    }
+    compilation.options.outputPath = (folder / (std::string("tests") + extension)).string();
+    int code = build(compilation);
+    if (code != 0) {
+        fs::remove_all(folder, ec);
+        return code;
+    }
+    std::vector<TestRun> runs;
+    for (size_t i = 0; i < compilation.tests.size(); ++i) {
+        const std::string& name = compilation.tests[i];
+        bool chosen = compilation.filters.empty();
+        for (const std::string& filter : compilation.filters) chosen = chosen || name.find(filter) != std::string::npos;
+        if (!chosen) continue;
+        TestRun run;
+        run.name = name;
+        run.index = i;
+        run.output = folder / ("test" + std::to_string(i) + ".out");
+        runs.push_back(std::move(run));
+    }
+    if (runs.empty()) {
+        std::printf(compilation.tests.empty() ? "no tests: write them as [[test]] void name() (D349)\n"
+                                              : "no test has those names\n");
+        fs::remove_all(folder, ec);
+        return compilation.tests.empty() ? 0 : 1;
+    }
+    runTests(fs::path(compilation.options.outputPath), runs);
+    size_t failed = 0;
+    for (const TestRun& run : runs) failed += run.code != 0;
+    std::printf("%zu passed, %zu failed\n", runs.size() - failed, failed);
+    fs::remove_all(folder, ec);
+    return failed == 0 ? 0 : 1;
+}
+
 }  // namespace
 
 #ifdef _WIN32
@@ -459,7 +683,7 @@ int main(int argc, char** argv) {
         std::fputs("cromo: the language server is cromo lsp (D170)\n", stderr);
         return 2;
     }
-    if (command != "build" && command != "run") {
+    if (command != "build" && command != "run" && command != "test") {
         if (fs::path(command).extension() == ".cro") {
             std::fprintf(stderr, "cromo: the command comes first: cromo build %s (D158)\n", command.c_str());
         } else {
@@ -476,7 +700,9 @@ int main(int argc, char** argv) {
         return 2;
     }
     Compilation compilation;
+    compilation.codegen.tests = command == "test";
     if (!readOptions(args, 2, separator, isRun, compilation)) return 2;
+    if (compilation.codegen.tests) return testCommand(compilation);
     if (!isRun) return build(compilation);
 
 #ifdef _WIN32

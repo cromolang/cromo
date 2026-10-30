@@ -38,8 +38,10 @@ public:
     }
 
 private:
-    // declaration := ['public'] (struct | enum | interface | function)   (D50)
+    // declaration := attributes ['public'] (struct | enum | interface | function)   (D50, D349)
     void parseDeclaration(Module& module) {
+        std::vector<Attribute> attributes;
+        if (!parseAttributes(attributes)) return skipToNextDeclaration();
         bool isPublic = false;
         if (check(TokenKind::KwPublic)) {
             SourceLocation loc = advance().loc;
@@ -53,6 +55,11 @@ private:
             }
             isPublic = true;
         }
+        if (!attributes.empty() && (check(TokenKind::KwStruct) || check(TokenKind::KwEnum) ||
+                                    check(TokenKind::KwInterface) || check(TokenKind::KwExtern))) {
+            diag_.error(attributes[0].loc, "an attribute is written before a field, or [[test]] before a function (D256, D349)");
+            return skipToNextDeclaration();
+        }
         if (check(TokenKind::KwStruct) || check(TokenKind::KwEnum)) {
             auto decl = check(TokenKind::KwStruct) ? parseStruct() : parseEnum();
             if (!decl) return skipToNextDeclaration();
@@ -65,6 +72,7 @@ private:
             module.interfaces.push_back(std::move(*decl));
         } else if (auto function = parseFunction()) {
             function->isPublic = isPublic;
+            function->attributes = std::move(attributes);
             module.functions.push_back(std::move(*function));
         } else {
             skipToNextDeclaration();
@@ -1157,6 +1165,17 @@ private:
         return std::make_unique<BinaryExpr>(loc, op, std::move(lhs), std::move(rhs));
     }
 
+    // A comparison knows where its operator is, so that assert can show its sides (D351).
+    ExprPtr comparison(BinaryOp op, const Token& token, ExprPtr lhs, ExprPtr rhs) {
+        ExprPtr result = binary(op, token.loc, std::move(lhs), std::move(rhs));
+        if (result) {
+            auto& made = static_cast<BinaryExpr&>(*result);
+            made.opBegin = token.begin;
+            made.opEnd = token.end;
+        }
+        return result;
+    }
+
     ExprPtr parseOr() {
         ExprPtr lhs = parseAnd();
         while (lhs && check(TokenKind::OrOr)) {
@@ -1179,8 +1198,8 @@ private:
         ExprPtr lhs = parseRelational();
         while (lhs && (check(TokenKind::Equal) || check(TokenKind::NotEqual))) {
             BinaryOp op = check(TokenKind::Equal) ? BinaryOp::Eq : BinaryOp::Ne;
-            SourceLocation loc = advance().loc;
-            lhs = binary(op, loc, std::move(lhs), parseRelational());
+            Token token = advance();
+            lhs = comparison(op, token, std::move(lhs), parseRelational());
         }
         return lhs;
     }
@@ -1197,8 +1216,8 @@ private:
             default: break;
             }
             if (!lhs || !op || atShiftRight(TokenKind::GreaterEqual)) return lhs;  // `>>=` is an assignment
-            SourceLocation loc = advance().loc;
-            lhs = binary(*op, loc, std::move(lhs), parseBitOr());
+            Token token = advance();
+            lhs = comparison(*op, token, std::move(lhs), parseBitOr());
         }
     }
 
@@ -1329,7 +1348,12 @@ private:
                 markAngle();
                 if (!expect(TokenKind::Greater, "to close the type arguments")) return nullptr;
             }
+            size_t open = pos_;
             if (!parseArgs(call->args)) return nullptr;
+            if (call->callee == "assert") {  // the condition as written (D351)
+                call->textBegin = tokens_[open].end;
+                call->textEnd = tokens_[pos_ - 1].begin;
+            }
             expr = std::move(call);
         } else {
             expr = parsePrimary();
