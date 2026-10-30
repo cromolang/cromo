@@ -11,7 +11,7 @@ namespace cromo {
 struct CodegenOptions {
     std::vector<std::string> sourcePaths;  // by SourceLocation::file, shown in panic messages (D62)
     bool release = false;    // D57: no overflow checks, integers wrap around
-    Target target = Target::Windows;
+    Target target = hostTarget();
 };
 
 // Translates a module already checked by sema into textual LLVM IR (D53).

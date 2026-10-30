@@ -1,7 +1,7 @@
 #include "backend.h"
 
 #include "codegen.h"
-#include "runtime_blob.h"
+#include "installation.h"
 
 #include <llvm/Analysis/TargetLibraryInfo.h>
 #include <llvm/IR/LLVMContext.h>
@@ -101,23 +101,16 @@ bool emitObject(llvm::Module& module, llvm::TargetMachine& machine, const std::s
     return true;
 }
 
-bool writeFile(const std::string& path, std::string_view data, std::string& error) {
-    std::error_code ec;
-    llvm::raw_fd_ostream out(path, ec, llvm::sys::fs::OF_None);
-    if (ec) {
-        error = "cannot write " + path + ": " + ec.message();
-        return false;
-    }
-    out.write(data.data(), data.size());
-    return true;
-}
-
 // The functions of kernel32 that the runtime imports: the `__imp_` symbols that
 // it leaves undefined, because it declares them with `dllimport`.
 bool runtimeImports(std::vector<std::string>& names, std::string& error) {
-    std::string_view data = runtimeLibrary(Target::Windows);
-    llvm::MemoryBufferRef buffer(llvm::StringRef(data.data(), data.size()), "cromo_rt.lib");
-    llvm::Expected<std::unique_ptr<llvm::object::Archive>> archive = llvm::object::Archive::create(buffer);
+    std::string path = runtimeLibraryPath(Target::Windows).string();
+    llvm::ErrorOr<std::unique_ptr<llvm::MemoryBuffer>> data = llvm::MemoryBuffer::getFile(path);
+    if (!data) {
+        error = "cannot read the runtime " + path + ": " + data.getError().message() + " (D237)";
+        return false;
+    }
+    llvm::Expected<std::unique_ptr<llvm::object::Archive>> archive = llvm::object::Archive::create((*data)->getMemBufferRef());
     if (!archive) {
         error = "internal error: cannot read the runtime: " + llvm::toString(archive.takeError());
         return false;
@@ -292,11 +285,10 @@ bool buildExecutable(const std::string& irText, const std::string& moduleName, c
 
     bool linux = options.target == Target::Linux;
     std::string objectPath = options.outputPath + (linux ? ".o" : ".obj");
-    std::string runtimePath = options.outputPath + (linux ? ".rt.a" : ".rt.lib");
+    std::string runtimePath = runtimeLibraryPath(options.target).string();  // in lib/ (D237)
     if (!emitObject(*module, *machine, objectPath, error)) return false;
-    if (!writeFile(runtimePath, runtimeLibrary(options.target), error)) return false;
 
-    std::vector<std::string> temporaries = {runtimePath};
+    std::vector<std::string> temporaries;
     bool linked = linux ? linkLinux(objectPath, runtimePath, options, error)
                         : linkWindows(objectPath, runtimePath, options, temporaries, error);
     for (const std::string& path : temporaries) llvm::sys::fs::remove(path);

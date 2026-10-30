@@ -25,7 +25,4 @@ std::string sourceKey(const std::string& path);
 Module loadProgram(std::deque<SourceFile>& sources, Diagnostics& diag, Target target,
                    const std::map<std::string, std::string>* overlay = nullptr);
 
-// A file embedded in cromo, as the modules of the library: "cromo:std/fs.cro".
-bool isEmbedded(const std::string& path);
-
 }  // namespace cromo

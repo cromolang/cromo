@@ -1494,6 +1494,48 @@ for {
 ### D289. `cromo update` and `cromo update <version>`
 *2026-10-30.* It details D239. `cromo update` takes the last version from `latest`; `cromo update 0.18.0` takes that version from its manifest, also to go back to an older one. A version already installed only becomes the active one; another is downloaded into `~/.cromo/versions/<version>`, checked (D286) and unpacked, then becomes the active one (D288).
 
+### D290. The archives now, the compiler in Cromo when the language is mature
+*2026-10-30.* It details D147 and D152. M20 makes the archives of D237 from the repository: `cromo` reads `lib/` from its folder, it is built for Linux too, and a script makes the two archives, their manifest and its signature (D285–D287). The compiler written in Cromo stays the last milestone, when the language and its library are mature (D147); it will have to make the same archives. The archives do not wait for it: LLVM stays C++ in both compilers.
+
+### D291. The compiler in Cromo reaches LLVM through its C API
+*2026-10-30.* It details D44. The compiler written in Cromo calls the C API of LLVM (`LLVM-C`) through `extern` blocks, to read the IR, optimize it and write the object file, and LLD through a few lines of C++, since LLD has no C API; it is the way of Zig. All the code of the compiler is in Cromo. `cromo` contains the runtime of C++ of its system, as today: D19 holds for the programs that it compiles, not for `cromo` itself.
+
+### D292. `cromo` for Linux is built in WSL with glibc
+*2026-10-30.* With the official archive of LLVM 23.1.4 for Linux, with its static libraries, and the C++ compiler of WSL. `cromo` for Linux depends on the glibc of the system, as `rustc` does; a static `cromo` with musl would need LLVM built from its sources.
+
+### D293. What an archive holds
+*2026-10-30.* It details D237. `bin/`, `lib/` and `extension/` at the root of the archive, without a folder around them, so that it unpacks into `~/.cromo/versions/<version>` (D288).
+
+### D294. Where `cromo` looks for `lib/`
+*2026-10-30.* It details D237. In `../lib` from the folder of the executable, as in an archive, then in `lib` inside it, as in a build (`build/lib`). There is no copy of the library inside `cromo`: without `lib/` it stops, with `cannot find the library: lib/ is missing next to the folder of cromo (D237)`.
+
+### D295. The names of the files of the library
+*2026-10-30.* In the messages of a program, as a panic, a file of the library is named `cromo:std/fs.cro`, without the folder where `cromo` is installed; the errors of the compiler give its real path, which the editor can open.
+
+### D296. The target given by default
+*2026-10-30.* It amends D142: without `--target`, `cromo` compiles for the system it runs on.
+
+### D297. The DLLs of Windows, from Linux
+*2026-10-30.* It details D137. On Linux there is no folder of Windows where to check the C functions of a DLL: they are taken as the `extern` blocks declare them, and a function that is missing is found when the program starts on Windows.
+
+### D298. `cromo run` on Linux
+*2026-10-30.* It details D156. The program runs with `fork` and `execv`; ended by a signal, its exit code is 128 plus the signal, as the shells say.
+
+### D299. `cromo` for Linux: glibc 2.29, and its size
+*2026-10-30.* It details D292. It needs glibc 2.29 or later: the C++ runtime, libxml2 with ICU, zlib, lzma and zstd are inside it, and two functions of a newer glibc that LLVM uses are written in `cromo` itself. In the archive its symbols are stripped. The archive for Linux is larger than the one for Windows, 52 MB against 33, for the data of ICU and the backends of LLVM that LLD brings: to be reduced later.
+
+### D300. The keys and the signatures
+*2026-10-30.* It details D286. The private key is the seed of 32 bytes of RFC 8032 in hex, in a file outside the repository; the public key is its 32 bytes in hex, and a signature its 64 bytes in hex, in a file `.sig` next to the one it signs. `tools/sign.cro`, a program in Cromo, makes a key, never over an existing one, signs and checks.
+
+### D301. The modules in the message of a missing one
+*2026-10-30.* `the standard library has no module std.io: it has std.crypto, std.fs, ...` lists the modules found in `lib/std`, not a list written in the compiler.
+
+### D302. The server of the language from a copy
+*2026-10-30.* It details D170. On Windows the extension for VS Code runs `cromo lsp` from a copy of `cromo.exe` in the temporary folder, next to a junction `lib` to the library of the original, so that a build can write `cromo.exe` again while VS Code is open.
+
+### D303. Making the archives
+*2026-10-30.* `tools/package.ps1` writes `dist/` with the layout of the site (D285), so that publishing is copying it. It stops if the two builds of `cromo` are not of the version of `CMakeLists.txt`; without `-Key` it warns that the manifest is not signed, which `cromo update` would refuse.
+
 ---
 
 ## Open

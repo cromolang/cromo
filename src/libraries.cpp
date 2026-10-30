@@ -1,5 +1,6 @@
 #include "libraries.h"
 
+#include "installation.h"
 #include "loader.h"
 
 #include <llvm/Object/COFF.h>
@@ -11,9 +12,11 @@
 #include <set>
 #include <system_error>
 
+#ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#endif
 
 namespace cromo {
 
@@ -21,12 +24,16 @@ namespace fs = std::filesystem;
 
 namespace {
 
-// The system folder of Windows, where kernel32.dll is (D137).
+// The system folder of Windows, where kernel32.dll is (D137); none on Linux.
 fs::path systemFolder() {
+#ifdef _WIN32
     wchar_t buffer[MAX_PATH];
     UINT size = GetSystemDirectoryW(buffer, MAX_PATH);
     if (size == 0 || size >= MAX_PATH) return {};
     return fs::path(buffer);
+#else
+    return {};
+#endif
 }
 
 bool isFile(const fs::path& path) {
@@ -44,7 +51,7 @@ bool readExports(const fs::path& dll, std::set<std::string>& names, std::string&
         return false;
     }
     const auto* coff = llvm::dyn_cast<llvm::object::COFFObjectFile>(file->getBinary());
-    if (!coff || coff->getMachine() != IMAGE_FILE_MACHINE_AMD64) {
+    if (!coff || coff->getMachine() != 0x8664) {  // IMAGE_FILE_MACHINE_AMD64
         error = dll.filename().string() + " is not a DLL for x64 (D139)";
         return false;
     }
@@ -76,7 +83,7 @@ Libraries findLibraries(const Module& module, const std::deque<SourceFile>& sour
         auto use = std::find_if(uses.begin(), uses.end(), [&](const Use& u) { return u.name == function.library; });
         if (use == uses.end()) use = uses.insert(uses.end(), Use{function.library, {}, {}});
         use->functions.push_back(&function);
-        if (function.loc.file == kLibraryFile || isEmbedded(sources[function.loc.file].path)) continue;  // no folder
+        if (function.loc.file == kLibraryFile || isLibraryFile(sources[function.loc.file].path)) continue;  // no folder
         fs::path folder = fs::absolute(sources[function.loc.file].path).parent_path();
         if (std::find(use->folders.begin(), use->folders.end(), folder) == use->folders.end()) {
             use->folders.push_back(folder);
@@ -113,6 +120,18 @@ Libraries findLibraries(const Module& module, const std::deque<SourceFile>& sour
             continue;
         }
         if (dll.empty() && !system.empty() && isFile(system / (use.name + ".dll"))) dll = system / (use.name + ".dll");
+        if (dll.empty() && system.empty()) {
+            // From Linux there is no folder of the system to check the DLLs of Windows:
+            // the functions are taken as declared, and the program finds out when it starts.
+            ImportLibrary import{use.name + ".dll", {}};
+            for (const FunctionDecl* function : use.functions) {
+                if (std::find(import.functions.begin(), import.functions.end(), function->name) == import.functions.end()) {
+                    import.functions.push_back(function->name);
+                }
+            }
+            libraries.imports.push_back(std::move(import));
+            continue;
+        }
         if (dll.empty()) {
             diag.error(use.functions[0]->loc, "cannot find the library '" + use.name + "': there is no " + use.name +
                                                   ".lib or " + use.name + ".dll next to the modules that use it, nor " +

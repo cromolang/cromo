@@ -1,8 +1,8 @@
 #include "loader.h"
 
+#include "installation.h"
 #include "lexer.h"
 #include "parser.h"
-#include "runtime_blob.h"
 
 #include <algorithm>
 #include <cctype>
@@ -33,9 +33,11 @@ std::string sourceKey(const std::string& path) {
     return key;
 }
 
-bool isEmbedded(const std::string& path) { return path.rfind("cromo:", 0) == 0; }
-
 namespace {
+
+// The modules of the library that serve only the library: std.winsock declares
+// `connect` and `listen` of C apart from those of std.net.
+const char* const kInternalModules[] = {"std.winsock"};
 
 // The suffix of the files of a system (D202): `fs_windows.cro`.
 const char* systemSuffix(Target target) { return target == Target::Linux ? "_linux" : "_windows"; }
@@ -74,7 +76,7 @@ public:
         // The list of files grows while their imports are loaded.
         for (size_t i = 0; i < sources_.size(); ++i) {
             for (size_t k = 0; k < program_.files[i].imports.size(); ++k) {
-                std::vector<int> files = resolve(program_.files[i].imports[k], isEmbedded(sources_[i].path));
+                std::vector<int> files = resolve(program_.files[i].imports[k], isLibraryFile(sources_[i].path));
                 program_.files[i].imports[k].files = std::move(files);
             }
             checkQualifiers(program_.files[i]);
@@ -88,7 +90,7 @@ private:
         module.files.resize(index + 1);
         module.files[index].name = names_[index];
         module.files[index].part = part;
-        module.files[index].isLibrary = isEmbedded(sources_[index].path);
+        module.files[index].isLibrary = isLibraryFile(sources_[index].path);
         program_.append(std::move(module));
     }
 
@@ -158,35 +160,43 @@ private:
         return index;
     }
 
-    // `import std.fs` (D201): the module embedded in cromo, with its file for the
-    // system (D202).
-    // A module whose name is in `internal` serves only the library: as std.winsock,
-    // which declares `connect` and `listen` of C apart from those of std.net.
+    // `import std.fs` (D201): the module in lib/std of the installation (D237), with
+    // its file for the system (D202).
     std::vector<int> resolveLibrary(const ImportDecl& import, const std::string& dotted, bool fromLibrary) {
-        static const char* const internal[] = {"std.winsock"};
         std::string base = "std/" + dotted.substr(4);
-        bool hidden = std::find(std::begin(internal), std::end(internal), dotted) != std::end(internal);
-        auto found = loaded_.find(fs::path("cromo:" + base));
-        if (found != loaded_.end()) return {found->second};
-        std::optional<std::string_view> text = libraryModule(base + ".cro");
-        if (import.path.size() != 2 || !text || (hidden && !fromLibrary)) {
-            diag_.error(import.loc, "the standard library has no module " + dotted + ": it has std.fs, std.time, std.os, std.thread, std.net and std.crypto, "
-                                    "and its core is visible without import (D201)");
+        bool hidden = std::find(std::begin(kInternalModules), std::end(kInternalModules), dotted) != std::end(kInternalModules);
+        fs::path path = libraryFile(base + ".cro");
+        std::error_code ec;
+        if (import.path.size() != 2 || !fs::is_regular_file(path, ec) || (hidden && !fromLibrary)) {
+            diag_.error(import.loc, "the standard library has no module " + dotted + ": it has " + libraryModules() +
+                                        ", and its core is visible without import (D201)");
             return {};
         }
-        int first = embed(base + ".cro", *text, dotted, -1);
-        loaded_[fs::path("cromo:" + base)] = first;
-        std::string own = base + systemSuffix(target_) + ".cro";
-        if (std::optional<std::string_view> part = libraryModule(own)) embed(own, *part, dotted, first);
+        int first = loadFile(path, dotted, import.loc);
+        fs::path own = libraryFile(base + systemSuffix(target_) + ".cro");
+        if (fs::is_regular_file(own, ec)) loadFile(own, dotted, import.loc, first);
         return {first};
     }
 
-    int embed(const std::string& name, std::string_view text, const std::string& module, int part) {
-        sources_.push_back({"cromo:" + name, std::string(text)});
-        int index = diag_.addFile(sources_.back());
-        names_.push_back(module);
-        parseFile(index, part);
-        return index;
+    // "std.crypto, std.fs and std.http": the modules of lib/std for the programs.
+    static std::string libraryModules() {
+        std::vector<std::string> names;
+        std::error_code ec;
+        for (const fs::directory_entry& entry : fs::directory_iterator(libraryFile("std"), ec)) {
+            if (entry.path().extension() != ".cro") continue;
+            bool own = false;
+            bool other = false;
+            std::string name = "std." + withoutSuffix(entry.path().stem().string(), Target::Windows, own, other);
+            if (own || other) continue;
+            if (std::find(std::begin(kInternalModules), std::end(kInternalModules), name) != std::end(kInternalModules)) continue;
+            names.push_back(name);
+        }
+        std::sort(names.begin(), names.end());
+        std::string text;
+        for (size_t i = 0; i < names.size(); ++i) {
+            text += (i == 0 ? "" : i + 1 == names.size() ? " and " : ", ") + names[i];
+        }
+        return text;
     }
 
     // Two imports whose names would be written the same way in front (D126).

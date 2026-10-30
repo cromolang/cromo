@@ -7,7 +7,7 @@
 #include "loader.h"
 #include "ownership.h"
 #include "parser.h"
-#include "runtime_blob.h"
+#include "installation.h"
 #include "sema.h"
 
 #include <chrono>
@@ -466,11 +466,12 @@ private:
         } else {
             readSourceFile(rootPath, analysis->sources[0].text);
         }
-        analysis->sources.push_back({"cromo:core.cro", std::string(coreLibrary())});
+        analysis->sources.push_back({libraryFile("core.cro").string(), {}});
+        readSourceFile(analysis->sources[1].path, analysis->sources[1].text);
         Diagnostics diag(analysis->sources[0]);
         diag.addFile(analysis->sources[1]);
         diag.collectInto(&analysis->messages);
-        analysis->module = loadProgram(analysis->sources, diag, Target::Windows, &overlay);
+        analysis->module = loadProgram(analysis->sources, diag, hostTarget(), &overlay);
         if (!diag.hasErrors()) {
             analysis->checked = true;
             if (check(analysis->module, diag, requireMain)) checkMoves(analysis->module, diag);

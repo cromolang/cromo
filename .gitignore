@@ -14,3 +14,7 @@ tools/vscode-cromo/dist/
 tests/m8/modules/*.dll
 tests/m8/modules/*.lib
 tests/m8/modules/*.a
+
+# The build of cromo for Linux (build-linux.sh), and the archives (tools/package.ps1)
+build-linux/
+dist/

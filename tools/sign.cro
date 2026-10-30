@@ -1,0 +1,81 @@
+// The keys and the signatures of the versions of Cromo (D286), with Ed25519.
+//   cromo run tools/sign.cro -- key <private key>            makes a key, prints its public key
+//   cromo run tools/sign.cro -- sign <private key> <file>    writes <file>.sig
+//   cromo run tools/sign.cro -- verify <public key> <file>   checks <file>.sig
+// The private key is a file outside the repository, with the 32 bytes of the seed
+// of RFC 8032 in hex; the public key is its 32 bytes in hex, and a signature its
+// 64 bytes in hex, in a file next to the one it signs.
+import std.crypto
+import std.fs
+import std.os
+
+// The text up to the end of its first line.
+string firstLine(string text) {
+    for (i64 i = 0; i < text.len(); i++) {
+        if (text[i] == '\n' || text[i] == '\r') {
+            ret text.slice(0, i)
+        }
+    }
+    ret text.copy()
+}
+
+list<u8> readKey(string path, i64 size) {
+    list<u8> key = crypto.fromHex(firstLine(fs.readText(path)))
+    if (key.len() != size) {
+        throw Error(format("{} does not hold a key of {} bytes in hex", path, size))
+    }
+    ret key
+}
+
+bool exists(string path) {
+    try {
+        fs.readBytes(path)
+        ret true
+    } catch (Exception e) {
+        ret false
+    }
+}
+
+void makeKey(string path) {
+    if (exists(path)) {
+        throw Error(format("{} exists already: a key is never overwritten", path))
+    }
+    list<u8> seed = crypto.random(32)
+    fs.writeText(path, crypto.hex(seed) + "\n")
+    println("public key: {}", crypto.hex(crypto.ed25519PublicKey(seed)))
+}
+
+void sign(string keyPath, string path) {
+    list<u8> signature = crypto.ed25519Sign(readKey(keyPath, 32), fs.readBytes(path))
+    fs.writeText(path + ".sig", crypto.hex(signature) + "\n")
+    println("signed {}", path)
+}
+
+bool verify(string publicKey, string path) {
+    list<u8> key = crypto.fromHex(publicKey)
+    list<u8> signature = crypto.fromHex(firstLine(fs.readText(path + ".sig")))
+    ret crypto.ed25519Verify(key, fs.readBytes(path), signature)
+}
+
+i32 main(list<string> args) {
+    try {
+        if (args.len() == 3 && args[1] == "key") {
+            makeKey(args[2])
+        } else if (args.len() == 4 && args[1] == "sign") {
+            sign(args[2], args[3])
+        } else if (args.len() == 4 && args[1] == "verify") {
+            if (!verify(args[2], args[3])) {
+                eprintln("the signature of {} is not valid", args[3])
+                ret 1
+            }
+            println("valid {}", args[3])
+        } else {
+            eprintln("usage: sign key <private key> | sign <private key> <file> | verify <public key> <file>")
+            ret 2
+        }
+    } catch (Exception e) {
+        eprintln("sign: {}", e.message())
+        ret 1
+    }
+    ret 0
+}

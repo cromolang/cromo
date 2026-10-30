@@ -22,21 +22,45 @@ function findCromo() {
 }
 
 // On Windows a running .exe cannot be replaced, and build.ps1 could not write
-// cromo.exe again while VS Code is open: the server runs from a copy in the
-// temporary folder, named after the size and the date of cromo.exe.
+// cromo.exe again while VS Code is open: the server runs from a copy, in a folder
+// of the temporary folder named after the size and the date of cromo.exe, next to
+// a junction lib to the library of the original, which cromo reads (D237).
 function runnableCopy(executable) {
     if (process.platform !== 'win32' || !path.isAbsolute(executable) || !fs.existsSync(executable)) return executable;
+    const home = path.dirname(executable);
+    const library = [path.join(home, '..', 'lib'), path.join(home, 'lib')].find((folder) =>
+        fs.existsSync(path.join(folder, 'core.cro')));
+    if (!library) return executable;
     const stat = fs.statSync(executable);
-    const copy = path.join(os.tmpdir(), `cromo-lsp-${stat.size}-${Math.floor(stat.mtimeMs)}.exe`);
+    const name = `cromo-lsp-${stat.size}-${Math.floor(stat.mtimeMs)}`;
+    const folder = path.join(os.tmpdir(), name);
+    const copy = path.join(folder, 'cromo.exe');
     try {
-        if (!fs.existsSync(copy)) fs.copyFileSync(executable, copy);
+        if (!fs.existsSync(copy)) {
+            fs.mkdirSync(folder, { recursive: true });
+            const link = path.join(folder, 'lib');
+            if (!fs.existsSync(link)) fs.symlinkSync(path.resolve(library), link, 'junction');
+            fs.copyFileSync(executable, copy);
+        }
     } catch (error) {
         return executable;
     }
-    // The copies of the cromo.exe of before, if no server uses them any more.
-    for (const name of fs.readdirSync(os.tmpdir())) {
-        const old = path.join(os.tmpdir(), name);
-        if (name.startsWith('cromo-lsp-') && name.endsWith('.exe') && old !== copy) fs.unlink(old, () => {});
+    // The copies of the cromo.exe of before, if no server uses them any more: the
+    // junction is removed by itself, so that the library is never touched.
+    for (const old of fs.readdirSync(os.tmpdir())) {
+        if (!old.startsWith('cromo-lsp-') || old === name) continue;
+        const other = path.join(os.tmpdir(), old);
+        if (old.endsWith('.exe')) {  // a copy of the extensions before 0.8.0
+            fs.unlink(other, () => {});
+            continue;
+        }
+        try {
+            fs.unlinkSync(path.join(other, 'cromo.exe'));
+            fs.rmdirSync(path.join(other, 'lib'));
+            fs.rmdirSync(other);
+        } catch (error) {
+            // a server still runs it
+        }
     }
     return copy;
 }

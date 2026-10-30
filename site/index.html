@@ -329,7 +329,7 @@ footer a:hover { color: var(--text); }
       <a href="#roadmap">Roadmap</a>
     </nav>
     <div class="nav-right">
-      <span class="pill">v0.19 · preview</span>
+      <span class="pill">v0.20 · preview</span>
       <a class="btn small" href="#start">Get started</a>
     </div>
   </div>
@@ -348,7 +348,7 @@ footer a:hover { color: var(--text); }
           </a>
           <a class="btn" href="#examples">See the code</a>
         </div>
-        <div class="facts"><span>LLVM backend</span><span>as fast as C++</span><span>no libc, no SDK</span><span>cross-compiles to Linux</span><span>lightweight tasks</span><span>HTTP, TLS and JSON built in</span><span>VS Code support</span></div>
+        <div class="facts"><span>LLVM backend</span><span>as fast as C++</span><span>no libc, no SDK</span><span>Windows and Linux, from either</span><span>lightweight tasks</span><span>HTTP, TLS and JSON built in</span><span>VS Code support</span></div>
       </div>
       <div class="window">
         <div class="window-bar"><i></i><i></i><i></i><span class="title"><b>timer.cro</b> — RAII, maps and bitwise operators</span></div>
@@ -391,7 +391,7 @@ sum: 120 µs</pre></div>
       <div class="stat"><b>0</b><span>dependencies: no libc, no Windows SDK</span></div>
       <div class="stat"><b>32 KB</b><span>for a hello world, statically linked</span></div>
       <div class="stat"><b>2</b><span>targets: Windows and Linux x64</span></div>
-      <div class="stat"><b>289</b><span>design decisions, all written down</span></div>
+      <div class="stat"><b>303</b><span>design decisions, all written down</span></div>
     </div></div>
   </div>
 
@@ -424,7 +424,7 @@ sum: 120 µs</pre></div>
         <div class="card">
           <div class="icon"><svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><rect x="2.5" y="4" width="15" height="10" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M7 17h6M6 8l2 1.5L6 11m4 0h3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
           <h3>Windows and Linux</h3>
-          <p>Build for Linux from Windows with <code>--target linux</code>. A module can add <code>fs_windows.cro</code> and <code>fs_linux.cro</code> next to <code>fs.cro</code>.</p>
+          <p>Build for Linux or Windows from either system with <code>--target linux</code> or <code>--target windows</code>. A module can add <code>fs_windows.cro</code> and <code>fs_linux.cro</code> next to <code>fs.cro</code>.</p>
         </div>
         <div class="card">
           <div class="icon"><svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><path d="M7 4 3 10l4 6M13 4l4 6-4 6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
@@ -658,7 +658,7 @@ Hello, world!
 <span class="prompt">$ </span><span class="cmd">cromo fmt .</span>                 <span class="out-dim"># one style, no options</span>
 <span class="prompt">$ </span><span class="cmd">cromo lsp</span>                   <span class="out-dim"># for the editors</span>
 <span class="prompt">$ </span><span class="cmd">cromo version</span>
-cromo 0.19.0 (LLVM 23.1.4)</pre>
+cromo 0.20.0 (LLVM 23.1.4)</pre>
         </div>
         <div class="vscode">
           <div class="card">
@@ -730,12 +730,12 @@ cromo 0.19.0 (LLVM 23.1.4)</pre>
     <div class="wrap">
       <div class="kicker">Roadmap</div>
       <h2>Built in the open, <span class="chrome">one milestone at a time</span></h2>
-      <p class="section-lead">Every choice is decided first and written down with its reasons, then implemented with tests on Windows and Linux. All twenty numbered milestones, M0 to M19, are done.</p>
-      <div class="progress-label"><span>M0 – M19 done</span><span>20 of 20 numbered milestones</span></div>
+      <p class="section-lead">Every choice is decided first and written down with its reasons, then implemented with tests on Windows and Linux. All twenty-one numbered milestones, M0 to M20, are done.</p>
+      <div class="progress-label"><span>M0 – M20 done</span><span>21 of 21 numbered milestones</span></div>
       <div class="progress" aria-hidden="true"><div></div></div>
       <div class="roadmap">
         <div class="phase">
-          <h3>Done <span class="badge done">M0 – M19</span></h3>
+          <h3>Done <span class="badge done">M0 – M20</span></h3>
           <ul class="steps">
             <li><b>M0–2</b><span>LLVM backend, numbers, control flow, structs, RAII</span></li>
             <li><b>M3–6</b><span>Ownership, generics, interfaces, lists, strings, enums, exceptions</span></li>
@@ -746,12 +746,13 @@ cromo 0.19.0 (LLVM 23.1.4)</pre>
             <li><b>M17</b><span>TLS for clients and servers, and cryptography</span></li>
             <li><b>M18</b><span>HTTP server and client, JSON from structs</span></li>
             <li><b>M19</b><span>Lightweight tasks under the same API as threads</span></li>
+            <li><b>M20</b><span>Signed archives for Windows and Linux, made from the repository</span></li>
           </ul>
         </div>
         <div class="phase">
           <h3>Next <span class="badge next">install</span></h3>
           <ul class="steps">
-            <li><b>install</b><span>The one-line installer and <code>cromo update</code>, with signed archives</span></li>
+            <li><b>install</b><span>The one-line installer and <code>cromo update</code>, once the archives are published</span></li>
           </ul>
         </div>
         <div class="phase">
@@ -787,7 +788,7 @@ cromo 0.19.0 (LLVM 23.1.4)</pre>
       </div>
       <div class="downloads">
         <div class="download"><span><b>Windows x64</b> · archive and <code>install.ps1</code></span><span class="soon">coming soon</span></div>
-        <div class="download"><span><b>Linux x64</b> · from Windows today, <code>--target linux</code></span><span class="soon">coming soon</span></div>
+        <div class="download"><span><b>Linux x64</b> · archive and <code>install.sh</code></span><span class="soon">coming soon</span></div>
         <div class="download"><span><b>VS Code</b> · cromo-lang extension</span><span class="soon">coming soon</span></div>
         <div class="download"><span><b>Specification</b> · language, compiler, decisions</span><span class="soon">draft</span></div>
       </div>

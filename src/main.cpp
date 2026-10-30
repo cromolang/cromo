@@ -7,8 +7,8 @@
 #include "loader.h"
 #include "lsp.h"
 #include "ownership.h"
+#include "installation.h"
 #include "parser.h"
-#include "runtime_blob.h"
 #include "sema.h"
 
 #include <llvm/Config/llvm-config.h>
@@ -32,6 +32,9 @@
 #include <fcntl.h>
 #include <io.h>
 #include <windows.h>
+#else
+#include <sys/wait.h>
+#include <unistd.h>
 #endif
 
 namespace {
@@ -53,7 +56,8 @@ void printUsage(FILE* out) {
         "options of build and run:\n"
         "  -o <file>    name of the executable (build; default: the source name, or the folder\n"
         "               without a file, with .exe for Windows)\n"
-        "  --target     the system of the executable: windows (default) or linux (build)\n"
+        "  --target     the system of the executable: windows or linux (build; default: the one\n"
+        "               cromo runs on)\n"
         "  --release    no overflow checks: integers wrap around (default: debug, with checks)\n"
         "  -O<n>        optimization level (default: -O2)\n"
         "  --emit-ir    print the generated LLVM IR instead of producing the executable (build)\n",
@@ -84,8 +88,16 @@ int build(Compilation& compilation) {
         return 2;
     }
 
-    // The standard library is compiled together with the program (D97).
-    sources.push_back({"cromo:core.cro", std::string(cromo::coreLibrary())});
+    // The standard library is compiled together with the program (D97), from lib/ (D237).
+    if (cromo::libraryFolder().empty()) {
+        std::fputs("cromo: cannot find the library: lib/ is missing next to the folder of cromo (D237)\n", stderr);
+        return 2;
+    }
+    sources.push_back({cromo::libraryFile("core.cro").string(), {}});
+    if (!cromo::readSourceFile(sources[1].path, sources[1].text)) {
+        std::fprintf(stderr, "cromo: cannot read %s\n", sources[1].path.c_str());
+        return 2;
+    }
     cromo::Diagnostics diag(sources[0]);
     diag.addFile(sources[1]);
     cromo::Module module = cromo::loadProgram(sources, diag, options.target);
@@ -98,7 +110,11 @@ int build(Compilation& compilation) {
     options.imports = libraries.imports;
 
     std::string sourceName = fs::path(inputPath).filename().string();
-    for (const cromo::SourceFile& source : sources) codegen.sourcePaths.push_back(source.path);
+    // In the messages of the program, a file of the library is named without the
+    // folder where cromo is installed: "cromo:std/fs.cro".
+    for (const cromo::SourceFile& source : sources) {
+        codegen.sourcePaths.push_back(cromo::isLibraryFile(source.path) ? cromo::libraryName(source.path) : source.path);
+    }
     std::string ir = cromo::generateIR(module, codegen);
     if (compilation.emitIr) {
         std::fwrite(ir.data(), 1, ir.size(), stdout);
@@ -358,6 +374,47 @@ int run(Compilation& compilation, const std::vector<std::wstring>& programArgs) 
     return code;
 }
 
+#else
+
+// D156 on Linux: the same, with fork and exec.
+int run(Compilation& compilation, const std::vector<std::string>& programArgs) {
+    std::error_code ec;
+    fs::path folder = fs::temp_directory_path(ec) / ("cromo-run-" + std::to_string(getpid()));
+    fs::create_directories(folder, ec);
+    if (ec) {
+        std::fprintf(stderr, "cromo: cannot create the folder %s: %s\n", folder.string().c_str(), ec.message().c_str());
+        return 1;
+    }
+    std::string stem = compilation.options.outputPath.empty() ? std::string("main")
+                                                               : fs::path(compilation.options.outputPath).stem().string();
+    compilation.options.outputPath = (folder / stem).string();
+    int code = build(compilation);
+    if (code == 0) {
+        std::vector<char*> argv;
+        argv.push_back(compilation.options.outputPath.data());
+        std::vector<std::string> copies = programArgs;
+        for (std::string& arg : copies) argv.push_back(arg.data());
+        argv.push_back(nullptr);
+        std::fflush(nullptr);
+        pid_t child = fork();
+        if (child == 0) {
+            execv(argv[0], argv.data());
+            _exit(127);
+        }
+        int status = 0;
+        if (child < 0 || waitpid(child, &status, 0) < 0) {
+            std::fprintf(stderr, "cromo: cannot run %s\n", compilation.options.outputPath.c_str());
+            code = 1;
+        } else if (WIFEXITED(status)) {
+            code = WEXITSTATUS(status);
+        } else {
+            code = 128 + WTERMSIG(status);  // as the shells say a signal
+        }
+    }
+    fs::remove_all(folder, ec);
+    return code;
+}
+
 #endif
 
 }  // namespace
@@ -419,9 +476,8 @@ int main(int argc, char** argv) {
 #ifdef _WIN32
     std::vector<std::wstring> programArgs;
     for (size_t i = separator + 1; i < wide.size(); ++i) programArgs.push_back(wide[i]);
-    return run(compilation, programArgs);
 #else
-    std::fputs("cromo: cromo run works only on Windows for now\n", stderr);
-    return 2;
+    std::vector<std::string> programArgs(args.begin() + std::min(separator + 1, args.size()), args.end());
 #endif
+    return run(compilation, programArgs);
 }
