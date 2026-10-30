@@ -13,7 +13,7 @@ Open entries marked **[M0]** are already needed for the first milestone of the c
 ## Decided
 
 ### D1. Name: Cromo
-*2026-10-28.* Chromium (*cromo* in Italian) is the element that makes steel stainless: a language "that does not rust", in dialogue with Rust (whose name literally means rust). It starts with C, like the C/C++/C# family. We checked that no known language has this name.
+*2026-10-28.* *Cromo* is the Italian word for chromium, element 24, a hard and bright metal. It starts with C, like the C/C++/C# family. We checked that no known language has this name.
 
 ### D2. General-purpose language
 *2026-10-28.* It is not designed for a specific domain.
@@ -1362,7 +1362,7 @@ curl -sSf https://cromolang.org/install.sh | sh      # Linux
 *2026-10-30.* `http.get(url)`, `http.post(url, body, type)`, and `http.send(request)` for the other methods. Each request opens its own connection, with TLS for `https` (D235), and the redirects are followed. The reuse of the connections comes later, with an `http.Client`.
 
 ### D255. The numbers of JSON: integers and floats
-*2026-10-30.* `json.Value` has `Int(i64)` for a number without a point or an exponent that fits in an `i64`, and `Float(f64)` for the others, as fcl and serde_json do: identifiers of 64 bits keep all their digits. A float can be read also from an `Int`.
+*2026-10-30.* `json.Value` has `Int(i64)` for a number without a point or an exponent that fits in an `i64`, and `Float(f64)` for the others, as serde_json does: identifiers of 64 bits keep all their digits. A float can be read also from an `Int`.
 
 ### D256. Attributes on the fields: the names of JSON
 *2026-10-30.* An attribute is written before a field with the syntax of C++11: `[[json("user_id")]] i64 id` gives the field another name in JSON, `[[json(skip)]] string passwordHash` leaves it out of the conversion (D251). It is a general means for the attributes that will come; for now `json` is the only one.

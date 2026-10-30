@@ -424,12 +424,6 @@ Each milestone lists the decisions still open that are needed **before** writing
 
 Generics come before containers because `list<T>` is written in Cromo as a generic struct (D37, D39). After M9 the order is D152: the tools come first, because they help to write the library. `cromo update` (D153) downloads the versions from the manifests and the archives of cromolang.org (D285–D289), which must be published before it can be used.
 
-For JSON, networking and the utilities of the library (M14–M18) the reference is fcl, the C++ library of the author, in WSL at `/home/andrea/source/private/fcl`:
-- its HTTP server makes blocking calls on a pool of threads and keeps the idle connections in epoll, and handles about 330k requests per second on loopback: the model recommended for Cromo works (D150);
-- the parsers of JSON, HTTP/1.1, URI and WebSocket, the HTTP client, and the utilities (scheduler with cron, rate limiter, processes, atomic writes, file watcher, logs with rotation, command line, dates, UUID) can be translated;
-- TLS, certificates, keys, AES-GCM, ChaCha20-Poly1305, HMAC, HKDF and the random numbers come from OpenSSL, which Cromo replaces (D150). SHA-1/256/512, MD5, Argon2id, Base64 and Ed25519/X25519 are written by hand and can be translated; its AES is not constant-time and is not translated;
-- its interfaces return references (`json&`, iterators) and store callbacks with `std::function` and `shared_ptr`: in Cromo the references become methods that take an anonymous function, or copies (D22), and the callbacks anonymous functions that capture with `move` (D148).
-
 ## 8. Repository structure (proposal)
 
 ```

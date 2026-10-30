@@ -4,7 +4,11 @@
   "description": "Syntax highlighting, errors, hover, definitions and formatting for the Cromo language, with cromo lsp",
   "version": "0.9.0",
   "publisher": "cromo",
-  "license": "UNLICENSED",
+  "license": "(MIT OR Apache-2.0)",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cromolang/cromo"
+  },
   "engines": {
     "vscode": "^1.60.0"
   },

@@ -1,0 +1,151 @@
+# Building Cromo
+
+This document explains how to build `cromo` from source, run the tests and make the archives of a release. To use Cromo, the archives on [cromolang.org](https://cromolang.org) are enough: building is needed only to work on the compiler, the runtime or the standard library.
+
+## Overview
+
+`cromo` is a C++20 program that contains LLVM and LLD, linked statically: one executable compiles and links Cromo programs, with no other tool. Next to it, `cromo` reads `lib/`: the standard library, written in Cromo, and the runtime, written in C and compiled for each system.
+
+| Build | Where | Result |
+|---|---|---|
+| Windows | Windows x64, with Visual Studio | `build\cromo.exe` and `build\lib\`, with the runtime for Windows and Linux |
+| Linux | WSL 2, or Linux x64 | `build-linux/cromo`, which uses the `lib/` of the Windows build |
+
+The Windows build is the main one: it compiles the runtime of both systems with the clang of LLVM, as a cross-compiler. `cromo` compiles for both systems from either one, so the Windows build alone is enough to develop and to test programs for Linux in WSL.
+
+## Requirements on Windows
+
+- **Windows 10 or 11, x64.**
+- **Visual Studio 2022**, Community or another edition, with the workload *Desktop development with C++*. It contains the MSVC compiler, CMake, Ninja and vcpkg.
+- **LLVM 23.1.4**, from the archive `clang+llvm-23.1.4-x86_64-pc-windows-msvc.tar.xz` of the [LLVM release](https://github.com/llvm/llvm-project/releases/tag/llvmorg-23.1.4). The installer `LLVM-23.1.4-win64.exe` is not enough: it has neither the static libraries nor the CMake files. The default place is `C:\software\llvm-23.1.4`:
+
+  ```powershell
+  tar -xf clang+llvm-23.1.4-x86_64-pc-windows-msvc.tar.xz -C C:\software
+  Rename-Item C:\software\clang+llvm-23.1.4-x86_64-pc-windows-msvc llvm-23.1.4
+  ```
+
+- **Git**, to clone the repository.
+- **A connection to the Internet** for the first build: vcpkg downloads and builds zlib, zstd and libxml2, which the LLVM libraries need.
+- Optional: **WSL 2** with Ubuntu, to run the tests for Linux and to build `cromo` for Linux.
+
+## Building on Windows
+
+```powershell
+git clone https://github.com/cromolang/cromo.git
+cd cromo
+powershell -ExecutionPolicy Bypass -File build.ps1
+build\cromo.exe version
+```
+
+The last command prints `cromo 0.27.1 (LLVM 23.1.4)`, with the version of the sources.
+
+`build.ps1` accepts:
+
+| Option | Meaning |
+|---|---|
+| `-Config Release` | A build without debug information; the default is `RelWithDebInfo` |
+| `-LlvmRoot <folder>` | LLVM in another folder than `C:\software\llvm-23.1.4` |
+| `-Clean` | Deletes `build\` and starts from scratch |
+
+The script finds Visual Studio with `vswhere`, loads the environment of `vcvars64.bat` and configures CMake with Ninja and the toolchain of vcpkg (triplet `x64-windows-static`). It removes from `PATH` the MinGW toolchains, such as the one of Strawberry Perl, whose zlib CMake would otherwise find. Then it builds:
+
+- `build\cromo.exe`, from `src\`, with the static C runtime (`/MT`) and without RTTI, as the LLVM libraries: `cromo.exe` needs no Visual C++ Redistributable;
+- `build\lib\`, with `core.cro` and `std\` copied from `library\`, and the runtime compiled from `runtime\` and `third_party\` by the clang of LLVM: `windows\cromo_rt.lib` and `linux\libcromo_rt.a`.
+
+Rebuild after any change to `library\` or `runtime\`: `cromo` reads them from `build\lib`. Debug builds are not supported, since the LLVM libraries are release builds.
+
+## Running the tests
+
+The tests are Cromo programs in `tests\`, grouped by milestone, whose comments say what they must do: the exit code, the output, or the compile error expected. The full list of the directives is at the top of `tests\run-tests.ps1`.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tests\run-tests.ps1                            # all the tests, on Windows
+powershell -ExecutionPolicy Bypass -File tests\run-tests.ps1 -Filter m18                # only those whose path contains m18
+powershell -ExecutionPolicy Bypass -File tests\run-tests.ps1 -Flags '--target linux'    # compiled for Linux, run in WSL
+powershell -ExecutionPolicy Bypass -File tests\run-tests.ps1 -Flags '--release'         # optimized
+```
+
+- `-Flags` passes options to every compilation; with `--target linux` the programs run in the default distribution of WSL, or in the one given with `-Distro`.
+- `-Cromo <path>` tests another `cromo`, such as the one for Linux: `-Cromo tools\cromo-wsl.cmd -Flags '--target linux'`.
+- The runner builds a few C libraries for the tests of `tests\m8` with the clang of LLVM (`-LlvmRoot` if it is elsewhere).
+- Some antivirus programs quarantine the small executables that the tests write in `tests\out\`; if a test fails because its executable cannot be opened, exclude that folder from the scan.
+
+A change to the compiler comes with its tests. A change to the standard library is tested on both systems.
+
+## Building cromo for Linux
+
+In WSL 2, or on a Linux x64 machine with Ubuntu 20.04 or later:
+
+```sh
+sudo apt install cmake ninja-build zlib1g-dev libzstd-dev
+```
+
+and a `g++` with C++20 support (the releases are built with GCC 14), and LLVM 23.1.4 for Linux, from the archive `LLVM-23.1.4-Linux-X64.tar.xz` of the same release, in `~/llvm-23.1.4`:
+
+```sh
+tar -xf LLVM-23.1.4-Linux-X64.tar.xz -C ~
+mv ~/LLVM-23.1.4-Linux-X64 ~/llvm-23.1.4
+```
+
+Then, from the folder of the repository, after the Windows build:
+
+```sh
+sh build-linux.sh            # --clean to start from scratch
+build-linux/cromo version
+```
+
+`build-linux.sh` builds only the compiler, in `build-linux/cromo`, and links `build-linux/lib` to the `lib` of the Windows build. `LLVM_ROOT` and `CXX` choose another LLVM and another C++ compiler.
+
+`cromo` for Linux links statically the C++ runtime, zlib and zstd, and depends only on the C library of the system: built on Ubuntu 20.04, it runs with glibc 2.29 or later. A build entirely on Linux, runtime included, is not supported yet.
+
+## The extension for Visual Studio Code
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\vscode-cromo\build-vsix.ps1 -Install
+```
+
+It writes `tools\vscode-cromo\dist\cromo-lang-<version>.vsix` and, with `-Install`, installs it with `code --install-extension`. The extension runs `cromo lsp`: the one of the setting `cromo.path`, else `build\cromo.exe` of the open folder, as while working on Cromo, else the one on the `PATH`. When the grammar changes, raise `version` in `tools\vscode-cromo\package.json`.
+
+## Making a release
+
+The version is in `CMakeLists.txt`, in `project(cromo VERSION 0.27.1)`: `0.<milestone>.<fix>` until 1.0. With the two builds of the same version:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\package.ps1 -Key <private key>
+```
+
+`tools\package.ps1` writes in `dist\`, with the layout of the site:
+
+| Path | Content |
+|---|---|
+| `package/win_x86_64-<version>.zip` | `bin/cromo.exe`, `lib/`, `extension/` |
+| `package/linux_x86_64-<version>.tar.gz` | `bin/cromo`, `lib/`, `extension/` |
+| `release/<version>`, `latest` | The manifest: the version, and the address and SHA-256 of each archive |
+| `release/<version>.sig`, `latest.sig` | The Ed25519 signature of the manifest |
+
+The signing key is a file kept outside the repository. `tools/sign.cro` makes one and prints its public key, with which `cromo update` will check the versions it downloads:
+
+```powershell
+build\cromo.exe run tools\sign.cro -- key <private key>
+```
+
+## Benchmarks
+
+`bench\run-bench.ps1` compiles the programs of `bench\` with `cromo` and with g++, clang++, Go and rustc, which must be installed in WSL, runs them in WSL and writes the results in `bench\results\`. See the head of the script for its options.
+
+## The repository
+
+| Folder | Content |
+|---|---|
+| `src/` | The compiler, in C++: lexer, parser, semantic analysis, generation of LLVM IR, backend, formatter, language server |
+| `runtime/` | The runtime in C, without the C library: memory, threads and tasks, stack traces, TLS and gzip |
+| `library/` | The standard library, in Cromo |
+| `third_party/` | Mbed TLS and Monocypher, with their licenses |
+| `tests/` | The tests of the compiler |
+| `examples/` | Example programs |
+| `bench/` | Benchmarks against C++, Go and Rust |
+| `tools/` | The extension for Visual Studio Code, the release scripts and helpers |
+| `docs/` | The specification, the design decisions and the architecture of the compiler |
+| `site/` | The website |
+
+The architecture of the compiler and of the runtime is described in [docs/compiler.md](docs/compiler.md).
