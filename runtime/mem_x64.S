@@ -281,6 +281,15 @@ cromo_task_entry:
     call cromo_task_run
     ud2
 
+# The return of a handler of a signal, rt_sigreturn: the C library gives it to
+# rt_sigaction as SA_RESTORER, and so does the runtime (D339).
+    .globl cromo_sigreturn
+    .p2align 4
+cromo_sigreturn:
+    mov eax, 15
+    syscall
+    ud2
+
     .section .note.GNU-stack, "", @progbits
 
 #endif

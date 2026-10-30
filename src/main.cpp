@@ -114,7 +114,13 @@ int build(Compilation& compilation) {
     // folder where cromo is installed: "cromo:std/fs.cro".
     for (const cromo::SourceFile& source : sources) {
         codegen.sourcePaths.push_back(cromo::isLibraryFile(source.path) ? cromo::libraryName(source.path) : source.path);
+        std::error_code ec;
+        fs::path full = fs::absolute(source.path, ec);  // a debugger finds the file from anywhere (D338)
+        codegen.debugPaths.push_back(ec ? source.path : full.lexically_normal().string());
+        options.fileNames.emplace_back(codegen.debugPaths.back(), codegen.sourcePaths.back());
     }
+    codegen.optimized = options.optLevel > 0;
+    options.debugInfo = !codegen.release;
     std::string ir = cromo::generateIR(module, codegen);
     if (compilation.emitIr) {
         std::fwrite(ir.data(), 1, ir.size(), stdout);

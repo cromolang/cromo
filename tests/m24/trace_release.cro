@@ -1,0 +1,18 @@
+// The stack traces also with --release (D339), from the table in the executable.
+// cromo-flags: --release
+// expect-exit: 101
+// expect-stderr: panic: the value is 7
+// expect-stderr:     at check (
+// expect-stderr: trace_release.cro:10)
+// expect-stderr:     at main (
+i64 check(i64 value) {
+    if (value > 5) {
+        panic(format("the value is {}", value))
+    }
+    ret value
+}
+
+i32 main(list<string> args) {
+    println("{}", check(args.len() + 6))
+    ret 0
+}

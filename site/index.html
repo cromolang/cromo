@@ -236,7 +236,7 @@ table.times { width: 100%; border-collapse: collapse; font: 13px/1.4 var(--mono)
 .steps li b { font: 500 12.5px/1.75 var(--mono); color: var(--text); }
 .progress-label { display: flex; justify-content: space-between; gap: 12px; font: 12.5px var(--mono); color: var(--dim); }
 .progress { height: 6px; border-radius: 999px; background: var(--surface-2); overflow: hidden; margin: 8px 0 18px; }
-.progress div { height: 100%; width: 86%; background: linear-gradient(90deg, var(--accent), var(--accent-2)); }
+.progress div { height: 100%; width: 89%; background: linear-gradient(90deg, var(--accent), var(--accent-2)); }
 
 /* Get started */
 .start { margin-top: 96px; border: 1px solid var(--border); border-radius: 20px; padding: 44px; box-shadow: var(--shadow); background: radial-gradient(500px 240px at 85% 0%, rgba(var(--accent-rgb), 0.08), transparent 70%), var(--surface); display: grid; grid-template-columns: 1fr 1fr; gap: 36px; align-items: center; }
@@ -329,7 +329,7 @@ footer a:hover { color: var(--text); }
       <a href="#roadmap">Roadmap</a>
     </nav>
     <div class="nav-right">
-      <span class="pill">v0.23 · preview</span>
+      <span class="pill">v0.24 · preview</span>
       <a class="btn small" href="#start">Get started</a>
     </div>
   </div>
@@ -391,7 +391,7 @@ sum: 120 µs</pre></div>
       <div class="stat"><b>0</b><span>dependencies: no libc, no Windows SDK</span></div>
       <div class="stat"><b>32 KB</b><span>for a hello world, statically linked</span></div>
       <div class="stat"><b>2</b><span>targets: Windows and Linux x64</span></div>
-      <div class="stat"><b>337</b><span>design decisions, all written down</span></div>
+      <div class="stat"><b>348</b><span>design decisions, all written down</span></div>
     </div></div>
   </div>
 
@@ -658,7 +658,7 @@ Hello, world!
 <span class="prompt">$ </span><span class="cmd">cromo fmt .</span>                 <span class="out-dim"># one style, no options</span>
 <span class="prompt">$ </span><span class="cmd">cromo lsp</span>                   <span class="out-dim"># for the editors</span>
 <span class="prompt">$ </span><span class="cmd">cromo version</span>
-cromo 0.23.0 (LLVM 23.1.4)</pre>
+cromo 0.24.0 (LLVM 23.1.4)</pre>
         </div>
         <div class="vscode">
           <div class="card">
@@ -730,12 +730,12 @@ cromo 0.23.0 (LLVM 23.1.4)</pre>
     <div class="wrap">
       <div class="kicker">Roadmap</div>
       <h2>Built in the open, <span class="chrome">one milestone at a time</span></h2>
-      <p class="section-lead">Every choice is decided first and written down with its reasons, then implemented with tests on Windows and Linux. Twenty-four milestones, M0 to M23, are done.</p>
-      <div class="progress-label"><span>M0 – M23 done</span><span>24 of 28 numbered milestones</span></div>
+      <p class="section-lead">Every choice is decided first and written down with its reasons, then implemented with tests on Windows and Linux. Twenty-five milestones, M0 to M24, are done.</p>
+      <div class="progress-label"><span>M0 – M24 done</span><span>25 of 28 numbered milestones</span></div>
       <div class="progress" aria-hidden="true"><div></div></div>
       <div class="roadmap">
         <div class="phase">
-          <h3>Done <span class="badge done">M0 – M23</span></h3>
+          <h3>Done <span class="badge done">M0 – M24</span></h3>
           <ul class="steps">
             <li><b>M0–2</b><span>LLVM backend, numbers, control flow, structs, RAII</span></li>
             <li><b>M3–6</b><span>Ownership, generics, interfaces, lists, strings, enums, exceptions</span></li>
@@ -750,12 +750,12 @@ cromo 0.23.0 (LLVM 23.1.4)</pre>
             <li><b>M21</b><span>List literals, text functions, files and other programs</span></li>
             <li><b>M22</b><span>Printable types, <code>{:?}</code> for every value, generic methods</span></li>
             <li><b>M23</b><span>Channels and atomics for tasks and threads</span></li>
+            <li><b>M24</b><span>Stack traces, also in release, and debugging with PDB and DWARF</span></li>
           </ul>
         </div>
         <div class="phase">
-          <h3>Next <span class="badge next">M24 – M27</span></h3>
+          <h3>Next <span class="badge next">M25 – M27</span></h3>
           <ul class="steps">
-            <li><b>M24</b><span>Debug information and stack traces</span></li>
             <li><b>M25</b><span><code>cromo test</code></span></li>
             <li><b>M26</b><span>Owned interface values, richer field initial values</span></li>
             <li><b>M27</b><span>More of JSON and HTTP: client, gzip, WebSocket</span></li>

@@ -1,0 +1,42 @@
+// An exception that nobody catches prints the stack of its throw (D340); throw
+// without a value, in a catch, keeps the stack of the first one.
+// expect-output: caught too long: cccc
+// expect-exit: 1
+// expect-stderr: uncaught exception: too long: dddd
+// expect-stderr:     at parse (
+// expect-stderr: trace_exception.cro:13)
+// expect-stderr:     at load (
+// expect-stderr:     at retry (
+// expect-stderr:     at main (
+i64 parse(string text) {
+    if (text.len() > 3) {
+        throw Error(format("too long: {}", text))
+    }
+    ret text.len()
+}
+
+i64 load(list<string> words) {
+    i64 total = 0
+    for (string word in words) {
+        total += parse(word)
+    }
+    ret total
+}
+
+i64 retry(list<string> words) {
+    try {
+        ret load(words)
+    } catch (Error e) {
+        throw
+    }
+}
+
+i32 main() {
+    try {
+        load(["a", "cccc"])
+    } catch (Error e) {
+        println("caught {}", e.message())
+    }
+    println("{}", retry(["bb", "dddd"]))
+    ret 0
+}

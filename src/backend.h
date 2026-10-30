@@ -3,6 +3,7 @@
 #include "target.h"
 
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace cromo {
@@ -20,6 +21,9 @@ struct BackendOptions {
     bool keepObject = false; // keep the intermediate object file
     std::vector<std::string> archives;   // static libraries of the extern blocks: name.lib, libname.a (D136, D143)
     std::vector<ImportLibrary> imports;  // DLLs of the extern blocks; kernel32 is always there, for the runtime
+    bool debugInfo = true;  // D338: a PDB next to the executable on Windows, DWARF kept in it on Linux
+    // D339: the path of each source file in the debug information, and its name in a stack trace.
+    std::vector<std::pair<std::string, std::string>> fileNames;
 };
 
 // Reads the textual IR with LLVM, optimizes it, generates machine code and links

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16...3.20)  # 3.16 in WSL for cromo for Linux, without the runtime
-project(cromo VERSION 0.23.0 LANGUAGES CXX)  # 0.milestone.fix (D157)
+project(cromo VERSION 0.24.0 LANGUAGES CXX)  # 0.milestone.fix (D157)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -65,8 +65,10 @@ set(CROMO_RT_BASE_FLAGS --target=x86_64-pc-windows-msvc -ffreestanding -fno-buil
     -fno-stack-protector -mno-stack-arg-probe)
 set(CROMO_RT_LINUX_BASE_FLAGS --target=x86_64-unknown-linux-gnu -ffreestanding -fno-builtin -nostdlib -O2
     -fno-stack-protector -fno-pic)
-set(CROMO_RT_FLAGS ${CROMO_RT_BASE_FLAGS} -Wall -Wextra)
-set(CROMO_RT_LINUX_FLAGS ${CROMO_RT_LINUX_BASE_FLAGS} -Wall -Wextra)
+# The unwind tables lead the stack traces of Windows through the runtime (D341).
+set(CROMO_RT_FLAGS ${CROMO_RT_BASE_FLAGS} -funwind-tables -Wall -Wextra)
+# The frame pointers lead the stack traces through the runtime too (D341).
+set(CROMO_RT_LINUX_FLAGS ${CROMO_RT_LINUX_BASE_FLAGS} -fno-omit-frame-pointer -Wall -Wextra)
 file(MAKE_DIRECTORY "${CROMO_RT_DIR}")
 
 # ---- TLS and cryptography (D233, D236) ----
@@ -204,7 +206,7 @@ else()
 endif()
 
 llvm_map_components_to_libnames(CROMO_LLVM_LIBS
-  Core IRReader Object Passes Support Target TargetParser MC
+  Core DebugInfoDWARF IRReader Object Passes Support Target TargetParser MC
   X86CodeGen X86AsmParser X86Desc X86Info
 )
 target_link_libraries(cromo PRIVATE lldCOFF lldELF lldCommon ${CROMO_LLVM_LIBS})

@@ -358,7 +358,7 @@ Shape s = Shape.Circle(1.0)     // a value is created with the name of the enum
 - `break` and `continue` written directly in a branch of a `switch` are errors: the branch ends by itself, and a `break` written out of C habit would leave the loop instead (D116).
 - While a branch uses the data of a case, the value of the `switch` cannot be modified (D125).
 
-## 10. Errors and exceptions (D16, D36)
+## 10. Errors and exceptions (D16, D36, D338–D348)
 
 ```cromo
 string firstLine(string path) {
@@ -388,6 +388,21 @@ i32 main() {
 - `panic("reason")` terminates the program on purpose, as those errors do (D62). Like `ret`, it ends a path of the function (D102).
 - Destructors and `finally` cannot let an exception out: it must be caught inside them, or it is a compile error (D113).
 - An exception that leaves `main` stops the program with `uncaught exception: <message>` (D121).
+
+```
+panic: index out of bounds: the index is 5 but the length is 3 at shapes.cro:14:19
+    at Point.at (shapes.cro:14)
+    at deep (shapes.cro:22)
+    at deep (shapes.cro:24)
+    ... the same 2 more times
+    at main (shapes.cro:29)
+```
+
+- A panic, an exception that nobody catches and a stack overflow print the calls that led there, from the innermost, also with `--release`: the function, the file and the line, with the functions that the optimizer put inside others (D339, D342). A recursion is written once, with how many times it repeats; the frames of the runtime and of C are left out. The program does not need its debug information for it: the compiler writes a compact table in the executable.
+- The names are those of the source: `main`, `Point.area`, `list<i64>.add`, `Point.Point` for a constructor, `Point.~Point` for a destructor, `main.lambda` for a lambda written in `main`, `fs.copy` for a function of another module (D343). The files are written as in the panics: as given to `cromo`, and `cromo:core.cro` for the library (D345).
+- The stack of an exception is the one of its `throw`, which keeps 63 return addresses with the object; `throw` alone, in a `catch`, keeps the stack of the first one (D340, D347).
+- A stack overflow is a panic, `panic: stack overflow`, with exit code 101 (D344).
+- Without `--release` the executable has the debug information for a debugger: the lines, the functions and the variables with their types, in a PDB next to the `.exe` on Windows and in DWARF on Linux (D338). The object of a method is `this`; a `string` or a `list` shows its fields (D346). With `-O2` some variables can be "optimized out"; `-O0` keeps them.
 
 ## 11. Printing and formatting (D21, D38, D318–D323)
 

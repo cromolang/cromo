@@ -1,0 +1,15 @@
+// A stack overflow is a panic with the stack trace (D339).
+// expect-exit: 101
+// expect-stderr: panic: stack overflow
+// expect-stderr:     at down (
+// expect-stderr: more times
+i64 down(i64 n) {
+    i64[16] pad
+    pad[n % 16] = n
+    ret down(n + 1) + pad[0]
+}
+
+i32 main() {
+    println("{}", down(0))
+    ret 0
+}

@@ -66,6 +66,9 @@ __declspec(dllimport) void* WINAPI CreateWaitableTimerExW(void* attributes, cons
 __declspec(dllimport) int WINAPI SetWaitableTimer(void* timer, const i64* due, i32 period, void* routine, void* argument,
                                                   int resume);
 __declspec(dllimport) void WINAPI Sleep(u32 milliseconds);
+__declspec(dllimport) u16 WINAPI RtlCaptureStackBackTrace(u32 skip, u32 count, void** frames, u32* hash);
+__declspec(dllimport) void* WINAPI AddVectoredExceptionHandler(u32 first, void* handler);
+__declspec(dllimport) int WINAPI SetThreadStackGuarantee(u32* size);
 
 // The Microsoft x64 ABI requires this symbol when floating point is used (D19).
 int _fltused = 0;
@@ -79,11 +82,13 @@ int _fltused = 0;
 #define SYS_mmap 9
 #define SYS_mprotect 10
 #define SYS_munmap 11
+#define SYS_rt_sigaction 13
 #define SYS_sched_yield 24
 #define SYS_mremap 25
 #define SYS_nanosleep 35
 #define SYS_clone 56
 #define SYS_exit 60
+#define SYS_sigaltstack 131
 #define SYS_arch_prctl 158
 #define SYS_futex 202
 #define SYS_sched_getaffinity 204
@@ -1059,6 +1064,125 @@ NORETURN void cromo_exit(i32 code) {
     exitProcess(code);
 }
 
+// ---- Stack traces (D339-D341) ----
+//
+// cromo writes in every program the table of its code (backend.cpp): from a
+// return address, the function, the file and the line, with the inlined calls.
+// The frames of the runtime and of C are not in it, and are left out.
+
+typedef struct {
+    const u8* code;      // cromo_code: where the offsets count from
+    u64 size;
+    u64 count;
+    const u32* offsets;  // where each point starts, in order
+    const u32* chains;   // its first frame, or none
+    const u32* frames;   // name, file, line | 1 << 31 when a caller follows
+    const char* strings;
+} TraceTable;
+
+extern const TraceTable cromo_trace_table;
+
+#define TRACE_FRAMES 63
+#define TRACE_MORE 0x80000000u
+#define CRASH_STACK (64u << 10)  // the room of the handler of a stack overflow
+
+// D340: in front of the object of every exception, the stack of its throw.
+typedef struct {
+    u64 count;
+    void* frames[TRACE_FRAMES];
+} ExceptionTrace;
+
+#ifdef _WIN32
+
+// D341: the unwind tables, which LLVM writes for every function of Windows. The
+// first address is in the caller of this function.
+static u32 traceCapture(void** frames, u32 most) { return RtlCaptureStackBackTrace(1, most, frames, 0); }
+
+#else
+
+// D341: the chain of the frame pointers, from `frame`: the frame pointer saved at
+// its address, then the return address.
+static u32 traceWalk(void** frame, void** frames, u32 count, u32 most) {
+    while (frame && count < most) {
+        void* back = frame[1];
+        if (!back) break;
+        frames[count++] = back;
+        void** next = (void**)frame[0];
+        if (next <= frame || (u64)((u8*)next - (u8*)frame) > ((u64)64 << 20) || ((u64)next & 7)) break;
+        frame = next;
+    }
+    return count;
+}
+
+static __attribute__((noinline)) u32 traceCapture(void** frames, u32 most) {
+    return traceWalk((void**)__builtin_frame_address(0), frames, 0, most);
+}
+
+#endif
+
+static void putText(const char* text) {
+    u64 size = 0;
+    while (text[size]) ++size;
+    put(2, (const u8*)text, size);
+}
+
+// The frames of the program at a return address, from the innermost, or none.
+static const u32* traceFind(const void* address) {
+    const TraceTable* table = &cromo_trace_table;
+    const u8* at = (const u8*)address;
+    if (at <= table->code || (u64)(at - table->code) > table->size) return 0;
+    u64 offset = (u64)(at - table->code) - 1;  // inside the call
+    u64 low = 0;
+    u64 high = table->count;
+    while (low < high) {
+        u64 middle = (low + high) / 2;
+        if (table->offsets[middle] <= offset) {
+            low = middle + 1;
+        } else {
+            high = middle;
+        }
+    }
+    if (low == 0 || table->chains[low - 1] == 0xFFFFFFFF) return 0;
+    return table->frames + 3 * (u64)table->chains[low - 1];
+}
+
+static void traceRepeats(u64 repeats) {
+    if (repeats == 0) return;
+    putText("    ... the same ");
+    cromo_fmt_int(2, repeats, 0, 0);
+    putText(repeats == 1 ? " more time\n" : " more times\n");
+}
+
+// A line for each frame of the program, "    at main (main.cro:12)": the same
+// frame one after the other, as in a recursion, is written once.
+static void tracePrint(void* const* frames, u32 count) {
+    const char* strings = cromo_trace_table.strings;
+    const u32* last = 0;
+    u64 repeats = 0;
+    for (u32 i = 0; i < count; ++i) {
+        const u32* frame = traceFind(frames[i]);
+        for (; frame; frame += 3) {
+            if (last && frame[0] == last[0] && frame[1] == last[1] && frame[2] == last[2]) {
+                ++repeats;
+            } else {
+                traceRepeats(repeats);
+                repeats = 0;
+                putText("    at ");
+                putText(strings + frame[0]);
+                putText(" (");
+                putText(strings + frame[1]);
+                putText(":");
+                cromo_fmt_int(2, frame[2] & ~TRACE_MORE, 0, 0);
+                putText(")\n");
+                last = frame;
+            }
+            if (!(frame[2] & TRACE_MORE)) break;
+        }
+    }
+    traceRepeats(repeats);
+    if (count == TRACE_FRAMES) putText("    ...\n");
+}
+
 // Where a panic happens: "<file>:<line>:<column>", a constant built by the compiler.
 typedef struct {
     const u8* text;
@@ -1077,6 +1201,8 @@ static NORETURN void panicEnd(const Where* where) {
         put(2, where->text, where->size);
     }
     put(2, (const u8*)"\n", 1);
+    void* frames[TRACE_FRAMES];
+    tracePrint(frames, traceCapture(frames, TRACE_FRAMES));  // D339
     flush(2);
     exitProcess(101);
 }
@@ -1098,18 +1224,23 @@ NORETURN void cromo_panic_index(i64 index, i64 length, const Where* where) {
     panicEnd(where);
 }
 
-static NORETURN void uncaught(const char* prefix, u32 prefixSize, const u8* message, u64 size) {
+// With the stack of its throw (D340).
+static NORETURN void uncaught(const char* prefix, u32 prefixSize, const u8* message, u64 size, const void* object) {
     sharedAcquire(&printLock);
     flush(1);
     put(2, (const u8*)prefix, prefixSize);
     put(2, message, size);
     put(2, (const u8*)"\n", 1);
+    const ExceptionTrace* trace = (const ExceptionTrace*)object - 1;
+    tracePrint(trace->frames, (u32)trace->count);
     flush(2);
     exitProcess(1);
 }
 
 // D121: an exception that leaves main, with its message; exit code 1.
-NORETURN void cromo_uncaught(const u8* message, u64 size) { uncaught("uncaught exception: ", 20, message, size); }
+NORETURN void cromo_uncaught(const u8* message, u64 size, const void* object) {
+    uncaught("uncaught exception: ", 20, message, size, object);
+}
 
 // ---- Heap, for list and string (D98) ----
 
@@ -1264,6 +1395,17 @@ void cromo_free(void* memory) {
     heapLockRelease();
 }
 
+// The object of an exception, made by throw with the stack where it is (D340).
+void* cromo_exception_new(i64 size) {
+    ExceptionTrace* trace = cromo_alloc((i64)sizeof(ExceptionTrace) + size);
+    trace->count = traceCapture(trace->frames, TRACE_FRAMES);
+    return trace + 1;
+}
+
+void cromo_exception_free(void* object) {
+    if (object) cromo_free((ExceptionTrace*)object - 1);
+}
+
 // ---- Threads and tasks (D214, D217, D269) ----
 
 // What the library keeps of a thread, of a task and of a group: the code and the
@@ -1306,7 +1448,12 @@ typedef struct {
 #endif
 } ThreadRecord;
 
-static void runThread(ThreadRecord* thread) { thread->head.code(thread->head.env, thread->head.raised); }
+static void crashStack(ThreadRecord* thread);
+
+static void runThread(ThreadRecord* thread) {
+    crashStack(thread);
+    thread->head.code(thread->head.env, thread->head.raised);
+}
 
 static NORETURN void threadFailure(void) {
     static const char text[] = "cannot start a thread: the system has no resources for it";
@@ -1380,7 +1527,10 @@ static void startSystemThread(ThreadRecord* thread) {
     i64 stack = systemCall(SYS_mmap, 0, (i64)THREAD_STACK, 3, 0x22 | 0x20000, -1, 0);  // MAP_PRIVATE|ANONYMOUS|STACK
     if (stack < 0 && stack > -4096) threadFailure();
     thread->stack = (u8*)stack;
-    systemCall(SYS_mprotect, stack, 4096, 0, 0, 0, 0);  // a guard page under the stack
+    // At the bottom a guard page, the stack of SIGSEGV, and a guard page under the
+    // stack of the thread (crashStack).
+    systemCall(SYS_mprotect, stack, 4096, 0, 0, 0, 0);
+    systemCall(SYS_mprotect, stack + 4096 + CRASH_STACK, 4096, 0, 0, 0, 0);
     thread->block.self = &thread->block;
     if (cloneThread(thread, thread->stack + THREAD_STACK) < 0) threadFailure();
 }
@@ -1422,6 +1572,104 @@ static void startRuntimeThread(ThreadRecord* thread, void (*code)(void*, void*),
     thread->head.kind = KIND_THREAD;
     startSystemThread(thread);
 }
+
+// ---- Stack overflow (D339) ----
+//
+// A panic with the stack trace, as the others. Windows calls a vectored handler
+// on the stack that overflowed, in the room that SetThreadStackGuarantee keeps for
+// each thread and each fiber; Linux sends SIGSEGV, which runs on a stack of its
+// own for each thread.
+
+static NORETURN void stackOverflow(void** frames, u32 count) {
+    panicStart();
+    putText("stack overflow\n");
+    tracePrint(frames, count);
+    flush(2);
+    exitProcess(101);
+}
+
+#ifdef _WIN32
+
+typedef struct {
+    u32 code;  // the rest of EXCEPTION_RECORD is not read
+} ExceptionRecord;
+
+typedef struct {
+    ExceptionRecord* record;
+    void* context;
+} ExceptionPointers;
+
+static i32 WINAPI crashHandler(ExceptionPointers* exception) {
+    if (exception->record->code != 0xC00000FD) return 0;  // not EXCEPTION_STACK_OVERFLOW: the others go on
+    void* frames[TRACE_FRAMES];
+    stackOverflow(frames, traceCapture(frames, TRACE_FRAMES));
+}
+
+static void crashStack(ThreadRecord* thread) {
+    (void)thread;
+    u32 size = CRASH_STACK;
+    SetThreadStackGuarantee(&size);
+}
+
+static void crashStart(void) {
+    AddVectoredExceptionHandler(1, (void*)crashHandler);
+    crashStack(0);
+}
+
+#else
+
+typedef struct {
+    void* handler;
+    u64 flags;
+    void (*restorer)(void);
+    u64 mask;
+} SignalAction;
+
+typedef struct {
+    void* base;
+    i32 flags;
+    i32 unused;
+    u64 size;
+} SignalStack;
+
+void cromo_sigreturn(void);  // mem_x64.S
+
+static u8 mainCrashStack[CRASH_STACK];
+
+// An address near the stack pointer is the guard page of a stack: other faults,
+// of C code, end the program as usual, faulting again without this handler.
+static void crashHandler(i32 signal, void* info, void* context) {
+    (void)signal;
+    u64 address = *(u64*)((u8*)info + 16);        // si_addr
+    u64* registers = (u64*)((u8*)context + 40);   // the gregs of uc_mcontext
+    u64 sp = registers[15];
+    u64 distance = address > sp ? address - sp : sp - address;
+    if (distance > ((u64)1 << 20)) {
+        SignalAction usual = {0, 0, 0, 0};
+        systemCall(SYS_rt_sigaction, 11, (i64)&usual, 0, 8, 0, 0);
+        return;
+    }
+    void* frames[TRACE_FRAMES];
+    frames[0] = (void*)(registers[16] + 1);  // where it stopped, as if a call returned there
+    stackOverflow(frames, traceWalk((void**)registers[10], frames, 1, TRACE_FRAMES));
+}
+
+static void crashStack(ThreadRecord* thread) {
+    SignalStack stack = {thread ? thread->stack + 4096 : mainCrashStack, 0, 0, CRASH_STACK};
+    systemCall(SYS_sigaltstack, (i64)&stack, 0, 0, 0, 0, 0);
+}
+
+static void crashStart(void) {
+    crashStack(0);
+    // SA_SIGINFO, SA_ONSTACK and SA_RESTORER, without the C library to give it.
+    SignalAction action = {(void*)crashHandler, 0x4 | 0x08000000 | 0x04000000, cromo_sigreturn, 0};
+    systemCall(SYS_rt_sigaction, 11, (i64)&action, 0, 8, 0, 0);
+}
+
+#endif
+
+// Called first by cromo_start (codegen.cpp).
+void cromo_runtime_start(void) { crashStart(); }
 
 // ---- Conditions: a thread of the system sleeps until another calls it ----
 
@@ -1642,7 +1890,10 @@ static NORETURN void stackMain(Stack* stack);
 
 #define FIBER_FLAG_FLOAT_SWITCH 1
 
-static void WINAPI fiberMain(void* parameter) { stackMain(parameter); }
+static void WINAPI fiberMain(void* parameter) {
+    crashStack(0);  // for each fiber its own room
+    stackMain(parameter);
+}
 
 static Stack* newStack(void) {
     Stack* stack = cromo_alloc(sizeof(Stack));
@@ -1886,7 +2137,7 @@ static void freeException(void** raised) {
     void** descriptor = (void**)raised[1];
     void (*drop)(void*) = (void (*)(void*))descriptor[0];
     if (drop) drop(raised[0]);
-    cromo_free(raised[0]);
+    cromo_exception_free(raised[0]);
     raised[0] = 0;
     raised[1] = 0;
 }
@@ -2383,8 +2634,8 @@ NORETURN void cromo_thread_uncaught(Runnable* record) {
     void (*message)(Text*, void*) = (void (*)(Text*, void*))table[0];
     Text text;
     message(&text, object);
-    if (record->kind == KIND_THREAD) uncaught("uncaught exception in a thread: ", 32, text.data, (u64)text.length);
-    uncaught("uncaught exception in a task: ", 30, text.data, (u64)text.length);
+    if (record->kind == KIND_THREAD) uncaught("uncaught exception in a thread: ", 32, text.data, (u64)text.length, object);
+    uncaught("uncaught exception in a task: ", 30, text.data, (u64)text.length, object);
 }
 
 // ---- The poller: the timers, and the waits for the network (D269) ----

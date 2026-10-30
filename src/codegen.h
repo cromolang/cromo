@@ -10,7 +10,9 @@ namespace cromo {
 
 struct CodegenOptions {
     std::vector<std::string> sourcePaths;  // by SourceLocation::file, shown in panic messages (D62)
-    bool release = false;    // D57: no overflow checks, integers wrap around
+    std::vector<std::string> debugPaths;   // by SourceLocation::file: the full paths, for a debugger (D338)
+    bool release = false;    // D57: no overflow checks, integers wrap around; D338: only the lines
+    bool optimized = true;
     Target target = hostTarget();
 };
 

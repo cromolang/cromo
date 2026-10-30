@@ -1677,6 +1677,39 @@ lines.close()
 ### D337. The errors of the atomics
 *2026-10-30.* `thread.Atomic<f64>`, or any `T` that is not an integer or a bool, is an error where the type is written; `add` of an `Atomic<bool>` is an error at the call.
 
+### D338. Debug information: lines and variables
+*2026-10-30.* Every build without `--release` carries the lines, the functions and the local variables, with the types of Cromo, for a debugger: a PDB next to the `.exe` on Windows, for Visual Studio, WinDbg and VS Code, and DWARF in the executable on Linux, for gdb and lldb. With `-O2` a debugger can find some variables "optimized out"; `-O0` keeps them all.
+
+### D339. Stack traces always, also with `--release`
+*2026-10-30.* A panic, an exception that nobody catches and a stack overflow print the calls that led there, with function, file and line, as Go does. The compiler writes a compact table in the executable, which the runtime reads: no PDB or DWARF is needed when the program runs.
+
+### D340. An uncaught exception prints the stack of its `throw`
+*2026-10-30.* The exceptions of Cromo go up through the return values (D36), so when one reaches `main` the stack where it started is gone: `throw` saves the return addresses, and an exception that nobody catches prints them. `throw` without a value, in a `catch`, keeps the stack of the first one.
+
+### D341. Walking the stack: frame pointers on Linux, the tables of Windows
+*2026-10-30.* On Linux every function keeps its frame pointer, and the runtime follows their chain: a few lines of C, about 1% slower, as Go and the distributions of Fedora and Ubuntu. On Windows LLVM places the frame pointer at a distance from the saved one that only the unwind tables know (`lea rbp, [rsp+128]`), so there the runtime asks `RtlCaptureStackBackTrace` of kernel32, which reads the tables that the ABI of Windows requires anyway: no cost when the program runs.
+
+### D342. The form of a stack trace
+*2026-10-30.* After the message, a line for each frame from the innermost, `    at main (main.cro:12)`, with the functions that the optimizer put inside others. The same frame one after the other, as in a recursion, is written once and then `    ... the same 57 more times`. The frames of the runtime and of C are left out; after 63 return addresses the trace ends with `    ...`.
+
+### D343. The names in a stack trace
+*2026-10-30.* As in the source: `main`, `Point.area`, `list<i64>.add`, `Point.Point` for a constructor and `Point.~Point` for a destructor, as in C++, `main.lambda` for a lambda written in `main`, and `fs.copy` for a function of another module; the functions of the program are written without the name of its module.
+
+### D344. A stack overflow is a panic
+*2026-10-30.* `panic: stack overflow` with the stack trace, and exit code 101, as the other errors of the program (D62). On Linux any other fault of memory, which only C code can cause, ends the program as usual, with its signal.
+
+### D345. The files: full paths for a debugger, as written in a trace
+*2026-10-30.* The debug information names each file with its full path, so that a debugger finds it from any folder; a stack trace writes it as the panics do (D62): as given to `cromo`, and `cromo:core.cro` for the library.
+
+### D346. `this` and the fields of strings and lists in a debugger
+*2026-10-30.* The object of a method has no name in Cromo (D70): a debugger shows it as `this`, as in C++. A `string` or a `list` shows its fields, `data`, `length` and `capacity`; a view of their text and of their elements, for Visual Studio and gdb, can come later.
+
+### D347. `throw` keeps 63 return addresses, also with `--release`
+*2026-10-30.* In front of the object of each exception, 512 bytes: the walk of the stack costs well under a microsecond with the frame pointers of Linux and a few microseconds with the tables of Windows, small next to the work that an exception reports.
+
+### D348. On Windows the DWARF stays in the executables without `--release`
+*2026-10-30.* The table of the stack traces is made from the DWARF, the PDB from CodeView. Without the DWARF a small executable built without `--release` was taken for malware by Bitdefender, which quarantined it and then blocked its path; with it, never, and neither the executables of `--release`, which have neither. So it stays, about as large as the code, which the debuggers of Windows ignore; `--release` has none.
+
 ---
 
 ## Open

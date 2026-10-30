@@ -1,0 +1,31 @@
+// A panic prints the calls that led to it (D339): the functions inlined by LLVM
+// too, and a recursion once, with how many times it repeats.
+// expect-exit: 101
+// expect-stderr: panic: index out of bounds: the index is 5 but the length is 3
+// expect-stderr:     at Point.at (
+// expect-stderr: trace_panic.cro:14)
+// expect-stderr:     at deep (
+// expect-stderr:     ... the same 2 more times
+// expect-stderr:     at main (
+struct Point {
+    i64 x
+
+    i64 at(list<i64> values) const {
+        ret values[x]
+    }
+}
+
+i64 deep(list<i64> values, i64 n) {
+    if (n == 0) {
+        Point p
+        p.x = 5
+        ret p.at(values)
+    }
+    ret deep(values, n - 1) + 1
+}
+
+i32 main() {
+    list<i64> values = [1, 2, 3]
+    println("{}", deep(values, 3))
+    ret 0
+}

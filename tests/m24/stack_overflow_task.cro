@@ -1,0 +1,18 @@
+// A stack overflow in a task, on the stack of the task (D272, D339).
+// expect-exit: 101
+// expect-stderr: panic: stack overflow
+// expect-stderr:     at down (
+import std.thread
+
+i64 down(i64 n) {
+    i64[16] pad
+    pad[n % 16] = n
+    ret down(n + 1) + pad[0]
+}
+
+i32 main() {
+    thread.Task t = thread.Task([]() { println("{}", down(0)) })
+    t.start()
+    t.join()
+    ret 0
+}

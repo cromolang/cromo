@@ -4,6 +4,8 @@
 #include "installation.h"
 
 #include <llvm/Analysis/TargetLibraryInfo.h>
+#include <llvm/DebugInfo/DIContext.h>
+#include <llvm/DebugInfo/DWARF/DWARFContext.h>
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/LegacyPassManager.h>
 #include <llvm/IR/Module.h>
@@ -28,8 +30,12 @@
 #include <lld/Common/Driver.h>
 
 #include <algorithm>
+#include <cstdint>
+#include <map>
 #include <memory>
 #include <optional>
+#include <set>
+#include <tuple>
 #include <vector>
 
 LLD_HAS_DRIVER(coff)
@@ -99,6 +105,193 @@ bool emitObject(llvm::Module& module, llvm::TargetMachine& machine, const std::s
     passes.run(module);
     out.flush();
     return true;
+}
+
+// ---- The table of the stack traces (D339) ----
+//
+// The runtime turns a return address into functions, files and lines without the
+// debug information: for the code of the program, from the label cromo_code at the
+// start of its section (codegen.cpp), the points where the line or the inlined
+// calls change, each with its frames from the innermost. It is made from the DWARF
+// of the object, which has the lines on both systems, and linked as an object of
+// its own:
+//   cromo_trace_table = { code, size, count, offsets[count], chains[count],
+//                         frames[3 each: name, file, line | 1 << 31 if a caller follows],
+//                         strings }
+
+struct TraceFrame {
+    std::string function;
+    std::string file;
+    uint32_t line = 0;
+    bool operator<(const TraceFrame& other) const {
+        return std::tie(function, file, line) < std::tie(other.function, other.file, other.line);
+    }
+    bool operator==(const TraceFrame& other) const {
+        return function == other.function && file == other.file && line == other.line;
+    }
+};
+
+std::string irBytes(const std::string& bytes) {
+    std::string out = "c\"";
+    for (unsigned char c : bytes) {
+        if (c == '"' || c == '\\' || c < 0x20 || c >= 0x7F) {
+            const char* hex = "0123456789ABCDEF";
+            out += '\\';
+            out += hex[c >> 4];
+            out += hex[c & 0xF];
+        } else {
+            out += static_cast<char>(c);
+        }
+    }
+    return out + "\"";
+}
+
+// A path compared whatever its separators: DWARF joins the folder and the name.
+std::string samePath(std::string path) {
+    std::replace(path.begin(), path.end(), '\\', '/');
+    return path;
+}
+
+std::string irNumbers(const std::vector<uint32_t>& numbers) {
+    std::string out = "[" + std::to_string(numbers.size()) + " x i32] [";
+    for (size_t i = 0; i < numbers.size(); ++i) out += (i ? ", i32 " : "i32 ") + std::to_string(numbers[i]);
+    return out + "]";
+}
+
+// The IR of the table, from the object of the program.
+bool traceTableIr(const std::string& objectPath, const BackendOptions& options, std::string& ir, std::string& error) {
+    llvm::ErrorOr<std::unique_ptr<llvm::MemoryBuffer>> data = llvm::MemoryBuffer::getFile(objectPath);
+    if (!data) {
+        error = "cannot read " + objectPath + ": " + data.getError().message();
+        return false;
+    }
+    llvm::Expected<std::unique_ptr<llvm::object::ObjectFile>> object =
+        llvm::object::ObjectFile::createObjectFile((*data)->getMemBufferRef());
+    if (!object) {
+        error = "internal error: cannot read the object: " + llvm::toString(object.takeError());
+        return false;
+    }
+    uint64_t section = UINT64_MAX;
+    uint64_t anchor = 0;
+    uint64_t size = 0;
+    for (const llvm::object::SymbolRef& symbol : (*object)->symbols()) {
+        llvm::Expected<llvm::StringRef> name = symbol.getName();
+        if (!name) {
+            llvm::consumeError(name.takeError());
+            continue;
+        }
+        if (*name != "cromo_code") continue;
+        llvm::Expected<llvm::object::section_iterator> place = symbol.getSection();
+        llvm::Expected<uint64_t> address = symbol.getAddress();
+        if (!place || !address || *place == (*object)->section_end()) {
+            if (!place) llvm::consumeError(place.takeError());
+            if (!address) llvm::consumeError(address.takeError());
+            break;
+        }
+        section = (*place)->getIndex();
+        anchor = *address;
+        size = (*place)->getAddress() + (*place)->getSize() - anchor;
+    }
+    if (section == UINT64_MAX) {
+        error = "internal error: the object has no label cromo_code";
+        return false;
+    }
+
+    std::map<std::string, std::string> names;
+    for (const auto& [path, name] : options.fileNames) names[samePath(path)] = name;
+    std::unique_ptr<llvm::DWARFContext> dwarf = llvm::DWARFContext::create(**object);
+    std::set<uint64_t> starts;
+    for (const std::unique_ptr<llvm::DWARFUnit>& unit : dwarf->compile_units()) {
+        const llvm::DWARFDebugLine::LineTable* lines = dwarf->getLineTableForUnit(unit.get());
+        if (!lines) continue;
+        for (const llvm::DWARFDebugLine::Row& row : lines->Rows) {
+            if (!row.EndSequence && row.Address.SectionIndex == section && row.Address.Address >= anchor) {
+                starts.insert(row.Address.Address);
+            }
+        }
+    }
+
+    llvm::DILineInfoSpecifier spec(llvm::DILineInfoSpecifier::FileLineInfoKind::AbsoluteFilePath,
+                                   llvm::DILineInfoSpecifier::FunctionNameKind::ShortName);
+    std::vector<uint32_t> offsets, chains, frames;
+    std::map<std::vector<TraceFrame>, uint32_t> chainIndex;
+    std::map<std::string, uint32_t> stringIndex;
+    std::string strings;
+    auto text = [&](const std::string& value) {
+        auto found = stringIndex.find(value);
+        if (found != stringIndex.end()) return found->second;
+        uint32_t offset = static_cast<uint32_t>(strings.size());
+        strings += value;
+        strings += '\0';
+        stringIndex[value] = offset;
+        return offset;
+    };
+    std::vector<TraceFrame> previous;
+    bool first = true;
+    for (uint64_t address : starts) {
+        llvm::DIInliningInfo info = dwarf->getInliningInfoForAddress({address, section}, spec);
+        std::vector<TraceFrame> chain;
+        for (uint32_t i = 0; i < info.getNumberOfFrames(); ++i) {
+            const llvm::DILineInfo& line = info.getFrame(i);
+            if (line.FunctionName == "cromo_start") continue;  // the entry point (codegen.cpp)
+            auto shown = names.find(samePath(line.FileName));
+            std::string function = line.FunctionName == llvm::DILineInfo::BadString ? "?" : line.FunctionName;
+            chain.push_back({function, shown == names.end() ? line.FileName : shown->second, line.Line});
+        }
+        if (!chain.empty() && chain.front().line == 0) continue;  // code of no line: the point before holds
+        if (!first && chain == previous) continue;
+        first = false;
+        previous = chain;
+        offsets.push_back(static_cast<uint32_t>(address - anchor));
+        if (chain.empty()) {
+            chains.push_back(UINT32_MAX);
+            continue;
+        }
+        auto found = chainIndex.find(chain);
+        if (found != chainIndex.end()) {
+            chains.push_back(found->second);
+            continue;
+        }
+        uint32_t index = static_cast<uint32_t>(frames.size() / 3);
+        chainIndex[chain] = index;
+        chains.push_back(index);
+        for (size_t i = 0; i < chain.size(); ++i) {
+            frames.push_back(text(chain[i].function));
+            frames.push_back(text(chain[i].file));
+            frames.push_back(chain[i].line | (i + 1 < chain.size() ? 0x80000000u : 0));
+        }
+    }
+    if (strings.empty()) strings += '\0';
+    ir = "@cromo_code = external global i8\n";
+    ir += "@cromo.trace.offsets = private unnamed_addr constant " + irNumbers(offsets) + "\n";
+    ir += "@cromo.trace.chains = private unnamed_addr constant " + irNumbers(chains) + "\n";
+    ir += "@cromo.trace.frames = private unnamed_addr constant " + irNumbers(frames) + "\n";
+    ir += "@cromo.trace.strings = private unnamed_addr constant [" + std::to_string(strings.size()) + " x i8] " +
+          irBytes(strings) + "\n";
+    ir += "@cromo_trace_table = constant { ptr, i64, i64, ptr, ptr, ptr, ptr } { ptr @cromo_code, i64 " +
+          std::to_string(size) + ", i64 " + std::to_string(offsets.size()) +
+          ", ptr @cromo.trace.offsets, ptr @cromo.trace.chains, ptr @cromo.trace.frames, ptr @cromo.trace.strings }\n";
+    return true;
+}
+
+bool emitTraceTable(const std::string& objectPath, const BackendOptions& options, llvm::TargetMachine& machine,
+                    const std::string& tablePath, std::string& error) {
+    std::string ir;
+    if (!traceTableIr(objectPath, options, ir, error)) return false;
+    llvm::LLVMContext context;
+    llvm::SMDiagnostic diagnostic;
+    auto buffer = llvm::MemoryBuffer::getMemBuffer(ir, "cromo.trace", false);
+    std::unique_ptr<llvm::Module> module = llvm::parseIR(buffer->getMemBufferRef(), diagnostic, context);
+    if (!module) {
+        std::string text;
+        llvm::raw_string_ostream stream(text);
+        diagnostic.print("cromo", stream);
+        error = "internal error: the table of the stack traces is not valid:\n" + text;
+        return false;
+    }
+    module->setTargetTriple(machine.getTargetTriple());
+    module->setDataLayout(machine.createDataLayout());
+    return emitObject(*module, machine, tablePath, error);
 }
 
 // The functions of kernel32 that the runtime imports: the `__imp_` symbols that
@@ -186,8 +379,8 @@ bool runLld(const std::vector<std::string>& args, std::string& error) {
     return true;
 }
 
-bool linkWindows(const std::string& objectPath, const std::string& runtimePath, const BackendOptions& options,
-                 std::vector<std::string>& temporaries, std::string& error) {
+bool linkWindows(const std::string& objectPath, const std::string& tablePath, const std::string& runtimePath,
+                 const BackendOptions& options, std::vector<std::string>& temporaries, std::string& error) {
     // The DLLs of the extern blocks, and kernel32 for the runtime.
     std::vector<ImportLibrary> imports = options.imports;
     auto kernel32 = std::find_if(imports.begin(), imports.end(), [](const ImportLibrary& i) { return i.dll == "kernel32.dll"; });
@@ -210,8 +403,16 @@ bool linkWindows(const std::string& objectPath, const std::string& runtimePath, 
         "/machine:x64",
         "/nodefaultlib",
         objectPath,
+        tablePath,
         runtimePath,
     };
+    // D338: the PDB next to the executable. /debug would keep the code that nothing
+    // calls. The DWARF, made for the table of the stack traces, stays in the
+    // executable too: without it Bitdefender takes the small ones for malware.
+    if (options.debugInfo) {
+        args.push_back("/debug");
+        args.push_back("/opt:ref");
+    }
     for (const std::string& archive : options.archives) args.push_back(archive);
     for (const ImportLibrary& import : imports) {
         std::string path = options.outputPath + "." + import.dll.substr(0, import.dll.size() - 4) + ".lib";
@@ -225,9 +426,10 @@ bool linkWindows(const std::string& objectPath, const std::string& runtimePath, 
 // A static executable at a fixed address, without the dynamic loader (D142, D145).
 // The static libraries of the extern blocks come before the runtime, because
 // their C code can call memcpy and the other functions of mem_x64.S.
-bool linkLinux(const std::string& objectPath, const std::string& runtimePath, const BackendOptions& options,
-               std::string& error) {
-    std::vector<std::string> args = {"ld.lld", "-o", options.outputPath, "-e", "_start", "-static", objectPath};
+bool linkLinux(const std::string& objectPath, const std::string& tablePath, const std::string& runtimePath,
+               const BackendOptions& options, std::string& error) {
+    std::vector<std::string> args = {"ld.lld", "-o", options.outputPath, "-e", "_start", "-static", objectPath, tablePath};
+    if (!options.debugInfo) args.push_back("--strip-debug");  // D338: only the table of the stack traces
     for (const std::string& archive : options.archives) args.push_back(archive);
     args.push_back(runtimePath);
     return runLld(args, error);
@@ -287,11 +489,18 @@ bool buildExecutable(const std::string& irText, const std::string& moduleName, c
     std::string objectPath = options.outputPath + (linux ? ".o" : ".obj");
     std::string runtimePath = runtimeLibraryPath(options.target).string();  // in lib/ (D237)
     if (!emitObject(*module, *machine, objectPath, error)) return false;
+    std::string tablePath = options.outputPath + (linux ? ".trace.o" : ".trace.obj");
+    if (!emitTraceTable(objectPath, options, *machine, tablePath, error)) {
+        llvm::sys::fs::remove(objectPath);
+        llvm::sys::fs::remove(tablePath);
+        return false;
+    }
 
     std::vector<std::string> temporaries;
-    bool linked = linux ? linkLinux(objectPath, runtimePath, options, error)
-                        : linkWindows(objectPath, runtimePath, options, temporaries, error);
+    bool linked = linux ? linkLinux(objectPath, tablePath, runtimePath, options, error)
+                        : linkWindows(objectPath, tablePath, runtimePath, options, temporaries, error);
     for (const std::string& path : temporaries) llvm::sys::fs::remove(path);
+    llvm::sys::fs::remove(tablePath);
     if (!options.keepObject) llvm::sys::fs::remove(objectPath);
     return linked;
 }

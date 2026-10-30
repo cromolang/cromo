@@ -1,0 +1,21 @@
+// An exception that no join() takes, in a task: its stack, with the lambda named
+// after the function where it is written (D339, D340).
+// expect-exit: 1
+// expect-stderr: uncaught exception in a task: boom
+// expect-stderr:     at fail (
+// expect-stderr:     at main.lambda (
+import std.thread
+
+void fail(i64 n) {
+    if (n > 2) {
+        throw Error("boom")
+    }
+}
+
+i32 main() {
+    thread.Group work
+    for (i64 i = 0; i < 4; i++) {
+        work.start([i]() { fail(i) })
+    }
+    ret 0
+}

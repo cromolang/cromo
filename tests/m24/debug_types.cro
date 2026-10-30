@@ -1,0 +1,68 @@
+// The debug information of every kind of variable compiles (D338): enums with
+// data, arrays, maps, function values, interfaces, generics, captures, the data
+// of a case and the exception of a catch.
+// expect-output: 3 circle 2.5 [1, 2, 3] 7 ok 6
+enum Shape {
+    Circle(f64 radius)
+    Square(f64 side)
+    Empty
+}
+
+interface Named {
+    string label() const
+}
+
+struct Tag : Named {
+    string text
+
+    public string label() const {
+        ret text.copy()
+    }
+}
+
+struct Box<T> {
+    T item
+}
+
+T first<T>(list<T> items) {
+    ret items[0].copy()
+}
+
+string describe(Named n) {
+    ret n.label()
+}
+
+i32 main() {
+    i64[3] numbers
+    for (i64 i = 0; i < 3; i++) {
+        numbers[i] = i + 1
+    }
+    map<string, i32> ages
+    ages["anna"] = 3
+    Shape shape = Shape.Circle(2.5)
+    string text = ""
+    switch (shape) {
+    case Circle(f64 radius) {
+        text = format("circle {}", radius)
+    }
+    default {
+    }
+    }
+    Box<i64> box
+    box.item = 7
+    i64 offset = 1
+    func(i64) i64 add = [offset](i64 x) i64 { ret x + offset }
+    Tag tag
+    tag.text = "ok"
+    i64 sum = 0
+    for (string name, i32 age in ages) {
+        sum += age + name.len()
+    }
+    try {
+        throw Error("x")
+    } catch (Error e) {
+        sum += e.message().len() - 1
+    }
+    println("{} {} {:?} {} {} {}", ages["anna"], text, numbers, add(box.item - 1), describe(tag), first([sum - 1, 0]))
+    ret 0
+}
