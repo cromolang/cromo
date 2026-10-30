@@ -1,0 +1,72 @@
+// Atomics shared by tasks and threads (D328).
+// expect-output: count 40000
+// expect-output: wins 1
+// expect-output: flag true false
+// expect-output: swap 5 9 false
+// expect-output: small 44
+// expect-output: stopped true
+import std.thread
+import std.time
+
+void bump(thread.Atomic<i64> counter) {
+    for (i64 i = 0; i < 10000; i++) {
+        counter.add(1)
+    }
+}
+
+i64 countAll() {
+    thread.Atomic<i64> count
+    thread.Group workers
+    for (i64 w = 0; w < 3; w++) {
+        workers.start([count]() { bump(count) })
+    }
+    bump(count)
+    workers.wait()
+    ret count.load()
+}
+
+i32 main() {
+    println("count {}", countAll())
+
+    // Only one of the tasks finds 0.
+    thread.Atomic<i64> winner
+    thread.Atomic<i64> wins
+    thread.Group racers
+    for (i64 r = 1; r <= 8; r++) {
+        racers.start([winner, wins, r]() {
+            if (winner.compareExchange(0, r)) {
+                wins.add(1)
+            }
+        })
+    }
+    racers.wait()
+    println("wins {}", wins.load())
+
+    thread.Atomic<bool> flag
+    bool before = flag.exchange(true)
+    println("flag {} {}", flag.load(), before)
+
+    thread.Atomic<i64> slot = thread.Atomic<i64>(5)
+    i64 old = slot.exchange(9)
+    println("swap {} {} {}", old, slot.load(), slot.compareExchange(5, 1))
+
+    thread.Atomic<u8> small = thread.Atomic<u8>(250)
+    small.add(50)
+    println("small {}", small.load())
+
+    // A thread stopped by a flag.
+    thread.Atomic<bool> stop
+    thread.Atomic<i64> turns
+    thread.Thread spinner = thread.Thread([stop, turns]() {
+        for (!stop.load()) {
+            turns.add(1)
+            time.msleep(1)
+        }
+    })
+    spinner.start()
+    time.msleep(20)
+    stop.store(true)
+    spinner.join()
+    println("stopped {}", turns.load() > 0)
+    ret 0
+}

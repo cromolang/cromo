@@ -70,7 +70,8 @@ std::string floatConstant(double value, int bits) {
     return text;
 }
 
-// A Mutex, or a value that holds one: other threads write it through its address (D216).
+// A Mutex, a Channel, an Atomic, or a value that holds one: other threads write it
+// through its address (D216, D326, D328).
 bool isAddressed(Type type) {
     type = baseElement(type);
     return type.isStruct() && type.structDecl->addressed;
@@ -1872,6 +1873,24 @@ private:
         return llvmType(value.type) + " " + value.ref;
     }
 
+    // The atomic instructions take a bool as the byte it is in memory (D328).
+    static std::string atomicType(Type type) { return type.isBool() ? "i8" : llvmType(type); }
+
+    std::string atomicValue(const Expr& expr, Type type) {
+        std::string value = generateExpr(expr).ref;
+        if (!type.isBool()) return value;
+        std::string wide = temp();
+        inst(wide + " = zext i1 " + value + " to i8");
+        return wide;
+    }
+
+    Value atomicResult(const std::string& value, Type type) {
+        if (!type.isBool()) return {value, type};
+        std::string bit = temp();
+        inst(bit + " = trunc i8 " + value + " to i1");
+        return {bit, type};
+    }
+
     // The built-in functions: `panic` (D102) and the `unsafe` dialect (D98). A
     // struct result is written to `dest`.
     Value generateIntrinsic(const CallExpr& call, const std::string& dest) {
@@ -2064,6 +2083,38 @@ private:
             inst("call void @cromo_exit(i32 " + arg(0) + ")");
             term("unreachable");
             return {"", Type::voidType()};
+        case Intrinsic::AtomicLoad: {  // D328: all in the order of the sequence
+            std::string place = arg(0);
+            inst(result + " = load atomic " + atomicType(element) + ", ptr " + place + " seq_cst, align " +
+                 std::to_string(sizeOf(element)));
+            return atomicResult(result, element);
+        }
+        case Intrinsic::AtomicStore: {
+            std::string place = arg(0);
+            std::string value = atomicValue(*call.args[1], element);
+            inst("store atomic " + atomicType(element) + " " + value + ", ptr " + place + " seq_cst, align " +
+                 std::to_string(sizeOf(element)));
+            return {"", Type::voidType()};
+        }
+        case Intrinsic::AtomicAdd:
+        case Intrinsic::AtomicExchange: {
+            std::string place = arg(0);
+            std::string value = atomicValue(*call.args[1], element);
+            const char* operation = call.intrinsic == Intrinsic::AtomicAdd ? "add" : "xchg";
+            inst(result + " = atomicrmw " + operation + " ptr " + place + ", " + atomicType(element) + " " + value + " seq_cst");
+            return atomicResult(result, element);
+        }
+        case Intrinsic::AtomicCompareExchange: {
+            std::string place = arg(0);
+            std::string type = atomicType(element);
+            std::string expected = atomicValue(*call.args[1], element);
+            std::string desired = atomicValue(*call.args[2], element);
+            std::string pair = temp();
+            inst(pair + " = cmpxchg ptr " + place + ", " + type + " " + expected + ", " + type + " " + desired +
+                 " seq_cst seq_cst");
+            inst(result + " = extractvalue { " + type + ", i1 } " + pair + ", 1");
+            return {result, Type::boolType()};
+        }
         case Intrinsic::HashBytes: {  // D198
             std::string data = arg(0);
             inst(result + " = call i64 @cromo_hash_bytes(ptr " + data + ", i64 " + arg(1) + ")");

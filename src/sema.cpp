@@ -51,6 +51,8 @@ std::optional<Intrinsic> findIntrinsic(const std::string& name) {
         {"selfAddress", Intrinsic::SelfAddress}, {"equalAt", Intrinsic::EqualAt},
         {"jsonWrite", Intrinsic::JsonWrite}, {"jsonRead", Intrinsic::JsonRead}, {"debugWrite", Intrinsic::DebugWrite},
         {"taskStart", Intrinsic::TaskStart}, {"groupStart", Intrinsic::GroupStart},
+        {"atomicLoad", Intrinsic::AtomicLoad}, {"atomicStore", Intrinsic::AtomicStore}, {"atomicAdd", Intrinsic::AtomicAdd},
+        {"atomicExchange", Intrinsic::AtomicExchange}, {"atomicCompareExchange", Intrinsic::AtomicCompareExchange},
     };
     auto found = intrinsics.find(name);
     if (found == intrinsics.end()) return std::nullopt;
@@ -685,6 +687,10 @@ private:
         if (!checkConstraints(generic.typeParams, args, generic.name, useLoc) || tooDeep(args, generic.name, useLoc)) {
             return nullptr;
         }
+        if (isThreadType(generic, "Atomic") && !args[0].isParam() && !args[0].isInt() && !args[0].isBool()) {
+            diag_->error(useLoc, "thread.Atomic holds an integer or a bool, not " + args[0].name() + " (D328)");
+            return nullptr;
+        }
 
         auto instance = std::make_unique<StructDecl>();
         instance->name = instanceName(generic.name, args);
@@ -1136,10 +1142,9 @@ private:
         auto [size, align] = layoutFields(decl, decl.fields, destruct);
         decl.size = size;
         decl.align = align;
-        // A mutex is written by the threads through its address, also in a const
-        // method; so is what holds one (D216).
-        const StructDecl* generic = decl.generic ? decl.generic : &decl;
-        decl.addressed = generic->name == "Mutex" && fileOf(scopeOf(generic->loc.file)).name == "std.thread";
+        // A mutex, a channel and an atomic are written by the threads through their
+        // address, also in a const method; so is what holds one (D216, D326, D328).
+        decl.addressed = isThreadType(decl, "Mutex") || isThreadType(decl, "Channel") || isThreadType(decl, "Atomic");
         for (const FieldDecl& field : decl.fields) {
             Type base = baseElement(field.resolved);
             if (base.isStruct() && base.structDecl->addressed) decl.addressed = true;
@@ -1582,6 +1587,14 @@ private:
     bool isGroupStruct(const StructDecl& decl) const {
         return decl.name == "Group" && fileOf(scopeOf(decl.loc.file)).name == "std.thread";
     }
+
+    // The struct `name` of std.thread, or an instance of it.
+    bool isThreadType(const StructDecl& decl, const char* name) const {
+        const StructDecl& generic = decl.generic ? *decl.generic : decl;
+        return generic.name == name && fileOf(scopeOf(generic.loc.file)).name == "std.thread";
+    }
+
+    bool isChannel(Type type) const { return type.isStruct() && isThreadType(*type.structDecl, "Channel"); }
 
     // "thread" or "task", for the messages.
     static std::string threadWord(const Variable& variable) {
@@ -2342,6 +2355,10 @@ private:
         Type element = resolveType(statement.elementType).value_or(Type::error());
         bool ok = !list.isError() && !element.isError();
         if (ok && isMap(list)) return checkForMap(statement, list, element);
+        if (ok && isChannel(list)) {
+            scopes_.pop_back();
+            return checkForChannel(statement, list, element);
+        }
         if (ok && statement.hasValue) {
             diag_->error(statement.valueLoc, "only a 'for' over a map has a key and a value (D197)");
             ok = false;
@@ -2435,6 +2452,59 @@ private:
         if (path) loopBorrows_.pop_back();
         scopes_.pop_back();
         return Flow::Continues;
+    }
+
+    // `for (T v in channel)` (D327): the values received until the channel is
+    // closed and empty, each owned by the body. It becomes
+    //     for { T v; if (!channel.next(ref v)) { break } ... }
+    // with the channel read again at each turn: it is a variable or a field.
+    Flow checkForChannel(ForStmt& statement, Type channel, Type element) {
+        Type valueType = channel.structDecl->typeArgs[0];
+        bool ok = false;
+        if (statement.hasValue) {
+            diag_->error(statement.valueLoc, "only a 'for' over a map has a key and a value (D197)");
+        } else if (statement.isRef) {
+            diag_->error(statement.elementLoc, "the values of a channel belong to the loop that receives them: write for (" +
+                                                   valueType.name() + " " + statement.elementName + " in ...) (D327)");
+        } else if (element != valueType) {
+            diag_->error(statement.elementType.loc, "the values of this channel are " + valueType.name() + ": write for (" +
+                                                        valueType.name() + " " + statement.elementName + " in ...) (D327)");
+        } else if (!isPlace(*statement.list)) {
+            diag_->error(statement.list->loc, "a 'for' receives from a channel in a variable or in a field (D327)");
+        } else {
+            ok = true;
+        }
+        if (!ok) {  // the body is checked all the same
+            scopes_.emplace_back();
+            Variable* variable = declare(statement.elementName, Type::error(), statement.elementLoc, false);
+            statement.element = variable;
+            loops_.push_back(false);
+            checkBlock(statement.body);
+            loops_.pop_back();
+            scopes_.pop_back();
+            return Flow::Continues;
+        }
+
+        SourceLocation loc = statement.loc;
+        auto value = std::make_unique<VarDeclStmt>(statement.elementLoc);
+        value->typeName = statement.elementType;
+        value->name = statement.elementName;
+        value->nameLoc = statement.elementLoc;
+        auto next = std::make_unique<MethodCallExpr>(statement.list->loc, std::move(statement.list), "next");
+        next->args.push_back(std::make_unique<RefExpr>(
+            statement.elementLoc, std::make_unique<NameExpr>(statement.elementLoc, statement.elementName)));
+        auto stop = std::make_unique<IfStmt>(loc);
+        stop->condition = std::make_unique<UnaryExpr>(loc, UnaryOp::Not, std::move(next));
+        stop->thenBlock.open = loc;
+        stop->thenBlock.close = loc;
+        stop->thenBlock.statements.push_back(std::make_unique<BreakStmt>(loc));
+        std::vector<StmtPtr> body;
+        body.push_back(std::move(value));
+        body.push_back(std::move(stop));
+        for (StmtPtr& inner : statement.body.statements) body.push_back(std::move(inner));
+        statement.body.statements = std::move(body);
+        statement.form = ForForm::Infinite;
+        return checkFor(statement);
     }
 
     Flow checkFor(ForStmt& statement) {
@@ -2979,6 +3049,13 @@ private:
         if (!memberVisible(*method, *object.structDecl, call.loc)) {
             reportPrivate(call.loc, "method '" + call.method + "' of " + object.name());
             return Type::error();
+        }
+        if (call.method == "add" && isThreadType(*object.structDecl, "Atomic")) {  // D328
+            Type held = object.structDecl->typeArgs[0];
+            if (!held.isInt() && !held.isParam()) {
+                diag_->error(call.loc, "add() is for an atomic integer, not for " + object.name() + " (D328)");
+                return Type::error();
+            }
         }
         if (!method->typeParams.empty()) {  // its instance, with the type arguments written or deduced (D92)
             std::vector<Type> args;
@@ -3847,8 +3924,10 @@ private:
         call.intrinsic = kind;
         if (kind == Intrinsic::JsonWrite || kind == Intrinsic::JsonRead) return checkJson(call, kind == Intrinsic::JsonWrite);
         if (kind == Intrinsic::DebugWrite) return checkDebug(call);
+        bool atomic = kind == Intrinsic::AtomicLoad || kind == Intrinsic::AtomicStore || kind == Intrinsic::AtomicAdd ||
+                      kind == Intrinsic::AtomicExchange || kind == Intrinsic::AtomicCompareExchange;
         bool generic = kind == Intrinsic::SizeOf || kind == Intrinsic::Take || kind == Intrinsic::Put ||
-                       kind == Intrinsic::Destroy || kind == Intrinsic::CopyAt || kind == Intrinsic::EqualAt;
+                       kind == Intrinsic::Destroy || kind == Intrinsic::CopyAt || kind == Intrinsic::EqualAt || atomic;
         std::string what = "'" + call.callee + "'";
         if (generic) {
             std::vector<Type> args;
@@ -3941,7 +4020,24 @@ private:
             result = addr;
             break;
         case Intrinsic::ExitProcess: params = {{ParamMode::Read, "code", Type::intType(32, true)}}; break;
+        case Intrinsic::AtomicLoad: params = {{ParamMode::Read, "place", addr}}; result = element; break;  // D328
+        case Intrinsic::AtomicStore: params = {{ParamMode::Read, "place", addr}, {ParamMode::Read, "value", element}}; break;
+        case Intrinsic::AtomicAdd:
+        case Intrinsic::AtomicExchange:  // they return the value before
+            params = {{ParamMode::Read, "place", addr}, {ParamMode::Read, "value", element}};
+            result = element;
+            break;
+        case Intrinsic::AtomicCompareExchange:
+            params = {{ParamMode::Read, "place", addr}, {ParamMode::Read, "expected", element},
+                      {ParamMode::Read, "desired", element}};
+            result = Type::boolType();
+            break;
         case Intrinsic::None: break;
+        }
+        if (atomic && !element.isParam() && !element.isInt() && !element.isBool()) {
+            diag_->error(call.loc, what + " takes an integer or a bool, not " + element.name() + " (D328)");
+            checkIgnored(call.args);
+            return Type::error();
         }
 
         if (kind == Intrinsic::CopyAt && !element.isParam()) {  // D85: checked for each type

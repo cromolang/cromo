@@ -1,11 +1,18 @@
-// The module std.thread (D214-D217, D269, D273): threads, tasks, groups of tasks
-// and mutexes. The threads of the system and the workers of the tasks are in the
-// runtime; the compiler keeps a thread or a task whose lambda captures by address
-// in its block, and checks what the block does while it runs (D215).
+// The module std.thread (D214-D217, D269, D273, D326-D328): threads, tasks,
+// groups of tasks, mutexes, channels and atomics. The threads of the system and the
+// workers of the tasks are in the runtime; the compiler keeps a thread or a task
+// whose lambda captures by address in its block, and checks what the block does
+// while it runs (D215).
 import unsafe
 
 extern "cromo" {
     addr cromo_group_new()
+    addr cromo_channel_ensure(addr slot, i64 capacity, i64 size)
+    i64 cromo_channel_send(addr channel, addr value)     // 0: closed
+    i64 cromo_channel_receive(addr channel, addr value)  // 0: closed and empty
+    void cromo_channel_close(addr channel)
+    i64 cromo_channel_drain(addr channel, addr value)  // 0: empty
+    void cromo_channel_free(addr channel)
 }
 
 // A thread made from a lambda, started with start() and waited for with join().
@@ -165,5 +172,116 @@ public struct Mutex<T> {
             put<T>(place, move value)
             mutexUnlock(me)
         }
+    }
+}
+
+// Values passed from task to task and from thread to thread, in the order they are
+// sent (D326). It holds up to `capacity` values; with capacity 0, the default, the
+// sender waits until a receiver has the value. close() ends it (D327).
+public struct Channel<T> {
+    addr record  // of the runtime, made by the first use: the first field
+    i64 capacity
+
+    public Channel(i64 count) {
+        if (count < 0) {
+            panic(format("the capacity of a channel is 0 or more, found {} (D326)", count))
+        }
+        capacity = count
+    }
+
+    // The values still in the channel end with it.
+    ~Channel() {
+        addr none
+        if (record == none) {
+            ret
+        }
+        addr place = alloc(sizeOf<T>())
+        for (cromo_channel_drain(record, place) != 0) {
+            destroy<T>(place)
+        }
+        free(place)
+        cromo_channel_free(record)
+    }
+
+    // Waits while the channel is full; throws if it is closed (D327).
+    public void send(move T value) const {
+        addr place = alloc(sizeOf<T>())
+        put<T>(place, move value)
+        if (cromo_channel_send(own(), place) == 0) {
+            destroy<T>(place)
+            free(place)
+            throw Error("cannot send: the channel is closed (D327)")
+        }
+        free(place)
+    }
+
+    // Waits while the channel is empty; throws once it is closed and empty (D327).
+    public T receive() const {
+        addr place = alloc(sizeOf<T>())
+        if (cromo_channel_receive(own(), place) == 0) {
+            free(place)
+            throw Error("cannot receive: the channel is closed (D327)")
+        }
+        T value = take<T>(place)
+        free(place)
+        ret value
+    }
+
+    // As receive(), but false once the channel is closed and empty: the step of
+    // `for (T v in channel)`.
+    public bool next(ref T value) const {
+        addr place = alloc(sizeOf<T>())
+        bool received = cromo_channel_receive(own(), place) != 0
+        if (received) {
+            value = take<T>(place)
+        }
+        free(place)
+        ret received
+    }
+
+    // The values already sent can still be received; a second close() does nothing.
+    public void close() const {
+        cromo_channel_close(own())
+    }
+
+    addr own() const {
+        ret cromo_channel_ensure(selfAddress(), capacity, sizeOf<T>())
+    }
+}
+
+// An integer or a bool that the threads and the tasks read and write together,
+// each operation in the one order of the sequence (D328).
+public struct Atomic<T> {
+    T state
+
+    public Atomic(move T initial) {
+        state = move initial
+    }
+
+    // No copies: two threads would see two values.
+    ~Atomic() {
+    }
+
+    public T load() const {
+        ret atomicLoad<T>(selfAddress())
+    }
+
+    public void store(T value) const {
+        atomicStore<T>(selfAddress(), value)
+    }
+
+    // Adds, and returns the value before; an integer only.
+    public T add(T amount) const {
+        ret atomicAdd<T>(selfAddress(), amount)
+    }
+
+    // Writes the value, and returns the one before.
+    public T exchange(T value) const {
+        ret atomicExchange<T>(selfAddress(), value)
+    }
+
+    // Writes `desired` only if the value is `expected`: true if it did.
+    public bool compareExchange(T expected, T desired) const {
+        ret atomicCompareExchange<T>(selfAddress(), expected, desired)
     }
 }

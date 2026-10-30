@@ -1,0 +1,25 @@
+// The checks of the channels (D327) and of the atomics (D328).
+// expect-error: the values of a channel belong to the loop that receives them: write for (string s in ...) (D327)
+// expect-error: the values of this channel are string: write for (string t in ...) (D327)
+// expect-error: a 'for' receives from a channel in a variable or in a field (D327)
+// expect-error: thread.Atomic holds an integer or a bool, not f64 (D328)
+// expect-error: add() is for an atomic integer, not for Atomic<bool> (D328)
+import std.thread
+
+thread.Channel<string> make() {
+    ret thread.Channel<string>(1)
+}
+
+i32 main() {
+    thread.Channel<string> lines = thread.Channel<string>(1)
+    for (ref string s in lines) {
+    }
+    for (i64 t in lines) {
+    }
+    for (string u in make()) {
+    }
+    thread.Atomic<f64> real
+    thread.Atomic<bool> flag
+    flag.add(true)
+    ret 0
+}

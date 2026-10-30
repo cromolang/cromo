@@ -1630,6 +1630,53 @@ println("{:?}", [p, p])   // [Point { x: 1, y: 2 }, Point { x: 1, y: 2 }]
 ### D325. `map` and `filter` of a list
 *2026-10-30.* `list<T>` has `map<U>(func(T) U f)` and `filter(func(T) bool keep)`, which copies the elements that it keeps.
 
+### D326. `thread.Channel<T>`: a channel with a fixed capacity
+*2026-10-30.* It resolves the channels of D216. `thread.Channel<T>(16)` holds up to 16 values: `send()` waits while it is full, `receive()` while it is empty, as the buffered channels of Go; `thread.Channel<T>(0)` hands every value over, the sender waiting for a receiver. A task that waits leaves its thread to the others (D269). The tasks of a group, and the threads of a block, read the same channel.
+```
+thread.Channel<string> lines = thread.Channel<string>(16)
+thread.Group work
+work.start([lines]() {
+    for (string line in lines) {   // until close()
+        println("{}", line)
+    }
+})
+lines.send("a")
+lines.close()
+```
+
+### D327. The end of a channel
+*2026-10-30.* `close()` ends it: the values already in it can still be received, then `receive()` throws an exception, and `for (T v in channel)` ends by itself, which is the usual way to read a channel. `send()` to a closed channel throws. There are no optionals (D47).
+
+### D328. `thread.Atomic<T>`: the order of the sequence only
+*2026-10-30.* It resolves the atomic integers of D216. `thread.Atomic<T>` holds an integer or a bool, with `load`, `store`, `add`, `exchange` and `compareExchange`, all sequentially consistent, as `memory_order_seq_cst` of C++: simpler to explain, and almost always fast enough.
+
+### D329. The default channel has capacity 0
+*2026-10-30.* `thread.Channel<string> c` without a value is a channel of capacity 0, as `thread.Channel<string>(0)`: the runtime makes it at its first use, so the default value (D48) needs no constructor.
+
+### D330. A negative capacity is a panic
+*2026-10-30.* `thread.Channel<T>(-1)` stops the program with a panic, as an index out of range: it is an error of the program, not of its data.
+
+### D331. A second `close()` does nothing
+*2026-10-30.* In Go it is a panic; here two tasks that both end their work can close the same channel, which is harmless and simpler to explain.
+
+### D332. `next(ref v)`: receiving without the exception
+*2026-10-30.* `bool next(ref T v)` receives the next value into `v`, or returns false once the channel is closed and empty. It is the step of `for (T v in channel)`, and the way to receive without `try` when the end is expected.
+
+### D333. The value of `for (T v in channel)` belongs to the body
+*2026-10-30.* Unlike the elements of a list (D101), `v` is a local variable of the body: it can be modified or moved, for example sent to another channel. `ref` is an error, as there is nothing to modify in place. The channel is a variable or a field, read at each turn.
+
+### D334. A sender and close()
+*2026-10-30.* With capacity 0 the sender waits until a receiver has its value; if the channel is closed first, `send()` returns normally, and the value can still be received, or ends with the channel. A sender that waits on a full channel throws when it is closed, as `send()` to a closed channel (D327).
+
+### D335. `thread.Atomic<T>(x)`, the default value, no copies
+*2026-10-30.* The default value is 0 or `false`; `thread.Atomic<i64>(5)` starts from 5. An atomic cannot be copied, as a mutex: the copy would be a second value, which the other threads do not see.
+
+### D336. What the operations of an atomic return
+*2026-10-30.* `add` and `exchange` return the value before, as `fetch_add` and `exchange` of C++. `compareExchange(expected, desired)` returns only whether it wrote: C++ also writes the value seen into `expected`, here the program calls `load()`.
+
+### D337. The errors of the atomics
+*2026-10-30.* `thread.Atomic<f64>`, or any `T` that is not an integer or a bool, is an error where the type is written; `add` of an `Atomic<bool>` is an error at the call.
+
 ---
 
 ## Open

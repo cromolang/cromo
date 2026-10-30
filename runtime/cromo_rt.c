@@ -2186,6 +2186,130 @@ void cromo_mutex_unlock(void* state) {
     if (__atomic_exchange_n(word, 0, __ATOMIC_RELEASE) == 2) unpark(word, 0);
 }
 
+// ---- Channels (D326, D327) ----
+//
+// A ring of values of `size` bytes each, behind a lock of the runtime. Who finds
+// it full waits on `space`, who finds it empty on `values`: each counter changes
+// when a value leaves or arrives and at close(), and parkOn() waits only while it
+// is the one seen, as for the Mutex. A channel of capacity 0 has room for one
+// value, and its sender also waits on `taken` until a receiver has the value.
+
+typedef struct {
+    Lock lock;
+    u8* ring;
+    u64 size;      // of a value
+    u64 capacity;  // of the ring, at least 1
+    u64 head;      // where the first value is
+    u64 count;
+    u64 sent;      // capacity 0: the values sent so far
+    u64 received;  // and those received
+    u32 space;
+    u32 values;
+    u32 taken;
+    u32 closed;
+    u32 handover;  // capacity 0
+} Channel;
+
+// The channel of a Cromo Channel, made by the first use: the default value of the
+// struct has none, and two threads may use it first together.
+void* cromo_channel_ensure(void** slot, i64 capacity, i64 size) {
+    Channel* channel = __atomic_load_n((Channel**)slot, __ATOMIC_ACQUIRE);
+    if (channel) return channel;
+    Channel* made = cromo_alloc(sizeof(Channel));
+    u8* bytes = (u8*)made;
+    for (u64 i = 0; i < sizeof(Channel); ++i) bytes[i] = 0;
+    made->handover = capacity == 0;
+    made->capacity = capacity > 0 ? (u64)capacity : 1;
+    made->size = (u64)size;
+    made->ring = cromo_alloc((i64)(made->capacity * made->size));
+    Channel* none = 0;
+    if (__atomic_compare_exchange_n((Channel**)slot, &none, made, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) return made;
+    cromo_free(made->ring);
+    cromo_free(made);
+    return none;  // the channel that the other thread made
+}
+
+// Waits while the counter is still the one seen, with the lock of the channel left.
+static void channelWait(Channel* channel, u32* counter) {
+    u32 seen = __atomic_load_n(counter, __ATOMIC_RELAXED);
+    lockRelease(&channel->lock);
+    parkOn(counter, seen);
+    lockAcquire(&channel->lock);
+}
+
+static void channelChanged(u32* counter) { __atomic_store_n(counter, *counter + 1, __ATOMIC_RELEASE); }
+
+// Copies the value in, waiting while the channel is full: 0 if it is closed.
+i64 cromo_channel_send(Channel* channel, const void* value) {
+    lockAcquire(&channel->lock);
+    while (!channel->closed && channel->count == channel->capacity) channelWait(channel, &channel->space);
+    if (channel->closed) {
+        lockRelease(&channel->lock);
+        return 0;
+    }
+    u64 tail = (channel->head + channel->count) % channel->capacity;
+    memcpy(channel->ring + tail * channel->size, value, channel->size);
+    channel->count++;
+    u64 number = ++channel->sent;
+    channelChanged(&channel->values);
+    lockRelease(&channel->lock);
+    unpark(&channel->values, 0);
+    if (channel->handover) {  // until a receiver has it, or the channel is closed
+        lockAcquire(&channel->lock);
+        while (!channel->closed && channel->received < number) channelWait(channel, &channel->taken);
+        lockRelease(&channel->lock);
+    }
+    return 1;
+}
+
+// Copies the first value out, waiting while the channel is empty: 0 once it is
+// closed and empty.
+i64 cromo_channel_receive(Channel* channel, void* value) {
+    lockAcquire(&channel->lock);
+    while (!channel->closed && channel->count == 0) channelWait(channel, &channel->values);
+    if (channel->count == 0) {
+        lockRelease(&channel->lock);
+        return 0;
+    }
+    memcpy(value, channel->ring + channel->head * channel->size, channel->size);
+    channel->head = (channel->head + 1) % channel->capacity;
+    channel->count--;
+    channel->received++;
+    channelChanged(&channel->space);
+    if (channel->handover) channelChanged(&channel->taken);
+    lockRelease(&channel->lock);
+    unpark(&channel->space, 0);
+    if (channel->handover) unpark(&channel->taken, 1);
+    return 1;
+}
+
+// Wakes all who wait: the senders find it closed, the receivers take what is left.
+void cromo_channel_close(Channel* channel) {
+    lockAcquire(&channel->lock);
+    channel->closed = 1;
+    channelChanged(&channel->space);
+    channelChanged(&channel->values);
+    channelChanged(&channel->taken);
+    lockRelease(&channel->lock);
+    unpark(&channel->space, 1);
+    unpark(&channel->values, 1);
+    unpark(&channel->taken, 1);
+}
+
+// The values left at the end, for the destructor: nobody else uses the channel.
+i64 cromo_channel_drain(Channel* channel, void* value) {
+    if (channel->count == 0) return 0;
+    memcpy(value, channel->ring + channel->head * channel->size, channel->size);
+    channel->head = (channel->head + 1) % channel->capacity;
+    channel->count--;
+    return 1;
+}
+
+void cromo_channel_free(Channel* channel) {
+    cromo_free(channel->ring);
+    cromo_free(channel);
+}
+
 // ---- What the library calls (D214, D269, D273) ----
 
 void* cromo_thread_start(void* code, void* env) {

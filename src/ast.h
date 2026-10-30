@@ -147,6 +147,7 @@ enum class Intrinsic {
     ArgumentCount, ArgumentLength, ArgumentData, DecimalToFloat, HashBytes, SystemCall, Environment, ExitProcess,
     ThreadStart, ThreadWait, ThreadRethrow, ThreadUncaught, ThreadFree, MutexLock, MutexUnlock, SelfAddress, EqualAt,
     TaskStart, GroupStart,  // D269, D273
+    AtomicLoad, AtomicStore, AtomicAdd, AtomicExchange, AtomicCompareExchange,  // D328
     JsonWrite, JsonRead,  // std.json (D251): for a real type, a call of the function that converts it
     DebugWrite,           // the form of debug (D319): for a real type, a call of the function that writes it
     HashNumber,  // `x.hash()` of a number or a bool (D198): made by the compiler, not named
@@ -591,7 +592,7 @@ struct StructDecl {
     std::unique_ptr<FunctionDecl> generatedCopy;  // created when `copy()` is used (D35)
     std::vector<const InterfaceDecl*> implements;
     bool needsDestruction = false;
-    bool addressed = false;  // a Mutex, or holds one: other threads write it, it never moves in a call (D216)
+    bool addressed = false;  // a Mutex, a Channel, an Atomic, or holds one: other threads write it, it never moves in a call (D216)
     int size = 0;
     int align = 1;
     int payloadOffset = 0;  // of an enum: where the data of the cases start, after the tag

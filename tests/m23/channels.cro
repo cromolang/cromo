@@ -1,0 +1,109 @@
+// Channels between tasks and threads (D326, D327): a fixed capacity, the
+// handover of capacity 0, close() and the for that ends with it.
+// expect-output: sum 5050
+// expect-output: words alpha beta gamma
+// expect-output: handover 0 1 2
+// expect-output: left 2
+// expect-output: pipeline 338350
+// expect-output: kept
+import std.thread
+
+// The values still in a channel end with it.
+void keep() {
+    thread.Channel<string> kept = thread.Channel<string>(2)
+    kept.send("never")
+    kept.send("received")
+    println("kept")
+}
+
+i32 main() {
+    // Four producers and a consumer: all the values arrive.
+    thread.Channel<i64> numbers = thread.Channel<i64>(4)
+    thread.Group producers
+    for (i64 p = 0; p < 4; p++) {
+        producers.start([numbers, p]() {
+            for (i64 i = p * 25 + 1; i <= p * 25 + 25; i++) {
+                numbers.send(i)
+            }
+        })
+    }
+    i64 sum = 0
+    for (i64 i = 0; i < 100; i++) {
+        sum += numbers.receive()
+    }
+    producers.wait()
+    println("sum {}", sum)
+
+    // Strings, in the order they are sent, until close().
+    thread.Channel<string> words = thread.Channel<string>(2)
+    thread.Task writer = thread.Task([words]() {
+        words.send("alpha")
+        words.send("beta")
+        words.send("gamma")
+        words.close()
+    })
+    writer.start()
+    string all = "words"
+    for (string word in words) {
+        all += " " + word
+    }
+    writer.join()
+    println("{}", all)
+
+    // Capacity 0, the default: each value is handed over.
+    thread.Channel<i64> handover
+    thread.Task sender = thread.Task([handover]() {
+        for (i64 i = 0; i < 3; i++) {
+            handover.send(i)
+        }
+        handover.close()
+    })
+    sender.start()
+    string seen = "handover"
+    for (i64 n in handover) {
+        seen += format(" {}", n)
+    }
+    sender.join()
+    println("{}", seen)
+
+    // After close() the values already sent are still received.
+    thread.Channel<string> box = thread.Channel<string>(3)
+    box.send("x")
+    box.send("y")
+    box.close()
+    i64 left = 0
+    for (string s in box) {
+        if (s.len() == 1) {
+            left++
+        }
+    }
+    println("left {}", left)
+
+    // A thread, a task and the main thread in a row.
+    thread.Channel<i64> first = thread.Channel<i64>(8)
+    thread.Channel<i64> second
+    thread.Thread source = thread.Thread([first]() {
+        for (i64 i = 1; i <= 100; i++) {
+            first.send(i)
+        }
+        first.close()
+    })
+    thread.Task square = thread.Task([first, second]() {
+        for (i64 n in first) {
+            second.send(n * n)
+        }
+        second.close()
+    })
+    source.start()
+    square.start()
+    i64 squares = 0
+    for (i64 n in second) {
+        squares += n
+    }
+    source.join()
+    square.join()
+    println("pipeline {}", squares)
+
+    keep()
+    ret 0
+}

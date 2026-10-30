@@ -639,7 +639,7 @@ p.wait()
 
 - `process.run` waits for the end of the program and gives its exit code, its output and its errors; `process.start` gives a `Process` with `write`, `closeInput`, `read`, `readAll`, `wait` and `kill`, whose errors go where the ones of this program go (D307). A program is found in the folders of `PATH`. An exit code other than 0 is a value; a program that cannot start is an exception.
 
-## 18. Threads and tasks (D214–D217, D269–D284)
+## 18. Threads, tasks and channels (D214–D217, D269–D284, D326–D337)
 
 ```cromo
 import std.thread
@@ -681,6 +681,29 @@ for {
 - A task has 1 MB of stack reserved, and takes the memory page by page: an idle task costs a few KB (D272).
 - A call that blocks the thread of a task, as a file or a C function, keeps that thread; after about a millisecond the runtime gives the other tasks another thread (D271).
 - `thread.Group` starts tasks one by one, also in a loop (D273). Its tasks can read the variables declared before the group, which stay constant until the end of its block, and take others with `move`; not with `ref`. At the end of its block the group waits for all its tasks; `g.wait()` waits for them earlier and throws again the first exception of a task.
+
+```cromo
+thread.Channel<string> lines = thread.Channel<string>(16)
+thread.Atomic<i64> count
+thread.Group readers
+for (i64 i = 0; i < 4; i++) {
+    readers.start([lines, count]() {
+        for (string line in lines) {   // until close() and the last value
+            count.add(1)
+        }
+    })
+}
+lines.send("a")
+lines.send("b")
+lines.close()
+readers.wait()
+println("{}", count.load())   // 2
+```
+
+- `thread.Channel<T>(n)` passes values from task to task and from thread to thread, in the order they are sent: it holds up to `n` of them, `send()` waits while it is full and `receive()` while it is empty, leaving the thread to the other tasks. With capacity 0, the default value, the sender waits until a receiver has the value (D326, D329). A negative capacity is a panic (D330).
+- `close()` ends it: the values already sent can still be received, then `receive()` throws; `send()` to a closed channel throws, also when it was waiting; a second `close()` does nothing (D327, D331, D334). `next(ref v)` is `receive()` without the exception: false once the channel is closed and empty (D332).
+- `for (T v in channel)` receives until the end: `v` belongs to the body, which can move it elsewhere; the channel is a variable or a field (D333). The values left in a channel end with it.
+- `thread.Atomic<T>` holds an integer or a bool, 0 or `false` by default, or the value of `thread.Atomic<T>(x)`; it cannot be copied (D335). `load`, `store`, `add` and `exchange`, which return the value before, and `compareExchange(expected, desired)`, true if it wrote, are all sequentially consistent (D328, D336). Another `T`, or `add` of a bool, is an error where it is written (D337).
 
 ## 19. Network (D223–D226)
 
