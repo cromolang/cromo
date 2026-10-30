@@ -1,7 +1,7 @@
 # Makes the archives of a version of Cromo (D237, D285-D287), in dist/ with the
 # layout of the site, so that publishing is copying it:
-#   dist/package/win_x86_64-<version>.zip     bin/cromo.exe, lib/, extension/
-#   dist/package/linux_x86_64-<version>.tar.gz  bin/cromo, lib/, extension/
+#   dist/package/win_x86_64-<version>.zip     bin/cromo.exe, lib/, extension/, the licenses
+#   dist/package/linux_x86_64-<version>.tar.gz  bin/cromo, lib/, extension/, the licenses
 #   dist/release/<version>, dist/latest       the manifest (D285)
 #   dist/release/<version>.sig, dist/latest.sig  its signature, with -Key (D286)
 # It needs the build of Windows (build.ps1), which makes lib/ for both systems, and
@@ -58,13 +58,19 @@ function New-Stage([string]$Name, [string]$Compiler, [string]$Executable) {
     Copy-Item $Compiler (Join-Path $folder "bin\$Executable")
     Copy-Item -Recurse $library (Join-Path $folder 'lib')
     Copy-Item $extension.FullName (Join-Path $folder 'extension')
+    # The licenses of Cromo and of the software of others it contains.
+    foreach ($file in 'LICENSE-MIT', 'LICENSE-APACHE', 'THIRD-PARTY-NOTICES.md') { Copy-Item (Join-Path $root $file) $folder }
+    New-Item -ItemType Directory -Force (Join-Path $folder 'licenses') | Out-Null
+    Copy-Item (Join-Path $root 'third_party\mbedtls\LICENSE') (Join-Path $folder 'licenses\mbedtls.txt')
+    Copy-Item (Join-Path $root 'third_party\monocypher\LICENCE.md') (Join-Path $folder 'licenses\monocypher.md')
     $folder
 }
+$contents = @('bin', 'lib', 'extension', 'licenses', 'LICENSE-MIT', 'LICENSE-APACHE', 'THIRD-PARTY-NOTICES.md')
 
 $windows = New-Stage 'win_x86_64' $cromo 'cromo.exe'
 $zip = Join-Path $packages "win_x86_64-$version.zip"
 if (Test-Path $zip) { Remove-Item $zip }
-Invoke-Checked 'tar.exe' @('-a', '-c', '-f', $zip, '-C', $windows, 'bin', 'lib', 'extension')
+Invoke-Checked 'tar.exe' (@('-a', '-c', '-f', $zip, '-C', $windows) + $contents)
 
 # On Linux the archive is made in a folder of WSL, where the permissions can be
 # set (not in /mnt/c); the symbols of cromo are stripped, as the build has no
@@ -73,7 +79,7 @@ $linux = New-Stage 'linux_x86_64' $linuxCromo 'cromo'
 $gz = Join-Path $packages "linux_x86_64-$version.tar.gz"
 $script = "set -e; s=`$(mktemp -d); cp -r '$(ConvertTo-LinuxPath $linux)'/. `$s; cd `$s; strip bin/cromo; " +
           "find . -type d -exec chmod 755 {} +; find . -type f -exec chmod 644 {} +; chmod 755 bin/cromo; " +
-          "tar -czf '$(ConvertTo-LinuxPath $gz)' --owner=0 --group=0 --numeric-owner bin lib extension; rm -rf `$s"
+          "tar -czf '$(ConvertTo-LinuxPath $gz)' --owner=0 --group=0 --numeric-owner $($contents -join ' '); rm -rf `$s"
 Invoke-Checked 'wsl.exe' @('-e', 'sh', '-c', $script)
 Remove-Item -Recurse -Force $stage
 

@@ -129,6 +129,26 @@ The signing key is a file kept outside the repository. `tools/sign.cro` makes on
 build\cromo.exe run tools\sign.cro -- key <private key>
 ```
 
+## The guide and the site
+
+The Cromo Guide is written in Markdown in `book/en` and `book/it`, one file for each chapter, listed in the `SUMMARY.md` of each language. `tools/book.py`, which needs Python 3 and nothing else, turns it into the pages of the site:
+
+```powershell
+python tools\book.py --check          # compiles and runs every example of the guide, and checks its output
+python tools\book.py --pdf            # the pages in dist\site\book, and the PDF of each language
+```
+
+`--check` compiles every program of the guide with `build\cromo.exe` and compares what it prints with the `output` block that follows it, in every language: run it after a change to the compiler or to the library, too. The head of `tools/book.py` describes the flags of the code blocks. The PDFs are printed by Microsoft Edge or Chrome, headless.
+
+`tools\site.ps1` assembles the whole site in `dist\site`: the pages of `site\` with the version of the archives, the installers `install.ps1` and `install.sh`, the guide with its PDFs, and the archives and the manifests of the version that `tools\package.ps1` made:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\package.ps1 -Key <private key>
+powershell -ExecutionPolicy Bypass -File tools\site.ps1
+```
+
+Publishing is copying `dist\site` to the folder of the server, `/var/www/cromolang.org`; `tools/nginx/cromolang.org.conf` is the configuration of nginx, with the types of the manifests and the caching of each kind of file. The installers read `CROMO_SITE` to install from another site, and `CROMO_NO_MODIFY_PATH=1` to leave the `PATH` as it is, for tests.
+
 ## Benchmarks
 
 `bench\run-bench.ps1` compiles the programs of `bench\` with `cromo` and with g++, clang++, Go and rustc, which must be installed in WSL, runs them in WSL and writes the results in `bench\results\`. See the head of the script for its options.
