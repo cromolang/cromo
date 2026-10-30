@@ -1,0 +1,124 @@
+// The client of HTTP (D254), against a raw server: a body in chunks, a body that
+// ends with the connection, a 307 that sends the POST again, a 303 that becomes a
+// GET, a status of error that is a response, and the URLs that cannot be used.
+// expect-output: chunked 200 hello world
+// expect-output: until the end 200 [the rest]
+// expect-output: 307 POST /again HTTP/1.1 4
+// expect-output: 303 GET /seen HTTP/1.1 0
+// expect-output: 503 busy
+// expect-output: cannot use the URL 'ftp://example.com/': it does not start with http:// or https://
+// expect-output: cannot use the URL 'http://:80/': it has no host
+// expect-output: cannot use the URL 'http://host:port/': 'port' is not a port
+// expect-output: cannot use the URL 'http://user@host/': a name and a password in the URL are not supported
+// expect-output: refused true
+// expect-output: %20a%2Bb%3D%C3%A8~
+import std.http
+import std.net
+import std.os
+import std.thread
+
+// The head of a raw request, up to the empty line, and its body of `length`.
+string readRequest(ref net.Connection c) {
+    list<u8> all
+    for {
+        list<u8> bytes = c.read(4096)
+        for (u8 b in bytes) {
+            all.add(b)
+        }
+        string text = string(all)
+        for (i64 i = 0; i + 4 <= text.len(); i++) {
+            if (text.slice(i, i + 4) == "\r\n\r\n") {
+                ret text
+            }
+        }
+        if (bytes.len() == 0) {
+            ret text
+        }
+    }
+}
+
+bool contains(string text, string part) {
+    for (i64 i = 0; i + part.len() <= text.len(); i++) {
+        if (text.slice(i, i + part.len()) == part) {
+            ret true
+        }
+    }
+    ret false
+}
+
+// Answers each connection by what its request asks.
+void answer(net.Listener listener) {
+    for {
+        net.Connection c = listener.accept()
+        string request = readRequest(ref c)
+        if (contains(request, "GET /chunked ")) {
+            c.writeText("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n6\r\nhello \r\n5\r\nworld\r\n0\r\n\r\n")
+        } else if (contains(request, "GET /end ")) {
+            c.writeText("HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\n\r\n[the rest]")
+        } else if (contains(request, "POST /first ")) {
+            c.writeText("HTTP/1.1 307 Temporary Redirect\r\nLocation: again\r\nContent-Length: 0\r\n\r\n")
+        } else if (contains(request, "POST /other ")) {
+            c.writeText("HTTP/1.1 303 See Other\r\nLocation: /seen\r\nContent-Length: 0\r\n\r\n")
+        } else if (contains(request, "/busy ")) {
+            c.writeText("HTTP/1.1 503 Service Unavailable\r\nContent-Length: 4\r\n\r\nbusy")
+        } else {
+            string line
+            for (i64 i = 0; i < request.len(); i++) {
+                if (request[i] == '\r') {
+                    line = request.slice(0, i)
+                    break
+                }
+            }
+            string length = "0"
+            if (contains(request, "Content-Length: 4")) {
+                length = "4"
+            }
+            string body = line + " " + length
+            c.writeText(format("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{}", body.len(), body))
+        }
+    }
+}
+
+void tryGet(string url) {
+    try {
+        http.get(url)
+        println("got {}", url)
+    } catch (Error e) {
+        println("{}", e.message())
+    }
+}
+
+i32 main() {
+    net.Listener listener = net.listen("127.0.0.1", 0)
+    i32 port = listener.port()
+    thread.Thread server = thread.Thread([listener]() { answer(listener) })
+    server.start()
+    string base = format("http://127.0.0.1:{}", port)
+
+    http.Response r = http.get(base + "/chunked")
+    println("chunked {} {}", r.status, r.text())
+    r = http.get(base + "/end")
+    println("until the end {} {}", r.status, r.text())
+    r = http.post(base + "/first", "body", "text/plain")
+    println("307 {}", r.text())
+    r = http.post(base + "/other", "body", "text/plain")
+    println("303 {}", r.text())
+    r = http.get(base + "/busy")
+    println("{} {}", r.status, r.text())
+
+    tryGet("ftp://example.com/")
+    tryGet("http://:80/")
+    tryGet("http://host:port/")
+    tryGet("http://user@host/")
+    net.Listener closed = net.listen("127.0.0.1", 0)
+    i32 free = closed.port()
+    closed.close()
+    try {
+        http.get(format("http://127.0.0.1:{}/", free))
+    } catch (Error e) {
+        println("refused {}", contains(e.message(), "cannot connect to 127.0.0.1"))
+    }
+    println("{}", http.escape(" a+b=è~"))
+    os.exit(0)
+    ret 0
+}

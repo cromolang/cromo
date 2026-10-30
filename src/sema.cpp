@@ -1,6 +1,11 @@
 #include "sema.h"
 
+#include "lexer.h"
+#include "parser.h"
+
 #include <algorithm>
+#include <cctype>
+#include <deque>
 #include <charconv>
 #include <cstring>
 #include <cstdint>
@@ -44,6 +49,7 @@ std::optional<Intrinsic> findIntrinsic(const std::string& name) {
         {"threadUncaught", Intrinsic::ThreadUncaught}, {"threadFree", Intrinsic::ThreadFree},
         {"mutexLock", Intrinsic::MutexLock}, {"mutexUnlock", Intrinsic::MutexUnlock},
         {"selfAddress", Intrinsic::SelfAddress}, {"equalAt", Intrinsic::EqualAt},
+        {"jsonWrite", Intrinsic::JsonWrite}, {"jsonRead", Intrinsic::JsonRead},
     };
     auto found = intrinsics.find(name);
     if (found == intrinsics.end()) return std::nullopt;
@@ -270,6 +276,9 @@ public:
         mapDecl_ = library.structs.count("map") ? library.structs["map"] : nullptr;
         keyInterface_ = library.interfaces.count("Key") ? library.interfaces["Key"] : nullptr;
         exceptionDecl_ = library.interfaces.count("Exception") ? library.interfaces["Exception"] : nullptr;
+        for (InterfaceDecl& decl : module_.interfaces) {  // only when the program imports std.json (D251)
+            if (decl.name == "Data" && fileOf(decl.loc.file).name == "std.json") dataInterface_ = &decl;
+        }
         declareInterfaces();
         declareTypeParams();
         // Every generic is checked once, with its type parameters as types (D52).
@@ -586,6 +595,7 @@ private:
     // Whether a type implements an interface, as a constraint requires (D52, D87).
     bool satisfies(Type type, const InterfaceDecl* iface) {
         if (iface == keyInterface_ && (type.isNumeric() || type.isBool())) return true;  // D198
+        if (iface == dataInterface_ && !type.isParam() && jsonProblem(type).empty()) return true;  // D251
         std::vector<const InterfaceDecl*> list;
         if (type.isStruct()) list = implementsOf(*type.structDecl);
         if (type.isParam()) list = type.param->interfaces;
@@ -598,6 +608,17 @@ private:
         for (size_t i = 0; i < params.size(); ++i) {
             for (const InterfaceDecl* iface : params[i].interfaces) {
                 if (satisfies(args[i], iface)) continue;
+                if (iface == dataInterface_) {
+                    if (args[i].isParam()) {
+                        diag_->error(loc, args[i].name() + " can be converted to JSON only with a constraint: write <" +
+                                              args[i].name() + " : json.Data> (D52, D251)");
+                    } else {
+                        diag_->error(loc, "values of type " + args[i].name() + " cannot be converted to JSON (D251): " +
+                                              jsonProblem(args[i]));
+                    }
+                    ok = false;
+                    continue;
+                }
                 std::string reason = args[i].isStruct() || args[i].isParam() ? " (D52)" : " (D52, D87)";
                 diag_->error(loc, args[i].name() + " does not implement " + iface->name + ", required by " + params[i].name +
                                       " of " + what + reason);
@@ -867,17 +888,49 @@ private:
         return false;
     }
 
+    // `[[json("user_id")]]` and `[[json(skip)]]` before a field (D256).
+    void readAttributes(FieldDecl& field) {
+        field.jsonName = field.name;
+        bool seen = false;
+        for (const Attribute& attribute : field.attributes) {
+            if (attribute.name != "json") {
+                diag_->error(attribute.loc, "unknown attribute '" + attribute.name + "': for now there is only json (D256)");
+                continue;
+            }
+            if (seen) {
+                diag_->error(attribute.loc, "the field '" + field.name + "' already has the attribute json (D256)");
+                continue;
+            }
+            seen = true;
+            bool skip = attribute.args.size() == 1 && !attribute.args[0].isText && attribute.args[0].text == "skip";
+            bool named = attribute.args.size() == 1 && attribute.args[0].isText && !attribute.args[0].text.empty();
+            if (skip) {
+                field.jsonName.clear();
+            } else if (named) {
+                field.jsonName = attribute.args[0].text;
+            } else {
+                diag_->error(attribute.loc, "json takes the name of the field in JSON, as json(\"user_id\"), or skip, "
+                                            "as json(skip) (D256)");
+            }
+        }
+    }
+
     // Fields, members, layout and interfaces of a struct that is not generic, or of
     // an instance of a generic one. Done once, when the struct is first needed.
     void completeStruct(StructDecl& decl) {
         if (!completed_.insert(&decl).second) return;
         BindingsScope scope(bindings_, &decl.typeBindings);
         std::map<std::string, const FieldDecl*> fieldNames;
+        std::set<std::string> jsonNames;
         for (FieldDecl& field : decl.fields) {
             if (fieldNames.count(field.name)) {
                 diag_->error(field.loc, "field '" + field.name + "' is already defined in " + decl.name);
             }
             fieldNames[field.name] = &field;
+            readAttributes(field);
+            if (!field.jsonName.empty() && !jsonNames.insert(field.jsonName).second) {
+                diag_->error(field.loc, "another field of " + decl.name + " has the name '" + field.jsonName + "' in JSON (D256)");
+            }
             field.resolved = resolveType(field.type).value_or(Type::error());
             if (field.resolved.isVoid()) {
                 diag_->error(field.type.loc, "a field cannot be void");
@@ -1087,6 +1140,7 @@ private:
             if (i) text += ", ";
             if (param.mode == ParamMode::Ref) text += "ref ";
             if (param.mode == ParamMode::Move) text += param.isConst ? "move const " : "move ";
+            if (param.mode == ParamMode::Read && param.isConst) text += "const ";
             text += withSelf(method.paramTypes[i], self).name() + " " + param.name;
         }
         return text + (method.isConst ? ") const" : ")");
@@ -2465,6 +2519,11 @@ private:
         } else if (object.kind == ExprKind::Name) {
             name = static_cast<const NameExpr&>(object).name;
             if (lookup(name) || ownFieldIndex(name) >= 0) return std::nullopt;
+            if (bindings_) {  // `T.Red` in the reading of an enum generated for JSON (D251)
+                for (const auto& [param, type] : *bindings_) {
+                    if (param == name && type.isStruct() && type.structDecl->isEnum) return type;
+                }
+            }
         } else {
             return std::nullopt;
         }
@@ -2534,7 +2593,7 @@ private:
         const auto& fields = object.structDecl->fields;
         for (size_t i = 0; i < fields.size(); ++i) {
             if (fields[i].name == field.field) {
-                if (!visible(fields[i].isPublic, *object.structDecl, field.loc)) {
+                if (!visible(fields[i].isPublic, *object.structDecl, field.loc) && !current_->convertsJson) {
                     reportPrivate(field.loc, "field '" + field.field + "' of " + object.name());
                     return Type::error();
                 }
@@ -2619,6 +2678,8 @@ private:
         for (size_t i = 0; i < args.size(); ++i) {
             if (function.paramTypes[i].isError()) continue;
             ok = checkArg(args[i], function.params[i], withSelf(function.paramTypes[i], self)) && ok;
+            const Param& param = function.params[i];
+            if (param.mode == ParamMode::Read && param.isConst && args[i]) checkConstFunction(*args[i]);
         }
         return ok && checkExclusivity(args, function, object, overlapChecks);
     }
@@ -3137,10 +3198,236 @@ private:
         return elementOf(object);
     }
 
+    // ---- JSON (D251, D256) ----
+
+    // json.Value, which is converted as it is.
+    bool isJsonValue(Type type) const {
+        return type.isStruct() && type.structDecl->name == "Value" && fileOf(type.structDecl->loc.file).name == "std.json";
+    }
+
+    // Why the values of `type` cannot be converted to JSON (D251), or "" when they
+    // can: the numbers, bool, string, json.Value, list<T> and map<string, T> of
+    // them, the enums without data, and the structs whose fields can be converted.
+    std::string jsonProblem(Type type) {
+        std::set<const StructDecl*> visiting;
+        return jsonProblem(type, "", visiting);
+    }
+
+    // `place` names the values in the message, as "Config.log"; empty for the
+    // value given to json.
+    std::string jsonProblem(Type type, const std::string& place, std::set<const StructDecl*>& visiting) {
+        auto bad = [&](const std::string& reason) {
+            if (place.empty()) return reason.empty() ? std::string("it has no form in JSON") : reason;
+            return place + " has type " + type.name() + (reason.empty() ? "" : " (" + reason + ")");
+        };
+        if (type.isBool() || type.isNumeric() || type.isError()) return "";
+        if (type.isParam()) {
+            const auto& constraints = type.param->interfaces;
+            if (std::find(constraints.begin(), constraints.end(), dataInterface_) != constraints.end()) return "";
+            return bad("it is not constrained to json.Data");
+        }
+        if (!type.isStruct()) return bad("");
+        const StructDecl& decl = *type.structDecl;
+        if (&decl == stringDecl_ || isJsonValue(type)) return "";
+        if (isList(type)) return jsonProblem(elementOf(type), place.empty() ? "an element" : place + "[i]", visiting);
+        if (isMap(type)) {
+            if (decl.typeArgs[0] != stringType()) return bad("the keys of JSON are strings");
+            return jsonProblem(decl.typeArgs[1], place.empty() ? "a value" : place + "[key]", visiting);
+        }
+        if (decl.isEnum) return withoutData(decl) ? "" : bad("an enum with data");
+        if (!visiting.insert(&decl).second) return "";  // already being checked: it contains a list of itself
+        for (const FieldDecl& field : decl.fields) {
+            if (field.jsonName.empty()) continue;  // json(skip)
+            std::string problem = jsonProblem(field.resolved, (place.empty() ? decl.name : place) + "." + field.name, visiting);
+            if (!problem.empty()) return problem;
+        }
+        return "";
+    }
+
+    // `jsonWrite<T>(ref writer, value)` and `jsonRead<T>(value)` of std.json (D251).
+    // For a real T the call becomes that of the function of std.json for T, of an
+    // instance of writeList or readList, or of a function generated for a struct
+    // or an enum.
+    Type checkJson(CallExpr& call, bool write) {
+        std::string what = "'" + call.callee + "'";
+        std::vector<Type> args;
+        if (!resolveTypeArgs(call.typeArgs, 1, what, call.loc, args)) {
+            checkIgnored(call.args);
+            return Type::error();
+        }
+        Type type = args[0];
+        call.typeArg = type;
+        if (isAbstract(type)) {  // the check of a generic of std.json (D52)
+            std::optional<Type> value = resolveType(TypeName{"Value", call.loc});
+            std::optional<Type> writer = resolveType(TypeName{"Writer", call.loc});
+            size_t expected = write ? 2 : 1;
+            if (!value || !writer || call.args.size() != expected) {
+                if (value && writer) diag_->error(call.loc, what + " takes " + std::to_string(expected) + " arguments");
+                checkIgnored(call.args);
+                return Type::error();
+            }
+            Param target;
+            target.mode = write ? ParamMode::Ref : ParamMode::Read;
+            target.name = write ? "writer" : "value";
+            bool ok = checkArg(call.args[0], target, write ? *writer : *value);
+            if (write) ok = checkArg(call.args[1], Param{}, type) && ok;
+            if (!ok) return Type::error();
+            return write ? Type::voidType() : type;
+        }
+        FunctionDecl* function = jsonFunction(write, type, call.loc);
+        if (!function) {
+            checkIgnored(call.args);
+            return Type::error();
+        }
+        call.intrinsic = Intrinsic::None;
+        call.function = function;
+        noteCall(function, call.loc);
+        if (!checkArgs(call.args, *function, what, call.loc, &call.overlaps)) return Type::error();
+        return function->resolvedReturn;
+    }
+
+    // The function that writes or reads the values of a real type: writeI32,
+    // readString, an instance of writeList, a function generated for a struct...
+    FunctionDecl* jsonFunction(bool write, Type type, SourceLocation loc) {
+        std::string prefix = write ? "write" : "read";
+        auto library = [&](const std::string& name) -> FunctionDecl* {
+            FunctionDecl* found = findDecl(&ModuleScope::functions, name, loc);
+            if (!found) diag_->error(loc, "std.json has no function '" + name + "'");
+            return found;
+        };
+        auto generic = [&](const std::string& name, Type arg) -> FunctionDecl* {
+            FunctionDecl* found = library(name);
+            return found ? instantiateFunction(*found, {arg}, loc) : nullptr;
+        };
+        if (type.isBool() || type.isNumeric()) {
+            std::string name = type.name();
+            name[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(name[0])));
+            return library(prefix + name);
+        }
+        if (type.isStruct()) {
+            const StructDecl& decl = *type.structDecl;
+            if (&decl == stringDecl_) return library(prefix + "String");
+            if (isJsonValue(type)) return library(prefix + "Value");
+            if (isList(type)) return generic(prefix + "List", elementOf(type));
+            if (isMap(type) && decl.typeArgs[0] == stringType()) return generic(prefix + "Map", decl.typeArgs[1]);
+            if (!isMap(type) && (!decl.isEnum || withoutData(decl))) return generatedJson(write, decl, loc);
+        }
+        diag_->error(loc, "values of type " + type.name() + " cannot be converted to JSON (D251): " + jsonProblem(type));
+        return nullptr;
+    }
+
+    // A text as a string literal of Cromo.
+    static std::string quoted(const std::string& text) {
+        std::string result = "\"";
+        for (char c : text) {
+            if (c == '"' || c == '\\') result += '\\';
+            if (c == '\n') {
+                result += "\\n";
+            } else if (c == '\r') {
+                result += "\\r";
+            } else if (c == '\t') {
+                result += "\\t";
+            } else if (static_cast<unsigned char>(c) < 0x20) {
+                const char* hex = "0123456789abcdef";
+                result += std::string("\\x") + hex[(c >> 4) & 15] + hex[c & 15];
+            } else {
+                result += c;
+            }
+        }
+        return result + "\"";
+    }
+
+    // The conversion of a struct or of an enum without data, written in Cromo and
+    // checked as an instance with the types of its fields (D251). It is in the scope
+    // of std.json, and it reads and writes also the private fields, as copy().
+    FunctionDecl* generatedJson(bool write, const StructDecl& decl, SourceLocation loc) {
+        auto key = std::make_pair(write, &decl);
+        auto found = jsonFunctions_.find(key);
+        if (found != jsonFunctions_.end()) return found->second;
+        TypeBindings bindings = {{"T", Type::structType(const_cast<StructDecl*>(&decl))}};
+        std::string text = write ? jsonWriter(decl, bindings) : jsonReader(decl, bindings);
+        SourceFile& source = generatedSources_.emplace_back(SourceFile{"<json>", text});
+        Module parsed = parse(tokenize(source, loc.file, *diag_), *diag_);
+        if (parsed.functions.size() != 1) {
+            diag_->error(loc, "internal error: the conversion to JSON of " + decl.name + " does not parse");
+            return nullptr;
+        }
+        auto function = std::make_unique<FunctionDecl>(std::move(parsed.functions[0]));
+        function->typeBindings = std::move(bindings);
+        function->convertsJson = true;
+        function->symbol = symbolFor(loc, (write ? "write." : "read.") + decl.symbol);
+        FunctionDecl* result = function.get();
+        module_.functionInstances.push_back(std::move(function));
+        jsonFunctions_[key] = result;
+        {
+            BindingsScope scope(bindings_, &result->typeBindings);
+            resolveSignature(*result);
+        }
+        schedule(*result, &decl, false, decl.name, loc);
+        return result;
+    }
+
+    // An object with a member for each field, or the name of the case of an enum.
+    static std::string jsonWriter(const StructDecl& decl, TypeBindings& bindings) {
+        std::string text = "void write(ref Writer w, T value) {\n";
+        if (decl.isEnum) {
+            text += "switch (value) {\n";
+            for (const EnumCase& item : decl.cases) text += "case " + item.name + " {\nw.writeText(" + quoted(item.name) + ")\n}\n";
+            text += "}\n";
+        } else {
+            text += "w.beginObject()\n";
+            for (size_t i = 0; i < decl.fields.size(); ++i) {
+                const FieldDecl& field = decl.fields[i];
+                if (field.jsonName.empty()) continue;
+                std::string param = "F" + std::to_string(i);
+                bindings.emplace_back(param, field.resolved);
+                text += "w.key(" + quoted(field.jsonName) + ")\n";
+                text += "jsonWrite<" + param + ">(ref w, value." + field.name + ")\n";
+            }
+            text += "w.endObject()\n";
+        }
+        return text + "}\n";
+    }
+
+    // The fields named by the members of an object, which keep the default value
+    // when their member is missing; the members without a field are ignored. A
+    // null gives the default value (D257).
+    static std::string jsonReader(const StructDecl& decl, TypeBindings& bindings) {
+        std::string text = "T read(Value v) {\n";
+        if (decl.isEnum) {
+            std::string names;
+            text += "if (v.isNull()) {\nT first\nret first\n}\n";  // D257
+            text += "string name = readString(v)\nswitch (name) {\n";
+            for (const EnumCase& item : decl.cases) {
+                text += "case " + quoted(item.name) + " {\nret T." + item.name + "\n}\n";
+                names += (names.empty() ? "" : ", ") + item.name;
+            }
+            return text + "}\nthrow unknownCase(name, " + quoted(names) + ")\n}\n";
+        }
+        std::string cases;
+        for (size_t i = 0; i < decl.fields.size(); ++i) {
+            const FieldDecl& field = decl.fields[i];
+            if (field.jsonName.empty()) continue;
+            std::string param = "F" + std::to_string(i);
+            bindings.emplace_back(param, field.resolved);
+            cases += "case " + quoted(field.jsonName) + " {\ntry {\nresult." + field.name + " = jsonRead<" + param +
+                     ">(member.value)\n} catch (Mismatch e) {\nthrow e.inside(" + quoted(field.jsonName) + ")\n}\n}\n";
+        }
+        text += "T result\n";
+        if (cases.empty()) {
+            text += "if (!isObject(v) && !v.isNull()) {\nthrow mismatch(\"an object\", v)\n}\n";
+        } else {
+            text += "switch (v) {\ncase Object(list<Member> members) {\nfor (Member member in members) {\nswitch (member.name) {\n" +
+                    cases + "}\n}\n}\ncase Null {\n}\ndefault {\nthrow mismatch(\"an object\", v)\n}\n}\n";
+        }
+        return text + "ret result\n}\n";
+    }
+
     // The built-in functions: `panic` (D102), and the `unsafe` dialect of the
     // standard library (D98).
     Type checkIntrinsic(CallExpr& call, Intrinsic kind) {
         call.intrinsic = kind;
+        if (kind == Intrinsic::JsonWrite || kind == Intrinsic::JsonRead) return checkJson(call, kind == Intrinsic::JsonWrite);
         bool generic = kind == Intrinsic::SizeOf || kind == Intrinsic::Take || kind == Intrinsic::Put ||
                        kind == Intrinsic::Destroy || kind == Intrinsic::CopyAt || kind == Intrinsic::EqualAt;
         std::string what = "'" + call.callee + "'";
@@ -3390,6 +3677,36 @@ private:
         return type.sig->result;
     }
 
+    // A function received as a read parameter can be a lambda that modifies what it
+    // captures, unless it is `const func`; a function value never does (D184, D253).
+    static bool mayModifyCaptures(const Variable& variable) {
+        const Variable* root = &variable;
+        while (root->kind == VariableKind::Captured && root->captured) root = root->captured;
+        return root->type.isFunction() && root->kind == VariableKind::ReadParam && !root->isConst;
+    }
+
+    // The argument of a `const func` parameter, which several threads can call at
+    // once: it does not modify what it captures (D253).
+    void checkConstFunction(const Expr& arg) {
+        if (arg.kind == ExprKind::Lambda) {
+            for (const Capture& capture : static_cast<const LambdaExpr&>(arg).captures) {
+                if (capture.mode == ParamMode::Ref) {
+                    diag_->error(capture.loc, "a const func does not modify what it captures: it cannot capture '" +
+                                                  capture.name + "' with 'ref' (D253)");
+                } else if (capture.outer && mayModifyCaptures(*capture.outer)) {
+                    diag_->error(capture.loc, "'" + capture.name + "' is a parameter func that is not const: a const func "
+                                                                   "cannot call it (D253)");
+                }
+            }
+        } else if (arg.kind == ExprKind::Name) {
+            const Variable* variable = static_cast<const NameExpr&>(arg).variable;
+            if (variable && mayModifyCaptures(*variable)) {
+                diag_->error(arg.loc, "'" + variable->name + "' is a parameter func that is not const: only a 'const func' "
+                                                             "can be given to a 'const func' (D253)");
+            }
+        }
+    }
+
     // `[limit, ref total](i32 x) bool { ... }` (D183, D184). `asArgument`: it is
     // the argument of a read parameter, the only place for one that borrows.
     Type checkLambda(LambdaExpr& lambda, bool asArgument) {
@@ -3411,6 +3728,10 @@ private:
                 continue;
             }
             capture.outer = outer;
+            if (lambda.forThread && mayModifyCaptures(*outer)) {
+                diag_->error(capture.loc, "'" + capture.name + "' is a parameter func that is not const: a thread cannot call "
+                                          "it, as it may modify what it captures; declare it 'const func' (D253)");
+            }
             checkNotBlockThread(*outer, capture.loc);
             checkNotUsedByThread(*outer, capture.loc);
             NameExpr place(capture.loc, capture.name);
@@ -3476,6 +3797,7 @@ private:
             inner->kind = VariableKind::Captured;
             inner->captureIndex = index++;
             inner->captureByAddress = capture.byAddress;
+            inner->captured = capture.outer;
             capture.inner = inner;
         }
         Flow flow = checkBlock(function.body);
@@ -4082,6 +4404,12 @@ private:
     std::vector<PendingBody> instances_;
     std::set<const void*> failed_;
     const TypeBindings* bindings_ = nullptr;  // the type parameters visible now
+
+    // JSON (D251): the interface Data of std.json, when it is imported, and the
+    // conversions generated for structs and enums, with their texts.
+    const InterfaceDecl* dataInterface_ = nullptr;
+    std::map<std::pair<bool, const StructDecl*>, FunctionDecl*> jsonFunctions_;
+    std::deque<SourceFile> generatedSources_;
     bool selfAllowed_ = false;                // while resolving the methods of interfaces
     std::map<const StructDecl*, int> layoutState_;  // 0 to do, 1 in progress, 2 done
     FunctionDecl* current_ = nullptr;

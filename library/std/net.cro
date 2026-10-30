@@ -61,8 +61,9 @@ public struct Listener {
 
     // The next connection; with a timeout, an exception if none arrives in time.
     // With TLS, its handshake comes with its first read or write, so that a slow
-    // client does not keep the others waiting (D244).
-    public Connection accept() {
+    // client does not keep the others waiting (D244). It is const: the threads of
+    // a server accept from the same listener (D252).
+    public Connection accept() const {
         ready(handle, true, wait, "accept a connection")
         Connection connection
         connection.handle = acceptOn(handle)

@@ -1,0 +1,59 @@
+// Example 12: structs to JSON and back, and the values of JSON read by hand.
+//
+// Decided: the compiler generates the conversion of the structs (D251), integers
+//          and floats apart (D255), the attributes of the fields (D256), a null
+//          gives the default value (D257)
+import std.json
+
+enum Level {
+    Junior
+    Senior
+}
+
+struct Skill {
+    string name
+    i32 years
+}
+
+struct Employee {
+    [[json("full_name")]] string name
+    Level level
+    list<Skill> skills
+    map<string, f64> rates
+    [[json(skip)]] string password
+}
+
+i32 main() {
+    Employee ada
+    ada.name = "Ada Lovelace"
+    ada.level = Level.Senior
+    Skill math
+    math.name = "mathematics"
+    math.years = 20
+    ada.skills.add(move math)
+    ada.rates["hour"] = 120.5
+    ada.password = "never in the text"
+
+    string text = json.pretty(ada)
+    println("{}", text)
+
+    // Back: the members that are missing, or null, keep the default value.
+    Employee copy = json.decode<Employee>(text)
+    println("{} knows {} for {} years", copy.name, copy.skills[0].name, copy.skills[0].years)
+
+    // A text whose shape is not known: the values one by one.
+    json.Value order = json.parse("{\"id\": 9007199254740993, \"items\": [{\"price\": 9.5}, {\"price\": 3}]}")
+    f64 total = 0.0
+    json.Value items = order.get("items")
+    for (i64 i = 0; i < items.len(); i++) {
+        total += items.at(i).get("price").asFloat()
+    }
+    println("order {} costs {}", order.get("id").asInt(), total)
+
+    try {
+        json.decode<Employee>("{\"skills\": [{\"name\": \"x\", \"years\": \"many\"}]}")
+    } catch (Error e) {
+        println("{}", e.message())  // cannot decode JSON: at skills[0].years: expected an integer, found a string
+    }
+    ret 0
+}

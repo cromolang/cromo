@@ -1,0 +1,61 @@
+// The types that cannot be converted to JSON are errors that name the field
+// (D251), and so are the attributes that are not valid (D256).
+// expect-error: another field of Bad has the name 'a' in JSON (D256)
+// expect-error: json takes the name of the field in JSON, as json("user_id"), or skip, as json(skip) (D256)
+// expect-error: unknown attribute 'other': for now there is only json (D256)
+// expect-error: the field 'w' already has the attribute json (D256)
+// expect-error: T can be converted to JSON only with a constraint: write <T : json.Data> (D52, D251)
+// expect-error: values of type Config cannot be converted to JSON (D251): Config.log.flush has type func()
+// expect-error: values of type Stats cannot be converted to JSON (D251): Stats.byId has type map<i64, i64> (the keys of JSON are strings)
+// expect-error: values of type Drawing cannot be converted to JSON (D251): Drawing.shapes[i] has type Shape (an enum with data)
+// expect-error: values of type Shape cannot be converted to JSON (D251): an enum with data
+// expect-error: values of type i32[3] cannot be converted to JSON (D251): it has no form in JSON
+import std.json
+
+enum Shape {
+    Circle(f64 radius)
+    Empty
+}
+
+struct Log {
+    string path
+    func() flush
+}
+
+struct Config {
+    string name
+    Log log
+}
+
+struct Stats {
+    map<i64, i64> byId
+}
+
+struct Drawing {
+    list<Shape> shapes
+}
+
+struct Bad {
+    [[json("a")]] i64 x
+    [[json("a")]] i64 y
+    [[json(nope)]] i64 z
+    [[other]] i64 v
+    [[json("w")]] [[json(skip)]] i64 w
+}
+
+string send<T>(T value) {
+    ret json.encode(value)
+}
+
+i32 main() {
+    Config c
+    println("{}", json.encode(c))
+    Stats s
+    println("{}", json.encode(s))
+    Drawing d
+    println("{}", json.encode(d))
+    println("{}", json.encode(Shape.Empty))
+    i32[3] a
+    println("{}", json.encode(a))
+    ret 0
+}

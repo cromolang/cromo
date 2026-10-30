@@ -1,0 +1,19 @@
+// The places of const and of the attributes (D253, D256), checked by the parser.
+// expect-error: only a 'move' parameter can be const, written 'move const' (D22), and a function, written 'const func' (D253)
+// expect-error: an attribute is written only before a field, for now (D256)
+// expect-error: expected ']' to close the attribute with ']]', found a name
+struct Method {
+    [[json("m")]] void run() {
+    }
+}
+
+struct Open {
+    [[json("x") i64 x
+}
+
+void number(const i64 n) {
+}
+
+i32 main() {
+    ret 0
+}

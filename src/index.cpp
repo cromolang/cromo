@@ -35,7 +35,7 @@ std::string typeText(Type type, const TypeName& written, const TypeBindings* bin
 std::string modePrefix(ParamMode mode, bool isConst) {
     if (mode == ParamMode::Ref) return "ref ";
     if (mode == ParamMode::Move) return isConst ? "move const " : "move ";
-    return "";
+    return isConst ? "const " : "";  // `const func` (D253)
 }
 
 std::string declarationOf(Type type) {
@@ -67,7 +67,9 @@ public:
         for (const StructDecl& decl : module.structs) structDecl(decl);
         for (const auto& decl : module.structInstances) structDecl(*decl);
         for (const FunctionDecl& function : module.functions) declaration(function, function.typeParams.empty());
-        for (const auto& function : module.functionInstances) declaration(*function, true);
+        for (const auto& function : module.functionInstances) {
+            if (!function->convertsJson) declaration(*function, true);  // its text is not in a file (D251)
+        }
         return std::move(references_);
     }
 

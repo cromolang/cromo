@@ -1,0 +1,1145 @@
+// The module std.json (D251, D255, D256): the values of JSON, and the conversion of
+// the types of a program to their text and back. `jsonWrite<T>` and `jsonRead<T>`
+// of the unsafe dialect become, for each real T, a call of one of the functions
+// below, as writeI32 or readList<T>, or of a function that the compiler generates
+// for a struct or an enum, in this module: an object with a member for each
+// field, or the name of the case.
+import unsafe
+
+// The types that can be converted, which the compiler recognizes without a
+// declaration (D251): the numbers, bool, string, Value, list<T> and map<string, T>
+// of them, the enums without data and the structs whose fields can be converted.
+public interface Data {
+}
+
+// A value of JSON (D255). An object keeps its members in their order.
+public enum Value {
+    Null
+    Bool(bool value)
+    Int(i64 value)
+    Float(f64 value)
+    Text(string value)
+    Array(list<Value> items)
+    Object(list<Member> members)
+
+    public bool isNull() const {
+        switch {
+            case Null {
+                ret true
+            }
+            default {
+                ret false
+            }
+        }
+    }
+
+    public bool asBool() const {
+        switch {
+            case Bool(bool b) {
+                ret b
+            }
+            default {
+                throw wrongKind("a bool")
+            }
+        }
+    }
+
+    public i64 asInt() const {
+        switch {
+            case Int(i64 n) {
+                ret n
+            }
+            default {
+                throw wrongKind("an integer")
+            }
+        }
+    }
+
+    // A float, also from an integer (D255).
+    public f64 asFloat() const {
+        switch {
+            case Int(i64 n) {
+                ret f64(n)
+            }
+            case Float(f64 x) {
+                ret x
+            }
+            default {
+                throw wrongKind("a number")
+            }
+        }
+    }
+
+    public string asText() const {
+        switch {
+            case Text(string s) {
+                ret s.copy()
+            }
+            default {
+                throw wrongKind("a string")
+            }
+        }
+    }
+
+    // The elements of an array, or the members of an object.
+    public i64 len() const {
+        switch {
+            case Array(list<Value> items) {
+                ret items.len()
+            }
+            case Object(list<Member> members) {
+                ret members.len()
+            }
+            default {
+                throw wrongKind("an array or an object")
+            }
+        }
+    }
+
+    // Whether an object has the member; false for the other values.
+    public bool has(string name) const {
+        switch {
+            case Object(list<Member> members) {
+                for (Member member in members) {
+                    if (member.name == name) {
+                        ret true
+                    }
+                }
+                ret false
+            }
+            default {
+                ret false
+            }
+        }
+    }
+
+    // A copy of the member of an object; with the same name twice, the last.
+    public Value get(string name) const {
+        switch {
+            case Object(list<Member> members) {
+                for (i64 i = members.len() - 1; i >= 0; i--) {
+                    if (members[i].name == name) {
+                        ret members[i].value.copy()
+                    }
+                }
+                throw Error(format("the object of JSON has no member '{}'", name))
+            }
+            default {
+                throw wrongKind("an object")
+            }
+        }
+    }
+
+    // A copy of an element of an array.
+    public Value at(i64 index) const {
+        switch {
+            case Array(list<Value> items) {
+                if (index < 0 || index >= items.len()) {
+                    throw Error(format("the array of JSON has {} elements: there is no element {}", items.len(), index))
+                }
+                ret items[index].copy()
+            }
+            default {
+                throw wrongKind("an array")
+            }
+        }
+    }
+
+    // The names of the members of an object, in their order.
+    public list<string> keys() const {
+        switch {
+            case Object(list<Member> members) {
+                list<string> names
+                for (Member member in members) {
+                    names.add(member.name.copy())
+                }
+                ret names
+            }
+            default {
+                throw wrongKind("an object")
+            }
+        }
+    }
+
+    // Replaces the member of an object, or adds it at the end.
+    public void set(string name, move Value item) {
+        switch {
+            case Object(ref list<Member> members) {
+                i64 found = -1
+                for (i64 i = 0; i < members.len(); i++) {
+                    if (members[i].name == name) {
+                        found = i
+                    }
+                }
+                if (found >= 0) {
+                    members[found].value = move item
+                } else {
+                    Member member
+                    member.name = name.copy()
+                    member.value = move item
+                    members.add(move member)
+                }
+            }
+            default {
+                throw wrongKind("an object")
+            }
+        }
+    }
+
+    // Adds an element at the end of an array.
+    public void add(move Value item) {
+        switch {
+            case Array(ref list<Value> items) {
+                items.add(move item)
+            }
+            default {
+                throw wrongKind("an array")
+            }
+        }
+    }
+
+    // What the value is, for the messages: "an integer".
+    string kind() const {
+        switch {
+            case Null {
+                ret "null"
+            }
+            case Bool {
+                ret "a bool"
+            }
+            case Int {
+                ret "an integer"
+            }
+            case Float {
+                ret "a float"
+            }
+            case Text {
+                ret "a string"
+            }
+            case Array {
+                ret "an array"
+            }
+            case Object {
+                ret "an object"
+            }
+        }
+    }
+
+    Error wrongKind(string expected) const {
+        ret Error(format("the value of JSON is {}, not {}", kind(), expected))
+    }
+}
+
+// A member of an object.
+public struct Member {
+    public string name
+    public Value value
+}
+
+// An empty object, to fill with set().
+public Value object() {
+    ret Value.Object(list<Member>())
+}
+
+// An empty array, to fill with add().
+public Value array() {
+    ret Value.Array(list<Value>())
+}
+
+// ---- Conversion (D251) ----
+
+// The text of a value, without spaces.
+public string encode<T : Data>(T value) {
+    Writer w
+    jsonWrite<T>(ref w, value)
+    ret move w.out
+}
+
+// The text of a value on several lines, indented by two spaces for each level.
+public string pretty<T : Data>(T value) {
+    Writer w
+    w.indent = 2
+    jsonWrite<T>(ref w, value)
+    ret move w.out
+}
+
+// A value from its text: an exception for a text that is not JSON (RFC 8259).
+public T decode<T : Data>(string text) {
+    ret fromValue<T>(parse(text))
+}
+
+// A struct, or another type, from a Value. A member that is missing leaves the
+// default value in its field; a member without a field is ignored.
+public T fromValue<T : Data>(Value value) {
+    try {
+        ret jsonRead<T>(value)
+    } catch (Mismatch e) {
+        throw Error(e.message())
+    }
+}
+
+public Value toValue<T : Data>(T value) {
+    ret parse(encode(value))
+}
+
+// ---- Writing ----
+
+// Writes the text of JSON: compact, or with `indent` spaces for each level.
+struct Writer {
+    string out
+    i64 indent
+    i64 depth
+    bool comma     // the next value goes after a ','
+    bool afterKey  // the next value follows its key on the same line
+
+    void beginObject() {
+        open("{")
+    }
+
+    void endObject() {
+        close("}")
+    }
+
+    void beginArray() {
+        open("[")
+    }
+
+    void endArray() {
+        close("]")
+    }
+
+    void key(string name) {
+        next()
+        quote(name)
+        if (indent > 0) {
+            out.append(": ")
+        } else {
+            out.append(":")
+        }
+        afterKey = true
+    }
+
+    void writeNull() {
+        next()
+        out.append("null")
+        comma = true
+    }
+
+    void writeBool(bool b) {
+        next()
+        if (b) {
+            out.append("true")
+        } else {
+            out.append("false")
+        }
+        comma = true
+    }
+
+    void writeInt(i64 n) {
+        next()
+        out.append(format("{}", n))
+        comma = true
+    }
+
+    void writeUnsigned(u64 n) {
+        next()
+        out.append(format("{}", n))
+        comma = true
+    }
+
+    // The shortest text that reads back the same number, with ".0" when it has no
+    // point, so that it is read back as a float (D255).
+    void writeFloat(string text) {
+        for (i64 i = 0; i < text.len(); i++) {
+            if (text[i] == 'n' || text[i] == 'i') {  // nan, inf
+                throw Error(format("cannot encode JSON: {} is not a number of JSON", text))
+            }
+        }
+        next()
+        out.append(text)
+        bool integer = true
+        for (i64 i = 0; i < text.len(); i++) {
+            if (text[i] == '.' || text[i] == 'e') {
+                integer = false
+            }
+        }
+        if (integer) {
+            out.append(".0")
+        }
+        comma = true
+    }
+
+    void writeText(string text) {
+        next()
+        quote(text)
+        comma = true
+    }
+
+    void open(string bracket) {
+        next()
+        out.append(bracket)
+        depth++
+        comma = false
+    }
+
+    void close(string bracket) {
+        depth--
+        if (comma && indent > 0) {
+            newline()
+        }
+        out.append(bracket)
+        comma = true
+    }
+
+    // The ',' after the value before, and the new line of the indented text.
+    void next() {
+        if (afterKey) {
+            afterKey = false
+            ret
+        }
+        if (comma) {
+            out.append(",")
+        }
+        if (indent > 0 && depth > 0) {
+            newline()
+        }
+    }
+
+    void newline() {
+        out.append("\n")
+        for (i64 i = 0; i < indent * depth; i++) {
+            out.append(" ")
+        }
+    }
+
+    // A string between quotes, with the escapes of JSON for '"', '\' and the
+    // control characters; the rest of UTF-8 as it is.
+    void quote(string text) {
+        out.append("\"")
+        i64 start = 0
+        for (i64 i = 0; i < text.len(); i++) {
+            u8 c = text[i]
+            if (c >= 0x20 && c != '"' && c != '\\') {
+                continue
+            }
+            out.append(text.slice(start, i))
+            out.append(escaped(c))
+            start = i + 1
+        }
+        if (start == 0) {
+            out.append(text)
+        } else {
+            out.append(text.slice(start, text.len()))
+        }
+        out.append("\"")
+    }
+}
+
+string escaped(u8 c) {
+    if (c == '"') {
+        ret "\\\""
+    }
+    if (c == '\\') {
+        ret "\\\\"
+    }
+    if (c == '\n') {
+        ret "\\n"
+    }
+    if (c == '\r') {
+        ret "\\r"
+    }
+    if (c == '\t') {
+        ret "\\t"
+    }
+    if (c == 8) {
+        ret "\\b"
+    }
+    if (c == 12) {
+        ret "\\f"
+    }
+    ret format("\\u{:04x}", c)
+}
+
+void writeBool(ref Writer w, bool b) {
+    w.writeBool(b)
+}
+
+void writeI8(ref Writer w, i8 n) {
+    w.writeInt(n)
+}
+
+void writeI16(ref Writer w, i16 n) {
+    w.writeInt(n)
+}
+
+void writeI32(ref Writer w, i32 n) {
+    w.writeInt(n)
+}
+
+void writeI64(ref Writer w, i64 n) {
+    w.writeInt(n)
+}
+
+void writeU8(ref Writer w, u8 n) {
+    w.writeInt(n)
+}
+
+void writeU16(ref Writer w, u16 n) {
+    w.writeInt(n)
+}
+
+void writeU32(ref Writer w, u32 n) {
+    w.writeInt(n)
+}
+
+void writeU64(ref Writer w, u64 n) {
+    w.writeUnsigned(n)
+}
+
+void writeF32(ref Writer w, f32 x) {
+    w.writeFloat(format("{}", x))
+}
+
+void writeF64(ref Writer w, f64 x) {
+    w.writeFloat(format("{}", x))
+}
+
+void writeString(ref Writer w, string s) {
+    w.writeText(s)
+}
+
+void writeValue(ref Writer w, Value v) {
+    switch (v) {
+        case Null {
+            w.writeNull()
+        }
+        case Bool(bool b) {
+            w.writeBool(b)
+        }
+        case Int(i64 n) {
+            w.writeInt(n)
+        }
+        case Float(f64 x) {
+            w.writeFloat(format("{}", x))
+        }
+        case Text(string s) {
+            w.writeText(s)
+        }
+        case Array(list<Value> items) {
+            w.beginArray()
+            for (Value item in items) {
+                writeValue(ref w, item)
+            }
+            w.endArray()
+        }
+        case Object(list<Member> members) {
+            w.beginObject()
+            for (Member member in members) {
+                w.key(member.name)
+                writeValue(ref w, member.value)
+            }
+            w.endObject()
+        }
+    }
+}
+
+void writeList<T : Data>(ref Writer w, list<T> items) {
+    w.beginArray()
+    for (T item in items) {
+        jsonWrite<T>(ref w, item)
+    }
+    w.endArray()
+}
+
+// The keys in the order of their bytes, so that the text does not change with
+// the order of the map (D209).
+void writeMap<T : Data>(ref Writer w, map<string, T> values) {
+    list<string> keys
+    for (string key, T item in values) {
+        keys.add(key.copy())
+    }
+    list<i64> order = sortedOrder(keys)
+    w.beginObject()
+    for (i64 i in order) {
+        w.key(keys[i])
+        jsonWrite<T>(ref w, values[keys[i]])
+    }
+    w.endObject()
+}
+
+// The positions of the texts in their order, with a merge sort.
+list<i64> sortedOrder(list<string> texts) {
+    i64 count = texts.len()
+    list<i64> order
+    for (i64 i = 0; i < count; i++) {
+        order.add(i)
+    }
+    list<i64> merged = order.copy()
+    for (i64 width = 1; width < count; width *= 2) {
+        for (i64 low = 0; low < count; low += 2 * width) {
+            i64 middle = low + width
+            if (middle > count) {
+                middle = count
+            }
+            i64 high = low + 2 * width
+            if (high > count) {
+                high = count
+            }
+            i64 a = low
+            i64 b = middle
+            for (i64 k = low; k < high; k++) {
+                if (a < middle && (b >= high || texts[order[a]] <= texts[order[b]])) {
+                    merged[k] = order[a]
+                    a++
+                } else {
+                    merged[k] = order[b]
+                    b++
+                }
+            }
+        }
+        for (i64 k = 0; k < count; k++) {
+            order[k] = merged[k]
+        }
+    }
+    ret order
+}
+
+// ---- Reading the values of a type ----
+
+// A value that does not have the type of the field it goes to. The path is
+// written on the way out, from the inside: ".users[2].age".
+struct Mismatch : Exception {
+    string path
+    string problem
+
+    string message() const {
+        if (path.len() == 0) {
+            ret "cannot decode JSON: " + problem
+        }
+        if (path[0] == '.') {
+            ret format("cannot decode JSON: at {}: {}", path.slice(1, path.len()), problem)
+        }
+        ret format("cannot decode JSON: at {}: {}", path, problem)
+    }
+
+    Mismatch inside(string name) const {
+        Mismatch result
+        result.path = "." + name + path
+        result.problem = problem.copy()
+        ret result
+    }
+
+    Mismatch at(i64 index) const {
+        Mismatch result
+        result.path = format("[{}]{}", index, path)
+        result.problem = problem.copy()
+        ret result
+    }
+}
+
+Mismatch mismatch(string expected, Value found) {
+    Mismatch result
+    result.problem = format("expected {}, found {}", expected, found.kind())
+    ret result
+}
+
+Mismatch unknownCase(string name, string names) {
+    Mismatch result
+    result.problem = format("expected one of {}, found \"{}\"", names, name)
+    ret result
+}
+
+bool isObject(Value v) {
+    switch (v) {
+        case Object {
+            ret true
+        }
+        default {
+            ret false
+        }
+    }
+}
+
+// A null gives the default value of the type (D257).
+bool readBool(Value v) {
+    switch (v) {
+        case Bool(bool b) {
+            ret b
+        }
+        case Null {
+            ret false
+        }
+        default {
+            throw mismatch("a bool", v)
+        }
+    }
+}
+
+// An integer field takes only an integer of JSON, in its range (D255).
+i64 readI64(Value v) {
+    switch (v) {
+        case Int(i64 n) {
+            ret n
+        }
+        case Null {
+            ret 0
+        }
+        default {
+            throw mismatch("an integer", v)
+        }
+    }
+}
+
+i64 readRange(Value v, i64 low, i64 high, string type) {
+    i64 n = readI64(v)
+    if (n < low || n > high) {
+        throw outOfRange(n, type)
+    }
+    ret n
+}
+
+Mismatch outOfRange(i64 n, string type) {
+    Mismatch result
+    result.problem = format("{} does not fit in {}", n, type)
+    ret result
+}
+
+i8 readI8(Value v) {
+    ret i8(readRange(v, -128, 127, "i8"))
+}
+
+i16 readI16(Value v) {
+    ret i16(readRange(v, -32768, 32767, "i16"))
+}
+
+i32 readI32(Value v) {
+    ret i32(readRange(v, -2147483648, 2147483647, "i32"))
+}
+
+u8 readU8(Value v) {
+    ret u8(readRange(v, 0, 255, "u8"))
+}
+
+u16 readU16(Value v) {
+    ret u16(readRange(v, 0, 65535, "u16"))
+}
+
+u32 readU32(Value v) {
+    ret u32(readRange(v, 0, 4294967295, "u32"))
+}
+
+u64 readU64(Value v) {
+    ret u64(readRange(v, 0, 9223372036854775807, "u64"))
+}
+
+// A float field takes also an integer (D255).
+f64 readF64(Value v) {
+    switch (v) {
+        case Int(i64 n) {
+            ret f64(n)
+        }
+        case Float(f64 x) {
+            ret x
+        }
+        case Null {
+            ret 0.0
+        }
+        default {
+            throw mismatch("a number", v)
+        }
+    }
+}
+
+f32 readF32(Value v) {
+    ret f32(readF64(v))
+}
+
+string readString(Value v) {
+    switch (v) {
+        case Text(string s) {
+            ret s.copy()
+        }
+        case Null {
+            ret ""
+        }
+        default {
+            throw mismatch("a string", v)
+        }
+    }
+}
+
+Value readValue(Value v) {
+    ret v.copy()
+}
+
+list<T> readList<T : Data>(Value v) {
+    switch (v) {
+        case Array(list<Value> items) {
+            list<T> result
+            result.reserve(items.len())
+            for (i64 i = 0; i < items.len(); i++) {
+                try {
+                    result.add(jsonRead<T>(items[i]))
+                } catch (Mismatch e) {
+                    throw e.at(i)
+                }
+            }
+            ret result
+        }
+        case Null {
+            ret list<T>()
+        }
+        default {
+            throw mismatch("an array", v)
+        }
+    }
+}
+
+map<string, T> readMap<T : Data>(Value v) {
+    switch (v) {
+        case Object(list<Member> members) {
+            map<string, T> result
+            for (Member member in members) {
+                try {
+                    result[member.name] = jsonRead<T>(member.value)
+                } catch (Mismatch e) {
+                    throw e.inside(member.name)
+                }
+            }
+            ret result
+        }
+        case Null {
+            ret map<string, T>()
+        }
+        default {
+            throw mismatch("an object", v)
+        }
+    }
+}
+
+// ---- Reading the text (RFC 8259) ----
+
+// A value from its text, without comments and without commas at the end. An
+// error says where: "cannot read JSON: line 3, column 7: expected ',' or '}'".
+public Value parse(string text) {
+    i64 at = 0
+    skipSpace(text, ref at)
+    Value result = parseValue(text, ref at, 0)
+    skipSpace(text, ref at)
+    if (at < text.len()) {
+        throw syntax(text, at, "the text goes on after the value")
+    }
+    ret result
+}
+
+Error syntax(string text, i64 at, string problem) {
+    i64 line = 1
+    i64 column = 1
+    for (i64 i = 0; i < at && i < text.len(); i++) {
+        u8 c = text[i]
+        if (c == '\n') {
+            line++
+            column = 1
+        } else if (c & 0xC0 != 0x80) {  // a character of UTF-8 starts
+            column++
+        }
+    }
+    ret Error(format("cannot read JSON: line {}, column {}: {}", line, column, problem))
+}
+
+void skipSpace(string text, ref i64 at) {
+    for (at < text.len()) {
+        u8 c = text[at]
+        if (c != ' ' && c != '\t' && c != '\n' && c != '\r') {
+            ret
+        }
+        at++
+    }
+}
+
+// Arrays and objects nested deeper than this would use up the stack.
+Value parseValue(string text, ref i64 at, i64 depth) {
+    if (at >= text.len()) {
+        throw syntax(text, at, "a value is missing")
+    }
+    u8 c = text[at]
+    if (c == '{' || c == '[') {
+        if (depth >= 512) {
+            throw syntax(text, at, "the arrays and objects are nested more than 512 times")
+        }
+        if (c == '{') {
+            ret parseObject(text, ref at, depth + 1)
+        }
+        ret parseArray(text, ref at, depth + 1)
+    }
+    if (c == '"') {
+        ret Value.Text(parseString(text, ref at))
+    }
+    if (c == '-' || (c >= '0' && c <= '9')) {
+        ret parseNumber(text, ref at)
+    }
+    if (word(text, ref at, "true")) {
+        ret Value.Bool(true)
+    }
+    if (word(text, ref at, "false")) {
+        ret Value.Bool(false)
+    }
+    if (word(text, ref at, "null")) {
+        ret Value.Null
+    }
+    throw syntax(text, at, "expected a value")
+}
+
+// Passes `expected`, if the text has it at `at`.
+bool word(string text, ref i64 at, string expected) {
+    if (at + expected.len() > text.len()) {
+        ret false
+    }
+    for (i64 i = 0; i < expected.len(); i++) {
+        if (text[at + i] != expected[i]) {
+            ret false
+        }
+    }
+    at += expected.len()
+    ret true
+}
+
+Value parseArray(string text, ref i64 at, i64 depth) {
+    at++  // '['
+    list<Value> items
+    skipSpace(text, ref at)
+    if (at < text.len() && text[at] == ']') {
+        at++
+        ret Value.Array(move items)
+    }
+    for {
+        skipSpace(text, ref at)
+        items.add(parseValue(text, ref at, depth))
+        skipSpace(text, ref at)
+        if (at < text.len() && text[at] == ',') {
+            at++
+        } else if (at < text.len() && text[at] == ']') {
+            at++
+            ret Value.Array(move items)
+        } else {
+            throw syntax(text, at, "expected ',' or ']'")
+        }
+    }
+}
+
+Value parseObject(string text, ref i64 at, i64 depth) {
+    at++  // '{'
+    list<Member> members
+    skipSpace(text, ref at)
+    if (at < text.len() && text[at] == '}') {
+        at++
+        ret Value.Object(move members)
+    }
+    for {
+        skipSpace(text, ref at)
+        if (at >= text.len() || text[at] != '"') {
+            throw syntax(text, at, "expected the name of a member, in double quotes")
+        }
+        Member member
+        member.name = parseString(text, ref at)
+        skipSpace(text, ref at)
+        if (at >= text.len() || text[at] != ':') {
+            throw syntax(text, at, "expected ':' after the name of a member")
+        }
+        at++
+        skipSpace(text, ref at)
+        member.value = parseValue(text, ref at, depth)
+        members.add(move member)
+        skipSpace(text, ref at)
+        if (at < text.len() && text[at] == ',') {
+            at++
+        } else if (at < text.len() && text[at] == '}') {
+            at++
+            ret Value.Object(move members)
+        } else {
+            throw syntax(text, at, "expected ',' or '}'")
+        }
+    }
+}
+
+string parseString(string text, ref i64 at) {
+    i64 begin = at
+    at++  // '"'
+    i64 start = at
+    string result
+    for {
+        if (at >= text.len()) {
+            throw syntax(text, begin, "the string does not end")
+        }
+        u8 c = text[at]
+        if (c == '"') {
+            result.append(text.slice(start, at))
+            at++
+            ret result
+        }
+        if (c == '\\') {
+            result.append(text.slice(start, at))
+            at++
+            result.append(unescape(text, ref at))
+            start = at
+        } else if (c < 0x20) {
+            throw syntax(text, at, "a control character in a string must be escaped")
+        } else {
+            at++
+        }
+    }
+}
+
+// The character of an escape, after its '\'.
+string unescape(string text, ref i64 at) {
+    if (at >= text.len()) {
+        throw syntax(text, at, "the string does not end")
+    }
+    u8 c = text[at]
+    at++
+    if (c == '"') {
+        ret "\""
+    }
+    if (c == '\\') {
+        ret "\\"
+    }
+    if (c == '/') {
+        ret "/"
+    }
+    if (c == 'b') {
+        ret "\x08"
+    }
+    if (c == 'f') {
+        ret "\x0c"
+    }
+    if (c == 'n') {
+        ret "\n"
+    }
+    if (c == 'r') {
+        ret "\r"
+    }
+    if (c == 't') {
+        ret "\t"
+    }
+    if (c != 'u') {
+        throw syntax(text, at - 2, "unknown escape in a string")
+    }
+    i64 code = hexCode(text, ref at)
+    if (code >= 0xDC00 && code <= 0xDFFF) {
+        throw syntax(text, at - 6, "the second half of a pair of \\u escapes comes without the first")
+    }
+    if (code >= 0xD800 && code <= 0xDBFF) {
+        if (!word(text, ref at, "\\u")) {
+            throw syntax(text, at, "the first half of a pair of \\u escapes comes without the second")
+        }
+        i64 low = hexCode(text, ref at)
+        if (low < 0xDC00 || low > 0xDFFF) {
+            throw syntax(text, at - 6, "the first half of a pair of \\u escapes comes without the second")
+        }
+        code = 0x10000 + (code - 0xD800) * 0x400 + (low - 0xDC00)
+    }
+    ret utf8(code)
+}
+
+// The four hexadecimal digits of \u.
+i64 hexCode(string text, ref i64 at) {
+    i64 code = 0
+    for (i64 i = 0; i < 4; i++) {
+        i64 digit = -1
+        if (at < text.len()) {
+            u8 c = text[at]
+            if (c >= '0' && c <= '9') {
+                digit = c - '0'
+            } else if (c >= 'a' && c <= 'f') {
+                digit = c - 'a' + 10
+            } else if (c >= 'A' && c <= 'F') {
+                digit = c - 'A' + 10
+            }
+        }
+        if (digit < 0) {
+            throw syntax(text, at, "expected four hexadecimal digits after \\u")
+        }
+        code = code * 16 + digit
+        at++
+    }
+    ret code
+}
+
+string utf8(i64 code) {
+    list<u8> bytes
+    if (code < 0x80) {
+        bytes.add(u8(code))
+    } else if (code < 0x800) {
+        bytes.add(u8(0xC0 | code >> 6))
+        bytes.add(u8(0x80 | code & 0x3F))
+    } else if (code < 0x10000) {
+        bytes.add(u8(0xE0 | code >> 12))
+        bytes.add(u8(0x80 | code >> 6 & 0x3F))
+        bytes.add(u8(0x80 | code & 0x3F))
+    } else {
+        bytes.add(u8(0xF0 | code >> 18))
+        bytes.add(u8(0x80 | code >> 12 & 0x3F))
+        bytes.add(u8(0x80 | code >> 6 & 0x3F))
+        bytes.add(u8(0x80 | code & 0x3F))
+    }
+    ret string(bytes)
+}
+
+bool digitAt(string text, i64 at) {
+    ret at < text.len() && text[at] >= '0' && text[at] <= '9'
+}
+
+void digits(string text, ref i64 at) {
+    for (digitAt(text, at)) {
+        at++
+    }
+}
+
+// An integer without a point or an exponent that fits in an i64 is an Int, the
+// other numbers are Float (D255).
+Value parseNumber(string text, ref i64 at) {
+    i64 start = at
+    if (text[at] == '-') {
+        at++
+    }
+    if (!digitAt(text, at)) {
+        throw syntax(text, at, "expected a digit")
+    }
+    if (text[at] == '0') {
+        at++
+    } else {
+        digits(text, ref at)
+    }
+    bool integer = true
+    if (at < text.len() && text[at] == '.') {
+        integer = false
+        at++
+        if (!digitAt(text, at)) {
+            throw syntax(text, at, "expected a digit after the point")
+        }
+        digits(text, ref at)
+    }
+    if (at < text.len() && (text[at] == 'e' || text[at] == 'E')) {
+        integer = false
+        at++
+        if (at < text.len() && (text[at] == '+' || text[at] == '-')) {
+            at++
+        }
+        if (!digitAt(text, at)) {
+            throw syntax(text, at, "expected a digit in the exponent")
+        }
+        digits(text, ref at)
+    }
+    string number = text.slice(start, at)
+    if (integer) {
+        try {
+            ret Value.Int(i64(number))
+        } catch (Error e) {
+        }
+    }
+    try {
+        ret Value.Float(f64(number))
+    } catch (Error e) {
+        throw syntax(text, start, "the number does not fit in a f64")
+    }
+}

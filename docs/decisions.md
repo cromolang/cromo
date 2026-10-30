@@ -1349,6 +1349,65 @@ curl -sSf https://cromolang.org/install.sh | sh      # Linux
 ### D250. The messages of TLS
 *2026-10-29.* As D230: `cannot connect to example.com:443 with TLS: the certificate is not for example.com`, `... has expired`, `... is not valid yet`, `... is not signed by an authority that the system trusts`; `cannot listen with TLS: the key is not the one of the certificate`.
 
+### D251. Structs to JSON and back: the compiler generates the conversion
+*2026-10-30.* It resolves the open point of JSON. `json.encode(value)` gives the text of a value, and `json.decode<T>(text)` gives a `T` back, without declaring anything, as in Go. The compiler generates the conversion of a struct the first time it is needed, as it does for `copy()` (D35): an object with a member for each field. A field whose type cannot be converted is a compile error that names it. Reflection at compile time, which would also serve printing (D38), is not needed for this: it would change D52.
+
+### D252. An HTTP server is one function for every request
+*2026-10-30.* `http.serve(host, port, handler)` waits for the requests and gives each one to `handler`, which receives `ref` the request (D258) and `ref` the response. Each connection is served on a thread (D223), so the handler runs on several threads at once. The handler chooses the route itself, with patterns: `req.matches("GET /users/{id}")`, then `req.param("id")`. What the requests share is captured by reading, as a `thread.Mutex` (D216).
+
+### D253. `const func`: a function that several threads can call at once
+*2026-10-30.* A parameter `const func(...)` receives a function that does not modify what it captures, as a lambda of C++ without `mutable`: a lambda that does not capture with `ref`, a named function, or a function value (D184), whose captures are read-only (D227). Then several threads can call it at the same time. The handler of `http.serve` is one (D252).
+
+### D254. The HTTP client: functions, a connection for each request
+*2026-10-30.* `http.get(url)`, `http.post(url, body, type)`, and `http.send(request)` for the other methods. Each request opens its own connection, with TLS for `https` (D235), and the redirects are followed. The reuse of the connections comes later, with an `http.Client`.
+
+### D255. The numbers of JSON: integers and floats
+*2026-10-30.* `json.Value` has `Int(i64)` for a number without a point or an exponent that fits in an `i64`, and `Float(f64)` for the others, as fcl and serde_json do: identifiers of 64 bits keep all their digits. A float can be read also from an `Int`.
+
+### D256. Attributes on the fields: the names of JSON
+*2026-10-30.* An attribute is written before a field with the syntax of C++11: `[[json("user_id")]] i64 id` gives the field another name in JSON, `[[json(skip)]] string passwordHash` leaves it out of the conversion (D251). It is a general means for the attributes that will come; for now `json` is the only one.
+
+### D257. A null of JSON gives the default value
+*2026-10-30.* Reading a type, `null` gives its default value (D51), as a member that is missing, also for the elements of a list and the values of a map, as in Go: there are no optionals (D47). Who needs to tell a null apart declares the field `json.Value`, asks `isNull()`, and converts it with `json.fromValue<T>(v)`.
+
+### D258. The handler receives the request with `ref` too
+*2026-10-30.* It amends D252: the handler is `const func(ref http.Request, ref http.Response)`, because `req.matches(...)` keeps in the request the parameters that `req.param(...)` then reads.
+
+### D259. A thread cannot capture a parameter `func` that is not `const`
+*2026-10-30.* It amends D215. The lambda of a thread cannot capture a parameter `func` that is not `const` (D253), also through the captures of nested lambdas: that function may modify what it captures while another thread reads it. Before, a lambda that captured with `ref` could reach several threads this way.
+
+### D260. The details of the HTTP server
+*2026-10-30.* It details D252.
+- A fixed pool of 128 threads, changed with `server.threads(n)` before `serve`; each thread accepts from the same listener and serves one connection at a time, with keep-alive.
+- It waits 5 s for the next request of a connection, and 30 s for each read and write.
+- The head of a request is at most 64 KB, otherwise 431; the body at most 16 MB, otherwise 413. `Expect: 100-continue` is answered.
+- HTTP/1.0 and HTTP/1.1; the others give 505. HEAD is answered without the body.
+- An exception of the handler gives 500 and a line on the error output: `http: GET /fail: boom`.
+
+### D261. The patterns of the routes
+*2026-10-30.* It details D252. `"METHOD /path/{name}/{rest...}"`: the method can be left out and then any method goes; GET takes also HEAD. The other segments are compared exactly, also a final slash; `{rest...}` takes the rest of the path, and only at the end. The parameters are without their escapes. `param()` of a name that the pattern has not is an exception. `queryValue(name)` decodes `+` and `%XX`, and gives `""` without it.
+
+### D262. The interface of `Request` and `Response`
+*2026-10-30.* `write(text)`, `writeJson(text)` and `writeBytes(bytes, type)` add to the body and set the `Content-Type` if it is missing; `text()` reads the body. The JSON is written as `res.writeJson(json.encode(x))`, because there are no generic methods. `Headers` compares the names without case; a header with a new line is an exception.
+
+### D263. The details of the HTTP client
+*2026-10-30.* It details D254. 30 s for each read and write; `Connection: close` and `User-Agent: cromo`. At most 10 redirects; 303, and 301 or 302 after a method other than GET, become GET; `Authorization` and `Cookie` are dropped when the host changes. A status of error is a response, not an exception; the 1xx are skipped. No gzip and no user and password in the URL; `http.escape(text)` escapes a part of it.
+
+### D264. Writing JSON
+*2026-10-30.* It details D251. Compact with `encode`, with 2 spaces with `pretty`. A float is written with the shortest text that reads back the same, with `.0` when it is integral; NaN and infinity are an exception. Only the escapes that RFC 8259 requires. The keys of a map are sorted. All the fields are written, the private ones too, as `copy()` (D35). An enum is the name of its case. Fixed-size arrays and enums with data are not converted yet.
+
+### D265. Reading JSON
+*2026-10-30.* It details D251 and D255. RFC 8259 strictly, nested up to 512 levels; of a member written twice the last one wins. An integer field takes only an `Int` in its range: `1.0` is an error, as in Go. A `u64` above 2^63 is not read yet. A lone surrogate is an error. The errors say where: the line and the column for the text, the path of the value for the conversion: `at grid[1][1]: expected an integer, found a string`.
+
+### D266. `json.Value` and `json.Data`
+*2026-10-30.* The interface of `json.Value` is the one in language.md §21: `isNull`, `asBool`, `asInt`, `asFloat`, `asText`, `len`, `has`, `get`, `at`, `keys`, `set`, `add`, with `json.object()` and `json.array()`. `json.Data` is the interface that every convertible type satisfies by itself; a generic that converts its `T` writes `<T : json.Data>` (D52).
+
+### D267. Additions to the parser
+*2026-10-30.* `module.function<Types>(args)`, as `json.decode<User>(text)`. An attribute can be on its own line before the field. A method of an enum can return the enum itself: a constructor is a name followed by `(`.
+
+### D268. `net.Listener.accept()` is `const`
+*2026-10-30.* Several threads accept from the same listener (D260), which they capture by reading.
+
 ---
 
 ## Open
@@ -1358,4 +1417,3 @@ The points still to be defined, each when its milestone needs it (D152):
 - the content of the standard library;
 - `cromo update` (D153, D239): where the archives are published, how a download is checked before its version becomes the active one, and how the active version is chosen. Recommended: a signature of each archive, checked with a public key contained in `cromo`; a link `~/.cromo/current` to the folder of the active version, a junction on Windows, which needs no administrator, and a symbolic link on Linux, with `current/bin` in the `PATH`;
 - where the completion of the other names goes among the milestones (D171, D179);
-- converting structs to JSON and back: fcl does it with a macro that lists the fields; Cromo needs either reflection at compile time or methods generated by the compiler, as `copy()` (D35) (M18);

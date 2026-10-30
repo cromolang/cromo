@@ -1,0 +1,39 @@
+// const func (D253): threads of a block that call the same function at once, with
+// what it shares in a mutex, and a const func passed on and captured again.
+// expect-output: 44000
+// expect-output: hello hello
+import std.thread
+
+void work(i64 id, thread.Mutex<i64> total, const func(i64) i64 handler) {
+    for (i64 i = 0; i < 1000; i++) {
+        i64 v = handler(id)
+        total.lock([v](ref i64 t) { t += v })
+    }
+}
+
+void startWorkers(i64 count, thread.Mutex<i64> total, const func(i64) i64 handler) {
+    if (count == 0) {
+        ret
+    }
+    thread.Thread worker = thread.Thread([count, total, handler]() { work(count, total, handler) })
+    worker.start()
+    startWorkers(count - 1, total, handler)
+    worker.join()
+}
+
+void twice(const func(string) string f) {
+    println("{} {}", f("hello"), f("hello"))
+}
+
+void pass(const func(string) string f) {
+    twice([f](string s) string { ret f(s) })
+}
+
+i32 main() {
+    thread.Mutex<i64> total
+    i64 base = 1
+    startWorkers(8, total, [base](i64 id) i64 { ret base + id })
+    total.lock([](ref i64 t) { println("{}", t) })
+    pass([](string s) string { ret s.copy() })
+    ret 0
+}

@@ -1,0 +1,1087 @@
+// The module std.http (D252-D254): HTTP/1.1 over the connections of std.net,
+// with TLS for https (D235). A server gives every request to one function, on
+// its threads (D252); the client opens a connection for each request (D254).
+import std.net
+import std.thread
+import std.time
+
+// ---- Headers ----
+
+// A header of a request or of a response.
+public struct Header {
+    public string name
+    public string value
+}
+
+// The headers in their order. The names are compared without case (RFC 9110).
+public struct Headers {
+    public list<Header> items
+
+    // The value of the first header with the name, "" without one.
+    public string get(string name) const {
+        for (Header item in items) {
+            if (sameName(item.name, name)) {
+                ret item.value.copy()
+            }
+        }
+        ret ""
+    }
+
+    public bool has(string name) const {
+        for (Header item in items) {
+            if (sameName(item.name, name)) {
+                ret true
+            }
+        }
+        ret false
+    }
+
+    // Replaces the headers with the name with one.
+    public void set(string name, string text) {
+        remove(name)
+        add(name, text)
+    }
+
+    // Adds a header, also when there is one with the same name.
+    public void add(string name, string text) {
+        checkHeader(name, text)
+        items.add(header(name, text))
+    }
+
+    public void remove(string name) {
+        list<Header> kept
+        for (i64 i = 0; i < items.len(); i++) {
+            if (!sameName(items[i].name, name)) {
+                kept.add(move items[i])
+            }
+        }
+        items = move kept
+    }
+}
+
+Header header(string name, string text) {
+    Header result
+    result.name = name.copy()
+    result.value = text.copy()
+    ret result
+}
+
+// A new line in a header would start another header, or the body.
+void checkHeader(string name, string text) {
+    if (name.len() == 0) {
+        throw Error("the name of a header of HTTP cannot be empty")
+    }
+    for (i64 i = 0; i < name.len(); i++) {
+        if (name[i] <= ' ' || name[i] == ':') {
+            throw Error(format("'{}' is not the name of a header of HTTP", name))
+        }
+    }
+    for (i64 i = 0; i < text.len(); i++) {
+        if (text[i] == '\r' || text[i] == '\n') {
+            throw Error(format("the header {} of HTTP cannot contain a new line", name))
+        }
+    }
+}
+
+// ---- Requests and responses ----
+
+// A request: the one that a server receives, or the one that the client sends
+// with send().
+public struct Request {
+    public string method
+    public string url    // the server: as in the request, "/users/7?full=1"
+    public string path   // the server: "/users/7", as sent, with its escapes
+    public string query  // the server: "full=1"
+    public Headers headers
+    public list<u8> body
+    list<Header> params  // of the last pattern of matches()
+    string version       // "HTTP/1.1"
+
+    // A request for the client: the method and the whole URL.
+    public Request(string verb, string address) {
+        method = verb.copy()
+        url = address.copy()
+    }
+
+    // The body as text: an exception if it is not UTF-8.
+    public string text() const {
+        ret string(body)
+    }
+
+    // Adds text to the body, of type text/plain unless the headers say another.
+    public void write(string text) {
+        appendText(ref body, text)
+        defaultType(ref headers, "text/plain; charset=utf-8")
+    }
+
+    // Adds the text of JSON to the body, of type application/json, as
+    // req.writeJson(json.encode(user)).
+    public void writeJson(string text) {
+        appendText(ref body, text)
+        defaultType(ref headers, "application/json")
+    }
+
+    public void writeBytes(list<u8> bytes, string type) {
+        for (u8 b in bytes) {
+            body.add(b)
+        }
+        defaultType(ref headers, type)
+    }
+
+    // Whether the request has the method and the path of the pattern (D252):
+    // "GET /users/{id}" takes a segment of the path as the parameter id, and
+    // "/files/{rest...}" all the rest; without the method any method goes, and
+    // GET takes also HEAD. The parameters are then read with param().
+    public bool matches(string pattern) {
+        string shape = pattern.copy()
+        i64 space = find(pattern, " ", 0)
+        if (space >= 0) {
+            string wanted = pattern.slice(0, space)
+            if (wanted != method && !(wanted == "GET" && method == "HEAD")) {
+                ret false
+            }
+            shape = trim(pattern.slice(space + 1, pattern.len()))
+        }
+        list<string> parts = split(shape, "/")
+        list<string> given = split(path, "/")
+        list<Header> found
+        for (i64 i = 0; i < parts.len(); i++) {
+            string name = parameterName(parts[i])
+            bool rest = name.len() > 3 && find(name, "...", 0) == name.len() - 3
+            if (rest) {
+                if (i != parts.len() - 1) {
+                    throw Error(format("the pattern '{}' has {{name...}} before its end (D252)", pattern))
+                }
+                if (i >= given.len()) {
+                    ret false
+                }
+                string value = given[i].copy()
+                for (i64 k = i + 1; k < given.len(); k++) {
+                    value += "/" + given[k]
+                }
+                found.add(header(name.slice(0, name.len() - 3), unescape(value, false)))
+                params = move found
+                ret true
+            }
+            if (i >= given.len()) {
+                ret false
+            }
+            if (name.len() > 0) {
+                if (given[i].len() == 0) {
+                    ret false
+                }
+                found.add(header(name, unescape(given[i], false)))
+            } else if (parts[i] != given[i]) {
+                ret false
+            }
+        }
+        if (parts.len() != given.len()) {
+            ret false
+        }
+        params = move found
+        ret true
+    }
+
+    // A parameter of the pattern of the last matches() that was true.
+    public string param(string name) const {
+        for (Header item in params) {
+            if (item.name == name) {
+                ret item.value.copy()
+            }
+        }
+        throw Error(format("the pattern that the request matched has no parameter {{{}}}", name))
+    }
+
+    // A value of the query, without its escapes: "" without it.
+    public string queryValue(string name) const {
+        for (string pair in split(query, "&")) {
+            i64 equal = find(pair, "=", 0)
+            string key = pair.copy()
+            string value
+            if (equal >= 0) {
+                key = pair.slice(0, equal)
+                value = pair.slice(equal + 1, pair.len())
+            }
+            if (unescape(key, true) == name) {
+                ret unescape(value, true)
+            }
+        }
+        ret ""
+    }
+}
+
+// `{id}` gives "id", `{rest...}` gives "rest...", the other parts "".
+string parameterName(string part) {
+    if (part.len() > 2 && part[0] == '{' && part[part.len() - 1] == '}') {
+        ret part.slice(1, part.len() - 1)
+    }
+    ret ""
+}
+
+// A response: the one that the handler of a server fills, with status 200 unless
+// it says another, or the one that the client receives.
+public struct Response {
+    public i32 status = 200
+    public Headers headers
+    public list<u8> body
+
+    // The body as text: an exception if it is not UTF-8.
+    public string text() const {
+        ret string(body)
+    }
+
+    // Adds text to the body, of type text/plain unless the headers say another.
+    public void write(string text) {
+        appendText(ref body, text)
+        defaultType(ref headers, "text/plain; charset=utf-8")
+    }
+
+    // Adds the text of JSON to the body, of type application/json, as
+    // res.writeJson(json.encode(user)).
+    public void writeJson(string text) {
+        appendText(ref body, text)
+        defaultType(ref headers, "application/json")
+    }
+
+    public void writeBytes(list<u8> bytes, string type) {
+        for (u8 b in bytes) {
+            body.add(b)
+        }
+        defaultType(ref headers, type)
+    }
+}
+
+void appendText(ref list<u8> body, string text) {
+    body.reserve(body.len() + text.len())
+    for (i64 i = 0; i < text.len(); i++) {
+        body.add(text[i])
+    }
+}
+
+void defaultType(ref Headers headers, string type) {
+    if (!headers.has("content-type")) {
+        headers.add("Content-Type", type)
+    }
+}
+
+// ---- The server (D252) ----
+
+// A server that listens, before it serves: port() gives the port also when 0
+// asked the system for a free one.
+public struct Server {
+    net.Listener listener
+    i64 count = 128
+
+    public i32 port() const {
+        ret listener.port()
+    }
+
+    // How many connections are served at the same time, each by its thread: 128
+    // unless set before serve(). The others wait to be accepted.
+    public void threads(i64 number) {
+        if (number < 1) {
+            throw Error("a server of HTTP needs at least one thread")
+        }
+        count = number
+    }
+
+    // Gives every request to the handler, on the threads of the server, and
+    // never returns. An exception of the handler gives the status 500.
+    public void serve(const func(ref Request, ref Response) handler) const {
+        startWorkers(count, listener, handler)
+    }
+}
+
+public Server listen(string host, i32 port) {
+    Server server
+    server.listener = net.listen(host, port)
+    ret server
+}
+
+// With TLS: the certificate, followed by its chain, and the key, in PEM (D235).
+public Server listenTls(string host, i32 port, string certificate, string key) {
+    Server server
+    server.listener = net.listenTls(host, port, certificate, key)
+    ret server
+}
+
+// Listens and serves: http.serve("0.0.0.0", 8080, handler).
+public void serve(string host, i32 port, const func(ref Request, ref Response) handler) {
+    Server server = listen(host, port)
+    server.serve(handler)
+}
+
+// One thread for each level: each accepts its connections from the same
+// listener and serves them, while the others do the same.
+void startWorkers(i64 count, net.Listener listener, const func(ref Request, ref Response) handler) {
+    if (count == 0) {
+        ret
+    }
+    thread.Thread worker = thread.Thread([listener, handler]() { work(listener, handler) })
+    worker.start()
+    startWorkers(count - 1, listener, handler)
+    worker.join()
+}
+
+void work(net.Listener listener, const func(ref Request, ref Response) handler) {
+    for {
+        net.Connection connection
+        try {
+            connection = listener.accept()
+        } catch (Exception e) {
+            time.msleep(10)  // as with too many open files: a pause, then again
+            continue
+        }
+        try {
+            serveConnection(ref connection, handler)
+        } catch (Exception e) {
+            // the client went away, or did not finish in time
+        }
+    }
+}
+
+// The requests of a connection, one after the other while it stays open.
+void serveConnection(ref net.Connection connection, const func(ref Request, ref Response) handler) {
+    Incoming input
+    for {
+        Request req
+        i32 problem = readRequest(ref connection, ref input, ref req)
+        if (problem < 0) {
+            ret
+        }
+        Response res
+        if (problem > 0) {
+            res.status = problem
+            res.write(reason(problem))
+            respond(ref connection, req, res, false)
+            ret
+        }
+        try {
+            handler(ref req, ref res)
+        } catch (Exception e) {
+            eprintln("http: {} {}: {}", req.method, req.path, e.message())
+            Response failed
+            failed.status = 500
+            res = move failed
+        }
+        bool keep = keepAlive(req) && !sameName(res.headers.get("connection"), "close")
+        respond(ref connection, req, res, keep)
+        if (!keep) {
+            ret
+        }
+    }
+}
+
+bool keepAlive(Request req) {
+    string connection = req.headers.get("connection")
+    if (req.version == "HTTP/1.0") {
+        ret sameName(connection, "keep-alive")
+    }
+    ret !sameName(connection, "close")
+}
+
+// The largest head of a request, and the largest body.
+i64 maxHead() {
+    ret 65536
+}
+
+i64 maxBody() {
+    ret 16777216
+}
+
+// The next request of a connection: 0, -1 when the connection has ended between
+// two requests, or the status for a request that cannot be served.
+i32 readRequest(ref net.Connection connection, ref Incoming input, ref Request req) {
+    connection.timeout(5000)  // the wait for the next request
+    i64 end = input.find("\r\n\r\n")
+    for (end < 0) {
+        if (input.available() > maxHead()) {
+            ret 431
+        }
+        if (!input.more(ref connection)) {
+            ret -1
+        }
+        connection.timeout(30000)
+        end = input.find("\r\n\r\n")
+    }
+    connection.timeout(30000)
+    if (end > maxHead()) {
+        ret 431
+    }
+    string head
+    try {
+        head = string(input.take(end + 4))
+    } catch (Error e) {
+        ret 400
+    }
+    list<string> lines = split(head.slice(0, head.len() - 4), "\r\n")
+    list<string> words = split(lines[0], " ")
+    if (words.len() != 3 || words[0].len() == 0 || words[1].len() == 0) {
+        ret 400
+    }
+    if (words[2] != "HTTP/1.1" && words[2] != "HTTP/1.0") {
+        ret 505
+    }
+    req.method = words[0].copy()
+    req.url = words[1].copy()
+    req.version = words[2].copy()
+    i64 question = find(req.url, "?", 0)
+    if (question >= 0) {
+        req.path = req.url.slice(0, question)
+        req.query = req.url.slice(question + 1, req.url.len())
+    } else {
+        req.path = req.url.copy()
+    }
+    for (i64 i = 1; i < lines.len(); i++) {
+        i64 colon = find(lines[i], ":", 0)
+        if (colon <= 0 || lines[i][0] == ' ' || lines[i][0] == '\t') {
+            ret 400
+        }
+        try {
+            req.headers.add(lines[i].slice(0, colon), trim(lines[i].slice(colon + 1, lines[i].len())))
+        } catch (Error e) {
+            ret 400
+        }
+    }
+    if (sameName(req.headers.get("expect"), "100-continue")) {
+        connection.writeText("HTTP/1.1 100 Continue\r\n\r\n")
+    }
+    try {
+        req.body = readBody(ref connection, ref input, req.headers, false)
+    } catch (TooLarge e) {
+        ret 413
+    }
+    ret 0
+}
+
+// The body of a message, by its Content-Length or in chunks; with `untilEnd`, a
+// response without either goes on until the connection ends.
+list<u8> readBody(ref net.Connection connection, ref Incoming input, Headers headers, bool untilEnd) {
+    if (sameName(headers.get("transfer-encoding"), "chunked")) {
+        ret readChunks(ref connection, ref input)
+    }
+    if (headers.has("content-length")) {
+        i64 length = -1
+        try {
+            length = i64(headers.get("content-length"))
+        } catch (Error e) {
+        }
+        if (length < 0) {
+            throw Error("the Content-Length of the message is not a number")
+        }
+        if (length > maxBody()) {
+            throw TooLarge()
+        }
+        input.fill(ref connection, length)
+        ret input.take(length)
+    }
+    list<u8> body
+    if (untilEnd) {
+        for (input.more(ref connection)) {
+            if (input.available() > maxBody()) {
+                throw TooLarge()
+            }
+        }
+        body = input.take(input.available())
+    }
+    ret body
+}
+
+list<u8> readChunks(ref net.Connection connection, ref Incoming input) {
+    list<u8> body
+    for {
+        string line = input.line(ref connection)
+        i64 semicolon = find(line, ";", 0)
+        if (semicolon >= 0) {
+            line = line.slice(0, semicolon)
+        }
+        i64 size = hexNumber(trim(line))
+        if (size == 0) {
+            for (input.line(ref connection).len() > 0) {  // the trailers
+            }
+            ret body
+        }
+        if (body.len() + size > maxBody()) {
+            throw TooLarge()
+        }
+        input.fill(ref connection, size + 2)
+        for (u8 b in input.take(size)) {
+            body.add(b)
+        }
+        input.take(2)  // the \r\n after the chunk
+    }
+}
+
+i64 hexNumber(string text) {
+    if (text.len() == 0 || text.len() > 15) {
+        throw Error(format("'{}' is not the size of a chunk", text))
+    }
+    i64 n = 0
+    for (i64 i = 0; i < text.len(); i++) {
+        u8 c = text[i]
+        i64 digit = -1
+        if (c >= '0' && c <= '9') {
+            digit = c - '0'
+        } else if (c >= 'a' && c <= 'f') {
+            digit = c - 'a' + 10
+        } else if (c >= 'A' && c <= 'F') {
+            digit = c - 'A' + 10
+        }
+        if (digit < 0) {
+            throw Error(format("'{}' is not the size of a chunk", text))
+        }
+        n = n * 16 + digit
+    }
+    ret n
+}
+
+// A body larger than maxBody().
+struct TooLarge : Exception {
+    string message() const {
+        ret format("the body is larger than {} bytes", maxBody())
+    }
+}
+
+// Writes the response in one piece, with its Content-Length.
+void respond(ref net.Connection connection, Request req, Response res, bool keep) {
+    string head = format("HTTP/1.1 {} {}\r\n", res.status, reason(res.status))
+    for (Header item in res.headers.items) {
+        if (sameName(item.name, "content-length") || sameName(item.name, "connection") ||
+            sameName(item.name, "transfer-encoding")) {
+            continue
+        }
+        head += item.name + ": " + item.value + "\r\n"
+    }
+    bool empty = res.status == 204 || res.status == 304 || res.status < 200
+    if (!empty) {
+        head += format("Content-Length: {}\r\n", res.body.len())
+    }
+    if (!keep) {
+        head += "Connection: close\r\n"
+    }
+    head += "\r\n"
+    list<u8> out
+    appendText(ref out, head)
+    if (!empty && req.method != "HEAD") {
+        for (u8 b in res.body) {
+            out.add(b)
+        }
+    }
+    connection.write(out)
+}
+
+string reason(i32 status) {
+    switch (status) {
+        case 100 {
+            ret "Continue"
+        }
+        case 200 {
+            ret "OK"
+        }
+        case 201 {
+            ret "Created"
+        }
+        case 202 {
+            ret "Accepted"
+        }
+        case 204 {
+            ret "No Content"
+        }
+        case 301 {
+            ret "Moved Permanently"
+        }
+        case 302 {
+            ret "Found"
+        }
+        case 303 {
+            ret "See Other"
+        }
+        case 304 {
+            ret "Not Modified"
+        }
+        case 307 {
+            ret "Temporary Redirect"
+        }
+        case 308 {
+            ret "Permanent Redirect"
+        }
+        case 400 {
+            ret "Bad Request"
+        }
+        case 401 {
+            ret "Unauthorized"
+        }
+        case 403 {
+            ret "Forbidden"
+        }
+        case 404 {
+            ret "Not Found"
+        }
+        case 405 {
+            ret "Method Not Allowed"
+        }
+        case 409 {
+            ret "Conflict"
+        }
+        case 413 {
+            ret "Content Too Large"
+        }
+        case 415 {
+            ret "Unsupported Media Type"
+        }
+        case 422 {
+            ret "Unprocessable Content"
+        }
+        case 429 {
+            ret "Too Many Requests"
+        }
+        case 431 {
+            ret "Request Header Fields Too Large"
+        }
+        case 500 {
+            ret "Internal Server Error"
+        }
+        case 501 {
+            ret "Not Implemented"
+        }
+        case 502 {
+            ret "Bad Gateway"
+        }
+        case 503 {
+            ret "Service Unavailable"
+        }
+        case 505 {
+            ret "HTTP Version Not Supported"
+        }
+    }
+    ret ""
+}
+
+// ---- The client (D254) ----
+
+public Response get(string url) {
+    ret send(Request("GET", url))
+}
+
+public Response post(string url, string body, string type) {
+    Request req = Request("POST", url)
+    req.headers.set("Content-Type", type)
+    req.write(body)
+    ret send(req)
+}
+
+// Sends a request on a new connection, with TLS for https, and follows up to ten
+// redirects. A status of error is a response, not an exception; an exception is
+// a failure of the network or a response that is not HTTP.
+public Response send(Request req) {
+    string method = req.method.copy()
+    string url = req.url.copy()
+    Headers headers = req.headers.copy()
+    list<u8> body = req.body.copy()
+    for (i64 hops = 0;; hops++) {
+        Response res = exchange(method, url, headers, body)
+        bool redirect = res.status == 301 || res.status == 302 || res.status == 303 || res.status == 307 ||
+            res.status == 308
+        if (!redirect || !res.headers.has("location")) {
+            ret res
+        }
+        if (hops == 10) {
+            throw Error(format("cannot get {}: more than 10 redirects", req.url))
+        }
+        string next = resolve(url, res.headers.get("location"))
+        if (res.status == 303 || ((res.status == 301 || res.status == 302) && method != "GET" && method != "HEAD")) {
+            method = "GET"
+            body.clear()
+            headers.remove("content-type")
+        }
+        if (parseUrl(next).authority() != parseUrl(url).authority()) {  // the credentials stay with their host
+            headers.remove("authorization")
+            headers.remove("cookie")
+        }
+        url = move next
+    }
+}
+
+Response exchange(string method, string url, Headers headers, list<u8> body) {
+    Url target = parseUrl(url)
+    net.Connection connection
+    if (target.secure) {
+        connection = net.connectTls(target.host, target.port)
+    } else {
+        connection = net.connect(target.host, target.port)
+    }
+    connection.timeout(30000)
+    string head = format("{} {} HTTP/1.1\r\nHost: {}\r\n", method, target.path, target.authority())
+    if (!headers.has("user-agent")) {
+        head += "User-Agent: cromo\r\n"
+    }
+    for (Header item in headers.items) {
+        if (sameName(item.name, "host") || sameName(item.name, "content-length") || sameName(item.name, "connection")) {
+            continue
+        }
+        head += item.name + ": " + item.value + "\r\n"
+    }
+    if (body.len() > 0 || method == "POST" || method == "PUT" || method == "PATCH") {
+        head += format("Content-Length: {}\r\n", body.len())
+    }
+    head += "Connection: close\r\n\r\n"
+    list<u8> out
+    appendText(ref out, head)
+    for (u8 b in body) {
+        out.add(b)
+    }
+    connection.write(out)
+    Incoming input
+    try {
+        for {
+            Response res = readResponse(ref connection, ref input, method)
+            if (res.status >= 200) {
+                ret res
+            }
+        }
+    } catch (TooLarge e) {
+        throw Error(format("cannot read the response of {}: {}", url, e.message()))
+    }
+}
+
+Response readResponse(ref net.Connection connection, ref Incoming input, string method) {
+    i64 end = input.find("\r\n\r\n")
+    for (end < 0) {
+        if (input.available() > maxHead()) {
+            throw Error("the head of the response of HTTP is too large")
+        }
+        if (!input.more(ref connection)) {
+            throw Error("the connection ended before the response of HTTP")
+        }
+        end = input.find("\r\n\r\n")
+    }
+    string head = string(input.take(end + 4))
+    list<string> lines = split(head.slice(0, head.len() - 4), "\r\n")
+    list<string> words = split(lines[0], " ")
+    if (words.len() < 2 || find(words[0], "HTTP/1.", 0) != 0 || words[1].len() != 3) {
+        throw Error(format("the response is not HTTP: '{}'", lines[0]))
+    }
+    Response res
+    res.status = i32(words[1])
+    for (i64 i = 1; i < lines.len(); i++) {
+        i64 colon = find(lines[i], ":", 0)
+        if (colon > 0) {
+            res.headers.add(lines[i].slice(0, colon), trim(lines[i].slice(colon + 1, lines[i].len())))
+        }
+    }
+    if (res.status >= 200 && res.status != 204 && res.status != 304 && method != "HEAD") {
+        res.body = readBody(ref connection, ref input, res.headers, true)
+    }
+    ret res
+}
+
+// The parts of a URL of http or https.
+struct Url {
+    bool secure
+    string host  // without the brackets of IPv6
+    i32 port
+    string path  // with the query, without the fragment: "/a?b=1"
+
+    // As in the header Host: the port only when it is not that of the scheme.
+    string authority() const {
+        string name = host.copy()
+        if (find(host, ":", 0) >= 0) {
+            name = "[" + host + "]"
+        }
+        if ((secure && port == 443) || (!secure && port == 80)) {
+            ret name
+        }
+        ret format("{}:{}", name, port)
+    }
+}
+
+Url parseUrl(string url) {
+    Url result
+    i64 start = 0
+    if (startsWithCase(url, "https://")) {
+        result.secure = true
+        result.port = 443
+        start = 8
+    } else if (startsWithCase(url, "http://")) {
+        result.port = 80
+        start = 7
+    } else {
+        throw Error(format("cannot use the URL '{}': it does not start with http:// or https://", url))
+    }
+    i64 end = start
+    for (end < url.len() && url[end] != '/' && url[end] != '?' && url[end] != '#') {
+        end++
+    }
+    string authority = url.slice(start, end)
+    string rest = url.slice(end, url.len())
+    i64 hash = find(rest, "#", 0)
+    if (hash >= 0) {
+        rest = rest.slice(0, hash)
+    }
+    if (rest.len() == 0 || rest[0] == '?') {
+        rest = "/" + rest
+    }
+    result.path = move rest
+    if (find(authority, "@", 0) >= 0) {
+        throw Error(format("cannot use the URL '{}': a name and a password in the URL are not supported", url))
+    }
+    string portText
+    if (authority.len() > 0 && authority[0] == '[') {
+        i64 close = find(authority, "]", 0)
+        if (close < 0) {
+            throw Error(format("cannot use the URL '{}': the address of IPv6 does not end with ']'", url))
+        }
+        result.host = authority.slice(1, close)
+        if (close + 1 < authority.len()) {
+            if (authority[close + 1] != ':') {
+                throw Error(format("cannot use the URL '{}': something follows the address", url))
+            }
+            portText = authority.slice(close + 2, authority.len())
+        }
+    } else {
+        i64 colon = find(authority, ":", 0)
+        if (colon >= 0) {
+            result.host = authority.slice(0, colon)
+            portText = authority.slice(colon + 1, authority.len())
+        } else {
+            result.host = move authority
+        }
+    }
+    if (result.host.len() == 0) {
+        throw Error(format("cannot use the URL '{}': it has no host", url))
+    }
+    if (portText.len() > 0) {
+        try {
+            result.port = i32(portText)
+        } catch (Error e) {
+            throw Error(format("cannot use the URL '{}': '{}' is not a port", url, portText))
+        }
+    }
+    ret result
+}
+
+// The URL of a Location, which can be relative to the one of the request.
+string resolve(string base, string location) {
+    if (startsWithCase(location, "http://") || startsWithCase(location, "https://")) {
+        ret location.copy()
+    }
+    Url url = parseUrl(base)
+    string scheme = "http:"
+    if (url.secure) {
+        scheme = "https:"
+    }
+    if (find(location, "//", 0) == 0) {
+        ret scheme + location
+    }
+    string root = scheme + "//" + url.authority()
+    if (location.len() > 0 && location[0] == '/') {
+        ret root + location
+    }
+    i64 slash = 0
+    for (i64 i = 0; i < url.path.len() && url.path[i] != '?'; i++) {
+        if (url.path[i] == '/') {
+            slash = i
+        }
+    }
+    ret root + url.path.slice(0, slash + 1) + location
+}
+
+// ---- Escapes of URLs ----
+
+// The text with %XX for every byte that is not a letter, a digit or -_.~, for a
+// value of the query or a segment of the path.
+public string escape(string text) {
+    string out
+    for (i64 i = 0; i < text.len(); i++) {
+        u8 c = text[i]
+        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_' ||
+            c == '.' || c == '~') {
+            out += text.slice(i, i + 1)
+        } else {
+            out += format("%{:02X}", c)
+        }
+    }
+    ret out
+}
+
+// The text without the %XX, and with '+' as a space in a query. An escape that is
+// not valid, or bytes that are not UTF-8, leave the text as it is.
+string unescape(string text, bool plus) {
+    list<u8> bytes
+    for (i64 i = 0; i < text.len(); i++) {
+        u8 c = text[i]
+        if (c == '%' && i + 2 < text.len() + 0 && hexDigit(text[i + 1]) >= 0 && hexDigit(text[i + 2]) >= 0) {
+            bytes.add(u8(hexDigit(text[i + 1]) * 16 + hexDigit(text[i + 2])))
+            i += 2
+        } else if (c == '+' && plus) {
+            bytes.add(' ')
+        } else {
+            bytes.add(c)
+        }
+    }
+    try {
+        ret string(bytes)
+    } catch (Error e) {
+        ret text.copy()
+    }
+}
+
+i64 hexDigit(u8 c) {
+    if (c >= '0' && c <= '9') {
+        ret c - '0'
+    }
+    if (c >= 'a' && c <= 'f') {
+        ret c - 'a' + 10
+    }
+    if (c >= 'A' && c <= 'F') {
+        ret c - 'A' + 10
+    }
+    ret -1
+}
+
+// ---- Reading from a connection ----
+
+// The bytes that arrived from a connection and are not read yet.
+struct Incoming {
+    list<u8> data
+    i64 at  // the bytes before it are read
+
+    i64 available() const {
+        ret data.len() - at
+    }
+
+    // More bytes from the connection: false when it has ended.
+    bool more(ref net.Connection connection) {
+        if (at > 0) {
+            list<u8> rest
+            rest.reserve(data.len() - at)
+            for (i64 i = at; i < data.len(); i++) {
+                rest.add(data[i])
+            }
+            data = move rest
+            at = 0
+        }
+        list<u8> bytes = connection.read(16384)
+        for (u8 b in bytes) {
+            data.add(b)
+        }
+        ret bytes.len() > 0
+    }
+
+    // Reads until `count` bytes are there.
+    void fill(ref net.Connection connection, i64 count) {
+        for (available() < count) {
+            if (!more(ref connection)) {
+                throw Error("the connection ended in the middle of a message of HTTP")
+            }
+        }
+    }
+
+    list<u8> take(i64 count) {
+        list<u8> bytes
+        bytes.reserve(count)
+        for (i64 i = at; i < at + count; i++) {
+            bytes.add(data[i])
+        }
+        at += count
+        ret bytes
+    }
+
+    // Where the bytes of `text` start among those not read, from `at`; -1 if not there.
+    i64 find(string text) const {
+        for (i64 i = at; i + text.len() <= data.len(); i++) {
+            bool same = true
+            for (i64 k = 0; k < text.len() && same; k++) {
+                same = data[i + k] == text[k]
+            }
+            if (same) {
+                ret i - at
+            }
+        }
+        ret -1
+    }
+
+    // A line that ends with \r\n, without it.
+    string line(ref net.Connection connection) {
+        i64 end = find("\r\n")
+        for (end < 0) {
+            if (available() > maxHead()) {
+                throw Error("a line of HTTP is too long")
+            }
+            if (!more(ref connection)) {
+                throw Error("the connection ended in the middle of a message of HTTP")
+            }
+            end = find("\r\n")
+        }
+        string text = string(take(end))
+        take(2)
+        ret text
+    }
+}
+
+// ---- Text ----
+
+u8 lowerByte(u8 c) {
+    if (c >= 'A' && c <= 'Z') {
+        ret c + 32
+    }
+    ret c
+}
+
+// Equal without the case of ASCII, as the names of the headers.
+bool sameName(string a, string b) {
+    if (a.len() != b.len()) {
+        ret false
+    }
+    for (i64 i = 0; i < a.len(); i++) {
+        if (lowerByte(a[i]) != lowerByte(b[i])) {
+            ret false
+        }
+    }
+    ret true
+}
+
+bool startsWithCase(string text, string start) {
+    ret text.len() >= start.len() && sameName(text.slice(0, start.len()), start)
+}
+
+// Where `part` starts in `text` from `from`, or -1.
+i64 find(string text, string part, i64 from) {
+    for (i64 i = from; i + part.len() <= text.len(); i++) {
+        bool same = true
+        for (i64 k = 0; k < part.len() && same; k++) {
+            same = text[i + k] == part[k]
+        }
+        if (same) {
+            ret i
+        }
+    }
+    ret -1
+}
+
+// Without the spaces and the tabs at the two ends.
+string trim(string text) {
+    i64 start = 0
+    i64 end = text.len()
+    for (start < end && (text[start] == ' ' || text[start] == '\t')) {
+        start++
+    }
+    for (end > start && (text[end - 1] == ' ' || text[end - 1] == '\t')) {
+        end--
+    }
+    ret text.slice(start, end)
+}
+
+list<string> split(string text, string separator) {
+    list<string> parts
+    i64 start = 0
+    for {
+        i64 next = find(text, separator, start)
+        if (next < 0) {
+            parts.add(text.slice(start, text.len()))
+            ret parts
+        }
+        parts.add(text.slice(start, next))
+        start = next + separator.len()
+    }
+}

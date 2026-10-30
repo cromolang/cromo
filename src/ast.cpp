@@ -255,6 +255,7 @@ FieldDecl clone(const FieldDecl& field) {
     result.loc = field.loc;
     result.isPublic = field.isPublic;
     result.init = cloneOrNull(field.init);
+    result.attributes = field.attributes;
     return result;
 }
 

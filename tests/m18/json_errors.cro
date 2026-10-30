@@ -1,0 +1,76 @@
+// The errors of JSON say where: the line and the column of a text that is not
+// JSON, the path of a value that does not fit its field (D251, D255).
+// expect-output: cannot read JSON: line 1, column 9: expected the name of a member, in double quotes
+// expect-output: cannot read JSON: line 1, column 6: expected ',' or ']'
+// expect-output: cannot read JSON: line 2, column 3: expected a value
+// expect-output: cannot read JSON: line 1, column 8: the first half of a pair of \u escapes comes without the second
+// expect-output: cannot read JSON: line 1, column 3: a control character in a string must be escaped
+// expect-output: cannot read JSON: line 1, column 2: the text goes on after the value
+// expect-output: cannot read JSON: line 1, column 1: a value is missing
+// expect-output: cannot read JSON: line 1, column 3: expected a digit after the point
+// expect-output: cannot read JSON: line 1, column 2: unknown escape in a string
+// expect-output: cannot read JSON: line 1, column 513: the arrays and objects are nested more than 512 times
+// expect-output: cannot decode JSON: at big: expected an integer, found a float
+// expect-output: cannot decode JSON: at tiny: 500 does not fit in i8
+// expect-output: cannot decode JSON: at tiny: expected an integer, found a float
+// expect-output: cannot decode JSON: at grid[1][1]: expected an integer, found a string
+// expect-output: cannot decode JSON: expected an object, found an array
+// expect-output: cannot decode JSON: at role: expected one of Admin, Guest, found "Root"
+// expect-output: cannot decode JSON: at names.b: expected a string, found a bool
+import std.json
+
+enum Role {
+    Admin
+    Guest
+}
+
+struct Small {
+    i8 tiny
+    u64 big
+    list<list<i32>> grid
+    Role role
+    map<string, string> names
+}
+
+void read(string text) {
+    try {
+        json.parse(text)
+        println("read")
+    } catch (Error e) {
+        println("{}", e.message())
+    }
+}
+
+void decode(string text) {
+    try {
+        json.decode<Small>(text)
+        println("decoded")
+    } catch (Error e) {
+        println("{}", e.message())
+    }
+}
+
+i32 main() {
+    read("{\"a\": 1,}")
+    read("[1, 2")
+    read("{\"a\":\n  tru}")
+    read("\"\\ud800\"")
+    read("\"a\tb\"")
+    read("01")
+    read("")
+    read("1.e5")
+    read("\"\\q\"")
+    string deep
+    for (i64 i = 0; i < 513; i++) {
+        deep += "["
+    }
+    read(deep)
+    decode("{\"big\": 18000000000000000000}")
+    decode("{\"tiny\": 500}")
+    decode("{\"tiny\": 1.0}")
+    decode("{\"grid\": [[1, 2], [3, \"x\"]]}")
+    decode("[1]")
+    decode("{\"role\": \"Root\"}")
+    decode("{\"names\": {\"a\": \"x\", \"b\": true}}")
+    ret 0
+}

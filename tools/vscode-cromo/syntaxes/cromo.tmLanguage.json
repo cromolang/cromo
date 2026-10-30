@@ -5,6 +5,7 @@
   "fileTypes": ["cro"],
   "patterns": [
     { "include": "#comments" },
+    { "include": "#attributes" },
     { "include": "#strings" },
     { "include": "#characters" },
     { "include": "#numbers" },
@@ -14,6 +15,17 @@
     { "include": "#operators" }
   ],
   "repository": {
+    "attributes": {
+      "comment": "[[json(\"user_id\")]] before a field (D256)",
+      "name": "meta.attribute.cromo",
+      "begin": "\\[\\[\\s*([A-Za-z_][A-Za-z0-9_]*)",
+      "beginCaptures": { "1": { "name": "entity.other.attribute-name.cromo" } },
+      "end": "\\]\\]",
+      "patterns": [
+        { "include": "#strings" },
+        { "match": "\\b[A-Za-z_][A-Za-z0-9_]*\\b", "name": "constant.language.cromo" }
+      ]
+    },
     "comments": {
       "patterns": [
         {

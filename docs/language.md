@@ -554,6 +554,7 @@ i32 main() {
 - A lambda that captures by address (with `ref`, or reading a value that is not simple) can only be passed as an argument; one that captures only with `move`, or values of simple types, is a value: it can be kept in variables, fields and lists, returned and moved (D184).
 - The type of a function is `func(i32, ref T) bool` (D185). A variable or a field of that type is called as a function; the call is indirect (D186).
 - Function values are moved and not copied; an empty one, as a variable without a value, is a panic when called (D189).
+- A parameter `const func(...)` receives a function that does not modify what it captures, as a lambda of C++ without `mutable`: a lambda without `ref` captures, a named function, or a function value. Several threads can call it at once, as the handler of `http.serve` (D253). A thread cannot call a parameter `func` that is not `const`.
 
 ## 16. Arrays, maps and bytes (D196–D200)
 
@@ -598,7 +599,7 @@ i32 main() {
 }
 ```
 
-- The core (`list`, `string`, `map`, `format`, the numbers from text) is visible everywhere; `std.fs`, `std.time`, `std.os`, `std.thread`, `std.net` and `std.crypto` are imported (D201). The functions of the first three are in D211.
+- The core (`list`, `string`, `map`, `format`, the numbers from text) is visible everywhere; `std.fs`, `std.time`, `std.os`, `std.thread`, `std.net`, `std.crypto`, `std.json` and `std.http` are imported (D201). The functions of the first three are in D211.
 - Next to `fs.cro` a module can have `fs_windows.cro` and `fs_linux.cro`: only the file of the system the program is compiled for is used, and it shares the names of the module, also the private ones (D202). It holds for the library and for the programs.
 - In the modules with `import unsafe`, `s.cstring()` gives the address of a copy of the string ending with a zero, for the C functions, until the end of the statement (D204).
 
@@ -629,6 +630,7 @@ i32 main() {
 - A thread whose lambda captures by address is a thread of its block: it is waited for at the end of the block, and while it runs the block cannot use what the thread has with `ref`, nor modify what it reads (D215). The compiler checks it, so two threads never write the same data. A thread that captures only with `move` is free: it can be kept in a list and outlive its block.
 - The data of a `thread.Mutex<T>` are reached only inside `lock`, which gives them with `ref` to one thread at a time (D216).
 - `join()` throws again the exception of the thread; an exception that no `join()` takes stops the program (D217).
+- A thread that calls a function received as a parameter needs it `const func`, which does not modify what it captures (D253).
 
 ## 19. Network (D223–D226)
 
@@ -697,6 +699,65 @@ bool valid = crypto.ed25519Verify(crypto.ed25519PublicKey(secret), data, signatu
 - Ed25519 signs (`ed25519PublicKey`, `ed25519Sign`, `ed25519Verify`) and X25519 exchanges keys (`x25519PublicKey`, `x25519`); the private keys are 32 random bytes.
 - A key of the wrong size is an exception.
 
-## 21. Still to be written
+## 21. JSON (D251, D255–D257, D264–D266)
 
-- The rest of the standard library: HTTP and JSON (M18).
+```cromo
+import std.json
+
+struct User {
+    [[json("user_id")]] i64 id        // its name in JSON (D256)
+    string name
+    list<string> roles
+    [[json(skip)]] string password    // left out
+}
+
+User u = json.decode<User>("{\"user_id\": 7, \"name\": \"Ada\", \"roles\": null}")
+string text = json.encode(u)          // {"user_id":7,"name":"Ada","roles":[]}
+string indented = json.pretty(u)      // on several lines
+
+json.Value v = json.parse("{\"items\": [1, 2.5]}")
+f64 second = v.get("items").at(1).asFloat()
+switch (v.get("items").at(0)) {
+    case Int(i64 n) { ... }           // integers and floats apart (D255)
+    default { ... }
+}
+```
+
+- `json.encode`, `json.pretty` and `json.decode<T>` work on the numbers, `bool`, `string`, `json.Value`, `list<T>` and `map<string, T>` of them, the enums without data, written as the name of their case, and the structs whose fields can be converted: the compiler generates the conversion of a struct the first time it is needed, as `copy()`, without a declaration (D251). A field that cannot be converted is a compile error that names it: `Config.log.flush has type func()`. A generic writes `<T : json.Data>`.
+- An object has a member for each field, in their order, also the private ones; the keys of a map are written in order. A member that is missing, or `null`, leaves the default value (D257); a member without a field is ignored.
+- `[[json("name")]]` before a field gives it another name in JSON, `[[json(skip)]]` leaves it out: the attributes are written with the syntax of C++11 (D256).
+- `json.Value` is an enum: `Null`, `Bool`, `Int(i64)`, `Float(f64)`, `Text`, `Array`, `Object`, with the members in their order. Its methods read it (`asInt`, `asFloat`, `asText`, `get`, `at`, `has`, `keys`, `len`, `isNull`) and build it (`json.object()`, `json.array()`, `set`, `add`); `json.fromValue<T>` and `json.toValue` convert it.
+- The errors are exceptions that say where: `cannot read JSON: line 3, column 7: expected ',' or '}'`, `cannot decode JSON: at users[2].age: expected an integer, found a string`.
+
+## 22. HTTP (D252–D254, D258–D263)
+
+```cromo
+import std.http
+import std.json
+import std.thread
+
+thread.Mutex<i64> hits
+http.serve("0.0.0.0", 8080, [hits](ref http.Request req, ref http.Response res) {
+    hits.lock([](ref i64 n) { n++ })
+    if (req.matches("GET /users/{id}")) {
+        res.writeJson(json.encode(findUser(i64(req.param("id")))))
+    } else if (req.matches("POST /users")) {
+        User u = json.decode<User>(req.text())
+        res.status = 201
+    } else {
+        res.status = 404
+    }
+})
+
+http.Response r = http.get("https://api.example.com/users/7")
+User u = json.decode<User>(r.text())
+```
+
+- `http.serve(host, port, handler)` gives every request to one handler, a `const func`, on the threads of the server, each with its connection: it runs on several threads at once, and what the requests share is in a mutex (D252, D253). `http.listen` and `http.listenTls` give a `Server` with `port()`, `threads(n)` and `serve(handler)`.
+- The handler chooses the route with patterns: `req.matches("GET /users/{id}")`, then `req.param("id")`; `{rest...}` takes the rest of the path, and GET takes also HEAD. `req.queryValue("page")` reads the query. An exception of the handler gives the status 500.
+- `http.get(url)`, `http.post(url, body, type)` and `http.send(request)` open a connection for each request, with TLS for `https`, and follow the redirects (D254). A status of error is a response; an exception is a failure of the network.
+- `Request` and `Response` have `headers`, compared without case, `body`, `text()`, and `write`, `writeJson` and `writeBytes`, which also set the `Content-Type`.
+
+## 23. Still to be written
+
+- The rest of the standard library.

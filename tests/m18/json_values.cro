@@ -1,0 +1,91 @@
+// json.Value (D255): the text of RFC 8259, integers and floats apart, the escapes
+// and UTF-8, the members in their order, and the methods of Value.
+// expect-output: {"a":[1,2.5,"x",true,null,{"b":-12000.0}],"c":"è😀/\"\t","d":9223372036854775807,"e":1.2345678901234569e+23}
+// expect-output: int 1 float 2.5 9223372036854775807 1.2345678901234569e+23 -5e-04
+// expect-output: 4 true false a,c,d,e
+// expect-output: {"name":"Grace","tags":[1,"two"],"ok":true}
+// expect-output: {"k":[],"m":{}} 0 0
+// expect-output: "\u0001\b\f" 3
+// expect-output: the value of JSON is a string, not an integer
+// expect-output: the object of JSON has no member 'missing'
+// expect-output: the array of JSON has 2 elements: there is no element 5
+// expect-output: the value of JSON is an array, not an object
+// expect-output: cannot encode JSON: inf is not a number of JSON
+// expect-output: [1,2] {"b":1,"a":2}
+import std.json
+
+i32 main() {
+    json.Value v = json.parse("{\"a\": [1, 2.5, \"x\", true, null, {\"b\": -12e3}], \"c\": \"\\u00e8\\ud83d\\ude00\\/\\\"\\t\", " +
+        "\"d\": 9223372036854775807, \"e\": 123456789012345678901234}")
+    println("{}", json.encode(v))
+    json.Value a = v.get("a")
+    switch (a.at(0)) {
+        case Int(i64 n) {
+            print("int {} ", n)
+        }
+        default {
+            print("not an int ")
+        }
+    }
+    switch (a.at(1)) {
+        case Float(f64 x) {
+            print("float {} ", x)
+        }
+        default {
+            print("not a float ")
+        }
+    }
+    println("{} {} {}", v.get("d").asInt(), v.get("e").asFloat(), json.parse("-0.5e-3").asFloat())
+    string names
+    for (string key in v.keys()) {
+        if (names.len() > 0) {
+            names += ","
+        }
+        names += key
+    }
+    println("{} {} {} {}", v.len(), v.has("c"), v.has("z"), names)
+
+    json.Value doc = json.object()
+    doc.set("name", json.Value.Text("Ada"))
+    json.Value tags = json.array()
+    tags.add(json.Value.Int(1))
+    tags.add(json.Value.Text("two"))
+    doc.set("tags", move tags)
+    doc.set("ok", json.Value.Bool(true))
+    doc.set("name", json.Value.Text("Grace"))
+    println("{}", json.encode(doc))
+
+    json.Value spaced = json.parse("  {\"k\" : [ ] ,\r\n\t\"m\" : { } }  ")
+    println("{} {} {}", json.encode(spaced), spaced.get("k").len(), spaced.get("m").len())
+    json.Value controls = json.Value.Text("\x01\x08\x0c")
+    println("{} {}", json.encode(controls), json.decode<string>(json.encode(controls)).len())
+
+    try {
+        println("{}", doc.get("name").asInt())
+    } catch (Error e) {
+        println("{}", e.message())
+    }
+    try {
+        println("{}", json.encode(doc.get("missing")))
+    } catch (Error e) {
+        println("{}", e.message())
+    }
+    try {
+        println("{}", json.encode(doc.get("tags").at(5)))
+    } catch (Error e) {
+        println("{}", e.message())
+    }
+    try {
+        doc.get("tags").set("x", json.Value.Null)
+    } catch (Error e) {
+        println("{}", e.message())
+    }
+    try {
+        println("{}", json.encode(f64(1.0) / 0.0))
+    } catch (Error e) {
+        println("{}", e.message())
+    }
+    json.Value twice = json.parse("{\"b\": 1, \"a\": 2}")
+    println("{} {}", json.encode(json.toValue(json.decode<list<i64>>("[1, 2]"))), json.encode(twice))
+    ret 0
+}

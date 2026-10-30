@@ -1,0 +1,71 @@
+// Example 13: a small service of HTTP with JSON, and the client that uses it.
+// Run it with `cromo run examples/13_web_server.cro`, then for example:
+//   curl http://localhost:8080/notes
+//   curl -X POST -d '{"text": "buy milk"}' http://localhost:8080/notes
+//   curl http://localhost:8080/notes/1
+//
+// Decided: one handler for every request, with patterns (D252), const func for the
+//          functions that several threads call at once (D253), the client with a
+//          connection for each request (D254), JSON (D251)
+import std.http
+import std.json
+import std.thread
+
+struct Note {
+    i64 id
+    string text
+}
+
+struct NewNote {
+    string text
+}
+
+struct Notes {
+    list<Note> items
+    i64 last
+}
+
+i32 main() {
+    // What the requests share is in a mutex: the handler runs on several threads.
+    thread.Mutex<Notes> notes
+    http.Server server = http.listen("0.0.0.0", 8080)
+    println("listening on port {}", server.port())
+    server.serve([notes](ref http.Request req, ref http.Response res) {
+        if (req.matches("GET /notes")) {
+            notes.lock([ref res](ref Notes all) { res.writeJson(json.encode(all.items)) })
+        } else if (req.matches("GET /notes/{id}")) {
+            i64 id = i64(req.param("id"))
+            res.status = 404
+            notes.lock([id, ref res](ref Notes all) {
+                for (Note note in all.items) {
+                    if (note.id == id) {
+                        res.status = 200
+                        res.writeJson(json.encode(note))
+                    }
+                }
+            })
+        } else if (req.matches("POST /notes")) {
+            NewNote wanted
+            try {
+                wanted = json.decode<NewNote>(req.text())
+            } catch (Error e) {
+                res.status = 400  // without this, the exception would give 500
+                res.write(e.message() + "\n")
+                ret
+            }
+            Note note
+            note.text = move wanted.text
+            notes.lock([ref note](ref Notes all) {
+                all.last++
+                note.id = all.last
+                all.items.add(note.copy())
+            })
+            res.status = 201
+            res.writeJson(json.encode(note))
+        } else {
+            res.status = 404
+            res.write("no such page\n")
+        }
+    })
+    ret 0
+}

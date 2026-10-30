@@ -1,0 +1,145 @@
+// A server of HTTP (D252): one handler for every request, on the threads of the
+// server, with the routes of its patterns, what the requests share in a mutex, the
+// status 500 for an exception, and HTTP/1.1 on raw connections: requests one
+// after the other on the same connection, a body in chunks, 100-continue, HEAD,
+// and the errors of the requests.
+// expect-output: 200 application/json {"id":7,"name":"Ada Love lace"}
+// expect-output: 201 created Grace
+// expect-output: 200 a/b c
+// expect-output: 404 not found
+// expect-output: 500 []
+// expect-output: 200 {"id":9,"name":"Ada "}
+// expect-output: 200 [] 5
+// expect-output: kept: 2 responses, then closed
+// expect-output: hello world
+// expect-output: continue: HTTP/1.1 100 Continue
+// expect-output: echo ping
+// expect-output: HTTP/1.1 400 Bad Request
+// expect-output: HTTP/1.1 505 HTTP Version Not Supported
+// expect-output: hits 12
+// expect-stderr: http: GET /fail: boom
+import std.http
+import std.json
+import std.net
+import std.os
+import std.thread
+
+struct User {
+    i64 id
+    string name
+}
+
+// What a raw connection receives until the server closes it.
+string readAll(ref net.Connection c) {
+    list<u8> all
+    for {
+        list<u8> bytes = c.read(4096)
+        if (bytes.len() == 0) {
+            ret string(all)
+        }
+        for (u8 b in bytes) {
+            all.add(b)
+        }
+    }
+}
+
+// The first line of a raw answer.
+string firstLine(string text) {
+    for (i64 i = 0; i + 1 < text.len(); i++) {
+        if (text[i] == '\r') {
+            ret text.slice(0, i)
+        }
+    }
+    ret text.copy()
+}
+
+i64 count(string text, string part) {
+    i64 n = 0
+    for (i64 i = 0; i + part.len() <= text.len(); i++) {
+        if (text.slice(i, i + part.len()) == part) {
+            n++
+        }
+    }
+    ret n
+}
+
+i32 main() {
+    http.Server server = http.listen("127.0.0.1", 0)
+    server.threads(4)
+    i32 port = server.port()
+    thread.Mutex<i64> hits
+    thread.Thread t = thread.Thread([server, hits]() {
+        server.serve([hits](ref http.Request req, ref http.Response res) {
+            hits.lock([](ref i64 n) { n++ })
+            if (req.matches("GET /users/{id}")) {
+                User u
+                u.id = i64(req.param("id"))
+                u.name = "Ada " + req.queryValue("x")
+                res.writeJson(json.encode(u))
+            } else if (req.matches("POST /users")) {
+                User u = json.decode<User>(req.text())
+                res.status = 201
+                res.write(format("created {}", u.name))
+            } else if (req.matches("POST /echo")) {
+                res.write(req.text())
+            } else if (req.matches("/files/{rest...}")) {
+                res.write(req.param("rest"))
+            } else if (req.matches("GET /fail")) {
+                throw Error("boom")
+            } else if (req.matches("GET /old")) {
+                res.status = 302
+                res.headers.set("Location", "/users/9")
+            } else {
+                res.status = 404
+                res.write("not found")
+            }
+        })
+    })
+    t.start()
+
+    string base = format("http://127.0.0.1:{}", port)
+    http.Response r = http.get(base + "/users/7?x=Love%20lace")
+    println("{} {} {}", r.status, r.headers.get("content-type"), r.text())
+    r = http.post(base + "/users", "{\"id\": 3, \"name\": \"Grace\"}", "application/json")
+    println("{} {}", r.status, r.text())
+    r = http.get(base + "/files/a/b%20c")
+    println("{} {}", r.status, r.text())
+    r = http.get(base + "/nothing")
+    println("{} {}", r.status, r.text())
+    r = http.get(base + "/fail")
+    println("{} [{}]", r.status, r.text())
+    r = http.get(base + "/old")
+    println("{} {}", r.status, r.text())
+    r = http.send(http.Request("HEAD", base + "/files/hello"))
+    println("{} [{}] {}", r.status, r.text(), r.headers.get("content-length"))
+
+    // Two requests at once on one connection: the second closes it.
+    net.Connection kept = net.connect("127.0.0.1", port)
+    kept.writeText("GET /files/one HTTP/1.1\r\nHost: x\r\n\r\nGET /files/two HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
+    string both = readAll(ref kept)
+    println("kept: {} responses, then closed", count(both, "HTTP/1.1 200 OK"))
+
+    net.Connection chunked = net.connect("127.0.0.1", port)
+    chunked.writeText("POST /echo HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n" +
+        "5\r\nhello\r\n6;ext=1\r\n world\r\n0\r\n\r\n")
+    string echoed = readAll(ref chunked)
+    println("{}", echoed.slice(echoed.len() - 11, echoed.len()))
+
+    net.Connection waiting = net.connect("127.0.0.1", port)
+    waiting.writeText("POST /echo HTTP/1.1\r\nHost: x\r\nContent-Length: 4\r\nExpect: 100-continue\r\nConnection: close\r\n\r\n")
+    println("continue: {}", firstLine(string(waiting.read(4096))))
+    waiting.writeText("ping")
+    string pong = readAll(ref waiting)
+    println("echo {}", pong.slice(pong.len() - 4, pong.len()))
+
+    net.Connection garbage = net.connect("127.0.0.1", port)
+    garbage.writeText("NONSENSE\r\n\r\n")
+    println("{}", firstLine(readAll(ref garbage)))
+    net.Connection old = net.connect("127.0.0.1", port)
+    old.writeText("GET / HTTP/2.0\r\n\r\n")
+    println("{}", firstLine(readAll(ref old)))
+
+    hits.lock([](ref i64 n) { println("hits {}", n) })
+    os.exit(0)
+    ret 0
+}

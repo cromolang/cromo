@@ -3,7 +3,8 @@
 // Decided: TLS with mbedTLS (D233), the root certificates of the system (D234),
 //          connectTls with the same Connection (D235), the module std.crypto
 //          (D236)
-// The client of HTTP comes with M18: here the request is written by hand.
+// Here the request is written by hand, to show TLS alone: http.get of std.http
+// does the same (examples/13_web_server.cro).
 import std.crypto
 import std.net
 

@@ -1,0 +1,153 @@
+// Structs to JSON and back (D251): the compiler generates the conversion, with the
+// fields in their order, the names of the attributes (D256), the enums without
+// data as the names of their cases, the maps with their keys in order, and a null
+// that gives the default value (D257).
+// expect-output: {"name":"Ada \"the first\"\n","age":36,"roles":["admin","dev"],"home":{"city":"Milano","zip_code":"20100"},"role":"Guest","score":3.0,"counts":{"a":1,"b":2},"extra":null}
+// expect-output: {
+// expect-output:   "name": "Ada \"the first\"\n",
+// expect-output:   "age": 36,
+// expect-output:   "roles": [
+// expect-output:     "admin",
+// expect-output:     "dev"
+// expect-output:   ],
+// expect-output:   "home": {
+// expect-output:     "city": "Milano",
+// expect-output:     "zip_code": "20100"
+// expect-output:   },
+// expect-output:   "role": "Guest",
+// expect-output:   "score": 3.0,
+// expect-output:   "counts": {
+// expect-output:     "a": 1,
+// expect-output:     "b": 2
+// expect-output:   },
+// expect-output:   "extra": null
+// expect-output: }
+// expect-output: Ada "the first"
+// expect-output:  36 admin,dev 20100 Guest 3 [] 2
+// expect-output: missing: [] 0 [] Admin 0
+// expect-output: null: [] 0 [] Admin [1,0,3] true
+// expect-output: manager Grace
+// expect-output: {"name":"root","children":[{"name":"leaf","children":[]}]} leaf
+// expect-output: {} [] [[1,2],[]] {"x":-1,"y":255,"big":18446744073709551615,"tiny":0.5}
+// expect-output: generic {"name":"g","children":[]}
+import std.json
+
+enum Role {
+    Admin
+    Guest
+}
+
+struct Address {
+    string city
+    [[json("zip_code")]] string zip
+}
+
+struct User {
+    string name
+    i64 age
+    list<string> roles
+    Address home
+    Role role
+    f64 score
+    [[json(skip)]]
+    string secret
+    map<string, i32> counts
+    json.Value extra
+}
+
+struct Node {
+    string name
+    list<Node> children
+}
+
+struct Empty {
+}
+
+struct Numbers {
+    i8 x
+    u8 y
+    u64 big
+    f32 tiny
+}
+
+struct Person {
+    string name
+}
+
+string send<T : json.Data>(T value) {
+    ret json.encode(value)
+}
+
+string roles(list<string> names) {
+    string text
+    for (string name in names) {
+        if (text.len() > 0) {
+            text += ","
+        }
+        text += name
+    }
+    ret text
+}
+
+i32 main() {
+    User u
+    u.name = "Ada \"the first\"\n"
+    u.age = 36
+    u.roles.add("admin")
+    u.roles.add("dev")
+    u.home.city = "Milano"
+    u.home.zip = "20100"
+    u.role = Role.Guest
+    u.score = 3.0
+    u.secret = "hidden"
+    u.counts["b"] = 2
+    u.counts["a"] = 1
+    string text = json.encode(u)
+    println("{}", text)
+    println("{}", json.pretty(u))
+    User back = json.decode<User>(text)
+    string role = "Admin"
+    if (back.role == Role.Guest) {
+        role = "Guest"
+    }
+    println("{} {} {} {} {} {} [{}] {}", back.name, back.age, roles(back.roles), back.home.zip, role, back.score,
+        back.secret, back.counts["b"])
+
+    User missing = json.decode<User>("{\"unknown\": [1, 2], \"other\": {\"a\": null}}")
+    println("missing: [{}] {} [{}] Admin {}", missing.name, missing.age, missing.home.city, missing.roles.len())
+    User nulls = json.decode<User>("{\"name\": null, \"age\": null, \"home\": null, \"role\": null, \"roles\": null, " +
+        "\"counts\": {\"x\": null}, \"extra\": null}")
+    list<i64> scores = json.decode<list<i64>>("[1, null, 3]")
+    println("null: [{}] {} [{}] Admin {} {}", nulls.name, nulls.age, nulls.home.city, json.encode(scores),
+        nulls.extra.isNull())
+
+    User boss = json.decode<User>("{\"extra\": {\"name\": \"Grace\"}}")
+    if (!boss.extra.isNull()) {
+        Person manager = json.fromValue<Person>(boss.extra)
+        println("manager {}", manager.name)
+    }
+
+    Node root
+    root.name = "root"
+    Node leaf
+    leaf.name = "leaf"
+    root.children.add(move leaf)
+    string tree = json.encode(root)
+    println("{} {}", tree, json.decode<Node>(tree).children[0].name)
+
+    list<list<i32>> grid
+    grid.add(list<i32>())
+    grid[0].add(1)
+    grid[0].add(2)
+    grid.add(list<i32>())
+    Numbers n
+    n.x = -1
+    n.y = 255
+    n.big = 18446744073709551615
+    n.tiny = 0.5
+    println("{} {} {} {}", json.encode(Empty()), json.encode(list<string>()), json.encode(grid), json.encode(n))
+    Node small
+    small.name = "g"
+    println("generic {}", send(small))
+    ret 0
+}

@@ -1,0 +1,48 @@
+// HTTPS on the loopback (D235, D252, D254): a server with listenTls and the
+// certificate of localhost, and the client, which trusts the authority of the
+// tests through SSL_CERT_FILE; a body larger than a record of TLS.
+// program-env: SSL_CERT_FILE={dir}/../m17/certificates/ca.pem
+// program-env: CERTIFICATES={dir}/../m17/certificates/
+// expect-output: 200 https hello
+// expect-output: 200 100000 bytes back
+import std.fs
+import std.http
+import std.os
+import std.thread
+
+i32 main() {
+    string folder = os.env("CERTIFICATES")
+    http.Server server = http.listenTls("localhost", 0, fs.readText(folder + "localhost.pem"),
+        fs.readText(folder + "localhost.key"))
+    server.threads(2)
+    i32 port = server.port()
+    thread.Thread t = thread.Thread([server]() {
+        server.serve([](ref http.Request req, ref http.Response res) {
+            if (req.matches("POST /echo")) {
+                res.writeBytes(req.body, "application/octet-stream")
+            } else {
+                res.write("https hello")
+            }
+        })
+    })
+    t.start()
+    string base = format("https://localhost:{}", port)
+    http.Response r = http.get(base + "/")
+    println("{} {}", r.status, r.text())
+    http.Request big = http.Request("POST", base + "/echo")
+    list<u8> data
+    for (i64 i = 0; i < 100000; i++) {
+        data.add(u8(i % 251))
+    }
+    big.writeBytes(data, "application/octet-stream")
+    r = http.send(big)
+    bool same = r.body.len() == data.len()
+    for (i64 i = 0; i < data.len() && same; i++) {
+        same = r.body[i] == data[i]
+    }
+    if (same) {
+        println("{} {} bytes back", r.status, r.body.len())
+    }
+    os.exit(0)
+    ret 0
+}

@@ -382,7 +382,7 @@ private:
     }
 
     // params := '(' [param {',' param}] ')'
-    // param  := ['ref' | 'move' ['const']] type name   (D22)
+    // param  := ['ref' | 'move' ['const'] | 'const'] type name   (D22, D253)
     bool parseParams(FunctionDecl& function) {
         if (!expect(TokenKind::LParen, "after the function name")) return false;
         if (!check(TokenKind::RParen)) {
@@ -393,11 +393,15 @@ private:
                 } else if (match(TokenKind::KwMove)) {
                     param.mode = ParamMode::Move;
                     param.isConst = match(TokenKind::KwConst);
+                } else if (check(TokenKind::KwConst) && peek(1).kind == TokenKind::KwFunc) {
+                    advance();  // `const func(...)`: a function that does not modify what it captures (D253)
+                    param.isConst = true;
                 }
                 if (check(TokenKind::KwConst)) {
                     diag_.error(peek().loc, param.mode == ParamMode::Ref
                                                 ? "'ref const' does not exist: a read parameter is already read-only (D22)"
-                                                : "only a 'move' parameter can be const, written 'move const' (D22)");
+                                                : "only a 'move' parameter can be const, written 'move const' (D22), and a "
+                                                  "function, written 'const func' (D253)");
                     return false;
                 }
                 if (!parseType(param.type)) return false;
@@ -498,7 +502,8 @@ private:
     bool parseEnumMember(StructDecl& decl) {
         std::optional<SourceLocation> publicLoc;
         if (check(TokenKind::KwPublic)) publicLoc = advance().loc;
-        if (check(TokenKind::Tilde) || (check(TokenKind::Identifier) && peek().text == decl.name)) {
+        if (check(TokenKind::Tilde) ||
+            (check(TokenKind::Identifier) && peek().text == decl.name && peek(1).kind == TokenKind::LParen)) {
             diag_.error(peek().loc, "an enum has no constructor or destructor (D110)");
             return false;
         }
@@ -640,8 +645,48 @@ private:
         return decl;
     }
 
-    // member := ['public'] (field | constructor | method) | destructor   (D50, D132)
+    // attributes := { '[' '[' name ['(' arg {',' arg} ')'] ']' ']' }   (D256)
+    // arg := text | name
+    bool parseAttributes(std::vector<Attribute>& out) {
+        while (check(TokenKind::LBracket) && peek(1).kind == TokenKind::LBracket) {
+            advance();
+            advance();
+            Attribute attribute;
+            if (!check(TokenKind::Identifier)) {
+                errorAtCurrent("the name of the attribute");
+                return false;
+            }
+            attribute.name = peek().text;
+            attribute.loc = advance().loc;
+            if (match(TokenKind::LParen)) {
+                do {
+                    AttributeArg arg;
+                    arg.loc = peek().loc;
+                    if (check(TokenKind::StringLiteral) || check(TokenKind::Identifier)) {
+                        arg.isText = check(TokenKind::StringLiteral);
+                        arg.text = advance().text;
+                    } else {
+                        errorAtCurrent("a text or a name as the argument of the attribute");
+                        return false;
+                    }
+                    attribute.args.push_back(std::move(arg));
+                } while (match(TokenKind::Comma));
+                if (!expect(TokenKind::RParen, "to close the arguments of the attribute")) return false;
+            }
+            if (!expect(TokenKind::RBracket, "to close the attribute with ']]'") ||
+                !expect(TokenKind::RBracket, "to close the attribute with ']]'")) {
+                return false;
+            }
+            out.push_back(std::move(attribute));
+            skipNewlines();  // the field may follow on the next line
+        }
+        return true;
+    }
+
+    // member := attributes ['public'] (field | constructor | method) | destructor   (D50, D132, D256)
     bool parseMember(StructDecl& decl) {
+        std::vector<Attribute> attributes;
+        if (!parseAttributes(attributes)) return false;
         bool isPublic = false;
         if (check(TokenKind::KwPublic)) {
             SourceLocation loc = advance().loc;
@@ -655,7 +700,13 @@ private:
         size_t fields = decl.fields.size();
         if (!parseMemberDecl(decl)) return false;
         if (decl.members.size() > members) decl.members.back().isPublic = isPublic;
-        if (decl.fields.size() > fields) decl.fields.back().isPublic = isPublic;
+        if (decl.fields.size() > fields) {
+            decl.fields.back().isPublic = isPublic;
+            decl.fields.back().attributes = std::move(attributes);
+        } else if (!attributes.empty()) {
+            diag_.error(attributes[0].loc, "an attribute is written only before a field, for now (D256)");
+            return false;
+        }
         return true;
     }
 
@@ -1304,6 +1355,24 @@ private:
                 return nullptr;
             }
             const Token& name = advance();
+            if (expr->kind == ExprKind::Name && check(TokenKind::Less) && skipTypeArgs(0) &&
+                peek(skipTypeArgs(0)).kind == TokenKind::LParen) {
+                // `json.decode<User>(text)`: a generic function of a module (D86, D126)
+                auto call = std::make_unique<CallExpr>(name.loc, name.text);
+                call->module = static_cast<NameExpr&>(*expr).name;
+                markAngle();
+                advance();
+                do {
+                    TypeName arg;
+                    if (!parseType(arg, false)) return nullptr;
+                    call->typeArgs.push_back(std::move(arg));
+                } while (match(TokenKind::Comma));
+                markAngle();
+                if (!expect(TokenKind::Greater, "to close the type arguments")) return nullptr;
+                if (!parseArgs(call->args)) return nullptr;
+                expr = std::move(call);
+                continue;
+            }
             if (check(TokenKind::LParen)) {
                 auto call = std::make_unique<MethodCallExpr>(name.loc, std::move(expr), name.text);
                 if (!parseArgs(call->args)) return nullptr;
