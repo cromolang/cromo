@@ -718,6 +718,45 @@ static void exactDigits(const FloatParts* f, i32 significant, i32 decimals, Deci
     if (c > 0 || (c == 0 && (out->digit[out->count - 1] & 1))) incrementLast(out);
 }
 
+// The digits of {:.Nf} without big integers when they fit: the value is m * 2^e,
+// so m * 10^p shifted right by -e bits, rounded half to even on what the shift
+// drops, is the exact result of exactDigits. 128 bits hold m * 10^p for p up to
+// 19; the result must fit in 64 bits. Returns 0 when it does not apply.
+static int fastFixed(const FloatParts* f, i32 decimals, Decimal* out) {
+    if (decimals > 19) return 0;
+    u64 power = 1;
+    for (i32 i = 0; i < decimals; ++i) power *= 10;
+    unsigned __int128 scaled = (unsigned __int128)f->mantissa * power;
+    unsigned __int128 rounded;
+    if (f->exponent >= 0) {
+        if (f->exponent >= 64 || (scaled >> (64 - f->exponent)) != 0) return 0;
+        rounded = scaled << f->exponent;
+    } else if (-f->exponent >= 128) {
+        rounded = 0;  // less than 2^117, far below half of 2^128
+    } else {
+        i32 shift = -f->exponent;
+        rounded = scaled >> shift;
+        unsigned __int128 rest = scaled - (rounded << shift);
+        unsigned __int128 half = (unsigned __int128)1 << (shift - 1);
+        if (rest > half || (rest == half && (rounded & 1))) ++rounded;
+        if ((rounded >> 64) != 0) return 0;
+    }
+    u64 value = (u64)rounded;
+    out->count = 0;
+    out->exponent = 1;
+    if (value == 0) return 1;
+    u8 reversed[20];
+    i32 length = 0;
+    while (value) {
+        reversed[length++] = (u8)(value % 10);
+        value /= 10;
+    }
+    for (i32 i = 0; i < length; ++i) out->digit[i] = reversed[length - 1 - i];
+    out->count = length;
+    out->exponent = length - decimals;  // 0.d1 d2 ... * 10^exponent is the value
+    return 1;
+}
+
 static u8 digitAt(const Decimal* d, i32 index) {
     return (u8)('0' + (index >= 0 && index < d->count ? d->digit[index] : 0));
 }
@@ -764,8 +803,10 @@ static void formatFloat(i64 stream, const FloatParts* f, int negative, int isNan
         return;
     }
 
-    static u8 text[MAX_DIGITS + 32];
-    static Decimal d;
+    // On the stack: format does not take the lock of printing, and several threads
+    // can write numbers at once (D221).
+    u8 text[MAX_DIGITS + 32];
+    Decimal d;
     u32 n = 0;
     int alternate = spec->alternate;
     i32 precision = spec->precision;
@@ -776,7 +817,7 @@ static void formatFloat(i64 stream, const FloatParts* f, int negative, int isNan
         n = writeScientific(&d, p, alternate, text);
     } else if (spec->type == 'f') {
         i32 p = precision < 0 ? 6 : precision;
-        exactDigits(f, -1, p, &d);
+        if (!fastFixed(f, p, &d)) exactDigits(f, -1, p, &d);
         n = writeFixed(&d, p, alternate, text);
     } else if (spec->type == 'g' || precision >= 0) {
         i32 p = precision < 0 ? 6 : precision == 0 ? 1 : precision;
@@ -1086,11 +1127,14 @@ static void heapFree(void* memory) { HeapFree(GetProcessHeap(), 0, memory); }
 
 #else
 
-// A simple allocator on top of mmap, without threads (D43). Every block starts
-// with 16 bytes that hold how many bytes it can contain. The small blocks, up to
-// 4 KB with those 16 bytes, have a size that is a power of two from 32 bytes: they
-// are cut from areas of 1 MB, and the freed ones are kept in a list for each size.
-// The larger blocks have a mapping of their own.
+// A simple allocator on top of mmap, under the lock of the heap. Every block
+// starts with 16 bytes that hold how many bytes it can contain. The small blocks,
+// up to 128 KB with those 16 bytes, have a size that is a power of two from 32
+// bytes: they are cut from areas of 4 MB, whose pages the system gives when they
+// are used, and the freed ones are kept in a list for each size. The larger
+// blocks have a mapping of their own, as for malloc of glibc: a mapping for every
+// block of a few KB costs two system calls, which wait for each other in a
+// process with threads.
 
 #define PROT_READ 1
 #define PROT_WRITE 2
@@ -1098,9 +1142,9 @@ static void heapFree(void* memory) { HeapFree(GetProcessHeap(), 0, memory); }
 #define MAP_ANONYMOUS 0x20
 #define MREMAP_MAYMOVE 1
 #define HEADER 16
-#define SMALL_LIMIT 4096
-#define SMALL_SIZES 8  // 32, 64, ..., 4096
-#define AREA_SIZE (1u << 20)
+#define SMALL_LIMIT (128u << 10)
+#define SMALL_SIZES 13  // 32, 64, ..., 128 KB
+#define AREA_SIZE (4u << 20)
 
 typedef struct FreeBlock {
     struct FreeBlock* next;
@@ -1135,7 +1179,7 @@ static void* heapAlloc(u64 size) {
             block = (u8*)freeBlocks[index];
             freeBlocks[index] = freeBlocks[index]->next;
         } else {
-            if ((u64)(areaEnd - areaNext) < total) {  // the rest of the old area, less than 4 KB, is not used
+            if ((u64)(areaEnd - areaNext) < total) {  // the rest of the old area is not used, nor touched
                 areaNext = mapPages(AREA_SIZE);
                 if (!areaNext) return 0;
                 areaEnd = areaNext + AREA_SIZE;

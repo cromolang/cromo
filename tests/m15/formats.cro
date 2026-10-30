@@ -1,10 +1,26 @@
-// format and the heap in several threads at once (D200, D214).
+// format and the heap in several threads at once (D200, D214), also with the
+// floating-point numbers, whose digits each format computes by itself (D221).
 // expect-output: wrong 0
 import std.thread
+
+// The text of format("{:.3f} {}", id * 1.25, id / 8.0).
+string floats(i64 id) {
+    if (id == 1) {
+        ret "1.250 0.125"
+    } else if (id == 2) {
+        ret "2.500 0.25"
+    } else if (id == 3) {
+        ret "3.750 0.375"
+    }
+    ret "5.000 0.5"
+}
 
 i64 check(i64 id) {
     i64 wrong = 0
     for (i64 i = 0; i < 20000; i++) {
+        if (format("{:.3f} {}", f64(id) * 1.25, f64(id) / 8.0) != floats(id)) {
+            wrong++
+        }
         string text = format("thread {} line {} {}", id, i, "end")
         string expected = "thread "
         expected += format("{}", id)
