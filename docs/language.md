@@ -603,7 +603,7 @@ i32 main() {
 - Next to `fs.cro` a module can have `fs_windows.cro` and `fs_linux.cro`: only the file of the system the program is compiled for is used, and it shares the names of the module, also the private ones (D202). It holds for the library and for the programs.
 - In the modules with `import unsafe`, `s.cstring()` gives the address of a copy of the string ending with a zero, for the C functions, until the end of the statement (D204).
 
-## 18. Threads (D214–D217)
+## 18. Threads and tasks (D214–D217, D269–D284)
 
 ```cromo
 import std.thread
@@ -631,6 +631,20 @@ i32 main() {
 - The data of a `thread.Mutex<T>` are reached only inside `lock`, which gives them with `ref` to one thread at a time (D216).
 - `join()` throws again the exception of the thread; an exception that no `join()` takes stops the program (D217).
 - A thread that calls a function received as a parameter needs it `const func`, which does not modify what it captures (D253).
+
+```cromo
+thread.Mutex<Stats> stats
+thread.Group connections
+for {
+    net.Connection c = listener.accept()
+    connections.start([move c, stats]() { serve(ref c, stats) })
+}
+```
+
+- `thread.Task` has the interface and the rules of `thread.Thread`, but many tasks run on a few threads of the system, one for each processor (D269). A task that waits for the network, for `time.sleep`, for a mutex or for `join()` leaves its thread to the others: the code is the same, without `async` or `await`. `thread.Thread` stays a thread of the system, for C code and for long work that blocks.
+- A task has 1 MB of stack reserved, and takes the memory page by page: an idle task costs a few KB (D272).
+- A call that blocks the thread of a task, as a file or a C function, keeps that thread; after about a millisecond the runtime gives the other tasks another thread (D271).
+- `thread.Group` starts tasks one by one, also in a loop (D273). Its tasks can read the variables declared before the group, which stay constant until the end of its block, and take others with `move`; not with `ref`. At the end of its block the group waits for all its tasks; `g.wait()` waits for them earlier and throws again the first exception of a task.
 
 ## 19. Network (D223–D226)
 
@@ -729,7 +743,7 @@ switch (v.get("items").at(0)) {
 - `json.Value` is an enum: `Null`, `Bool`, `Int(i64)`, `Float(f64)`, `Text`, `Array`, `Object`, with the members in their order. Its methods read it (`asInt`, `asFloat`, `asText`, `get`, `at`, `has`, `keys`, `len`, `isNull`) and build it (`json.object()`, `json.array()`, `set`, `add`); `json.fromValue<T>` and `json.toValue` convert it.
 - The errors are exceptions that say where: `cannot read JSON: line 3, column 7: expected ',' or '}'`, `cannot decode JSON: at users[2].age: expected an integer, found a string`.
 
-## 22. HTTP (D252–D254, D258–D263)
+## 22. HTTP (D252–D254, D258–D263, D270)
 
 ```cromo
 import std.http
@@ -753,7 +767,7 @@ http.Response r = http.get("https://api.example.com/users/7")
 User u = json.decode<User>(r.text())
 ```
 
-- `http.serve(host, port, handler)` gives every request to one handler, a `const func`, on the threads of the server, each with its connection: it runs on several threads at once, and what the requests share is in a mutex (D252, D253). `http.listen` and `http.listenTls` give a `Server` with `port()`, `threads(n)` and `serve(handler)`.
+- `http.serve(host, port, handler)` gives every request to one handler, a `const func`, each connection on a task of its own (D270): it runs on several threads at once, and what the requests share is in a mutex (D252, D253). `http.listen` and `http.listenTls` give a `Server` with `port()` and `serve(handler)`.
 - The handler chooses the route with patterns: `req.matches("GET /users/{id}")`, then `req.param("id")`; `{rest...}` takes the rest of the path, and GET takes also HEAD. `req.queryValue("page")` reads the query. An exception of the handler gives the status 500.
 - `http.get(url)`, `http.post(url, body, type)` and `http.send(request)` open a connection for each request, with TLS for `https`, and follow the redirects (D254). A status of error is a response; an exception is a failure of the network.
 - `Request` and `Response` have `headers`, compared without case, `body`, `text()`, and `write`, `writeJson` and `writeBytes`, which also set the `Content-Type`.

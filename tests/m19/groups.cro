@@ -1,0 +1,97 @@
+// Groups of tasks (D273): started in a loop, they read the variables declared
+// before the group and take others with move; the block waits for them at its
+// end, wait() earlier, with the first exception of a task.
+// expect-output: words 1000 letters 4475
+// expect-output: squares 333833500
+// expect-output: caught bad 3
+// expect-output: after wait 4
+// expect-output: nested 45
+// expect-output: empty
+import std.thread
+import std.time
+
+struct Stats {
+    i64 words
+    i64 letters
+}
+
+i64 sumOfSquares(i64 count) {
+    thread.Mutex<i64> total
+    thread.Group squares
+    for (i64 i = 1; i <= count; i++) {
+        squares.start([total, i]() { total.lock([i](ref i64 t) { t += i * i }) })
+    }
+    squares.wait()
+    i64 result = 0
+    total.lock([ref result](ref i64 t) { result = t })
+    ret result
+}
+
+// At its end the block waits for the tasks of its group.
+void count(list<string> dictionary, thread.Mutex<Stats> stats) {
+    thread.Group counters
+    for (i64 i = 0; i < 1000; i++) {
+        string word = dictionary[i % 3].copy()
+        if (i % 7 == 0) {
+            word += "!"
+        }
+        counters.start([move word, stats]() {
+            time.msleep(1)
+            stats.lock([word](ref Stats s) {
+                s.words++
+                s.letters += word.len()
+            })
+        })
+    }
+}
+
+i32 main() {
+    list<string> dictionary
+    dictionary.add("one")
+    dictionary.add("three")
+    dictionary.add("seven")
+    thread.Mutex<Stats> stats
+    count(dictionary, stats)
+    stats.lock([](ref Stats s) { println("words {} letters {}", s.words, s.letters) })
+
+    println("squares {}", sumOfSquares(1000))
+
+    // wait() throws the first exception; the others are lost.
+    thread.Mutex<i64> done
+    thread.Group failing
+    for (i64 i = 0; i < 5; i++) {
+        failing.start([i, done]() {
+            if (i == 3) {
+                throw Error(format("bad {}", i))
+            }
+            done.lock([](ref i64 n) { n++ })
+        })
+    }
+    try {
+        failing.wait()
+    } catch (Exception e) {
+        println("caught {}", e.message())
+    }
+    done.lock([](ref i64 n) { println("after wait {}", n) })
+
+    // A group inside a task.
+    i64 nested = 0
+    thread.Task outer = thread.Task([ref nested]() {
+        thread.Mutex<i64> sum
+        thread.Group inner
+        for (i64 i = 0; i < 10; i++) {
+            inner.start([sum, i]() { sum.lock([i](ref i64 s) { s += i }) })
+        }
+        inner.wait()
+        sum.lock([ref nested](ref i64 s) { nested = s })
+    })
+    outer.start()
+    outer.join()
+    println("nested {}", nested)
+
+    // A group without tasks waits for nothing.
+    thread.Group none
+    none.wait()
+    println("empty")
+    ret 0
+}

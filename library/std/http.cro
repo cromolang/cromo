@@ -1,6 +1,7 @@
 // The module std.http (D252-D254): HTTP/1.1 over the connections of std.net,
-// with TLS for https (D235). A server gives every request to one function, on
-// its threads (D252); the client opens a connection for each request (D254).
+// with TLS for https (D235). A server gives every request to one function, each
+// connection on a task (D252, D270); the client opens a connection for each
+// request (D254).
 import std.net
 import std.thread
 import std.time
@@ -270,25 +271,31 @@ void defaultType(ref Headers headers, string type) {
 // asked the system for a free one.
 public struct Server {
     net.Listener listener
-    i64 count = 128
 
     public i32 port() const {
         ret listener.port()
     }
 
-    // How many connections are served at the same time, each by its thread: 128
-    // unless set before serve(). The others wait to be accepted.
-    public void threads(i64 number) {
-        if (number < 1) {
-            throw Error("a server of HTTP needs at least one thread")
-        }
-        count = number
-    }
-
-    // Gives every request to the handler, on the threads of the server, and
-    // never returns. An exception of the handler gives the status 500.
+    // Gives every request to the handler, each connection on a task of its own
+    // (D270), and never returns. An exception of the handler gives the status 500.
     public void serve(const func(ref Request, ref Response) handler) const {
-        startWorkers(count, listener, handler)
+        thread.Group connections
+        for {
+            net.Connection connection
+            try {
+                connection = listener.accept()
+            } catch (Exception e) {
+                time.msleep(10)  // as with too many open files: a pause, then again
+                continue
+            }
+            connections.start([move connection, handler]() {
+                try {
+                    serveConnection(ref connection, handler)
+                } catch (Exception e) {
+                    // the client went away, or did not finish in time
+                }
+            })
+        }
     }
 }
 
@@ -309,35 +316,6 @@ public Server listenTls(string host, i32 port, string certificate, string key) {
 public void serve(string host, i32 port, const func(ref Request, ref Response) handler) {
     Server server = listen(host, port)
     server.serve(handler)
-}
-
-// One thread for each level: each accepts its connections from the same
-// listener and serves them, while the others do the same.
-void startWorkers(i64 count, net.Listener listener, const func(ref Request, ref Response) handler) {
-    if (count == 0) {
-        ret
-    }
-    thread.Thread worker = thread.Thread([listener, handler]() { work(listener, handler) })
-    worker.start()
-    startWorkers(count - 1, listener, handler)
-    worker.join()
-}
-
-void work(net.Listener listener, const func(ref Request, ref Response) handler) {
-    for {
-        net.Connection connection
-        try {
-            connection = listener.accept()
-        } catch (Exception e) {
-            time.msleep(10)  // as with too many open files: a pause, then again
-            continue
-        }
-        try {
-            serveConnection(ref connection, handler)
-        } catch (Exception e) {
-            // the client went away, or did not finish in time
-        }
-    }
 }
 
 // The requests of a connection, one after the other while it stays open.

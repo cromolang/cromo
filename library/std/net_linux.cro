@@ -5,6 +5,10 @@ import unsafe
 import std.fs
 import std.time
 
+extern "cromo" {
+    void cromo_socket_closed(i64 handle)
+}
+
 i32 inet6() {
     ret 10
 }
@@ -18,7 +22,7 @@ i64 openSocket(i32 version, bool stream) {
     if (stream) {
         kind = 1  // SOCK_STREAM
     }
-    i64 handle = systemCall(41, family, kind | 0x80000, 0, 0, 0, 0)  // socket, SOCK_CLOEXEC
+    i64 handle = systemCall(41, family, kind | 0x80800, 0, 0, 0, 0)  // socket, SOCK_CLOEXEC|SOCK_NONBLOCK
     if (handle < 0) {
         throw failure("open a socket", errorText(-handle))
     }
@@ -38,10 +42,25 @@ i64 connectTo(i64 handle, Address to) {
     addr raw = socketAddress(to, ref length)
     i64 result = systemCall(42, handle, raw, i64(length), 0, 0, 0)  // connect
     free(raw)
+    if (result == -115) {  // EINPROGRESS
+        ret -1
+    }
     if (result < 0) {
         ret -result
     }
     ret 0
+}
+
+i64 connectError(i64 handle) {
+    addr value = alloc(4)
+    addr length = alloc(4)
+    put<i32>(value, 0)
+    put<i32>(length, 4)
+    systemCall(55, handle, 1, 4, value, length, 0)  // getsockopt SOL_SOCKET SO_ERROR
+    i64 code = i64(copyAt<i32>(value))
+    free(length)
+    free(value)
+    ret code
 }
 
 void bindTo(i64 handle, Address to) {
@@ -61,11 +80,15 @@ void listenOn(i64 handle) {
     }
 }
 
+// -1 when there is no connection yet (EAGAIN).
 i64 acceptOn(i64 handle) {
     for {
-        i64 client = systemCall(288, handle, 0, 0, 0x80000, 0, 0)  // accept4, SOCK_CLOEXEC
+        i64 client = systemCall(288, handle, 0, 0, 0x80800, 0, 0)  // accept4, SOCK_CLOEXEC|SOCK_NONBLOCK
         if (client >= 0) {
             ret client
+        }
+        if (client == -11) {
+            ret -1
         }
         if (client != -4) {  // EINTR: again
             throw failure("accept a connection", errorText(-client))
@@ -73,11 +96,15 @@ i64 acceptOn(i64 handle) {
     }
 }
 
+// -1 when there are no bytes yet.
 i64 receiveSome(i64 handle, addr data, i64 most) {
     for {
         i64 count = systemCall(45, handle, data, most, 0, 0, 0)  // recvfrom
         if (count >= 0) {
             ret count
+        }
+        if (count == -11) {
+            ret -1
         }
         if (count != -4) {
             throw failure("read", errorText(-count))
@@ -86,12 +113,15 @@ i64 receiveSome(i64 handle, addr data, i64 most) {
 }
 
 // MSG_NOSIGNAL: a connection closed on the other side is an exception, not
-// the signal SIGPIPE that would end the program.
+// the signal SIGPIPE that would end the program. -1 when there is no room yet.
 i64 sendSome(i64 handle, addr data, i64 size) {
     for {
         i64 count = systemCall(44, handle, data, size, 0x4000, 0, 0)  // sendto
         if (count >= 0) {
             ret count
+        }
+        if (count == -11) {
+            ret -1
         }
         if (count != -4) {
             throw failure("write", errorText(-count))
@@ -99,22 +129,32 @@ i64 sendSome(i64 handle, addr data, i64 size) {
     }
 }
 
-void sendTo(i64 handle, addr data, i64 size, Address to) {
+// false when there is no room yet.
+bool sendTo(i64 handle, addr data, i64 size, Address to) {
     i32 length = 0
     addr raw = socketAddress(to, ref length)
     i64 count = systemCall(44, handle, data, size, 0x4000, raw, i64(length))
     free(raw)
+    if (count == -11) {
+        ret false
+    }
     if (count < 0) {
         throw failure("send", errorText(-count))
     }
+    ret true
 }
 
+// -1 when there is no message yet.
 i64 receiveFrom(i64 handle, addr data, i64 most, ref Address from) {
     addr raw = alloc(28)
     addr length = alloc(4)
     put<i32>(length, 28)
     i64 count = systemCall(45, handle, data, most, 0, raw, length)
     free(length)
+    if (count == -11) {
+        free(raw)
+        ret -1
+    }
     if (count < 0) {
         free(raw)
         throw failure("receive", errorText(-count))
@@ -157,6 +197,7 @@ i32 localPort(i64 handle) {
 }
 
 void closeSocket(i64 handle) {
+    cromo_socket_closed(handle)  // the waits of the tasks forget it (D269)
     systemCall(3, handle, 0, 0, 0, 0, 0)
 }
 
@@ -267,12 +308,14 @@ void query(Address server, string host, i64 type, i32 port, ref list<Address> ad
     addr data = copyBytes(packet)
     addr buffer = alloc(1500)
     try {
-        sendTo(handle, data, packet.len(), server)
-        if (!waitFor(handle, true, 2000)) {
+        if (!sendTo(handle, data, packet.len(), server) || !readyFor(handle, true, 2000)) {
             ret
         }
         Address from
         i64 count = receiveFrom(handle, buffer, 1500, ref from)
+        if (count < 0) {
+            ret
+        }
         list<u8> reply
         for (i64 i = 0; i < count; i++) {
             reply.add(copyAt<u8>(offset(buffer, i)))

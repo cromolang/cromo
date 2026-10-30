@@ -4,6 +4,10 @@
 import unsafe
 import std.fs
 
+extern "cromo" {
+    i64 cromo_task_sleep(i64 nanoseconds)  // 0 outside a task (D269)
+}
+
 i64 clock(i64 id) {
     addr spec = alloc(16)
     systemCall(228, id, spec, 0, 0, 0, 0)  // clock_gettime
@@ -20,8 +24,9 @@ i64 unixNanoseconds() {
     ret clock(0)  // CLOCK_REALTIME
 }
 
+// In a task, the task waits and its thread runs the others (D269).
 void pause(i64 nanoseconds) {
-    if (nanoseconds <= 0) {
+    if (nanoseconds <= 0 || cromo_task_sleep(nanoseconds) != 0) {
         ret
     }
     addr spec = alloc(16)

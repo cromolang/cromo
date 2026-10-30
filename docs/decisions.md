@@ -1408,6 +1408,68 @@ curl -sSf https://cromolang.org/install.sh | sh      # Linux
 ### D268. `net.Listener.accept()` is `const`
 *2026-10-30.* Several threads accept from the same listener (D260), which they capture by reading.
 
+### D269. Lightweight tasks: `thread.Task`, with the API of `thread.Thread`
+*2026-10-30.* It resolves the lightweight tasks of D152 and D223. `thread.Task` has the interface and the rules of `thread.Thread`: made from a lambda, `start()` and `join()`, tasks of a block and free tasks (D215, D218, D219), the exception given back by `join()` (D217). Many tasks run on a few threads of the system; a task that waits for the network, for `time.sleep`, for a mutex or for `join()` leaves its thread to the others, without `async`/`await` (D223). `thread.Thread` stays a thread of the system, for C code and for long work that blocks. It is the model of the virtual threads of Java 21.
+```
+thread.Task t = thread.Task([ref left]() { sort(ref left) })
+t.start()
+sort(ref right)
+t.join()
+```
+
+### D270. The HTTP server gives each connection a task
+*2026-10-30.* It amends D252 and D260. Each connection is served by its own task (D269), without a fixed limit: thousands of idle connections with keep-alive cost little memory. `server.threads(n)` is removed.
+
+### D271. A call that blocks the thread of a task
+*2026-10-30.* A task that calls something which blocks its thread of the system, as a file, a C function or the names of the hosts on Windows, keeps that thread; when it stays there more than about a millisecond while other tasks wait, the runtime gives them another thread, as Go does. Any C library works inside a task.
+
+### D272. The stack of a task
+*2026-10-30.* It details D219 for the tasks. A task has 1 MB of stack reserved, with a guard page, and the memory is taken page by page when it is used: an idle task costs a few KB. Code that runs in a thread runs in a task too.
+
+### D273. `thread.Group`: a variable number of tasks
+*2026-10-30.* A group starts tasks with `g.start(lambda)`, also in a loop, as a server does with a task for each connection; its tasks can read the variables declared before the group, and take others with `move`. Those variables stay constant until the end of the block of the group, which then waits for all its tasks. `g.wait()` waits for them earlier and throws again the first exception of a task. It is the structured concurrency of the `TaskGroup` of Swift and of the nurseries of Trio.
+```
+thread.Mutex<Stats> stats
+thread.Group connections
+for {
+    net.Connection c = listener.accept()
+    connections.start([move c, stats]() { serve(ref c, stats) })
+}
+```
+
+### D274. The workers of the tasks
+*2026-10-30.* It details D269. There are as many workers as logical processors: all the groups of processors on Windows, the affinity of the process on Linux. For now the number cannot be set.
+
+### D275. How the runtime sees a call that blocks
+*2026-10-30.* It details D271. The compiler does not mark the calls: every millisecond, while tasks wait and no worker is idle, the monitor gives another worker the place of one that has run the same task for the whole millisecond. It covers the files of Linux and any C function at no cost for each call; it counts also a long computation, so the workers added are at most 256 beyond the processors.
+
+### D276. The stacks kept, and the limit of Linux
+*2026-10-30.* It details D272. The stack of a task that ends is kept, with its memory, for the next task, up to 1024 stacks; the others give their memory back. On Linux every stack is two areas of the kernel, the guard page and the stack: with the usual limit, `vm.max_map_count` of 65530, about 32 000 tasks can live at once, as the threads of glibc. Beyond it, starting a task is a panic.
+
+### D277. `main` is a thread of the system
+*2026-10-30.* `main` is not a task: it waits as a thread, and starts tasks as any thread does.
+
+### D278. The sockets do not block
+*2026-10-30.* It details D223 and D269. Every socket of `std.net` does not block: a call that would wait returns, and the library waits for the socket, with the poller in a task and with `poll` in a thread, as before. `connect` waits without a timeout, as before.
+
+### D279. The details of a group
+*2026-10-30.* It details D273. The variables that its tasks read stay constant from the declaration of the group, not from its first `start()`. `wait()` throws the first exception of a task and the others are lost; an exception that no `wait()` takes stops the program, as D217. A group cannot be moved, assigned, returned, passed with `ref` or captured. After `wait()` it can start other tasks.
+
+### D280. The messages of the tasks
+*2026-10-30.* The errors and the panics say "task" for a task: `'values' is used by the task 'a' until a.join() (D215)`, `the task is already started (D269)`, `uncaught exception in a task: lost`.
+
+### D281. The mutex among tasks and threads
+*2026-10-30.* It details D216 and D220. A mutex taken by another spins briefly, then a task parks and a thread sleeps. It is not fair; D220 does not change.
+
+### D282. The waits of the sockets
+*2026-10-30.* On Linux epoll, edge-triggered. On Windows the polls of `\Device\Afd` on an IOCP, as libuv and mio do; without it, the tasks wait for a socket as threads, and the monitor gives the others a worker (D275).
+
+### D283. The locks of the runtime on Linux
+*2026-10-30.* They spin up to 100 times before sleeping, as the SRWLOCK of Windows does: they are held briefly, and a sleep and a wake for each would slow the tasks.
+
+### D284. `sleep(0)` in a task
+*2026-10-30.* It returns at once, as in a thread. There is no `thread.yield()`.
+
 ---
 
 ## Open

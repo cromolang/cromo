@@ -1948,8 +1948,12 @@ private:
         case Intrinsic::ArgumentData:
             inst(result + " = call ptr @cromo_arg_data(i64 " + arg(0) + ")");
             return {result, addr};
-        case Intrinsic::ThreadStart: {  // D214
-            Value body = generateExpr(*call.args[0]);
+        case Intrinsic::ThreadStart:  // D214
+        case Intrinsic::TaskStart:    // D269
+        case Intrinsic::GroupStart: {  // D273: the runtime owns the data of the lambda from here on
+            bool group = call.intrinsic == Intrinsic::GroupStart;
+            std::string record = group ? arg(0) : "";
+            Value body = generateExpr(*call.args[group ? 1 : 0]);
             std::string code = temp();
             std::string env = temp();
             std::string empty = temp();
@@ -1957,7 +1961,13 @@ private:
             inst(env + " = extractvalue { ptr, ptr } " + body.ref + ", 1");
             inst(empty + " = icmp eq ptr " + code + ", null");
             panicIf(empty, "the function is empty: no lambda was given to it (D189)", call.loc);
-            std::string fn = intrinsic("declare ptr @cromo_thread_start(ptr, ptr) nounwind", "@cromo_thread_start");
+            if (group) {
+                std::string fn = intrinsic("declare void @cromo_group_start(ptr, ptr, ptr) nounwind", "@cromo_group_start");
+                inst("call void " + fn + "(ptr " + record + ", ptr " + code + ", ptr " + env + ")");
+                return {"", Type::voidType()};
+            }
+            const char* name = call.intrinsic == Intrinsic::TaskStart ? "@cromo_task_start" : "@cromo_thread_start";
+            std::string fn = intrinsic(std::string("declare ptr ") + name + "(ptr, ptr) nounwind", name);
             inst(result + " = call ptr " + fn + "(ptr " + code + ", ptr " + env + ")");
             return {result, addr};
         }

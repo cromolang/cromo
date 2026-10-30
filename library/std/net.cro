@@ -1,19 +1,22 @@
 // The module std.net (D223-D226): TCP connections and listeners, UDP sockets and
 // the names of the hosts. A call waits until it is done, or until the timeout
-// set on its socket (D225). The calls of the system are in net_windows.cro and
-// net_linux.cro (D202), with:
+// set on its socket (D225); in a task, the task waits and its thread runs the
+// others (D269). The sockets do not block: the calls of the system say when they
+// would wait, -1 or false below, and the library waits for the socket. They are in
+// net_windows.cro and net_linux.cro (D202), with:
 //   i32 inet6()                                        the code of IPv6 for the system
 //   i64 openSocket(i32 version, bool stream)
 //   void reuseAddress(i64 socket)                      for a listener
-//   i64 connectTo(i64 socket, Address to)              0, or the code of the error
+//   i64 connectTo(i64 socket, Address to)              0, -1 while it connects, or the code of the error
+//   i64 connectError(i64 socket)                       then: 0, or the code of the error
 //   void bindTo(i64 socket, Address to)
 //   void listenOn(i64 socket)
 //   i64 acceptOn(i64 socket)
 //   i64 receiveSome(i64 socket, addr data, i64 most)   0 at the end
 //   i64 sendSome(i64 socket, addr data, i64 size)
-//   void sendTo(i64 socket, addr data, i64 size, Address to)
+//   bool sendTo(i64 socket, addr data, i64 size, Address to)
 //   i64 receiveFrom(i64 socket, addr data, i64 most, ref Address from)
-//   bool waitFor(i64 socket, bool reading, i64 milliseconds)
+//   bool waitFor(i64 socket, bool reading, i64 milliseconds)  as a thread; -1 as long as it takes
 //   i32 localPort(i64 socket)
 //   void closeSocket(i64 socket)
 //   list<Address> resolveHost(string host, i32 port)
@@ -40,6 +43,7 @@ extern "cromo" {
     addr cromo_tls_output(addr session)
     void cromo_tls_sent(addr session, i64 count)
     i64 cromo_tls_error(addr object, addr out, i64 most)
+    i64 cromo_task_wait_socket(i64 handle, i64 reading, i64 milliseconds)  // -1 outside a task (D269)
 }
 
 // An address of IPv4 or IPv6, with a port.
@@ -61,12 +65,16 @@ public struct Listener {
 
     // The next connection; with a timeout, an exception if none arrives in time.
     // With TLS, its handshake comes with its first read or write, so that a slow
-    // client does not keep the others waiting (D244). It is const: the threads of
-    // a server accept from the same listener (D252).
+    // client does not keep the others waiting (D244). It is const: several threads
+    // or tasks can accept from the same listener (D268).
     public Connection accept() const {
-        ready(handle, true, wait, "accept a connection")
+        checkOpen(handle, "accept a connection")
         Connection connection
         connection.handle = acceptOn(handle)
+        for (connection.handle < 0) {
+            waitReady(handle, true, wait, "accept a connection")
+            connection.handle = acceptOn(handle)
+        }
         addr none
         if (tls != none) {
             connection.tls = cromo_tls_accept(tls)
@@ -122,10 +130,14 @@ public struct Connection {
         if (tls != none) {
             ret readTls(most)
         }
-        ready(handle, true, wait, "read")
+        checkOpen(handle, "read")
         addr buffer = alloc(most)
         try {
             i64 count = receiveSome(handle, buffer, most)
+            for (count < 0) {
+                waitReady(handle, true, wait, "read")
+                count = receiveSome(handle, buffer, most)
+            }
             list<u8> bytes
             bytes.reserve(count)
             for (i64 i = 0; i < count; i++) {
@@ -180,10 +192,15 @@ public struct Connection {
             writeTls(data, size)
             ret
         }
+        checkOpen(handle, "write")
         i64 done = 0
         for (done < size) {
-            ready(handle, false, wait, "write")
-            done += sendSome(handle, offset(data, done), size - done)
+            i64 count = sendSome(handle, offset(data, done), size - done)
+            if (count < 0) {
+                waitReady(handle, false, wait, "write")
+            } else {
+                done += count
+            }
         }
     }
 
@@ -244,17 +261,27 @@ public struct Connection {
 
     // Sends what the session has written for the other side.
     void flush(string action) {
+        checkOpen(handle, action)
         for (cromo_tls_pending(tls) > 0) {
-            ready(handle, false, wait, action)
-            cromo_tls_sent(tls, sendSome(handle, cromo_tls_output(tls), cromo_tls_pending(tls)))
+            i64 count = sendSome(handle, cromo_tls_output(tls), cromo_tls_pending(tls))
+            if (count < 0) {
+                waitReady(handle, false, wait, action)
+            } else {
+                cromo_tls_sent(tls, count)
+            }
         }
     }
 
     // More bytes from the socket for the session, or the news that there are none.
     void receive(string action) {
-        ready(handle, true, wait, action)
+        checkOpen(handle, action)
         addr room = cromo_tls_input(tls, 16384)
-        cromo_tls_received(tls, receiveSome(handle, room, 16384))
+        i64 count = receiveSome(handle, room, 16384)
+        for (count < 0) {
+            waitReady(handle, true, wait, action)
+            count = receiveSome(handle, room, 16384)
+        }
+        cromo_tls_received(tls, count)
     }
 }
 
@@ -279,8 +306,10 @@ public struct Udp {
         Address target = pick(resolveHost(host, port), version, host)
         addr data = copyBytes(bytes)
         try {
-            ready(handle, false, wait, "send")
-            sendTo(handle, data, bytes.len(), target)
+            checkOpen(handle, "send")
+            for (!sendTo(handle, data, bytes.len(), target)) {
+                waitReady(handle, false, wait, "send")
+            }
         } finally {
             free(data)
         }
@@ -288,11 +317,15 @@ public struct Udp {
 
     // The next message, of at most `most` bytes.
     public Datagram receive(i64 most) {
-        ready(handle, true, wait, "receive")
+        checkOpen(handle, "receive")
         addr buffer = alloc(most)
         try {
             Address from
             i64 count = receiveFrom(handle, buffer, most, ref from)
+            for (count < 0) {
+                waitReady(handle, true, wait, "receive")
+                count = receiveFrom(handle, buffer, most, ref from)
+            }
             Datagram message
             message.data.reserve(count)
             for (i64 i = 0; i < count; i++) {
@@ -350,6 +383,10 @@ public Connection connect(string host, i32 port) {
         Connection connection
         connection.handle = openSocket(address.version, true)
         code = connectTo(connection.handle, address)
+        if (code < 0) {  // it connects: writable when done
+            readyFor(connection.handle, false, -1)
+            code = connectError(connection.handle)
+        }
         if (code == 0) {
             ret connection
         }
@@ -385,12 +422,29 @@ public list<string> resolve(string host) {
     ret names
 }
 
-// D225: an operation waits for its socket only as long as the timeout.
-void ready(i64 handle, bool reading, i64 wait, string action) {
+void checkOpen(i64 handle, string action) {
     if (handle < 0) {
         throw failure(action, "the socket is closed")
     }
-    if (wait >= 0 && !waitFor(handle, reading, wait)) {
+}
+
+// Whether the socket can be read or written before the timeout, -1 as long as it
+// takes: in a task the task waits, and its thread runs the others (D269).
+bool readyFor(i64 handle, bool reading, i64 milliseconds) {
+    i64 reads = 0
+    if (reading) {
+        reads = 1
+    }
+    i64 parked = cromo_task_wait_socket(handle, reads, milliseconds)
+    if (parked >= 0) {
+        ret parked == 1
+    }
+    ret waitFor(handle, reading, milliseconds)
+}
+
+// D225: an operation waits for its socket only as long as the timeout.
+void waitReady(i64 handle, bool reading, i64 wait, string action) {
+    if (!readyFor(handle, reading, wait)) {
         throw failure(action, format("timed out after {} ms", wait))
     }
 }

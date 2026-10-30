@@ -1,0 +1,162 @@
+// Lightweight tasks (D269): tasks of a block and free tasks with the rules of the
+// threads, the exception given back by join(), tasks that start tasks, and a
+// mutex shared by tasks and a thread of the system.
+// expect-output: sorted 1 2 3 4 | 5 6 7 8
+// expect-output: sum 500500 and 1500500
+// expect-output: free 42 43 44
+// expect-output: caught deep
+// expect-output: fibonacci 6765
+// expect-output: order a b c
+// expect-output: counter 20000
+import std.thread
+import std.time
+
+void sort(ref list<i64> values) {
+    for (i64 i = 0; i < values.len(); i++) {
+        for (i64 j = i + 1; j < values.len(); j++) {
+            if (values[j] < values[i]) {
+                i64 kept = values[i]
+                values[i] = values[j]
+                values[j] = kept
+            }
+        }
+    }
+}
+
+i64 total(list<i64> values, i64 from, i64 to) {
+    i64 sum = 0
+    for (i64 i = from; i < to; i++) {
+        sum += values[i]
+    }
+    ret sum
+}
+
+thread.Task numbered(i64 value) {
+    list<i64> data
+    data.add(value)
+    thread.Task t = thread.Task([move data]() { time.msleep(10 - data[0] % 10) })
+    ret t
+}
+
+void fail(i64 depth) {
+    if (depth == 0) {
+        throw Error("deep")
+    }
+    fail(depth - 1)
+}
+
+// Each call starts two tasks and waits for them: tasks inside tasks.
+i64 fibonacci(i64 n) {
+    if (n < 2) {
+        ret n
+    }
+    if (n < 12) {
+        ret fibonacci(n - 1) + fibonacci(n - 2)
+    }
+    i64 a = 0
+    i64 b = 0
+    thread.Task left = thread.Task([n, ref a]() { a = fibonacci(n - 1) })
+    thread.Task right = thread.Task([n, ref b]() { b = fibonacci(n - 2) })
+    left.start()
+    right.start()
+    left.join()
+    right.join()
+    ret a + b
+}
+
+i32 main() {
+    list<i64> left
+    left.add(4)
+    left.add(2)
+    left.add(3)
+    left.add(1)
+    list<i64> right
+    right.add(8)
+    right.add(6)
+    right.add(5)
+    right.add(7)
+    thread.Task a = thread.Task([ref left]() { sort(ref left) })
+    thread.Task b = thread.Task([ref right]() { sort(ref right) })
+    a.start()
+    b.start()
+    a.join()
+    b.join()
+    println("sorted {} {} {} {} | {} {} {} {}", left[0], left[1], left[2], left[3], right[0], right[1], right[2], right[3])
+
+    // Two tasks read the same list, each with its own result.
+    list<i64> numbers
+    for (i64 i = 1; i <= 2000; i++) {
+        numbers.add(i)
+    }
+    i64 low = 0
+    i64 high = 0
+    thread.Task first = thread.Task([numbers, ref low]() { low = total(numbers, 0, 1000) })
+    thread.Task second = thread.Task([numbers, ref high]() { high = total(numbers, 1000, 2000) })
+    first.start()
+    second.start()
+    first.join()
+    second.join()
+    println("sum {} and {}", low, high)
+
+    // Free tasks in a list, joined in turn.
+    list<thread.Task> free
+    for (i64 i = 42; i <= 44; i++) {
+        free.add(numbered(i))
+    }
+    for (i64 i = 0; i < free.len(); i++) {
+        free[i].start()
+    }
+    for (i64 i = 0; i < free.len(); i++) {
+        free[i].join()
+    }
+    println("free 42 43 44")
+
+    // The exception of a task comes back from join(), through the frames of the task.
+    thread.Task failing = thread.Task([]() { fail(50) })
+    failing.start()
+    try {
+        failing.join()
+    } catch (Exception e) {
+        println("caught {}", e.message())
+    }
+
+    println("fibonacci {}", fibonacci(20))
+
+    // time.sleep in a task lets the others run: they end in the order of their pauses.
+    thread.Mutex<string> order
+    thread.Task c = thread.Task([order]() {
+        time.msleep(60)
+        order.lock([](ref string s) { s += " c" })
+    })
+    thread.Task bb = thread.Task([order]() {
+        time.msleep(30)
+        order.lock([](ref string s) { s += " b" })
+    })
+    thread.Task aa = thread.Task([order]() { order.lock([](ref string s) { s += "a" }) })
+    c.start()
+    bb.start()
+    aa.start()
+    c.join()
+    bb.join()
+    aa.join()
+    order.lock([](ref string s) { println("order {}", s) })
+
+    // A mutex shared by tasks and by a thread of the system.
+    thread.Mutex<i64> counter
+    thread.Thread system = thread.Thread([counter]() {
+        for (i64 i = 0; i < 10000; i++) {
+            counter.lock([](ref i64 n) { n++ })
+        }
+    })
+    thread.Task light = thread.Task([counter]() {
+        for (i64 i = 0; i < 10000; i++) {
+            counter.lock([](ref i64 n) { n++ })
+        }
+    })
+    system.start()
+    light.start()
+    system.join()
+    light.join()
+    counter.lock([](ref i64 n) { println("counter {}", n) })
+    ret 0
+}

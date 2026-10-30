@@ -2,6 +2,10 @@
 // of the system, and a waitable timer of high resolution for the pauses.
 import unsafe
 
+extern "cromo" {
+    i64 cromo_task_sleep(i64 nanoseconds)  // 0 outside a task (D269)
+}
+
 struct SystemTime {
     u16 year
     u16 month
@@ -54,8 +58,9 @@ i32 localOffset(i64 seconds) {
     ret i32((moved - utc) / 600000000)
 }
 
+// In a task, the task waits and its thread runs the others (D269).
 void pause(i64 nanoseconds) {
-    if (nanoseconds <= 0) {
+    if (nanoseconds <= 0 || cromo_task_sleep(nanoseconds) != 0) {
         ret
     }
     addr none

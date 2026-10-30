@@ -1,0 +1,62 @@
+// Example 14: lightweight tasks and groups of tasks.
+//
+// Decided: thread.Task with the interface and the rules of thread.Thread (D269),
+//          a task that waits leaves its thread to the others (D269, D271), the
+//          stack of a task (D272), thread.Group (D273)
+import std.thread
+import std.time
+
+struct Report {
+    i64 done
+    i64 slowest
+}
+
+// A job that waits, as for an answer from the network: meanwhile its thread runs
+// the other tasks.
+i64 job(i64 id) {
+    i64 pause = 10 + id % 40
+    time.msleep(pause)
+    ret pause
+}
+
+i64 sum(list<i64> numbers, i64 from, i64 to) {
+    i64 total = 0
+    for (i64 i = from; i < to; i++) {
+        total += numbers[i]
+    }
+    ret total
+}
+
+i32 main() {
+    // Ten thousand tasks wait at the same time, on a few threads of the system.
+    time.Instant start = time.now()
+    thread.Mutex<Report> report
+    thread.Group jobs
+    for (i64 id = 0; id < 10000; id++) {
+        jobs.start([id, report]() {
+            i64 waited = job(id)
+            report.lock([waited](ref Report r) {
+                r.done++
+                if (waited > r.slowest) {
+                    r.slowest = waited
+                }
+            })
+        })
+    }
+    jobs.wait()
+    report.lock([](ref Report r) { println("{} jobs, the slowest waited {} ms", r.done, r.slowest) })
+    println("all of them in {} ms", start.elapsed().milliseconds())
+
+    // A task of a block, as a thread: it adds one half while main adds the other.
+    list<i64> numbers
+    for (i64 i = 1; i <= 1000000; i++) {
+        numbers.add(i)
+    }
+    i64 low = 0
+    thread.Task half = thread.Task([numbers, ref low]() { low = sum(numbers, 0, 500000) })
+    half.start()
+    i64 high = sum(numbers, 500000, 1000000)
+    half.join()
+    println("sum {}", low + high)
+    ret 0
+}

@@ -1,0 +1,66 @@
+// The network in tasks (D269): a server with a task for each connection,
+// clients that are tasks, the timeout of a task that reads, and UDP.
+// expect-output: echoed 300
+// expect-output: timeout cannot read: timed out after 50 ms
+// expect-output: udp ping
+import std.net
+import std.thread
+
+i32 main() {
+    net.Listener listener = net.listen("127.0.0.1", 0)
+    i32 port = listener.port()
+    thread.Task server = thread.Task([listener]() {
+        thread.Group connections
+        for (i64 i = 0; i < 300; i++) {
+            net.Connection c = listener.accept()
+            connections.start([move c]() {
+                list<u8> data = c.read(100)
+                c.write(data)
+            })
+        }
+    })
+    server.start()
+    thread.Mutex<i64> echoed
+    thread.Group clients
+    for (i64 i = 0; i < 300; i++) {
+        clients.start([port, i, echoed]() {
+            net.Connection c = net.connect("127.0.0.1", port)
+            string text = format("client {}", i)
+            c.writeText(text)
+            if (string(c.read(100)) == text) {
+                echoed.lock([](ref i64 n) { n++ })
+            }
+        })
+    }
+    clients.wait()
+    server.join()
+    echoed.lock([](ref i64 n) { println("echoed {}", n) })
+
+    // A task that waits for bytes that never come.
+    net.Listener quiet = net.listen("127.0.0.1", 0)
+    i32 quietPort = quiet.port()
+    thread.Task reader = thread.Task([quietPort]() {
+        net.Connection c = net.connect("127.0.0.1", quietPort)
+        c.timeout(50)
+        try {
+            c.read(10)
+        } catch (Exception e) {
+            println("timeout {}", e.message())
+        }
+    })
+    reader.start()
+    net.Connection silent = quiet.accept()
+    reader.join()
+
+    net.Udp a = net.udp("127.0.0.1", 0)
+    i32 aPort = a.port()
+    thread.Task receiver = thread.Task([ref a]() {
+        net.Datagram d = a.receive(100)
+        println("udp {}", string(d.data))
+    })
+    receiver.start()
+    net.Udp b = net.udp("127.0.0.1", 0)
+    b.send("127.0.0.1", aPort, "ping".bytes())
+    receiver.join()
+    ret 0
+}

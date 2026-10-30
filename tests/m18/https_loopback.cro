@@ -14,7 +14,6 @@ i32 main() {
     string folder = os.env("CERTIFICATES")
     http.Server server = http.listenTls("localhost", 0, fs.readText(folder + "localhost.pem"),
         fs.readText(folder + "localhost.key"))
-    server.threads(2)
     i32 port = server.port()
     thread.Thread t = thread.Thread([server]() {
         server.serve([](ref http.Request req, ref http.Response res) {

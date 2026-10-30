@@ -61,8 +61,9 @@ struct Variable {
     int captureIndex = -1;       // Captured: its place in the data of the lambda
     bool captureByAddress = false;  // Captured: the data hold its address, not its value
     const Variable* captured = nullptr;  // Captured: the variable outside the lambda
-    // A thread of its block (D215): the lambda it runs.
+    // A thread or a task of its block (D215, D269): the lambda it runs.
     const struct LambdaExpr* blockThread = nullptr;
+    bool group = false;  // a thread.Group (D273)
 };
 
 // ---- Expressions ----
@@ -145,6 +146,7 @@ enum class Intrinsic {
     None, Panic, Alloc, Resize, Free, SizeOf, Offset, Take, Put, Destroy, CopyAt, CopyMemory, CompareMemory, CheckIndex,
     ArgumentCount, ArgumentLength, ArgumentData, DecimalToFloat, HashBytes, SystemCall, Environment, ExitProcess,
     ThreadStart, ThreadWait, ThreadRethrow, ThreadUncaught, ThreadFree, MutexLock, MutexUnlock, SelfAddress, EqualAt,
+    TaskStart, GroupStart,  // D269, D273
     JsonWrite, JsonRead,  // std.json (D251): for a real type, a call of the function that converts it
     HashNumber,  // `x.hash()` of a number or a bool (D198): made by the compiler, not named
 };
@@ -641,6 +643,7 @@ struct LambdaExpr : Expr {
     bool borrows = false;   // it captures by address: only as an argument (D184)
     bool onStack = false;   // passed as an argument: its data live in the frame of the caller
     bool forThread = false; // given to a thread (D215): its data stay in the frame, owned by the thread
+    const Variable* group = nullptr;  // given to start() of a group (D273): its data on the heap
     const FunctionDecl* enclosing = nullptr;
     std::vector<std::unique_ptr<NameExpr>> capturePlaces;  // the captures by address, for exclusivity (D22)
 };

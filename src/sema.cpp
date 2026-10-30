@@ -50,6 +50,7 @@ std::optional<Intrinsic> findIntrinsic(const std::string& name) {
         {"mutexLock", Intrinsic::MutexLock}, {"mutexUnlock", Intrinsic::MutexUnlock},
         {"selfAddress", Intrinsic::SelfAddress}, {"equalAt", Intrinsic::EqualAt},
         {"jsonWrite", Intrinsic::JsonWrite}, {"jsonRead", Intrinsic::JsonRead},
+        {"taskStart", Intrinsic::TaskStart}, {"groupStart", Intrinsic::GroupStart},
     };
     auto found = intrinsics.find(name);
     if (found == intrinsics.end()) return std::nullopt;
@@ -1489,17 +1490,38 @@ private:
         return type;
     }
 
-    // ---- Threads of a block (D215) ----
+    // ---- Threads and tasks of a block (D215, D269), groups of tasks (D273) ----
 
     bool isThreadStruct(const StructDecl& decl) const {
-        return decl.name == "Thread" && fileOf(scopeOf(decl.loc.file)).name == "std.thread";
+        return (decl.name == "Thread" || decl.name == "Task") && fileOf(scopeOf(decl.loc.file)).name == "std.thread";
     }
 
-    // A thread of a block stays where it is declared, as its lambda (D184).
+    bool isGroupStruct(const StructDecl& decl) const {
+        return decl.name == "Group" && fileOf(scopeOf(decl.loc.file)).name == "std.thread";
+    }
+
+    // "thread" or "task", for the messages.
+    static std::string threadWord(const Variable& variable) {
+        return variable.type.isStruct() && variable.type.structDecl->name == "Task" ? "task" : "thread";
+    }
+
+    // Who has a variable while it runs: a thread, a task, or the tasks of a group.
+    static std::string holderText(const Variable& holder) {
+        if (holder.group) return "the tasks of the group '" + holder.name + "' until the end of its block (D273)";
+        return "the " + threadWord(holder) + " '" + holder.name + "' until " + holder.name + ".join() (D215)";
+    }
+
+    // A thread of a block stays where it is declared, as its lambda (D184); so does
+    // a group, whose tasks read the variables of its block (D273).
     bool checkNotBlockThread(const Variable& variable, SourceLocation loc) {
+        if (variable.group) {
+            diag_->error(loc, "'" + variable.name + "' is a group of tasks, which read the variables of its block: it "
+                                                    "cannot be moved, assigned, returned, passed with 'ref' or captured (D273)");
+            return false;
+        }
         if (!variable.blockThread) return true;
-        diag_->error(loc, "'" + variable.name + "' is a thread of its block, which captures by address: it cannot be moved, "
-                                                "assigned, returned, passed with 'ref' or captured (D215)");
+        diag_->error(loc, "'" + variable.name + "' is a " + threadWord(variable) + " of its block, which captures by address: "
+                                                "it cannot be moved, assigned, returned, passed with 'ref' or captured (D215)");
         return false;
     }
 
@@ -1507,8 +1529,7 @@ private:
     void checkNotUsedByThread(const Variable& variable, SourceLocation loc) {
         for (const ThreadBorrow& borrow : threadBorrows_) {
             if (borrow.exclusive && borrow.captured == &variable) {
-                diag_->error(loc, "'" + variable.name + "' is used by the thread '" + borrow.thread->name + "' until " +
-                                      borrow.thread->name + ".join() (D215)");
+                diag_->error(loc, "'" + variable.name + "' is used by " + holderText(*borrow.thread));
                 return;
             }
         }
@@ -1520,10 +1541,11 @@ private:
         if (call.object->kind != ExprKind::Name || (call.method != "start" && call.method != "join")) return;
         const Variable* thread = static_cast<const NameExpr&>(*call.object).variable;
         if (!thread || !thread->blockThread) return;
+        std::string word = threadWord(*thread);
         auto declared = scopes_.back().find(thread->name);
         if (declared == scopes_.back().end() || declared->second != thread) {
-            diag_->error(call.loc, call.method + "() of a thread of a block is written directly in the block that declares '" +
-                                       thread->name + "' (D215)");
+            diag_->error(call.loc, call.method + "() of a " + word + " of a block is written directly in the block that "
+                                                 "declares '" + thread->name + "' (D215)");
             return;
         }
         if (call.method == "join") {
@@ -1532,7 +1554,7 @@ private:
         }
         for (const ThreadBorrow& borrow : threadBorrows_) {
             if (borrow.thread == thread) {
-                diag_->error(call.loc, "the thread '" + thread->name + "' is already started (D214)");
+                diag_->error(call.loc, "the " + word + " '" + thread->name + "' is already started (D214)");
                 return;
             }
         }
@@ -1541,21 +1563,54 @@ private:
             bool exclusive = capture.mode == ParamMode::Ref;
             for (const ThreadBorrow& borrow : threadBorrows_) {
                 if (borrow.captured != capture.outer || (!exclusive && !borrow.exclusive)) continue;
-                diag_->error(call.loc, "the thread '" + thread->name + "' cannot start: '" + capture.name +
-                                           "' is used by the thread '" + borrow.thread->name + "' until " +
-                                           borrow.thread->name + ".join() (D215)");
+                diag_->error(call.loc, "the " + word + " '" + thread->name + "' cannot start: '" + capture.name +
+                                           "' is used by " + holderText(*borrow.thread));
                 return;
             }
             threadBorrows_.push_back({thread, capture.outer, exclusive});
             Path path;
             path.variable = capture.outer;
-            loopBorrows_.push_back({path, "while the thread '" + thread->name + "' runs (D215)", thread});
+            loopBorrows_.push_back({path, "while the " + word + " '" + thread->name + "' runs (D215)", thread});
+        }
+    }
+
+    // The tasks of a group read what they capture by address until the end of the
+    // block of the group (D273): the variables declared before the group, not
+    // modified after its declaration.
+    void groupReads(const LambdaExpr& lambda) {
+        const Variable& group = *lambda.group;
+        for (const Capture& capture : lambda.captures) {
+            if (!capture.outer || !capture.byAddress) continue;
+            const Variable& outer = *capture.outer;
+            if (outer.loc.file == group.loc.file &&
+                (outer.loc.line > group.loc.line || (outer.loc.line == group.loc.line && outer.loc.column > group.loc.column))) {
+                diag_->error(capture.loc, "the tasks of the group '" + group.name + "' read '" + capture.name +
+                                              "', declared after the group: declare it before, or take it with 'move' (D273)");
+                continue;
+            }
+            Path path;
+            path.variable = &outer;
+            for (const GroupLog& log : activeGroups_) {
+                if (log.group != &group) continue;
+                for (const auto& [modified, where] : log.modified) {
+                    if (overlaps(modified, path) == Overlap::No) continue;
+                    diag_->error(where, "'" + capture.name + "' cannot be modified after the group '" + group.name +
+                                            "', whose tasks read it (D273)");
+                    break;
+                }
+            }
+            bool lent = false;
+            for (const ThreadBorrow& borrow : threadBorrows_) lent = lent || (borrow.thread == &group && borrow.captured == &outer);
+            if (lent) continue;
+            threadBorrows_.push_back({&group, &outer, false});
+            loopBorrows_.push_back({path, "while the tasks of the group '" + group.name + "' read it (D273)", &group});
         }
     }
 
     void endThread(const Variable& thread) {
         std::erase_if(threadBorrows_, [&](const ThreadBorrow& borrow) { return borrow.thread == &thread; });
         std::erase_if(loopBorrows_, [&](const LoopBorrow& borrow) { return borrow.thread == &thread; });
+        std::erase_if(activeGroups_, [&](const GroupLog& log) { return log.group == &thread; });
     }
 
     // D101: while a `for` goes over the elements of a list, the list cannot be
@@ -1563,6 +1618,7 @@ private:
     bool checkNotBorrowed(const Expr& place, SourceLocation loc) {
         std::optional<Path> path = pathOf(place);
         if (!path) return true;
+        for (GroupLog& log : activeGroups_) log.modified.push_back({*path, loc});  // D273
         for (const LoopBorrow& borrow : loopBorrows_) {
             if (overlaps(*path, borrow.path) == Overlap::No) continue;
             diag_->error(loc, "'" + placeText(place) + "' cannot be modified " + borrow.reason);
@@ -1733,9 +1789,9 @@ private:
             Flow next = checkStatement(*statement);
             if (flow == Flow::Continues) flow = next;
         }
-        // The threads of this block end with it (D215).
+        // The threads and the groups of this block end with it (D215, D273).
         for (const auto& [name, variable] : scopes_.back()) {
-            if (variable->blockThread) endThread(*variable);
+            if (variable->blockThread || variable->group) endThread(*variable);
         }
         scopes_.pop_back();
         return flow;
@@ -1790,6 +1846,10 @@ private:
         decl.variable = declare(decl.name, type, decl.nameLoc, decl.isConst);
         if (decl.variable && decl.init && decl.init->kind == ExprKind::Construct) {
             decl.variable->blockThread = static_cast<const ConstructExpr&>(*decl.init).blockThread;
+        }
+        if (decl.variable && type.isStruct() && isGroupStruct(*type.structDecl)) {  // D273
+            decl.variable->group = true;
+            activeGroups_.push_back({decl.variable, {}});
         }
     }
 
@@ -2385,10 +2445,12 @@ private:
         bool lambdaArgument = std::exchange(lambdaArgument_, false);
         bool insertTarget = std::exchange(insertTarget_, false);
         bool threadLambda = std::exchange(threadLambda_, false);
+        const Variable* groupLambda = std::exchange(groupLambda_, nullptr);
         switch (expr->kind) {
         case ExprKind::Lambda:
-            static_cast<LambdaExpr&>(*expr).forThread = threadLambda;
-            return checkLambda(static_cast<LambdaExpr&>(*expr), lambdaArgument || threadLambda);
+            static_cast<LambdaExpr&>(*expr).forThread = threadLambda || groupLambda;
+            static_cast<LambdaExpr&>(*expr).group = groupLambda;
+            return checkLambda(static_cast<LambdaExpr&>(*expr), lambdaArgument || threadLambda || groupLambda);
         case ExprKind::CallValue: return checkCallValue(expr);
         case ExprKind::IntLiteral: return checkIntLiteral(static_cast<IntLiteralExpr&>(*expr), expected);
         case ExprKind::FloatLiteral: return checkFloatLiteral(static_cast<FloatLiteralExpr&>(*expr), expected);
@@ -2845,9 +2907,15 @@ private:
         call.function = method;
         use(method, call.loc);
         noteCall(method, call.loc);
-        if (!checkArgs(call.args, *method, "'" + call.method + "'", call.loc, &call.overlaps, call.object.get())) {
-            return Type::error();
+        // `g.start([...]() { ... })` of a group: its tasks may read the block (D273).
+        if (call.method == "start" && call.object->kind == ExprKind::Name && call.args.size() == 1 &&
+            call.args[0]->kind == ExprKind::Lambda && isGroupStruct(*object.structDecl)) {
+            const Variable* group = static_cast<const NameExpr&>(*call.object).variable;
+            if (group && group->group) groupLambda_ = group;
         }
+        bool ok = checkArgs(call.args, *method, "'" + call.method + "'", call.loc, &call.overlaps, call.object.get());
+        groupLambda_ = nullptr;
+        if (!ok) return Type::error();
         return method->resolvedReturn;
     }
 
@@ -3493,8 +3561,13 @@ private:
             break;
         case Intrinsic::Environment: params = {{ParamMode::Read, "index", i64}}; result = addr; break;
         case Intrinsic::ThreadStart:  // D214
+        case Intrinsic::TaskStart:    // D269
             params = {{ParamMode::Read, "body", Type::functionType(internSignature({}, {}, Type::voidType()))}};
             result = addr;
+            break;
+        case Intrinsic::GroupStart:  // D273: the group owns the lambda from here on
+            params = {{ParamMode::Read, "group", addr},
+                      {ParamMode::Move, "body", Type::functionType(internSignature({}, {}, Type::voidType()))}};
             break;
         case Intrinsic::ThreadWait: params = {{ParamMode::Read, "thread", addr}}; result = Type::boolType(); break;
         case Intrinsic::ThreadRethrow:  // D217: whatever the thread threw
@@ -3729,8 +3802,12 @@ private:
             }
             capture.outer = outer;
             if (lambda.forThread && mayModifyCaptures(*outer)) {
-                diag_->error(capture.loc, "'" + capture.name + "' is a parameter func that is not const: a thread cannot call "
-                                          "it, as it may modify what it captures; declare it 'const func' (D253)");
+                diag_->error(capture.loc, "'" + capture.name + "' is a parameter func that is not const: a thread or a task "
+                                          "cannot call it, as it may modify what it captures; declare it 'const func' (D253)");
+            }
+            if (lambda.group && capture.mode == ParamMode::Ref) {
+                diag_->error(capture.loc, "the tasks of a group run at the same time: they cannot capture '" + capture.name +
+                                              "' with 'ref'; read it, or take it with 'move' (D273)");
             }
             checkNotBlockThread(*outer, capture.loc);
             checkNotUsedByThread(*outer, capture.loc);
@@ -3818,8 +3895,10 @@ private:
 
         module_.lambdas.push_back(&lambda);
         // Given to a thread, only the data of a lambda that captures by address stay
-        // in the frame; the others go with the thread, on the heap (D215).
-        lambda.onStack = lambda.forThread ? lambda.borrows : asArgument;
+        // in the frame; the others go with the thread, on the heap (D215). Each task
+        // of a group has its own, on the heap, with the addresses of what it reads (D273).
+        lambda.onStack = lambda.group ? false : lambda.forThread ? lambda.borrows : asArgument;
+        if (lambda.group) groupReads(lambda);
         if (lambda.borrows && !asArgument) {
             diag_->error(lambda.loc, "this lambda captures by address (with 'ref', or reading a value that is not simple): "
                                      "it can only be passed as an argument; capture with 'move' to keep it (D184)");
@@ -4106,8 +4185,9 @@ private:
             if (!ok) return Type::error();
             if (thread && node.args[0]->kind == ExprKind::Lambda && static_cast<LambdaExpr&>(*node.args[0]).borrows) {
                 if (!declared) {
-                    diag_->error(node.loc, "a thread whose lambda captures by address belongs to its block: declare it, as "
-                                           "thread.Thread t = thread.Thread(...) (D215)");
+                    std::string word = decl->name == "Task" ? "task" : "thread";
+                    diag_->error(node.loc, "a " + word + " whose lambda captures by address belongs to its block: declare it, "
+                                           "as thread." + decl->name + " t = thread." + decl->name + "(...) (D215)");
                     return Type::error();
                 }
                 node.blockThread = static_cast<const LambdaExpr*>(node.args[0].get());
@@ -4431,6 +4511,13 @@ private:
     };
     std::vector<ThreadBorrow> threadBorrows_;
     bool threadLambda_ = false;           // the next lambda checked is given to a thread (D215)
+    const Variable* groupLambda_ = nullptr;  // the next lambda checked is given to this group (D273)
+    // The groups whose block is being checked, with what was modified after each (D273).
+    struct GroupLog {
+        const Variable* group;
+        std::vector<std::pair<Path, SourceLocation>> modified;
+    };
+    std::vector<GroupLog> activeGroups_;
     int nextLambda_ = 0;                  // for the symbols of the lambdas
     const Expr* threadInit_ = nullptr;    // the value of the declaration being checked
     std::vector<LoopBorrow> loopBorrows_;  // also the values of `switch` whose data are named (D125)

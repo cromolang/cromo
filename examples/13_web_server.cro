@@ -4,9 +4,10 @@
 //   curl -X POST -d '{"text": "buy milk"}' http://localhost:8080/notes
 //   curl http://localhost:8080/notes/1
 //
-// Decided: one handler for every request, with patterns (D252), const func for the
-//          functions that several threads call at once (D253), the client with a
-//          connection for each request (D254), JSON (D251)
+// Decided: one handler for every request, with patterns (D252), each connection on
+//          a task (D270), const func for the functions that several threads call
+//          at once (D253), the client with a connection for each request (D254),
+//          JSON (D251)
 import std.http
 import std.json
 import std.thread

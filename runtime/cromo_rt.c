@@ -1,4 +1,4 @@
-// Bootstrap runtime of Cromo (D58, D93): printing, panics, heap, threads and program exit.
+// Bootstrap runtime of Cromo (D58, D93): printing, panics, heap, threads, tasks and program exit.
 // Freestanding C without the C library (D19): it talks to Windows through
 // kernel32.dll, and to Linux with system calls (D142). CMake compiles it once for
 // each system. It will be rewritten in Cromo `unsafe` when extern (M7), the
@@ -40,6 +40,32 @@ __declspec(dllimport) void* WINAPI CreateThread(void* security, u64 stackSize, u
                                                 u32 flags, u32* id);
 __declspec(dllimport) u32 WINAPI WaitForSingleObject(void* handle, u32 milliseconds);
 __declspec(dllimport) int WINAPI CloseHandle(void* handle);
+__declspec(dllimport) int WINAPI SleepConditionVariableSRW(void* condition, void* lock, u32 milliseconds, u32 flags);
+__declspec(dllimport) void WINAPI WakeConditionVariable(void* condition);
+__declspec(dllimport) void WINAPI WakeAllConditionVariable(void* condition);
+__declspec(dllimport) int WINAPI SwitchToThread(void);
+__declspec(dllimport) u32 WINAPI TlsAlloc(void);
+__declspec(dllimport) void* WINAPI TlsGetValue(u32 index);
+__declspec(dllimport) int WINAPI TlsSetValue(u32 index, void* value);
+__declspec(dllimport) void* WINAPI ConvertThreadToFiberEx(void* parameter, u32 flags);
+__declspec(dllimport) void* WINAPI CreateFiberEx(u64 commit, u64 reserve, u32 flags, void(WINAPI* start)(void*),
+                                                 void* parameter);
+__declspec(dllimport) void WINAPI SwitchToFiber(void* fiber);
+__declspec(dllimport) void WINAPI DeleteFiber(void* fiber);
+__declspec(dllimport) u32 WINAPI GetActiveProcessorCount(u16 group);
+__declspec(dllimport) int WINAPI QueryPerformanceCounter(i64* count);
+__declspec(dllimport) int WINAPI QueryPerformanceFrequency(i64* frequency);
+__declspec(dllimport) void* WINAPI CreateIoCompletionPort(void* file, void* port, u64 key, u32 threads);
+__declspec(dllimport) int WINAPI GetQueuedCompletionStatusEx(void* port, void* entries, u32 count, u32* removed,
+                                                             u32 milliseconds, int alertable);
+__declspec(dllimport) int WINAPI PostQueuedCompletionStatus(void* port, u32 bytes, u64 key, void* overlapped);
+__declspec(dllimport) int WINAPI SetFileCompletionNotificationModes(void* file, u8 flags);
+__declspec(dllimport) void* WINAPI GetModuleHandleW(const u16* name);
+__declspec(dllimport) void* WINAPI GetProcAddress(void* module, const char* name);
+__declspec(dllimport) void* WINAPI CreateWaitableTimerExW(void* attributes, const u16* name, u32 flags, u32 access);
+__declspec(dllimport) int WINAPI SetWaitableTimer(void* timer, const i64* due, i32 period, void* routine, void* argument,
+                                                  int resume);
+__declspec(dllimport) void WINAPI Sleep(u32 milliseconds);
 
 // The Microsoft x64 ABI requires this symbol when floating point is used (D19).
 int _fltused = 0;
@@ -48,15 +74,25 @@ int _fltused = 0;
 
 // ---- Linux system calls ----
 
+#define SYS_read 0
 #define SYS_write 1
 #define SYS_mmap 9
 #define SYS_mprotect 10
 #define SYS_munmap 11
+#define SYS_sched_yield 24
 #define SYS_mremap 25
+#define SYS_nanosleep 35
 #define SYS_clone 56
 #define SYS_exit 60
+#define SYS_arch_prctl 158
 #define SYS_futex 202
+#define SYS_sched_getaffinity 204
+#define SYS_clock_gettime 228
 #define SYS_exit_group 231
+#define SYS_epoll_wait 232
+#define SYS_epoll_ctl 233
+#define SYS_eventfd2 290
+#define SYS_epoll_create1 291
 #define EINTR 4
 #define FUTEX_WAIT 0
 #define FUTEX_WAKE 1
@@ -104,6 +140,13 @@ static void lockAcquire(Lock* lock) {
     u32* state = (u32*)&lock->state;
     u32 seen = 0;
     if (__atomic_compare_exchange_n(state, &seen, 1, 0, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED)) return;
+    // The locks of the runtime are held briefly: a short spin before sleeping, as
+    // the SRWLOCK of Windows does, avoids a sleep and a wake for each of them.
+    for (u32 spins = 0; spins < 100 && seen != 2; ++spins) {
+        __asm__ volatile("pause");
+        seen = __atomic_load_n(state, __ATOMIC_RELAXED);
+        if (seen == 0 && __atomic_compare_exchange_n(state, &seen, 1, 0, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED)) return;
+    }
     if (seen != 2) seen = __atomic_exchange_n(state, 2, __ATOMIC_ACQUIRE);
     while (seen != 0) {
         systemCall(SYS_futex, (i64)state, FUTEX_WAIT | FUTEX_PRIVATE, 2, 0, 0, 0);
@@ -120,10 +163,6 @@ static void lockRelease(Lock* lock) {
 }
 
 #endif
-
-// The mutexes of the library (D216): the lock is the first field of the Mutex.
-void cromo_mutex_lock(void* state) { lockAcquire((Lock*)state); }
-void cromo_mutex_unlock(void* state) { lockRelease((Lock*)state); }
 
 // One print at a time on stdout and stderr: the compiler computes the arguments
 // first, then takes this lock, writes, and leaves it in cromo_print_end. A panic
@@ -1181,27 +1220,65 @@ void cromo_free(void* memory) {
     heapLockRelease();
 }
 
-// ---- Threads (D214, D217) ----
+// ---- Threads and tasks (D214, D217, D269) ----
 
-// What the library keeps of a thread: the code and the data of its lambda, and
-// the exception that leaves it, as the slot of a call that can throw (D36).
+// What the library keeps of a thread, of a task and of a group: the code and the
+// data of the lambda, and the exception that leaves it, as the slot of a call that
+// can throw (D36). The functions cromo_thread_* take any of them.
+#define KIND_THREAD 0
+#define KIND_TASK 1
+#define KIND_GROUP 2
+#define KIND_GROUP_TASK 3  // a task of a group: nobody joins it
+
 typedef struct {
     void (*code)(void* env, void* raised);
     void* env;
     void* raised[2];  // the object and its descriptor, or nothing
+    i64 kind;
+} Runnable;
+
+typedef struct Worker Worker;
+
+#ifndef _WIN32
+// What the register fs points to in every thread, so that a thread knows whether
+// it is a worker of the tasks: the first word is its own address.
+typedef struct ThreadBlock {
+    struct ThreadBlock* self;
+    Worker* worker;
+} ThreadBlock;
+
+// The main thread: _start (mem_x64.S) points fs here.
+ThreadBlock cromo_main_block = {&cromo_main_block, 0};
+#endif
+
+typedef struct {
+    Runnable head;
 #ifdef _WIN32
     void* handle;
 #else
     i32 tid;  // the kernel clears it, and wakes its futex, when the thread ends
     u8* stack;
+    ThreadBlock block;
 #endif
 } ThreadRecord;
 
-static void runThread(ThreadRecord* thread) { thread->code(thread->env, thread->raised); }
+static void runThread(ThreadRecord* thread) { thread->head.code(thread->head.env, thread->head.raised); }
 
 static NORETURN void threadFailure(void) {
     static const char text[] = "cannot start a thread: the system has no resources for it";
     cromo_panic((const u8*)text, sizeof text - 1, 0);
+}
+
+static void relax(u32 spins) {
+    if (spins < 64) {
+        __asm__ volatile("pause");
+        return;
+    }
+#ifdef _WIN32
+    SwitchToThread();
+#else
+    systemCall(SYS_sched_yield, 0, 0, 0, 0, 0, 0);
+#endif
 }
 
 #ifdef _WIN32
@@ -1222,18 +1299,20 @@ static void freeSystemThread(ThreadRecord* thread) { CloseHandle(thread->handle)
 #else
 
 #define THREAD_STACK ((u64)8 << 20)  // as the main thread; the pages are taken when used
-#define CLONE_FLAGS 0x350F00         // VM, FS, FILES, SIGHAND, THREAD, SYSVSEM, PARENT_SETTID, CHILD_CLEARTID
+// VM, FS, FILES, SIGHAND, THREAD, SYSVSEM, SETTLS, PARENT_SETTID, CHILD_CLEARTID
+#define CLONE_FLAGS 0x3D0F00
 
 static void threadEntry(void* argument) { runThread(argument); }
 
 // clone() without the C library: the new thread starts on its own stack, takes the
 // function and its argument from there, and ends with exit(), never returning here.
+// Its fs points to the block of its record.
 static i64 cloneThread(ThreadRecord* thread, u8* top) {
     u64* sp = (u64*)top;
     *--sp = (u64)thread;
     *--sp = (u64)threadEntry;
     register i64 r10 __asm__("r10") = (i64)&thread->tid;
-    register i64 r8 __asm__("r8") = 0;
+    register i64 r8 __asm__("r8") = (i64)&thread->block;
     i64 result;
     __asm__ volatile("syscall\n\t"
                      "test %%rax, %%rax\n\t"
@@ -1258,6 +1337,7 @@ static void startSystemThread(ThreadRecord* thread) {
     if (stack < 0 && stack > -4096) threadFailure();
     thread->stack = (u8*)stack;
     systemCall(SYS_mprotect, stack, 4096, 0, 0, 0, 0);  // a guard page under the stack
+    thread->block.self = &thread->block;
     if (cloneThread(thread, thread->stack + THREAD_STACK) < 0) threadFailure();
 }
 
@@ -1271,48 +1351,1324 @@ static void waitSystemThread(ThreadRecord* thread) {
 
 static void freeSystemThread(ThreadRecord* thread) { systemCall(SYS_munmap, (i64)thread->stack, (i64)THREAD_STACK, 0, 0, 0, 0); }
 
+static void futexWait(u32* address, u32 value) {
+    systemCall(SYS_futex, (i64)address, FUTEX_WAIT | FUTEX_PRIVATE, value, 0, 0, 0);
+}
+
+static void futexWake(u32* address, i32 count) {
+    systemCall(SYS_futex, (i64)address, FUTEX_WAKE | FUTEX_PRIVATE, count, 0, 0, 0);
+}
+
 #endif
 
-void* cromo_thread_start(void* code, void* env) {
+static ThreadRecord* newThreadRecord(void* code, void* env) {
     ThreadRecord* thread = cromo_alloc(sizeof(ThreadRecord));
-    threaded = 1;  // from now on the locks are taken
     u8* bytes = (u8*)thread;
     for (u64 i = 0; i < sizeof(ThreadRecord); ++i) bytes[i] = 0;
-    thread->code = (void (*)(void*, void*))code;
-    thread->env = env;
+    thread->head.code = (void (*)(void*, void*))code;
+    thread->head.env = env;
+    thread->head.kind = KIND_THREAD;
+    return thread;
+}
+
+// A thread of the runtime: the workers, the monitor and the poller.
+static void startRuntimeThread(ThreadRecord* thread, void (*code)(void*, void*), void* argument) {
+    thread->head.code = code;
+    thread->head.env = argument;
+    thread->head.kind = KIND_THREAD;
+    startSystemThread(thread);
+}
+
+// ---- Conditions: a thread of the system sleeps until another calls it ----
+
+typedef struct {
+    u64 state;  // a CONDITION_VARIABLE on Windows, a futex on Linux
+} Condition;
+
+#ifdef _WIN32
+
+static void conditionWait(Condition* condition, Lock* lock) {
+    SleepConditionVariableSRW(condition, lock, 0xFFFFFFFF, 0);
+}
+static void conditionSignal(Condition* condition) { WakeConditionVariable(condition); }
+
+#else
+
+static void conditionWait(Condition* condition, Lock* lock) {
+    u32* sequence = (u32*)&condition->state;
+    u32 seen = __atomic_load_n(sequence, __ATOMIC_ACQUIRE);
+    lockRelease(lock);
+    futexWait(sequence, seen);
+    lockAcquire(lock);
+}
+
+static void conditionSignal(Condition* condition) {
+    u32* sequence = (u32*)&condition->state;
+    __atomic_add_fetch(sequence, 1, __ATOMIC_RELEASE);
+    futexWake(sequence, 1);
+}
+
+#endif
+
+// ---- Tasks (D269-D273) ----
+//
+// Many tasks run on a few threads of the system, the workers, one for each
+// processor (D269). A task runs on a stack of its own, 1 MB reserved and taken
+// page by page (D272): a fiber on Windows; on Linux a mapping, entered and left
+// with cromo_switch (mem_x64.S). The stacks are kept for the next tasks.
+//
+// A task that waits leaves its worker, which takes the next task of the queue;
+// whoever wakes it puts it back in the queue, once its worker has left its stack
+// (`running`). The waits:
+// - a mutex, join() and the end of a group: a task parks and a thread of the
+//   system sleeps, in lists keyed by an address, as the futexes of Linux;
+// - the network and time.sleep: the poller, a thread that waits with epoll on
+//   Linux and with the polls of AFD on an IOCP on Windows, keeps the timers;
+// - a call that blocks the thread of a task keeps it: the monitor, every
+//   millisecond while tasks wait, gives the place of a worker that has run the same
+//   task all that time to another worker (D271).
+
+#define WAIT_NONE 0
+#define WAIT_PARKED 1
+#define WAIT_WOKEN 2
+
+#define TIMER_WAKE 0    // the timer wakes the task: time.sleep, and a wait for a socket on Linux
+#define TIMER_CANCEL 1  // the timer cancels the poll of AFD, whose end wakes the task (Windows)
+
+typedef struct Stack Stack;
+typedef struct Group Group;
+
+#ifdef _WIN32
+typedef struct {
+    i32 status;
+    i32 padding;
+    u64 information;
+} IoStatus;  // IO_STATUS_BLOCK
+
+typedef struct {
+    i64 timeout;
+    u32 count;
+    u32 exclusive;
+    void* handle;
+    u32 events;
+    i32 status;
+} AfdPoll;  // AFD_POLL_INFO with one AFD_POLL_HANDLE_INFO
+#endif
+
+typedef struct Task {
+    Runnable head;
+    struct Task* next;  // in the queue of the tasks ready to run
+    Stack* stack;       // from when it first runs to its end
+    Group* group;       // of a task of a group (D273)
+    u32 finished;       // its lambda has returned: join() goes on
+    u32 running;        // its worker has not left its stack yet
+    u32 waitState;      // WAIT_PARKED until the first of the event and the timer wakes it
+    i32 ready;          // woken by the event, not by the timer
+    i64 deadline;       // of its timer, on the monotonic clock in nanoseconds
+    i64 timerIndex;     // in the heap of the timers, -1 without a timer
+    i32 timerKind;
+#ifdef _WIN32
+    IoStatus status;  // of its poll of AFD: the completion points here
+    AfdPoll poll;
+#else
+    struct Task* nextWaiter;  // among those that wait for a socket
+#endif
+} Task;
+
+struct Stack {
+    Stack* next;    // among the stacks kept for the next tasks
+    void* context;  // Windows: the fiber; Linux: the stack pointer while it does not run
+    Task* task;     // the task it runs
+#ifndef _WIN32
+    u8* base;  // the mapping, with the guard page at the bottom
+#endif
+};
+
+struct Group {
+    Runnable head;  // the first exception of its tasks (D273)
+    u32 running;    // its tasks not yet ended
+    Lock lock;      // for the exception
+};
+
+struct Worker {
+    void* context;   // Windows: the fiber of its thread; Linux: its stack pointer while a task runs
+    Task* current;   // the task it runs
+    i32 ended;       // the task has returned
+    i32 stuck;       // the monitor gave its place to another worker (D271)
+    u64 switches;    // tasks entered and left: the monitor sees whether it moves
+    u64 seen;        // the switches at the start of the tick of the monitor
+    Worker* next;    // in the list of all the workers
+    ThreadRecord thread;
+};
+
+// The workers: `target` of them run tasks at the same time, one for each
+// processor; the monitor can give the place of a stuck one to another (D271).
+#define EXTRA_WORKERS 256
+
+static struct {
+    Lock lock;
+    Task* first;  // the queue of the tasks ready to run
+    Task* last;
+    i64 queued;
+    i32 target;      // places: workers that run tasks at the same time
+    i32 places;      // places without a worker
+    i32 idle;        // workers with a place, waiting for a task
+    i32 idleCalls;   // idle workers called for a task, not yet awake
+    i32 spares;      // workers without a place
+    i32 spareCalls;  // spares given a place, not yet awake
+    i32 workers;     // all the workers
+    i32 monitorSleeping;
+    Worker* all;
+    Condition work;
+    Condition spare;
+    Condition monitorCall;
+    ThreadRecord monitor;
+    u32 state;  // 0, 1 while it starts, 2 started
+} scheduler;
+
+#ifdef _WIN32
+
+static u32 tlsIndex = 0xFFFFFFFF;  // TLS_OUT_OF_INDEXES until the first task
+
+static Worker* currentWorker(void) {
+    u32 index = __atomic_load_n(&tlsIndex, __ATOMIC_ACQUIRE);
+    return index == 0xFFFFFFFF ? 0 : (Worker*)TlsGetValue(index);
+}
+
+#else
+
+static Worker* currentWorker(void) {
+    ThreadBlock* block;
+    __asm__ volatile("mov %%fs:0, %0" : "=r"(block));
+    return block->worker;
+}
+
+#endif
+
+static Task* currentTask(void) {
+    Worker* worker = currentWorker();
+    return worker ? worker->current : 0;
+}
+
+static i64 monotonicNanoseconds(void) {
+#ifdef _WIN32
+    i64 count, frequency;
+    QueryPerformanceCounter(&count);
+    QueryPerformanceFrequency(&frequency);
+    return count / frequency * 1000000000 + count % frequency * 1000000000 / frequency;
+#else
+    i64 now[2];
+    systemCall(SYS_clock_gettime, 1, (i64)now, 0, 0, 0, 0);  // CLOCK_MONOTONIC
+    return now[0] * 1000000000 + now[1];
+#endif
+}
+
+static i32 processorCount(void) {
+#ifdef _WIN32
+    u32 count = GetActiveProcessorCount(0xFFFF);  // all the groups
+#else
+    u64 mask[16];
+    i64 size = systemCall(SYS_sched_getaffinity, 0, sizeof mask, (i64)mask, 0, 0, 0);
+    u32 count = 0;
+    for (i64 i = 0; i < size / 8; ++i) count += (u32)__builtin_popcountll(mask[i]);
+#endif
+    return count > 0 ? (i32)count : 1;
+}
+
+static NORETURN void taskFailure(void) {
+    static const char text[] = "cannot start a task: the system has no resources for it";
+    cromo_panic((const u8*)text, sizeof text - 1, 0);
+}
+
+// ---- Stacks (D272) ----
+//
+// The stack of a task that ends is kept for the next one, with its memory, up to
+// KEPT_STACKS; the others give it back to the system.
+
+#define TASK_STACK ((u64)1 << 20)
+#define KEPT_STACKS 1024
+
+static Lock stackLock;
+static Stack* keptStacks;
+static i64 keptCount;
+
+static NORETURN void stackMain(Stack* stack);
+
+#ifdef _WIN32
+
+#define FIBER_FLAG_FLOAT_SWITCH 1
+
+static void WINAPI fiberMain(void* parameter) { stackMain(parameter); }
+
+static Stack* newStack(void) {
+    Stack* stack = cromo_alloc(sizeof(Stack));
+    stack->next = 0;
+    stack->task = 0;
+    stack->context = CreateFiberEx(0, TASK_STACK, FIBER_FLAG_FLOAT_SWITCH, fiberMain, stack);
+    if (!stack->context) taskFailure();
+    return stack;
+}
+
+static void dropStack(Stack* stack) {
+    DeleteFiber(stack->context);
+    cromo_free(stack);
+}
+
+static void switchToTask(Worker* worker, Stack* stack) {
+    (void)worker;
+    SwitchToFiber(stack->context);
+}
+
+static void switchToWorker(Worker* worker, Stack* stack) {
+    (void)stack;
+    SwitchToFiber(worker->context);
+}
+
+#else
+
+void cromo_switch(void** save, void* next);  // mem_x64.S
+void cromo_task_entry(void);                 // mem_x64.S: cromo_task_run(rbx)
+
+NORETURN void cromo_task_run(Stack* stack) { stackMain(stack); }
+
+// The stacks are cut from regions of addresses reserved without memory, 4 GB at
+// a time: a new stack is one mprotect, which leaves its guard page at the bottom,
+// and one given back keeps its addresses for the next. A mapping for each stack
+// would take three calls, which wait for each other in a process with threads.
+#define REGION_STACKS 4096
+
+static u8* regionNext;
+static u8* regionEnd;
+static Stack* emptyStacks;  // without memory: they start again from the top
+
+// What cromo_switch takes back the first time: the control words of SSE and x87,
+// six registers with the stack in rbx, and where it returns.
+static void startFrame(Stack* stack) {
+    u64* top = (u64*)(stack->base + TASK_STACK);
+    *--top = (u64)cromo_task_entry;
+    *--top = 0;           // rbp
+    *--top = (u64)stack;  // rbx
+    *--top = 0;           // r12
+    *--top = 0;           // r13
+    *--top = 0;           // r14
+    *--top = 0;           // r15
+    *--top = 0x037F00001F80ull;  // MXCSR, then the control word of x87
+    stack->context = top;
+}
+
+// With the lock of the stacks taken.
+static Stack* newStack(void) {
+    Stack* stack = emptyStacks;
+    if (stack) {
+        emptyStacks = stack->next;
+    } else {
+        if (regionNext == regionEnd) {
+            // PROT_NONE, MAP_PRIVATE|ANONYMOUS|NORESERVE: addresses, no memory
+            i64 region = systemCall(SYS_mmap, 0, (i64)(REGION_STACKS * TASK_STACK), 0, 0x22 | 0x4000, -1, 0);
+            if (region < 0 && region > -4096) taskFailure();
+            regionNext = (u8*)region;
+            regionEnd = regionNext + REGION_STACKS * TASK_STACK;
+        }
+        u8* base = regionNext;
+        regionNext += TASK_STACK;
+        // PROT_READ|PROT_WRITE above the guard page: the pages are taken when they are used
+        if (systemCall(SYS_mprotect, (i64)(base + 4096), (i64)(TASK_STACK - 4096), 3, 0, 0, 0) < 0) taskFailure();
+        stack = cromo_alloc(sizeof(Stack));
+        stack->base = base;
+    }
+    stack->next = 0;
+    stack->task = 0;
+    startFrame(stack);
+    return stack;
+}
+
+// Its memory goes back to the system (MADV_DONTNEED), its addresses to the next.
+static void dropStack(Stack* stack) {
+    systemCall(28, (i64)(stack->base + 4096), (i64)(TASK_STACK - 4096), 4, 0, 0, 0);  // madvise
+    lockAcquire(&stackLock);
+    stack->next = emptyStacks;
+    emptyStacks = stack;
+    lockRelease(&stackLock);
+}
+
+static void switchToTask(Worker* worker, Stack* stack) { cromo_switch(&worker->context, stack->context); }
+static void switchToWorker(Worker* worker, Stack* stack) { cromo_switch(&stack->context, worker->context); }
+
+#endif
+
+static void giveStack(Task* task) {
+    lockAcquire(&stackLock);
+    Stack* stack = keptStacks;
+    if (stack) {
+        keptStacks = stack->next;
+        --keptCount;
+    }
+#ifndef _WIN32
+    if (!stack) stack = newStack();
+#endif
+    lockRelease(&stackLock);
+#ifdef _WIN32
+    if (!stack) stack = newStack();
+#endif
+    stack->task = task;
+    task->stack = stack;
+}
+
+static void releaseStack(Stack* stack) {
+    lockAcquire(&stackLock);
+    if (keptCount < KEPT_STACKS) {
+        stack->next = keptStacks;
+        keptStacks = stack;
+        ++keptCount;
+        stack = 0;
+    }
+    lockRelease(&stackLock);
+    if (stack) dropStack(stack);
+}
+
+// ---- The queue of the tasks ready to run ----
+
+static void startWorker(void);
+
+// Wakes a worker for a task just queued, or starts one, with the lock taken:
+// false when there is none to call.
+static i32 callWorker(void) {
+    if (scheduler.idle > 0) {
+        --scheduler.idle;
+        ++scheduler.idleCalls;
+        conditionSignal(&scheduler.work);
+        return 1;
+    }
+    if (scheduler.places > 0) {
+        --scheduler.places;
+        startWorker();
+        return 1;
+    }
+    if (scheduler.monitorSleeping) {
+        scheduler.monitorSleeping = 0;
+        conditionSignal(&scheduler.monitorCall);
+    }
+    return 0;
+}
+
+// Tasks woken together, put in the queue with one lock: the timers that expire
+// at once, the events of one wait of the poller.
+typedef struct {
+    Task* first;
+    Task* last;
+    i64 count;
+} Batch;
+
+static void batchAdd(Batch* batch, Task* task) {
+    task->next = 0;
+    if (batch->last) {
+        batch->last->next = task;
+    } else {
+        batch->first = task;
+    }
+    batch->last = task;
+    ++batch->count;
+}
+
+// Puts the tasks in the queue, once their workers have left their stacks.
+static void enqueue(Batch* batch) {
+    if (!batch->first) return;
+    for (Task* task = batch->first; task; task = task->next) {
+        for (u32 spins = 0; __atomic_load_n(&task->running, __ATOMIC_ACQUIRE); ++spins) relax(spins);
+    }
+    lockAcquire(&scheduler.lock);
+    if (scheduler.last) {
+        scheduler.last->next = batch->first;
+    } else {
+        scheduler.first = batch->first;
+    }
+    scheduler.last = batch->last;
+    scheduler.queued += batch->count;
+    for (i64 i = 0; i < batch->count && callWorker(); ++i) {
+    }
+    lockRelease(&scheduler.lock);
+    batch->first = 0;
+    batch->last = 0;
+    batch->count = 0;
+}
+
+static void makeReady(Task* task) {
+    Batch batch = {0, 0, 0};
+    batchAdd(&batch, task);
+    enqueue(&batch);
+}
+
+// The task leaves its worker until makeReady(); it can come back on another one.
+static void parkTask(Task* task) { switchToWorker(currentWorker(), task->stack); }
+
+// The first of the event and the timer wakes a parked task: into the batch, which
+// the caller puts in the queue.
+static void wakeTask(Task* task, i32 ready, Batch* batch) {
+    u32 parked = WAIT_PARKED;
+    if (__atomic_compare_exchange_n(&task->waitState, &parked, WAIT_WOKEN, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+        task->ready = ready;
+        batchAdd(batch, task);
+    }
+}
+
+// The next task for a worker, with the lock taken: a worker whose place went to
+// another waits as a spare until it gets one back (D271).
+static Task* nextTask(Worker* worker) {
+    for (;;) {
+        if (worker->stuck) {
+            worker->stuck = 0;
+            if (scheduler.places > 0) {
+                --scheduler.places;
+            } else {
+                ++scheduler.spares;
+                while (scheduler.spareCalls == 0) conditionWait(&scheduler.spare, &scheduler.lock);
+                --scheduler.spareCalls;
+            }
+        }
+        Task* task = scheduler.first;
+        if (task) {
+            scheduler.first = task->next;
+            if (!scheduler.first) scheduler.last = 0;
+            --scheduler.queued;
+            return task;
+        }
+        ++scheduler.idle;
+        while (scheduler.idleCalls == 0) conditionWait(&scheduler.work, &scheduler.lock);
+        --scheduler.idleCalls;
+    }
+}
+
+static void freeException(void** raised) {
+    void** descriptor = (void**)raised[1];
+    void (*drop)(void*) = (void (*)(void*))descriptor[0];
+    if (drop) drop(raised[0]);
+    cromo_free(raised[0]);
+    raised[0] = 0;
+    raised[1] = 0;
+}
+
+static void unpark(const u32* key, i32 all);
+
+// After its lambda, on its own stack, since destructors can wait too: a task of a
+// group destroys the data of the lambda, which it owns, and gives its exception
+// to the group if it is the first (D273).
+static void finishGroupTask(Task* task) {
+    void** data = (void**)task->head.env;
+    if (data && data[0]) ((void (*)(void*))data[0])(data);
+    if (!task->head.raised[0]) return;
+    Group* group = task->group;
+    lockAcquire(&group->lock);
+    i32 first = group->head.raised[0] == 0;
+    if (first) {
+        group->head.raised[0] = task->head.raised[0];
+        group->head.raised[1] = task->head.raised[1];
+    }
+    lockRelease(&group->lock);
+    if (!first) freeException(task->head.raised);
+}
+
+// What a stack runs: a task, then the next ones it is given.
+static NORETURN void stackMain(Stack* stack) {
+    for (;;) {
+        Task* task = stack->task;
+        task->head.code(task->head.env, task->head.raised);
+        if (task->head.kind == KIND_GROUP_TASK) finishGroupTask(task);
+        Worker* worker = currentWorker();
+        worker->ended = 1;
+        switchToWorker(worker, stack);
+    }
+}
+
+// The end of a task, on the stack of its worker.
+static void endTask(Task* task) {
+    releaseStack(task->stack);
+    task->stack = 0;
+    if (task->head.kind == KIND_GROUP_TASK) {
+        Group* group = task->group;
+        cromo_free(task);
+        if (__atomic_sub_fetch(&group->running, 1, __ATOMIC_ACQ_REL) == 0) unpark(&group->running, 1);
+        return;
+    }
+    __atomic_store_n(&task->finished, 1, __ATOMIC_RELEASE);
+    unpark(&task->finished, 1);  // the record can be freed already: only its address is used
+}
+
+static void workerLoop(Worker* worker) {
+    lockAcquire(&scheduler.lock);
+    for (;;) {
+        Task* task = nextTask(worker);
+        task->running = 1;
+        worker->current = task;
+        ++worker->switches;
+        lockRelease(&scheduler.lock);
+        if (!task->stack) giveStack(task);
+        switchToTask(worker, task->stack);
+        if (worker->ended) {
+            worker->ended = 0;
+            endTask(task);
+        } else {
+            __atomic_store_n(&task->running, 0, __ATOMIC_RELEASE);  // parked: it can be woken
+        }
+        lockAcquire(&scheduler.lock);
+        worker->current = 0;
+        ++worker->switches;
+    }
+}
+
+static void workerMain(void* argument, void* raised) {
+    (void)raised;
+    Worker* worker = argument;
+#ifdef _WIN32
+    TlsSetValue(tlsIndex, worker);
+    worker->context = ConvertThreadToFiberEx(worker, FIBER_FLAG_FLOAT_SWITCH);
+    if (!worker->context) taskFailure();
+#endif
+    workerLoop(worker);
+}
+
+// With the lock of the scheduler taken.
+static void startWorker(void) {
+    Worker* worker = cromo_alloc(sizeof(Worker));
+    u8* bytes = (u8*)worker;
+    for (u64 i = 0; i < sizeof(Worker); ++i) bytes[i] = 0;
+    worker->next = scheduler.all;
+    scheduler.all = worker;
+    ++scheduler.workers;
+#ifndef _WIN32
+    worker->thread.block.worker = worker;
+#endif
+    startRuntimeThread(&worker->thread, workerMain, worker);
+}
+
+// A place for another worker, when one is stuck (D271).
+static void givePlace(void) {
+    if (scheduler.spares > 0) {
+        --scheduler.spares;
+        ++scheduler.spareCalls;
+        conditionSignal(&scheduler.spare);
+    } else if (scheduler.workers < scheduler.target + EXTRA_WORKERS) {
+        startWorker();
+    } else {
+        ++scheduler.places;
+    }
+}
+
+#ifdef _WIN32
+
+#define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 2
+#define TIMER_ALL_ACCESS 0x1F0003
+
+static void* tickTimer;
+
+static void sleepTick(void) {
+    if (!tickTimer) tickTimer = CreateWaitableTimerExW(0, 0, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
+    if (!tickTimer) tickTimer = CreateWaitableTimerExW(0, 0, 0, TIMER_ALL_ACCESS);  // before Windows 10 1803
+    i64 due = -10000;  // 1 ms from now, in units of 100 ns
+    if (tickTimer && SetWaitableTimer(tickTimer, &due, 0, 0, 0, 0)) {
+        WaitForSingleObject(tickTimer, 0xFFFFFFFF);
+    } else {
+        Sleep(1);
+    }
+}
+
+#else
+
+static void sleepTick(void) {
+    i64 tick[2] = {0, 1000000};
+    systemCall(SYS_nanosleep, (i64)tick, 0, 0, 0, 0, 0);
+}
+
+#endif
+
+// While tasks wait and no worker is idle, every millisecond: a worker that has
+// run the same task for the whole tick gives its place to another (D271).
+static void monitorMain(void* argument, void* raised) {
+    (void)argument;
+    (void)raised;
+    lockAcquire(&scheduler.lock);
+    for (;;) {
+        while (scheduler.queued == 0 || scheduler.idle > 0) {
+            scheduler.monitorSleeping = 1;
+            conditionWait(&scheduler.monitorCall, &scheduler.lock);
+        }
+        scheduler.monitorSleeping = 0;
+        for (Worker* worker = scheduler.all; worker; worker = worker->next) worker->seen = worker->switches;
+        lockRelease(&scheduler.lock);
+        sleepTick();
+        lockAcquire(&scheduler.lock);
+        if (scheduler.queued == 0 || scheduler.idle > 0) continue;
+        for (Worker* worker = scheduler.all; worker; worker = worker->next) {
+            if (!worker->current || worker->stuck || worker->switches != worker->seen) continue;
+            worker->stuck = 1;
+            givePlace();
+        }
+    }
+}
+
+static void startScheduler(void) {
+    u32 state = __atomic_load_n(&scheduler.state, __ATOMIC_ACQUIRE);
+    if (state == 2) return;
+    if (state == 0 && __atomic_compare_exchange_n(&scheduler.state, &state, 1, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+        threaded = 1;  // from now on the locks are taken
+#ifdef _WIN32
+        __atomic_store_n(&tlsIndex, TlsAlloc(), __ATOMIC_RELEASE);
+#endif
+        scheduler.target = processorCount();
+        scheduler.places = scheduler.target;
+        startRuntimeThread(&scheduler.monitor, monitorMain, 0);
+        __atomic_store_n(&scheduler.state, 2, __ATOMIC_RELEASE);
+        return;
+    }
+    for (u32 spins = 0; __atomic_load_n(&scheduler.state, __ATOMIC_ACQUIRE) != 2; ++spins) relax(spins);
+}
+
+static Task* newTask(void* code, void* env, i64 kind) {
+    Task* task = cromo_alloc(sizeof(Task));
+    u8* bytes = (u8*)task;
+    for (u64 i = 0; i < sizeof(Task); ++i) bytes[i] = 0;
+    task->head.code = (void (*)(void*, void*))code;
+    task->head.env = env;
+    task->head.kind = kind;
+    task->timerIndex = -1;
+    return task;
+}
+
+// ---- Parking: the waits of the tasks and of the threads, keyed by an address ----
+//
+// As FUTEX_WAIT and FUTEX_WAKE of Linux: parkOn() waits only if the value at the
+// key is still the one expected, checked with the lock of the list taken.
+
+typedef struct Waiter {
+    struct Waiter* next;
+    const u32* key;
+    Task* task;  // a task parks; a thread of the system sleeps
+    u32 woken;
+} Waiter;
+
+typedef struct {
+    Lock lock;
+    Waiter* first;
+    Waiter* last;
+    Condition sleeping;  // Windows: the threads that wait in this list
+} Bucket;
+
+#define BUCKETS 256
+static Bucket buckets[BUCKETS];
+
+static Bucket* bucketOf(const u32* key) { return &buckets[((u64)key >> 2) * 0x9E3779B97F4A7C15ull >> 56]; }
+
+static void parkOn(const u32* key, u32 expected) {
+    Bucket* bucket = bucketOf(key);
+    lockAcquire(&bucket->lock);
+    if (__atomic_load_n(key, __ATOMIC_ACQUIRE) != expected) {
+        lockRelease(&bucket->lock);
+        return;
+    }
+    Waiter waiter = {0, key, currentTask(), 0};
+    if (bucket->last) {
+        bucket->last->next = &waiter;
+    } else {
+        bucket->first = &waiter;
+    }
+    bucket->last = &waiter;
+    if (waiter.task) {
+        lockRelease(&bucket->lock);
+        parkTask(waiter.task);
+        return;
+    }
+#ifdef _WIN32
+    while (!waiter.woken) conditionWait(&bucket->sleeping, &bucket->lock);
+    lockRelease(&bucket->lock);
+#else
+    lockRelease(&bucket->lock);
+    while (!__atomic_load_n(&waiter.woken, __ATOMIC_ACQUIRE)) futexWait(&waiter.woken, 0);
+#endif
+}
+
+static void unpark(const u32* key, i32 all) {
+    Bucket* bucket = bucketOf(key);
+    Batch woken = {0, 0, 0};
+    lockAcquire(&bucket->lock);
+    Waiter** link = &bucket->first;
+    Waiter* previous = 0;
+    i32 sleepers = 0;
+    while (*link) {
+        Waiter* waiter = *link;
+        if (waiter->key != key) {
+            previous = waiter;
+            link = &waiter->next;
+            continue;
+        }
+        *link = waiter->next;
+        if (bucket->last == waiter) bucket->last = previous;
+        if (waiter->task) {
+            batchAdd(&woken, waiter->task);
+        } else {
+            sleepers = 1;
+            __atomic_store_n(&waiter->woken, 1, __ATOMIC_RELEASE);
+#ifndef _WIN32
+            futexWake(&waiter->woken, 1);  // it may be gone already: a wake for nobody
+#endif
+        }
+        if (!all) break;
+    }
+#ifdef _WIN32
+    if (sleepers) WakeAllConditionVariable(&bucket->sleeping);
+#else
+    (void)sleepers;
+#endif
+    lockRelease(&bucket->lock);
+    enqueue(&woken);
+}
+
+// ---- Mutex (D216, D220) ----
+//
+// The first 4 bytes of the Mutex: 0 free, 1 taken, 2 taken with others waiting
+// (Drepper, "Futexes are tricky"). A task that waits for it parks, a thread sleeps.
+
+void cromo_mutex_lock(void* state) {
+    u32* word = (u32*)state;
+    for (u32 spins = 0; spins < 64; ++spins) {
+        u32 seen = 0;
+        if (__atomic_compare_exchange_n(word, &seen, 1, 0, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED)) return;
+        if (seen == 2) break;
+        __asm__ volatile("pause");
+    }
+    while (__atomic_exchange_n(word, 2, __ATOMIC_ACQUIRE) != 0) parkOn(word, 2);
+}
+
+void cromo_mutex_unlock(void* state) {
+    u32* word = (u32*)state;
+    if (__atomic_exchange_n(word, 0, __ATOMIC_RELEASE) == 2) unpark(word, 0);
+}
+
+// ---- What the library calls (D214, D269, D273) ----
+
+void* cromo_thread_start(void* code, void* env) {
+    ThreadRecord* thread = newThreadRecord(code, env);
+    threaded = 1;  // from now on the locks are taken
     startSystemThread(thread);
     return thread;
 }
 
-// Waits for the end of the thread: 1 if it ended with an exception.
-i32 cromo_thread_wait(ThreadRecord* thread) {
-    waitSystemThread(thread);
-    return thread->raised[0] != 0;
+void* cromo_task_start(void* code, void* env) {
+    Task* task = newTask(code, env, KIND_TASK);
+    startScheduler();
+    makeReady(task);
+    return task;
 }
 
-// The exception of the thread goes into the slot of the caller of join() (D217).
-void cromo_thread_take(ThreadRecord* thread, void** slot) {
-    slot[0] = thread->raised[0];
-    slot[1] = thread->raised[1];
-    thread->raised[0] = 0;
-    thread->raised[1] = 0;
+void* cromo_group_new(void) {
+    Group* group = cromo_alloc(sizeof(Group));
+    u8* bytes = (u8*)group;
+    for (u64 i = 0; i < sizeof(Group); ++i) bytes[i] = 0;
+    group->head.kind = KIND_GROUP;
+    return group;
 }
 
-void cromo_thread_free(ThreadRecord* thread) {
-    freeSystemThread(thread);
-    cromo_free(thread);
+void cromo_group_start(Group* group, void* code, void* env) {
+    Task* task = newTask(code, env, KIND_GROUP_TASK);
+    task->group = group;
+    __atomic_add_fetch(&group->running, 1, __ATOMIC_ACQ_REL);
+    startScheduler();
+    makeReady(task);
+}
+
+// Waits for the end of the thread, of the task or of all the tasks of the group:
+// 1 if there is an exception to take.
+i32 cromo_thread_wait(Runnable* record) {
+    if (record->kind == KIND_THREAD) {
+        waitSystemThread((ThreadRecord*)record);
+    } else if (record->kind == KIND_TASK) {
+        Task* task = (Task*)record;
+        while (!__atomic_load_n(&task->finished, __ATOMIC_ACQUIRE)) parkOn(&task->finished, 0);
+    } else {
+        Group* group = (Group*)record;
+        for (;;) {
+            u32 running = __atomic_load_n(&group->running, __ATOMIC_ACQUIRE);
+            if (running == 0) break;
+            parkOn(&group->running, running);
+        }
+    }
+    return record->raised[0] != 0;
+}
+
+// The exception goes into the slot of the caller of join() (D217).
+void cromo_thread_take(Runnable* record, void** slot) {
+    slot[0] = record->raised[0];
+    slot[1] = record->raised[1];
+    record->raised[0] = 0;
+    record->raised[1] = 0;
+}
+
+void cromo_thread_free(Runnable* record) {
+    if (record->kind == KIND_THREAD) freeSystemThread((ThreadRecord*)record);
+    cromo_free(record);
 }
 
 // D217: an exception that no join() takes stops the program, with its message
 // from the first method of the table of Exception, as for main (D121).
-NORETURN void cromo_thread_uncaught(ThreadRecord* thread) {
-    void* object = thread->raised[0];
-    void** descriptor = (void**)thread->raised[1];
+NORETURN void cromo_thread_uncaught(Runnable* record) {
+    void* object = record->raised[0];
+    void** descriptor = (void**)record->raised[1];
     void** table = (void**)descriptor[1];
     void (*message)(Text*, void*) = (void (*)(Text*, void*))table[0];
     Text text;
     message(&text, object);
-    uncaught("uncaught exception in a thread: ", 32, text.data, (u64)text.length);
+    if (record->kind == KIND_THREAD) uncaught("uncaught exception in a thread: ", 32, text.data, (u64)text.length);
+    uncaught("uncaught exception in a task: ", 30, text.data, (u64)text.length);
+}
+
+// ---- The poller: the timers, and the waits for the network (D269) ----
+
+static struct {
+    Lock lock;
+    Task** heap;  // the tasks with a timer, the nearest first
+    i64 count;
+    i64 capacity;
+    i64 sleepingUntil;  // the deadline the poller waits for
+    u32 state;          // 0, 1 while it starts, 2 started
+    ThreadRecord thread;
+#ifdef _WIN32
+    void* port;  // the IOCP
+    void* afd;   // \Device\Afd, for the polls of the sockets
+    i32(WINAPI* deviceControl)(void*, void*, void*, void*, void*, u32, void*, u32, void*, u32);
+    i32(WINAPI* cancel)(void*, void*, void*);
+    i32(WINAPI* socketControl)(u64, u32, void*, u32, void*, u32, u32*, void*, void*);
+#else
+    i32 epoll;
+    i32 wake;  // an eventfd that interrupts the wait
+#endif
+} poller;
+
+#define NO_DEADLINE 0x7FFFFFFFFFFFFFFFll
+
+static i32 earlier(i64 a, i64 b) { return poller.heap[a]->deadline < poller.heap[b]->deadline; }
+
+static void swapTimers(i64 a, i64 b) {
+    Task* first = poller.heap[a];
+    poller.heap[a] = poller.heap[b];
+    poller.heap[b] = first;
+    poller.heap[a]->timerIndex = a;
+    poller.heap[b]->timerIndex = b;
+}
+
+static void timerUp(i64 index) {
+    while (index > 0 && earlier(index, (index - 1) / 2)) {
+        swapTimers(index, (index - 1) / 2);
+        index = (index - 1) / 2;
+    }
+}
+
+static void timerDown(i64 index) {
+    for (;;) {
+        i64 least = index;
+        i64 left = 2 * index + 1;
+        if (left < poller.count && earlier(left, least)) least = left;
+        if (left + 1 < poller.count && earlier(left + 1, least)) least = left + 1;
+        if (least == index) return;
+        swapTimers(index, least);
+        index = least;
+    }
+}
+
+static void interruptPoller(void);
+
+// With the lock of the poller taken.
+static void addTimer(Task* task, i64 deadline, i32 kind) {
+    if (poller.count == poller.capacity) {
+        poller.capacity = poller.capacity ? poller.capacity * 2 : 64;
+        poller.heap = cromo_realloc(poller.heap, poller.capacity * (i64)sizeof(Task*));
+    }
+    task->deadline = deadline;
+    task->timerKind = kind;
+    task->timerIndex = poller.count;
+    poller.heap[poller.count++] = task;
+    timerUp(task->timerIndex);
+    if (deadline < poller.sleepingUntil) {
+        poller.sleepingUntil = deadline;
+        interruptPoller();
+    }
+}
+
+static void removeTimer(Task* task) {
+    i64 index = task->timerIndex;
+    if (index < 0) return;
+    task->timerIndex = -1;
+    Task* last = poller.heap[--poller.count];
+    if (index == poller.count) return;
+    poller.heap[index] = last;
+    last->timerIndex = index;
+    timerDown(index);
+    timerUp(last->timerIndex);
+}
+
+static void timerExpired(Task* task, Batch* woken);
+
+// The timers that have expired; the milliseconds until the next one, -1 without.
+static i64 fireTimers(void) {
+    Batch woken = {0, 0, 0};
+    lockAcquire(&poller.lock);
+    i64 now = monotonicNanoseconds();
+    while (poller.count > 0 && poller.heap[0]->deadline <= now) {
+        Task* task = poller.heap[0];
+        removeTimer(task);
+        timerExpired(task, &woken);
+    }
+    i64 wait = -1;
+    poller.sleepingUntil = NO_DEADLINE;
+    if (poller.count > 0) {
+        poller.sleepingUntil = poller.heap[0]->deadline;
+        wait = (poller.sleepingUntil - now + 999999) / 1000000;
+    }
+    lockRelease(&poller.lock);
+    enqueue(&woken);
+    return wait;
+}
+
+#ifdef _WIN32
+
+#define STATUS_PENDING 0x103
+#define STATUS_CANCELLED ((i32)0xC0000120)
+#define IOCTL_AFD_POLL 0x00012024
+#define AFD_POLL_RECEIVE 0x0001
+#define AFD_POLL_SEND 0x0004
+#define AFD_POLL_DISCONNECT 0x0008
+#define AFD_POLL_ABORT 0x0010
+#define AFD_POLL_LOCAL_CLOSE 0x0020
+#define AFD_POLL_ACCEPT 0x0080
+#define AFD_POLL_CONNECT_FAIL 0x0100
+#define SIO_BASE_HANDLE 0x48000022
+
+typedef struct {
+    u16 length;
+    u16 capacity;
+    const u16* text;
+} UnicodeText;
+
+typedef struct {
+    u32 length;
+    void* root;
+    UnicodeText* name;
+    u32 attributes;
+    void* security;
+    void* quality;
+} ObjectAttributes;
+
+typedef struct {
+    u64 key;
+    void* overlapped;
+    u64 internal;
+    u32 bytes;
+} CompletionEntry;  // OVERLAPPED_ENTRY
+
+static void timerExpired(Task* task, Batch* woken) {
+    if (task->timerKind == TIMER_CANCEL) {
+        IoStatus ignored;
+        poller.cancel(poller.afd, &task->status, &ignored);  // its completion wakes the task
+    } else {
+        wakeTask(task, 0, woken);
+    }
+}
+
+static void interruptPoller(void) { PostQueuedCompletionStatus(poller.port, 0, 0, 0); }
+
+// The device of AFD, under the sockets of Windows: its polls end on the IOCP, as
+// in libuv and in mio. Without it the tasks wait as the threads do.
+static void openPoller(void) {
+    poller.port = CreateIoCompletionPort((void*)(i64)-1, 0, 0, 1);
+    if (!poller.port) taskFailure();
+    void* ntdll = GetModuleHandleW(L"ntdll.dll");
+    i32(WINAPI * create)(void**, u32, ObjectAttributes*, IoStatus*, i64*, u32, u32, u32, u32, void*, u32) =
+        (i32(WINAPI*)(void**, u32, ObjectAttributes*, IoStatus*, i64*, u32, u32, u32, u32, void*, u32))GetProcAddress(
+            ntdll, "NtCreateFile");
+    poller.deviceControl = (i32(WINAPI*)(void*, void*, void*, void*, void*, u32, void*, u32, void*, u32))GetProcAddress(
+        ntdll, "NtDeviceIoControlFile");
+    poller.cancel = (i32(WINAPI*)(void*, void*, void*))GetProcAddress(ntdll, "NtCancelIoFileEx");
+    void* sockets = GetModuleHandleW(L"ws2_32.dll");
+    if (sockets) {
+        poller.socketControl = (i32(WINAPI*)(u64, u32, void*, u32, void*, u32, u32*, void*, void*))GetProcAddress(
+            sockets, "WSAIoctl");
+    }
+    if (!create || !poller.deviceControl || !poller.cancel) return;
+    static const u16 path[] = L"\\Device\\Afd\\Cromo";
+    UnicodeText name = {sizeof path - 2, sizeof path, path};
+    ObjectAttributes attributes = {sizeof(ObjectAttributes), 0, &name, 0, 0, 0};
+    IoStatus status;
+    void* afd = 0;
+    // SYNCHRONIZE, FILE_SHARE_READ|FILE_SHARE_WRITE, FILE_OPEN
+    if (create(&afd, 0x00100000, &attributes, &status, 0, 0, 3, 1, 0, 0, 0) != 0) return;
+    if (!CreateIoCompletionPort(afd, poller.port, 0, 0)) {
+        CloseHandle(afd);
+        return;
+    }
+    SetFileCompletionNotificationModes(afd, 2);  // FILE_SKIP_SET_EVENT_ON_HANDLE
+    poller.afd = afd;
+}
+
+static void pollEvents(i64 milliseconds) {
+    CompletionEntry entries[64];
+    u32 count = 0;
+    u32 wait = milliseconds < 0 ? 0xFFFFFFFF : milliseconds > 0x7FFFFFFF ? 0x7FFFFFFF : (u32)milliseconds;
+    if (!GetQueuedCompletionStatusEx(poller.port, entries, 64, &count, wait, 0)) return;
+    Batch woken = {0, 0, 0};
+    for (u32 i = 0; i < count; ++i) {
+        if (!entries[i].overlapped) continue;  // interruptPoller()
+        Task* task = (Task*)((u8*)entries[i].overlapped - __builtin_offsetof(Task, status));
+        wakeTask(task, task->status.status != STATUS_CANCELLED, &woken);
+    }
+    enqueue(&woken);
+}
+
+// The socket under the layers of Winsock, which AFD knows.
+static void* baseSocket(i64 handle) {
+    void* base = 0;
+    u32 bytes = 0;
+    if (poller.socketControl && poller.socketControl((u64)handle, SIO_BASE_HANDLE, 0, 0, &base, sizeof base, &bytes, 0, 0) == 0) {
+        return base;
+    }
+    return (void*)handle;
+}
+
+#else
+
+#define EPOLLIN 0x001
+#define EPOLLOUT 0x004
+#define EPOLLERR 0x008
+#define EPOLLHUP 0x010
+#define EPOLLRDHUP 0x2000
+#define EPOLLET 0x80000000u
+#define WAKE_MARK 0xFFFFFFFFFFFFFFFFull
+
+typedef struct __attribute__((packed)) {
+    u32 events;
+    u64 data;
+} EpollEvent;
+
+// What the tasks wait for on a socket, by its number: registered once in epoll,
+// edge-triggered. An event that no task was waiting for stays in `readable` or
+// `writable` for the next wait.
+typedef struct {
+    Lock lock;
+    u32 generation;  // changes when the socket is closed: the events of the old one are ignored
+    u8 registered;
+    u8 readable;
+    u8 writable;
+    Task* readers;
+    Task* writers;
+} SocketWaits;
+
+#define SOCKET_CHUNK 1024
+static SocketWaits* socketChunks[1024];
+
+static SocketWaits* socketWaits(i64 handle, i32 create) {
+    if (handle < 0 || handle >= 1024 * SOCKET_CHUNK) return 0;
+    SocketWaits** chunk = &socketChunks[handle / SOCKET_CHUNK];
+    SocketWaits* entries = __atomic_load_n(chunk, __ATOMIC_ACQUIRE);
+    if (!entries) {
+        if (!create) return 0;
+        SocketWaits* fresh = cromo_alloc(sizeof(SocketWaits) * SOCKET_CHUNK);
+        u8* bytes = (u8*)fresh;
+        for (u64 i = 0; i < sizeof(SocketWaits) * SOCKET_CHUNK; ++i) bytes[i] = 0;
+        if (__atomic_compare_exchange_n(chunk, &entries, fresh, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+            entries = fresh;
+        } else {
+            cromo_free(fresh);
+        }
+    }
+    return &entries[handle % SOCKET_CHUNK];
+}
+
+static void timerExpired(Task* task, Batch* woken) { wakeTask(task, 0, woken); }
+
+static void interruptPoller(void) {
+    u64 one = 1;
+    systemCall(SYS_write, poller.wake, (i64)&one, 8, 0, 0, 0);
+}
+
+static void openPoller(void) {
+    poller.epoll = (i32)systemCall(SYS_epoll_create1, 0x80000, 0, 0, 0, 0, 0);  // EPOLL_CLOEXEC
+    poller.wake = (i32)systemCall(SYS_eventfd2, 0, 0x80800, 0, 0, 0, 0);       // EFD_CLOEXEC|EFD_NONBLOCK
+    if (poller.epoll < 0 || poller.wake < 0) taskFailure();
+    EpollEvent event = {EPOLLIN, WAKE_MARK};
+    systemCall(SYS_epoll_ctl, poller.epoll, 1, poller.wake, (i64)&event, 0, 0);  // EPOLL_CTL_ADD
+}
+
+static void wakeWaiters(Task** list, Batch* woken) {
+    Task* task = *list;
+    *list = 0;
+    while (task) {
+        Task* next = task->nextWaiter;
+        task->nextWaiter = 0;
+        wakeTask(task, 1, woken);
+        task = next;
+    }
+}
+
+static void pollEvents(i64 milliseconds) {
+    EpollEvent events[64];
+    i64 count = systemCall(SYS_epoll_wait, poller.epoll, (i64)events, 64, milliseconds, 0, 0);
+    Batch woken = {0, 0, 0};
+    for (i64 i = 0; i < count; ++i) {
+        u64 data = events[i].data;
+        if (data == WAKE_MARK) {
+            u64 value;
+            systemCall(SYS_read, poller.wake, (i64)&value, 8, 0, 0, 0);
+            continue;
+        }
+        SocketWaits* waits = socketWaits((i64)(u32)data, 0);
+        if (!waits) continue;
+        lockAcquire(&waits->lock);
+        if (waits->generation == (u32)(data >> 32)) {
+            u32 happened = events[i].events;
+            if (happened & (EPOLLIN | EPOLLRDHUP | EPOLLHUP | EPOLLERR)) {
+                waits->readable = 1;
+                wakeWaiters(&waits->readers, &woken);
+            }
+            if (happened & (EPOLLOUT | EPOLLHUP | EPOLLERR)) {
+                waits->writable = 1;
+                wakeWaiters(&waits->writers, &woken);
+            }
+        }
+        lockRelease(&waits->lock);
+    }
+    enqueue(&woken);
+}
+
+static void unlinkWaiter(Task** list, Task* task) {
+    for (Task** link = list; *link; link = &(*link)->nextWaiter) {
+        if (*link == task) {
+            *link = task->nextWaiter;
+            task->nextWaiter = 0;
+            return;
+        }
+    }
+}
+
+#endif
+
+static void pollerMain(void* argument, void* raised) {
+    (void)argument;
+    (void)raised;
+    for (;;) pollEvents(fireTimers());
+}
+
+static void startPoller(void) {
+    u32 state = __atomic_load_n(&poller.state, __ATOMIC_ACQUIRE);
+    if (state == 2) return;
+    if (state == 0 && __atomic_compare_exchange_n(&poller.state, &state, 1, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+        poller.sleepingUntil = NO_DEADLINE;
+        openPoller();
+        startRuntimeThread(&poller.thread, pollerMain, 0);
+        __atomic_store_n(&poller.state, 2, __ATOMIC_RELEASE);
+        return;
+    }
+    for (u32 spins = 0; __atomic_load_n(&poller.state, __ATOMIC_ACQUIRE) != 2; ++spins) relax(spins);
+}
+
+// time.sleep in a task: it parks until its timer. 0 outside a task, where the
+// library sleeps as a thread.
+i64 cromo_task_sleep(i64 nanoseconds) {
+    Task* task = currentTask();
+    if (!task) return 0;
+    startPoller();
+    lockAcquire(&poller.lock);
+    task->waitState = WAIT_PARKED;
+    addTimer(task, monotonicNanoseconds() + (nanoseconds > 0 ? nanoseconds : 0), TIMER_WAKE);
+    lockRelease(&poller.lock);
+    parkTask(task);
+    task->waitState = WAIT_NONE;
+    return 1;
+}
+
+// A task waits until the socket can be read or written, or until the timeout
+// (D225): 1 ready, 0 timed out, -1 outside a task, where the library waits as a
+// thread. Ready can also mean an error or the end, which the next call tells.
+i64 cromo_task_wait_socket(i64 handle, i64 reading, i64 milliseconds) {
+    Task* task = currentTask();
+    if (!task) return -1;
+    startPoller();
+#ifdef _WIN32
+    if (!poller.afd) return -1;
+    task->poll.timeout = NO_DEADLINE;
+    task->poll.count = 1;
+    task->poll.exclusive = 0;
+    task->poll.handle = baseSocket(handle);
+    task->poll.events = reading ? AFD_POLL_RECEIVE | AFD_POLL_ACCEPT | AFD_POLL_DISCONNECT | AFD_POLL_ABORT |
+                                      AFD_POLL_LOCAL_CLOSE | AFD_POLL_CONNECT_FAIL
+                                : AFD_POLL_SEND | AFD_POLL_ABORT | AFD_POLL_LOCAL_CLOSE | AFD_POLL_CONNECT_FAIL;
+    task->poll.status = 0;
+    task->status.status = STATUS_PENDING;
+    task->status.information = 0;
+    task->waitState = WAIT_PARKED;
+    i32 status = poller.deviceControl(poller.afd, 0, 0, &task->status, &task->status, IOCTL_AFD_POLL, &task->poll,
+                                      sizeof(AfdPoll), &task->poll, sizeof(AfdPoll));
+    if (status != STATUS_PENDING && status < 0) {  // not started: the next call tells why
+        task->waitState = WAIT_NONE;
+        return 1;
+    }
+    if (milliseconds >= 0) {
+        lockAcquire(&poller.lock);
+        addTimer(task, monotonicNanoseconds() + milliseconds * 1000000, TIMER_CANCEL);
+        lockRelease(&poller.lock);
+    }
+    parkTask(task);
+#else
+    SocketWaits* waits = socketWaits(handle, 1);
+    if (!waits) return -1;
+    lockAcquire(&waits->lock);
+    if (!waits->registered) {
+        EpollEvent event = {EPOLLIN | EPOLLOUT | EPOLLRDHUP | EPOLLET, (u64)(u32)handle | (u64)waits->generation << 32};
+        if (systemCall(SYS_epoll_ctl, poller.epoll, 1, handle, (i64)&event, 0, 0) < 0) {  // EPOLL_CTL_ADD
+            lockRelease(&waits->lock);
+            return -1;
+        }
+        waits->registered = 1;
+    }
+    u8* pending = reading ? &waits->readable : &waits->writable;
+    if (*pending) {
+        *pending = 0;
+        lockRelease(&waits->lock);
+        return 1;
+    }
+    Task** list = reading ? &waits->readers : &waits->writers;
+    task->nextWaiter = *list;
+    *list = task;
+    task->waitState = WAIT_PARKED;
+    lockRelease(&waits->lock);
+    if (milliseconds >= 0) {
+        lockAcquire(&poller.lock);
+        addTimer(task, monotonicNanoseconds() + milliseconds * 1000000, TIMER_WAKE);
+        lockRelease(&poller.lock);
+    }
+    parkTask(task);
+    lockAcquire(&waits->lock);
+    unlinkWaiter(list, task);  // woken by the timer, it is still there
+    lockRelease(&waits->lock);
+#endif
+    if (milliseconds >= 0) {
+        lockAcquire(&poller.lock);
+        removeTimer(task);  // woken by the event, its timer is still there
+        lockRelease(&poller.lock);
+    }
+    task->waitState = WAIT_NONE;
+    return task->ready;
+}
+
+// Before a socket is closed: on Linux its number can come back with another one.
+void cromo_socket_closed(i64 handle) {
+#ifdef _WIN32
+    (void)handle;
+#else
+    SocketWaits* waits = socketWaits(handle, 0);
+    if (!waits) return;
+    lockAcquire(&waits->lock);
+    ++waits->generation;
+    waits->registered = 0;
+    waits->readable = 0;
+    waits->writable = 0;
+    lockRelease(&waits->lock);
+#endif
 }
 
 // ---- Arguments of the program (D154) ----

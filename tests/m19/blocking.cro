@@ -1,0 +1,39 @@
+// A call that blocks the thread of a task keeps it (D271): with more blocking
+// tasks than workers, the monitor gives the others more workers, and a quick
+// task still runs at once.
+// expect-output: quick first
+// expect-output: blocking 200 done
+import std.thread
+import std.time
+
+// join() of a thread of the system keeps the worker of the task waiting.
+void block(i64 milliseconds) {
+    thread.Thread sleeper = thread.Thread([milliseconds]() { time.msleep(milliseconds) })
+    sleeper.start()
+    sleeper.join()
+}
+
+i32 main() {
+    time.Instant start = time.now()
+    thread.Mutex<i64> done
+    thread.Mutex<string> order
+    thread.Group blocking
+    for (i64 i = 0; i < 200; i++) {
+        blocking.start([done]() {
+            block(500)
+            done.lock([](ref i64 n) { n++ })
+        })
+    }
+    thread.Task quick = thread.Task([order]() { order.lock([](ref string s) { s += "quick first" }) })
+    quick.start()
+    quick.join()
+    order.lock([](ref string s) { println("{}", s) })
+    blocking.wait()
+    done.lock([](ref i64 n) { println("blocking {} done", n) })
+    // Each worker would take its blocking tasks in turn without the monitor.
+    i64 elapsed = start.elapsed().milliseconds()
+    if (elapsed > 3000) {
+        println("too slow: {} ms", elapsed)
+    }
+    ret 0
+}

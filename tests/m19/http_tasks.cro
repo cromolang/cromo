@@ -1,0 +1,58 @@
+// The server of HTTP gives each connection a task (D270), without a fixed limit:
+// 500 clients, each a task, wait for a slow handler at the same time.
+// expect-output: responses 500
+// expect-output: more than 128 at once
+import std.http
+import std.os
+import std.thread
+import std.time
+
+struct Load {
+    i64 active
+    i64 peak
+}
+
+i32 main() {
+    http.Server server = http.listen("127.0.0.1", 0)
+    i32 port = server.port()
+    thread.Mutex<Load> load
+    thread.Thread t = thread.Thread([server, load]() {
+        server.serve([load](ref http.Request req, ref http.Response res) {
+            load.lock([](ref Load l) {
+                l.active++
+                if (l.active > l.peak) {
+                    l.peak = l.active
+                }
+            })
+            time.msleep(300)
+            load.lock([](ref Load l) { l.active-- })
+            if (req.matches("GET /{n}")) {
+                res.write(req.param("n"))
+            }
+        })
+    })
+    t.start()
+
+    string base = format("http://127.0.0.1:{}", port)
+    thread.Mutex<i64> answered
+    thread.Group clients
+    for (i64 i = 0; i < 500; i++) {
+        clients.start([base, i, answered]() {
+            http.Response r = http.get(format("{}/{}", base, i))
+            if (r.status == 200 && r.text() == format("{}", i)) {
+                answered.lock([](ref i64 n) { n++ })
+            }
+        })
+    }
+    clients.wait()
+    answered.lock([](ref i64 n) { println("responses {}", n) })
+    load.lock([](ref Load l) {
+        if (l.peak > 128) {
+            println("more than 128 at once")
+        } else {
+            println("peak {}", l.peak)
+        }
+    })
+    os.exit(0)
+    ret 0
+}

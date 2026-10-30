@@ -1,7 +1,12 @@
-// The module std.thread (D214-D217): threads and mutexes. The threads of the
-// system are in the runtime; the compiler keeps a thread whose lambda captures by
-// address in its block, and checks what the block does while it runs (D215).
+// The module std.thread (D214-D217, D269, D273): threads, tasks, groups of tasks
+// and mutexes. The threads of the system and the workers of the tasks are in the
+// runtime; the compiler keeps a thread or a task whose lambda captures by address
+// in its block, and checks what the block does while it runs (D215).
 import unsafe
+
+extern "cromo" {
+    addr cromo_group_new()
+}
 
 // A thread made from a lambda, started with start() and waited for with join().
 public struct Thread {
@@ -49,6 +54,93 @@ public struct Thread {
     bool started() const {
         addr none
         ret record != none
+    }
+}
+
+// A lightweight task (D269), with the interface and the rules of Thread: many of
+// them run on a few threads of the system. A task that waits for the network, for
+// time.sleep, for a mutex or for join() leaves its thread to the others.
+public struct Task {
+    func() body
+    addr record  // of the runtime, from start() on
+    bool joined
+
+    public Task(move func() work) {
+        body = move work
+    }
+
+    // A task still running is waited for; an exception that no join() took stops
+    // the program (D217).
+    ~Task() {
+        if (!started()) {
+            ret
+        }
+        if (!joined && threadWait(record)) {
+            threadUncaught(record)
+        }
+        threadFree(record)
+    }
+
+    public void start() {
+        if (started()) {
+            panic("the task is already started (D269)")
+        }
+        record = taskStart(body)
+    }
+
+    // Waits for the end of the task, and throws again its exception (D217).
+    public void join() {
+        if (!started()) {
+            panic("the task is not started: call start() first (D269)")
+        }
+        if (joined) {
+            panic("the task is already joined (D269)")
+        }
+        joined = true
+        if (threadWait(record)) {
+            threadRethrow(record)
+        }
+    }
+
+    bool started() const {
+        addr none
+        ret record != none
+    }
+}
+
+// Tasks started one by one, also in a loop (D273): they can read the variables
+// declared before the group, which stay constant until the end of its block, and
+// there the group waits for all of them.
+public struct Group {
+    addr record  // of the runtime, from the first start() on
+
+    // An exception that no wait() took stops the program (D217).
+    ~Group() {
+        addr none
+        if (record == none) {
+            ret
+        }
+        if (threadWait(record)) {
+            threadUncaught(record)
+        }
+        threadFree(record)
+    }
+
+    public void start(move func() work) {
+        addr none
+        if (record == none) {
+            record = cromo_group_new()
+        }
+        groupStart(record, move work)
+    }
+
+    // Waits for the tasks started so far, and throws again the first exception of
+    // one of them; the others are lost.
+    public void wait() {
+        addr none
+        if (record != none && threadWait(record)) {
+            threadRethrow(record)
+        }
     }
 }
 
