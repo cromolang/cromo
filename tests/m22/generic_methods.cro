@@ -1,0 +1,61 @@
+// Methods with type parameters of their own (D92): in a generic struct and in a
+// plain one, with the type arguments written or deduced, and map and filter of a
+// list.
+// expect-output: ["#1", "#2", "#3", "#4"]
+// expect-output: [2, 4]
+// expect-output: [0.5, 1.0, 1.5, 2.0]
+// expect-output: Pair { first: "<3>", second: "<4>" }
+// expect-output: 10 a
+// expect-output: [1, 2]
+// expect-output: 3
+struct Pair<A> {
+    public A first
+    public A second
+
+    public Pair<B> convert<B>(func(A) B f) const {
+        Pair<B> result
+        result.first = f(first)
+        result.second = f(second)
+        ret result
+    }
+}
+
+struct Counter {
+    i64 count
+
+    public T pick<T>(T a, T b) const {
+        if (count % 2 == 0) {
+            ret a.copy()
+        }
+        ret b.copy()
+    }
+}
+
+struct Holder {
+    list<i64> values
+
+    i64 longest() const {
+        ret values.map<string>([](i64 n) string { ret format("{}", n) }).filter([](string s) bool { ret s.len() > 1 }).len()
+    }
+}
+
+i32 main() {
+    list<i64> numbers = [1, 2, 3, 4]
+    list<string> texts = numbers.map<string>([](i64 n) string { ret format("#{}", n) })
+    println("{:?}", texts)
+    println("{:?}", numbers.filter([](i64 n) bool { ret n % 2 == 0 }))
+    println("{:?}", numbers.map<f64>([](i64 n) f64 { ret f64(n) / 2.0 }))
+    Pair<i64> p
+    p.first = 3
+    p.second = 4
+    Pair<string> q = p.convert<string>([](i64 n) string { ret format("<{}>", n) })
+    println("{:?}", q)
+    Counter c
+    println("{} {}", c.pick(i64(10), 20), c.pick("a", "b"))
+    list<list<i64>> nested = [[1], [2, 3]]
+    println("{:?}", nested.map<i64>([](list<i64> l) i64 { ret l.len() }))
+    Holder h
+    h.values = [5, 10, 200, 3000]
+    println("{}", h.longest())
+    ret 0
+}

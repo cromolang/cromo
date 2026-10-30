@@ -1,0 +1,18 @@
+// The errors of the methods with type parameters of their own (D92).
+// expect-error: 'T' is already a type parameter of Box
+// expect-error: cannot deduce U in this call of 'map': write the type arguments, map<...>(...) (D86)
+// expect-error: 'len' has no type parameters (D92)
+struct Box<T> {
+    T item
+
+    T get<T>() const {
+        ret item
+    }
+}
+
+i32 main() {
+    list<i64> numbers = [1, 2]
+    list<string> texts = numbers.map([](i64 n) string { ret "x" })
+    i64 n = numbers.len<i64>()
+    ret 0
+}

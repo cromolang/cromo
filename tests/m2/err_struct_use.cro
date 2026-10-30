@@ -1,6 +1,6 @@
 // expect-error: Point has no constructor: Point() gives its default value (D71)
 // expect-error: values of type File are not copied implicitly (D23)
-// expect-error: a Point cannot be printed yet (D76)
+// expect-error: a Point cannot be printed with {}: give it a method string text() const (D318), or print its form of debug with {:?} (D319)
 // expect-error: '==' does not work on structs yet (D76)
 // expect-error: 'x' is a field of Point: choose another name (D70)
 // expect-error: cannot call 'shift', which is not const (D24)

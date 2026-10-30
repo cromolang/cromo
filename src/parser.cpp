@@ -1373,8 +1373,20 @@ private:
                 expr = std::move(call);
                 continue;
             }
-            if (check(TokenKind::LParen)) {
+            if (check(TokenKind::LParen) || (check(TokenKind::Less) && skipTypeArgs(0) &&
+                                              peek(skipTypeArgs(0)).kind == TokenKind::LParen)) {
                 auto call = std::make_unique<MethodCallExpr>(name.loc, std::move(expr), name.text);
+                if (check(TokenKind::Less)) {  // `pairs[0].map<string>(f)` (D92)
+                    markAngle();
+                    advance();
+                    do {
+                        TypeName arg;
+                        if (!parseType(arg, false)) return nullptr;
+                        call->typeArgs.push_back(std::move(arg));
+                    } while (match(TokenKind::Comma));
+                    markAngle();
+                    if (!expect(TokenKind::Greater, "to close the type arguments")) return nullptr;
+                }
                 if (!parseArgs(call->args)) return nullptr;
                 expr = std::move(call);
             } else {

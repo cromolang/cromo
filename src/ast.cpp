@@ -67,6 +67,7 @@ ExprPtr cloneExpr(const Expr& expr) {
     case ExprKind::MethodCall: {
         const auto& from = static_cast<const MethodCallExpr&>(expr);
         auto to = std::make_unique<MethodCallExpr>(from.loc, clone(*from.object), from.method);
+        to->typeArgs = from.typeArgs;
         to->args = cloneAll(from.args);
         return to;
     }

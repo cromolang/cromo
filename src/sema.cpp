@@ -49,7 +49,7 @@ std::optional<Intrinsic> findIntrinsic(const std::string& name) {
         {"threadUncaught", Intrinsic::ThreadUncaught}, {"threadFree", Intrinsic::ThreadFree},
         {"mutexLock", Intrinsic::MutexLock}, {"mutexUnlock", Intrinsic::MutexUnlock},
         {"selfAddress", Intrinsic::SelfAddress}, {"equalAt", Intrinsic::EqualAt},
-        {"jsonWrite", Intrinsic::JsonWrite}, {"jsonRead", Intrinsic::JsonRead},
+        {"jsonWrite", Intrinsic::JsonWrite}, {"jsonRead", Intrinsic::JsonRead}, {"debugWrite", Intrinsic::DebugWrite},
         {"taskStart", Intrinsic::TaskStart}, {"groupStart", Intrinsic::GroupStart},
     };
     auto found = intrinsics.find(name);
@@ -278,6 +278,7 @@ public:
         mapDecl_ = library.structs.count("map") ? library.structs["map"] : nullptr;
         keyInterface_ = library.interfaces.count("Key") ? library.interfaces["Key"] : nullptr;
         exceptionDecl_ = library.interfaces.count("Exception") ? library.interfaces["Exception"] : nullptr;
+        debugInterface_ = library.interfaces.count("Debug") ? library.interfaces["Debug"] : nullptr;
         for (InterfaceDecl& decl : module_.interfaces) {  // only when the program imports std.json (D251)
             if (decl.name == "Data" && fileOf(decl.loc.file).name == "std.json") dataInterface_ = &decl;
         }
@@ -295,10 +296,19 @@ public:
         }
         declareFunctions();
         checkPublicSignatures();
+        // A method with type parameters of its own is checked once, with them as types (D52, D92).
+        for (StructDecl& decl : module_.structs) {
+            if (!decl.typeParams.empty()) continue;
+            for (FunctionDecl& member : decl.members) {
+                if (!member.typeParams.empty()) instantiateMethod(member, ownParams(member.typeParams), member.loc);
+            }
+        }
         checkBodies(definitions_);
         for (StructDecl& decl : module_.structs) {
             if (!decl.typeParams.empty()) continue;
-            for (FunctionDecl& member : decl.members) checkFunction(member);
+            for (FunctionDecl& member : decl.members) {
+                if (member.typeParams.empty()) checkFunction(member);
+            }
         }
         for (FunctionDecl& function : module_.functions) {
             if (function.typeParams.empty() && !function.isExtern) checkFunction(function);
@@ -505,7 +515,8 @@ private:
                 }
                 names[method.name] = &method;
                 if (!method.typeParams.empty()) {
-                    diag_->error(method.typeParams[0].loc, "methods with type parameters of their own will come later (D92)");
+                    diag_->error(method.typeParams[0].loc, "a method of an interface cannot have type parameters of its "
+                                                           "own: its table has one entry for each method (D92)");
                 }
                 resolveSignature(method);
                 bool usesSelf = method.resolvedReturn.kind == TypeKind::SelfType;
@@ -537,7 +548,19 @@ private:
                 }
             }
         };
-        for (StructDecl& decl : module_.structs) declare(decl.typeParams);
+        for (StructDecl& decl : module_.structs) {
+            declare(decl.typeParams);
+            for (FunctionDecl& member : decl.members) {
+                declare(member.typeParams);
+                for (const TypeParam& param : member.typeParams) {
+                    for (const TypeParam& outer : decl.typeParams) {
+                        if (param.name == outer.name) {
+                            diag_->error(param.loc, "'" + param.name + "' is already a type parameter of " + decl.name);
+                        }
+                    }
+                }
+            }
+        }
         for (FunctionDecl& function : module_.functions) declare(function.typeParams);
     }
 
@@ -598,6 +621,7 @@ private:
     bool satisfies(Type type, const InterfaceDecl* iface) {
         if (iface == keyInterface_ && (type.isNumeric() || type.isBool())) return true;  // D198
         if (iface == dataInterface_ && !type.isParam() && jsonProblem(type).empty()) return true;  // D251
+        if (iface == debugInterface_ && !type.isParam() && debugProblem(type).empty()) return true;  // D319
         std::vector<const InterfaceDecl*> list;
         if (type.isStruct()) list = implementsOf(*type.structDecl);
         if (type.isParam()) list = type.param->interfaces;
@@ -610,6 +634,17 @@ private:
         for (size_t i = 0; i < params.size(); ++i) {
             for (const InterfaceDecl* iface : params[i].interfaces) {
                 if (satisfies(args[i], iface)) continue;
+                if (iface == debugInterface_) {
+                    if (args[i].isParam()) {
+                        diag_->error(loc, args[i].name() + " can be printed with {:?} only with a constraint: write <" +
+                                              args[i].name() + " : Debug> (D52, D319)");
+                    } else {
+                        diag_->error(loc, "values of type " + args[i].name() + " cannot be printed with {:?} (D319): " +
+                                              debugProblem(args[i]));
+                    }
+                    ok = false;
+                    continue;
+                }
                 if (iface == dataInterface_) {
                     if (args[i].isParam()) {
                         diag_->error(loc, args[i].name() + " can be converted to JSON only with a constraint: write <" +
@@ -680,7 +715,13 @@ private:
         completeStruct(*result);
         if (definition && diag_->errorCount() > before) failed_.insert(&generic);
         if (definition) {
-            for (FunctionDecl& member : result->members) schedule(member, &generic, true, result->name, useLoc);
+            for (FunctionDecl& member : result->members) {
+                if (member.typeParams.empty()) {
+                    schedule(member, &generic, true, result->name, useLoc);
+                } else {
+                    instantiateMethod(member, ownParams(member.typeParams), member.loc);
+                }
+            }
         } else if (!result->isAbstract && result->destructor) {
             // D103: the other methods are checked when they are used.
             schedule(*result->destructor, &generic, false, result->name, useLoc);
@@ -720,10 +761,48 @@ private:
         return result;
     }
 
+    // A method with type parameters of its own (D92): an instance for each set of
+    // type arguments, with the bindings of its struct and its own; with its own
+    // parameters as types, the check of the generic (D52).
+    FunctionDecl* instantiateMethod(FunctionDecl& generic, const std::vector<Type>& args, SourceLocation useLoc) {
+        std::string key = instanceKey(&generic, args);
+        auto found = functionInstances_.find(key);
+        if (found != functionInstances_.end()) return found->second;
+        bool definition = isDefinitionArgs(generic.typeParams, args);
+        if (!definition && failed_.count(&generic)) return nullptr;
+        std::string what = "'" + generic.name + "'";
+        if (!checkConstraints(generic.typeParams, args, what, useLoc) || tooDeep(args, generic.name, useLoc)) return nullptr;
+
+        const StructDecl& owner = *generic.owner;
+        auto instance = std::make_unique<FunctionDecl>(clone(generic));
+        instance->typeParams.clear();
+        instance->owner = generic.owner;
+        instance->symbol = owner.symbol + "." + instanceName(generic.name, args, true);
+        instance->generic = &generic;
+        instance->genericMethod = true;
+        instance->typeBindings = generic.typeBindings;
+        for (const auto& binding : bind(generic.typeParams, args)) instance->typeBindings.push_back(binding);
+        instance->isAbstract = owner.isAbstract;
+        for (Type arg : args) instance->isAbstract = instance->isAbstract || isAbstract(arg);
+        instance->isDefinition = definition;
+        FunctionDecl* result = instance.get();
+        module_.functionInstances.push_back(std::move(instance));
+        functionInstances_[key] = result;
+
+        int before = diag_->errorCount();
+        {
+            BindingsScope scope(bindings_, &result->typeBindings);
+            resolveSignature(*result);
+        }
+        if (definition && diag_->errorCount() > before) failed_.insert(&generic);
+        if (definition || !result->isAbstract) schedule(*result, &generic, definition, owner.name + "." + generic.name, useLoc);
+        return result;
+    }
+
     // D103: a method of an instance of a generic struct with real types is checked,
     // and emitted, the first time it is used.
     void use(FunctionDecl* member, SourceLocation loc) {
-        if (!member || member->scheduled || member->isGenerated || !member->owner) return;
+        if (!member || member->scheduled || member->isGenerated || !member->owner || !member->typeParams.empty()) return;
         const StructDecl& owner = *member->owner;
         if (!owner.generic || owner.isAbstract) return;
         schedule(*member, owner.generic, false, owner.name, loc);
@@ -975,8 +1054,9 @@ private:
             member.owner = &decl;
             member.typeBindings = decl.typeBindings;
             member.isAbstract = decl.isAbstract;
-            if (!member.typeParams.empty()) {
-                diag_->error(member.typeParams[0].loc, "methods with type parameters of their own will come later (D92)");
+            if (!member.typeParams.empty() && member.kind != FunctionKind::Method) {
+                diag_->error(member.typeParams[0].loc, "only a method can have type parameters of its own (D92)");
+                member.typeParams.clear();
             }
             if (member.kind == FunctionKind::Constructor) {
                 if (decl.constructor) diag_->error(member.loc, "a struct has only one constructor (D69)");
@@ -996,7 +1076,9 @@ private:
         }
 
         layout(decl);
-        for (FunctionDecl& member : decl.members) resolveSignature(member);
+        for (FunctionDecl& member : decl.members) {
+            if (member.typeParams.empty()) resolveSignature(member);  // a generic method: in its instances (D92)
+        }
         checkCopySignature(decl);
         checkImplements(decl);
     }
@@ -2898,6 +2980,21 @@ private:
             reportPrivate(call.loc, "method '" + call.method + "' of " + object.name());
             return Type::error();
         }
+        if (!method->typeParams.empty()) {  // its instance, with the type arguments written or deduced (D92)
+            std::vector<Type> args;
+            bool ok = call.typeArgs.empty()
+                          ? !failed_.count(method) && deduceTypeArgs(*method, call.args, call.loc, args)
+                          : resolveTypeArgs(call.typeArgs, method->typeParams.size(), "'" + call.method + "'", call.loc, args);
+            FunctionDecl* instance = ok ? instantiateMethod(*method, args, call.loc) : nullptr;
+            if (!instance) {
+                checkIgnored(call.args);
+                return Type::error();
+            }
+            method = instance;
+        } else if (!call.typeArgs.empty()) {
+            diag_->error(call.loc, "'" + call.method + "' has no type parameters (D92)");
+            return Type::error();
+        }
         if (!method->isConst) {
             std::string reason = readOnlyReason(*call.object);
             if (!reason.empty()) {
@@ -3339,6 +3436,193 @@ private:
         return type.isStruct() && type.structDecl->name == "Value" && fileOf(type.structDecl->loc.file).name == "std.json";
     }
 
+    // ---- The form of debug (D319) ----
+
+    // Why the values of `type` have no form of debug, or "" when they have one: all
+    // the types but the functions and the interfaces, and what holds them.
+    std::string debugProblem(Type type) {
+        std::set<const StructDecl*> visiting;
+        return debugProblem(type, "", visiting);
+    }
+
+    std::string debugProblem(Type type, const std::string& place, std::set<const StructDecl*>& visiting) {
+        auto bad = [&](const std::string& reason) {
+            if (place.empty()) return reason.empty() ? std::string("it has no form of debug") : reason;
+            return place + " has type " + type.name() + (reason.empty() ? "" : " (" + reason + ")");
+        };
+        if (type.isBool() || type.isNumeric() || type.isError()) return "";
+        if (type.isParam()) {
+            const auto& constraints = type.param->interfaces;
+            if (std::find(constraints.begin(), constraints.end(), debugInterface_) != constraints.end()) return "";
+            return bad("it is not constrained to Debug");
+        }
+        if (type.isArray()) return debugProblem(type.array->element, place.empty() ? "an element" : place + "[i]", visiting);
+        if (!type.isStruct()) return bad("");
+        const StructDecl& decl = *type.structDecl;
+        if (&decl == stringDecl_) return "";
+        if (isList(type)) return debugProblem(elementOf(type), place.empty() ? "an element" : place + "[i]", visiting);
+        if (isMap(type)) {
+            std::string problem = debugProblem(decl.typeArgs[0], place.empty() ? "a key" : place + " key", visiting);
+            if (!problem.empty()) return problem;
+            return debugProblem(decl.typeArgs[1], place.empty() ? "a value" : place + "[key]", visiting);
+        }
+        if (!visiting.insert(&decl).second) return "";  // already being checked: it contains a list of itself
+        std::string base = place.empty() ? debugName(decl) : place;
+        for (const EnumCase& item : decl.cases) {
+            for (const FieldDecl& field : item.fields) {
+                std::string problem = debugProblem(field.resolved, base + "." + item.name, visiting);
+                if (!problem.empty()) return problem;
+            }
+        }
+        for (const FieldDecl& field : decl.fields) {
+            std::string problem = debugProblem(field.resolved, base + "." + field.name, visiting);
+            if (!problem.empty()) return problem;
+        }
+        return "";
+    }
+
+    // The name in the form of debug: "Box" also for Box<i64>, as Rust prints it.
+    static std::string debugName(const StructDecl& decl) { return decl.generic ? decl.generic->name : decl.name; }
+
+    // `debugWrite<T>(ref out, value)` of the core: for a real T, the call of
+    // debugString, of an instance of debugList or debugMap, or of a function
+    // generated for the numbers, the arrays, the structs and the enums (D319).
+    Type checkDebug(CallExpr& call) {
+        std::string what = "'" + call.callee + "'";
+        std::vector<Type> args;
+        if (!resolveTypeArgs(call.typeArgs, 1, what, call.loc, args)) {
+            checkIgnored(call.args);
+            return Type::error();
+        }
+        Type type = args[0];
+        call.typeArg = type;
+        if (isAbstract(type)) {  // the check of a generic of the core (D52)
+            if (call.args.size() != 2) {
+                diag_->error(call.loc, what + " takes 2 arguments");
+                checkIgnored(call.args);
+                return Type::error();
+            }
+            Param target;
+            target.mode = ParamMode::Ref;
+            target.name = "out";
+            bool ok = checkArg(call.args[0], target, stringType());
+            ok = checkArg(call.args[1], Param{}, type) && ok;
+            return ok ? Type::voidType() : Type::error();
+        }
+        FunctionDecl* function = debugFunction(type, call.loc);
+        if (!function) {
+            checkIgnored(call.args);
+            return Type::error();
+        }
+        call.intrinsic = Intrinsic::None;
+        call.function = function;
+        noteCall(function, call.loc);
+        if (!checkArgs(call.args, *function, what, call.loc, &call.overlaps)) return Type::error();
+        return Type::voidType();
+    }
+
+    FunctionDecl* debugFunction(Type type, SourceLocation loc) {
+        std::string problem = debugProblem(type);
+        if (!problem.empty()) {
+            diag_->error(loc, "values of type " + type.name() + " cannot be printed with {:?} (D319): " + problem);
+            return nullptr;
+        }
+        auto library = [&](const std::string& name) -> FunctionDecl* {
+            auto found = modules_[kLibraryFile].functions.find(name);
+            if (found == modules_[kLibraryFile].functions.end()) {
+                diag_->error(loc, "the standard library has no function '" + name + "'");
+                return nullptr;
+            }
+            return found->second;
+        };
+        if (type.isStruct()) {
+            const StructDecl& decl = *type.structDecl;
+            if (&decl == stringDecl_) return library("debugString");
+            if (isList(type) || isMap(type)) {
+                FunctionDecl* generic = library(isList(type) ? "debugList" : "debugMap");
+                if (!generic) return nullptr;
+                return instantiateFunction(*generic, decl.typeArgs, loc);
+            }
+        }
+        return generatedDebug(type, loc);
+    }
+
+    // The writer of the form of debug of a number, an array, a struct or an enum,
+    // written in Cromo and checked as an instance with the types of its parts, in
+    // the scope of the core; it reads the private fields too, as copy().
+    FunctionDecl* generatedDebug(Type type, SourceLocation loc) {
+        std::string key = type.isStruct() ? "struct " + std::to_string(reinterpret_cast<uintptr_t>(type.structDecl))
+                                          : type.name();
+        auto found = debugFunctions_.find(key);
+        if (found != debugFunctions_.end()) return found->second;
+        TypeBindings bindings = {{"T", type}};
+        std::string text = debugWriter(type, bindings);
+        SourceFile& source = generatedSources_.emplace_back(SourceFile{"<debug>", text});
+        Module parsed = parse(tokenize(source, kLibraryFile, *diag_), *diag_);
+        if (parsed.functions.size() != 1) {
+            diag_->error(loc, "internal error: the form of debug of " + type.name() + " does not parse");
+            return nullptr;
+        }
+        auto function = std::make_unique<FunctionDecl>(std::move(parsed.functions[0]));
+        function->typeBindings = std::move(bindings);
+        function->convertsJson = true;  // the private fields too
+        function->symbol = symbolFor(loc, "debug." + (type.isStruct() ? type.structDecl->symbol : type.name()));
+        FunctionDecl* result = function.get();
+        module_.functionInstances.push_back(std::move(function));
+        debugFunctions_[key] = result;
+        {
+            BindingsScope scope(bindings_, &result->typeBindings);
+            resolveSignature(*result);
+        }
+        schedule(*result, type.isStruct() ? type.structDecl : nullptr, false, type.name(), loc);
+        return result;
+    }
+
+    // `Point { x: 1, y: 2 }`, `Circle(2.5)`, `[1, 2]`, or the number as {} prints it.
+    std::string debugWriter(Type type, TypeBindings& bindings) const {
+        std::string text = "void write(ref string out, T value) {\n";
+        if (type.isFloat()) {  // 1.0, not 1: a float looks different from an integer, as in JSON (D264)
+            return text + "string number = format(\"{}\", value)\nout += number\n"
+                          "if (!number.contains(\".\") && !number.contains(\"e\") && !number.contains(\"n\")) {\n"
+                          "out += \".0\"\n}\n}\n";
+        }
+        if (type.isNumeric() || type.isBool()) return text + "out += format(\"{}\", value)\n}\n";
+        if (type.isArray()) {
+            bindings.emplace_back("E", type.array->element);
+            return text + "out += \"[\"\nfor (i64 i = 0; i < value.len(); i++) {\nif (i > 0) {\nout += \", \"\n}\n"
+                          "debugWrite<E>(ref out, value[i])\n}\nout += \"]\"\n}\n";
+        }
+        const StructDecl& decl = *type.structDecl;
+        if (decl.isEnum) {
+            text += "switch (value) {\n";
+            for (size_t c = 0; c < decl.cases.size(); ++c) {
+                const EnumCase& item = decl.cases[c];
+                std::string bound;
+                std::string body = "out += " + quoted(item.name + (item.fields.empty() ? "" : "(")) + "\n";
+                for (size_t i = 0; i < item.fields.size(); ++i) {
+                    std::string param = "C" + std::to_string(c) + "_" + std::to_string(i);
+                    bindings.emplace_back(param, item.fields[i].resolved);
+                    bound += (i ? ", " : "") + param + " b" + std::to_string(i);
+                    if (i) body += "out += \", \"\n";
+                    body += "debugWrite<" + param + ">(ref out, b" + std::to_string(i) + ")\n";
+                }
+                if (!item.fields.empty()) body += "out += \")\"\n";
+                text += "case " + item.name + (item.fields.empty() ? "" : "(" + bound + ")") + " {\n" + body + "}\n";
+            }
+            return text + "}\n}\n";
+        }
+        if (decl.fields.empty()) return text + "out += " + quoted(debugName(decl)) + "\n}\n";
+        text += "out += " + quoted(debugName(decl) + " { ") + "\n";
+        for (size_t i = 0; i < decl.fields.size(); ++i) {
+            const FieldDecl& field = decl.fields[i];
+            std::string param = "F" + std::to_string(i);
+            bindings.emplace_back(param, field.resolved);
+            text += "out += " + quoted((i ? ", " : "") + field.name + ": ") + "\n";
+            text += "debugWrite<" + param + ">(ref out, value." + field.name + ")\n";
+        }
+        return text + "out += \" }\"\n}\n";
+    }
+
     // Why the values of `type` cannot be converted to JSON (D251), or "" when they
     // can: the numbers, bool, string, json.Value, list<T> and map<string, T> of
     // them, the enums without data, and the structs whose fields can be converted.
@@ -3562,6 +3846,7 @@ private:
     Type checkIntrinsic(CallExpr& call, Intrinsic kind) {
         call.intrinsic = kind;
         if (kind == Intrinsic::JsonWrite || kind == Intrinsic::JsonRead) return checkJson(call, kind == Intrinsic::JsonWrite);
+        if (kind == Intrinsic::DebugWrite) return checkDebug(call);
         bool generic = kind == Intrinsic::SizeOf || kind == Intrinsic::Take || kind == Intrinsic::Put ||
                        kind == Intrinsic::Destroy || kind == Intrinsic::CopyAt || kind == Intrinsic::EqualAt;
         std::string what = "'" + call.callee + "'";
@@ -3979,6 +4264,18 @@ private:
         auto& call = static_cast<CallExpr&>(*expr);
         bool typed = !call.typeArgs.empty();
         bool qualified = !call.module.empty();  // `geometry.area(c)` (D126)
+        if (qualified && typed && (lookup(call.module) || ownFieldIndex(call.module) >= 0)) {
+            // `values.map<string>(f)`: a generic method of a variable or of a field (D92).
+            SourceLocation loc = call.loc;
+            ExprPtr object = lookup(call.module)
+                                 ? ExprPtr(std::make_unique<NameExpr>(loc, call.module))
+                                 : ExprPtr(std::make_unique<FieldExpr>(loc, std::make_unique<SelfExpr>(loc), call.module));
+            auto method = std::make_unique<MethodCallExpr>(loc, std::move(object), call.callee);
+            method->typeArgs = std::move(call.typeArgs);
+            method->args = std::move(call.args);
+            expr = std::move(method);
+            return checkMethodCall(expr);
+        }
 
         if (!typed && !qualified) {
             if (std::optional<Type> target = findBuiltinType(call.callee)) return checkConversion(expr, *target);
@@ -4147,27 +4444,34 @@ private:
             if (!resolveTypeArgs(call.typeArgs, generic.typeParams.size(), what, call.loc, args)) return nullptr;
             return instantiateFunction(generic, args, call.loc);
         }
-        if (failed_.count(&generic)) return nullptr;
+        if (failed_.count(&generic) || !deduceTypeArgs(generic, call.args, call.loc, args)) return nullptr;
+        return instantiateFunction(generic, args, call.loc);
+    }
+
+    // The type arguments of a call of a generic, from its arguments (D86).
+    bool deduceTypeArgs(const FunctionDecl& generic, const std::vector<ExprPtr>& callArgs, SourceLocation loc,
+                        std::vector<Type>& args) {
+        std::string what = "'" + generic.name + "'";
         size_t expected = generic.params.size();
-        if (call.args.size() != expected) {
-            diag_->error(call.loc, what + " takes " + std::to_string(expected) + (expected == 1 ? " argument, but " : " arguments, but ") +
-                                       std::to_string(call.args.size()) + " were given");
-            return nullptr;
+        if (callArgs.size() != expected) {
+            diag_->error(loc, what + " takes " + std::to_string(expected) + (expected == 1 ? " argument, but " : " arguments, but ") +
+                                  std::to_string(callArgs.size()) + " were given");
+            return false;
         }
         std::vector<std::optional<Type>> deduced(generic.typeParams.size());
-        for (size_t i = 0; i < call.args.size(); ++i) {
-            std::optional<Type> type = argumentType(*call.args[i]);
-            if (type && !deduce(generic.params[i].type, *type, generic, deduced, call.args[i]->loc)) return nullptr;
+        for (size_t i = 0; i < callArgs.size(); ++i) {
+            std::optional<Type> type = argumentType(*callArgs[i]);
+            if (type && !deduce(generic.params[i].type, *type, generic, deduced, callArgs[i]->loc)) return false;
         }
         for (size_t i = 0; i < deduced.size(); ++i) {
             if (!deduced[i]) {
-                diag_->error(call.loc, "cannot deduce " + generic.typeParams[i].name + " in this call of " + what +
-                                           ": write the type arguments, " + generic.name + "<...>(...) (D86)");
-                return nullptr;
+                diag_->error(loc, "cannot deduce " + generic.typeParams[i].name + " in this call of " + what +
+                                      ": write the type arguments, " + generic.name + "<...>(...) (D86)");
+                return false;
             }
             args.push_back(*deduced[i]);
         }
-        return instantiateFunction(generic, args, call.loc);
+        return true;
     }
 
     // The type of an argument, checked on a copy without reporting errors: it
@@ -4357,10 +4661,6 @@ private:
                 } else if (type.isVoid()) {
                     diag_->error(arg->loc, "this call does not return a value");
                     ok = false;
-                } else if ((type.isStruct() && !isString(type)) || type.isParam() || type.isInterface() || type.isArray() ||
-                           type.isFunction()) {
-                    diag_->error(arg->loc, "a " + type.name() + " cannot be printed yet (D76)");
-                    ok = false;
                 } else if (type.isError()) {
                     ok = false;
                 }
@@ -4368,13 +4668,138 @@ private:
             print->args.push_back(std::move(arg));
         }
 
-        if (ok) parseFormat(text, formatLoc, *print);
+        if (ok) ok = parseFormat(text, formatLoc, *print) && printable(*print, formatLoc);
         expr = std::move(print);
         if (format) return ok ? stringType() : Type::error();
         return Type::voidType();
     }
 
-    void parseFormat(const std::string& format, SourceLocation loc, PrintExpr& print) {
+    // After the format: an argument of {:?} becomes debugText(x) (D319), a struct of
+    // {} becomes x.text() (D318); then the specifications are checked against the
+    // types to print.
+    bool printable(PrintExpr& print, SourceLocation loc) {
+        std::vector<bool> debug(print.args.size(), false);
+        std::vector<bool> plain(print.args.size(), false);
+        for (FormatPiece& piece : print.pieces) {
+            if (piece.arg < 0) continue;
+            (piece.spec.type == '?' ? debug : plain)[piece.arg] = true;
+            if (piece.spec.type == '?') piece.spec.type = 0;
+        }
+        bool ok = true;
+        for (size_t i = 0; i < print.args.size(); ++i) {
+            ExprPtr& arg = print.args[i];
+            Type type = arg->type;
+            if (debug[i] && plain[i] && !basicPrintable(type)) {
+                diag_->error(arg->loc, "this argument is printed both with {} and with {:?}: pass it twice (D319)");
+                ok = false;
+            } else if (debug[i]) {
+                ok = toDebugText(arg) && ok;
+            } else if (!basicPrintable(type)) {
+                ok = toText(arg) && ok;
+            }
+        }
+        if (!ok) return false;
+        for (const FormatPiece& piece : print.pieces) {
+            if (piece.arg >= 0 && piece.hasSpec && !validateSpec(piece.spec, print.args[piece.arg]->type, loc)) return false;
+        }
+        return true;
+    }
+
+    // What {} prints by itself: the numbers, bool and string (D38).
+    bool basicPrintable(Type type) const {
+        return type.isNumeric() || type.isBool() || isString(type) || type == Type::stringType();  // and string literals
+    }
+
+    // `x` printed with {:?}: debugText<T>(x) of the core (D319).
+    bool toDebugText(ExprPtr& arg) {
+        Type type = arg->type;
+        if (arg->kind == ExprKind::StringLiteral) {  // its form is known here, as debugString writes it
+            auto& literal = static_cast<StringLiteralExpr&>(*arg);
+            std::string text = "\"";
+            for (char c : literal.value) {
+                auto byte = static_cast<unsigned char>(c);
+                if (c == '"' || c == '\\') {
+                    text += std::string("\\") + c;
+                } else if (c == '\n') {
+                    text += "\\n";
+                } else if (c == '\r') {
+                    text += "\\r";
+                } else if (c == '\t') {
+                    text += "\\t";
+                } else if (byte < 0x20 || byte == 0x7F) {
+                    const char* hex = "0123456789abcdef";
+                    text += std::string("\\x") + hex[byte >> 4] + hex[byte & 15];
+                } else {
+                    text += c;
+                }
+            }
+            literal.value = text + "\"";
+            return true;
+        }
+        if (type.isParam()) {
+            const auto& constraints = type.param->interfaces;
+            if (std::find(constraints.begin(), constraints.end(), debugInterface_) == constraints.end()) {
+                diag_->error(arg->loc, type.name() + " can be printed with {:?} only with a constraint: write <" + type.name() +
+                                           " : Debug> (D52, D319)");
+                return false;
+            }
+        } else {
+            std::string problem = debugProblem(type);
+            if (!problem.empty()) {
+                diag_->error(arg->loc, "values of type " + type.name() + " cannot be printed with {:?} (D319): " + problem);
+                return false;
+            }
+        }
+        auto found = modules_[kLibraryFile].functions.find("debugText");
+        if (found == modules_[kLibraryFile].functions.end()) {
+            diag_->error(arg->loc, "the standard library has no debugText");
+            return false;
+        }
+        FunctionDecl* function = instantiateFunction(*found->second, {type}, arg->loc);
+        if (!function) return false;
+        use(function, arg->loc);
+        noteCall(function, arg->loc);
+        SourceLocation loc = arg->loc;
+        auto call = std::make_unique<CallExpr>(loc, "debugText");
+        call->function = function;
+        call->args.push_back(std::move(arg));
+        call->type = stringType();
+        arg = std::move(call);
+        return true;
+    }
+
+    // A struct or an enum printed with {}: its method text() (D318).
+    bool toText(ExprPtr& arg) {
+        Type type = arg->type;
+        FunctionDecl* method = nullptr;
+        if (type.isStruct()) {
+            auto found = type.structDecl->methods.find("text");
+            if (found != type.structDecl->methods.end()) method = found->second;
+        }
+        if (!type.isStruct()) {  // an array, a function, an interface or a T: no methods of its own
+            diag_->error(arg->loc, "a " + type.name() + " cannot be printed with {}: print its form of debug with {:?} (D319)");
+            return false;
+        }
+        if (!method || !method->params.empty() || !method->isConst || !isString(method->resolvedReturn)) {
+            diag_->error(arg->loc, "a " + type.name() + " cannot be printed with {}: give it a method string text() const "
+                                                         "(D318), or print its form of debug with {:?} (D319)");
+            return false;
+        }
+        if (!memberVisible(*method, *type.structDecl, arg->loc)) {
+            reportPrivate(arg->loc, "method 'text' of " + type.name());
+            return false;
+        }
+        use(method, arg->loc);
+        noteCall(method, arg->loc);
+        SourceLocation loc = arg->loc;
+        auto call = std::make_unique<MethodCallExpr>(loc, std::move(arg), "text");
+        call->function = method;
+        call->type = stringType();
+        arg = std::move(call);
+        return true;
+    }
+
+    bool parseFormat(const std::string& format, SourceLocation loc, PrintExpr& print) {
         std::string text;
         int nextAuto = 0;
         bool usedAuto = false;
@@ -4390,7 +4815,7 @@ private:
                     continue;
                 }
                 diag_->error(loc, "single '}' in the format string: write '}}' for a brace");
-                return;
+                return false;
             }
             if (c != '{') {
                 text += c;
@@ -4404,7 +4829,7 @@ private:
             size_t close = format.find('}', i);
             if (close == std::string::npos) {
                 diag_->error(loc, "'{' without a matching '}' in the format string: write '{{' for a brace");
-                return;
+                return false;
             }
             std::string inside = format.substr(i + 1, close - i - 1);
             i = close;
@@ -4424,7 +4849,7 @@ private:
                 for (char d : id) {
                     if (d < '0' || d > '9') {
                         diag_->error(loc, "invalid placeholder '{" + inside + "}'");
-                        return;
+                        return false;
                     }
                 }
                 usedManual = true;
@@ -4432,32 +4857,34 @@ private:
             }
             if (usedAuto && usedManual) {
                 diag_->error(loc, "cannot mix automatic '{}' and numbered '{0}' placeholders");
-                return;
+                return false;
             }
             if (piece.arg >= static_cast<int>(print.args.size())) {
                 diag_->error(loc, "the format string needs at least " + std::to_string(piece.arg + 1) + " arguments, but " +
                                      std::to_string(print.args.size()) + " were given");
-                return;
+                return false;
             }
             if (colon != std::string::npos) {
                 piece.hasSpec = true;
                 std::string spec = inside.substr(colon + 1);
                 if (!parseSpec(spec, piece.spec)) {
                     diag_->error(loc, "invalid format specification '" + spec + "'");
-                    return;
+                    return false;
                 }
-                if (!validateSpec(piece.spec, print.args[piece.arg]->type, loc)) return;
             }
             used[piece.arg] = true;
             print.pieces.push_back(piece);
         }
         if (!text.empty()) print.pieces.push_back(FormatPiece{text});
 
+        bool ok = true;
         for (size_t i = 0; i < used.size(); ++i) {
             if (!used[i]) {
                 diag_->error(print.args[i]->loc, "this argument is not used by the format string");
+                ok = false;
             }
         }
+        return ok;
     }
 
     // [[fill]align][sign]['#']['0'][width]['.' precision][type]
@@ -4497,7 +4924,7 @@ private:
             if (precision > kMaxPrecision) return false;
             spec.precision = precision;
         }
-        if (p < text.size() && std::strchr("dxXbocefgs", text[p])) spec.type = text[p++];
+        if (p < text.size() && std::strchr("dxXbocefgs?", text[p])) spec.type = text[p++];
         return p == text.size();
     }
 
@@ -4555,6 +4982,8 @@ private:
     // conversions generated for structs and enums, with their texts.
     const InterfaceDecl* dataInterface_ = nullptr;
     std::map<std::pair<bool, const StructDecl*>, FunctionDecl*> jsonFunctions_;
+    const InterfaceDecl* debugInterface_ = nullptr;
+    std::map<std::string, FunctionDecl*> debugFunctions_;  // the writers of the form of debug (D319)
     std::deque<SourceFile> generatedSources_;
     bool selfAllowed_ = false;                // while resolving the methods of interfaces
     std::map<const StructDecl*, int> layoutState_;  // 0 to do, 1 in progress, 2 done

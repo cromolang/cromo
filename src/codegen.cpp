@@ -126,7 +126,8 @@ int fieldIndexOf(const StructDecl& decl, const std::string& name) {
 std::string symbolOf(const FunctionDecl& function) {
     switch (function.kind) {
     case FunctionKind::Free: return llvmName('@', function.symbol);
-    case FunctionKind::Method: return methodSymbol(*function.owner, function.name);
+    case FunctionKind::Method:  // an instance with type arguments of its own has its own name (D92)
+        return function.genericMethod ? llvmName('@', function.symbol) : methodSymbol(*function.owner, function.name);
     case FunctionKind::Constructor: return constructorSymbol(*function.owner);
     case FunctionKind::Destructor: return dropSymbol(*function.owner);
     }

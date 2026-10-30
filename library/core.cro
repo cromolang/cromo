@@ -85,6 +85,39 @@ public struct list<T> {
         ret result
     }
 
+    // A new list with what `f` gives for each element (D92).
+    public list<U> map<U>(func(T) U f) const {
+        list<U> result
+        result.reserve(length)
+        for (i64 i = 0; i < length; i++) {
+            T value = take<T>(addressOf(i))  // lent to f, and given back also if f throws
+            try {
+                result.add(f(value))
+            } finally {
+                put<T>(addressOf(i), move value)
+            }
+        }
+        ret result
+    }
+
+    // A copy of the elements for which `keep` is true.
+    public list<T> filter(func(T) bool keep) const {
+        list<T> result
+        for (i64 i = 0; i < length; i++) {
+            T value = take<T>(addressOf(i))
+            bool kept = false
+            try {
+                kept = keep(value)
+            } finally {
+                put<T>(addressOf(i), move value)
+            }
+            if (kept) {
+                result.add(copyAt<T>(addressOf(i)))
+            }
+        }
+        ret result
+    }
+
     addr addressOf(i64 index) const {
         ret offset(data, index * sizeOf<T>())
     }
@@ -391,6 +424,73 @@ public string join(list<string> parts, string separator) {
         result.append(parts[i])
     }
     ret result
+}
+
+// ---- The form of debug of the values (D319) ----
+//
+// Every type has it but the functions and the interfaces: `{:?}` prints the text
+// of debugText. The compiler turns debugWrite<T> into the function for T: one of
+// these for a string, a list and a map, and one that it generates for the
+// numbers, the arrays, the structs and the enums.
+
+// The types that have a form of debug: all of them by themselves, as json.Data.
+public interface Debug { }
+
+public string debugText<T : Debug>(T value) {
+    string out
+    debugWrite<T>(ref out, value)
+    ret out
+}
+
+// Between quotes, with the escapes of Cromo.
+void debugString(ref string out, string value) {
+    out += "\""
+    for (i64 i = 0; i < value.len(); i++) {
+        u8 c = value[i]
+        if (c == '"') {
+            out += "\\\""
+        } else if (c == '\\') {
+            out += "\\\\"
+        } else if (c == '\n') {
+            out += "\\n"
+        } else if (c == '\r') {
+            out += "\\r"
+        } else if (c == '\t') {
+            out += "\\t"
+        } else if (c < 0x20 || c == 0x7F) {
+            out += format("\\x{:02x}", c)
+        } else {
+            out.appendBytes(offset(value.data, i), 1)
+        }
+    }
+    out += "\""
+}
+
+void debugList<T : Debug>(ref string out, list<T> values) {
+    out += "["
+    for (i64 i = 0; i < values.len(); i++) {
+        if (i > 0) {
+            out += ", "
+        }
+        debugWrite<T>(ref out, values[i])
+    }
+    out += "]"
+}
+
+// In the order of the map, which is not defined.
+void debugMap<K : Key + Debug, V : Debug>(ref string out, map<K, V> values) {
+    out += "{"
+    bool first = true
+    for (K key, V value in values) {
+        if (!first) {
+            out += ", "
+        }
+        first = false
+        debugWrite<K>(ref out, key)
+        out += ": "
+        debugWrite<V>(ref out, value)
+    }
+    out += "}"
 }
 
 // The spaces that trim() removes: space, tab, line feed, vertical tab, form feed

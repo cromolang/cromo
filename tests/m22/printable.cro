@@ -1,0 +1,71 @@
+// Printable types (D318) and the form of debug (D319): text() with the format of
+// a string, and {:?} of structs, enums, lists, maps, arrays, generic structs,
+// strings with escapes and floats, also in a generic and in format.
+// expect-output: (1, 2) [    (1, 2)] [(1, 2)--]
+// expect-output: Point { x: 1, y: 2 }
+// expect-output: Secret { name: "a \"q\"\n", score: 1.5, tags: [1, 2] }
+// expect-output: Circle(2.5) Rect(1.0, 2.0) Empty
+// expect-output: [Point { x: 1, y: 2 }, Point { x: 1, y: 2 }]
+// expect-output: {"anna": 30} "plain\t" 42 true
+// expect-output: Box { item: 7 } Nothing [0, 5, 0]
+// expect-output: generic Point { x: 1, y: 2 }
+// expect-output: generic [1.5, 2.5]
+// expect-output: [          Point { x: 1, y: 2 }]|(1, 2)
+struct Point {
+    i64 x
+    i64 y
+
+    public string text() const {
+        ret format("({}, {})", x, y)
+    }
+}
+
+struct Secret {
+    string name
+    f64 score = 1.5
+    list<i64> tags
+}
+
+enum Shape {
+    Circle(f64 r)
+    Rect(f64 w, f64 h)
+    Empty
+}
+
+struct Box<T> {
+    public T item
+}
+
+struct Nothing {
+}
+
+void show<T : Debug>(T value) {
+    println("generic {:?}", value)
+}
+
+i32 main() {
+    Point p
+    p.x = 1
+    p.y = 2
+    println("{} [{:>10}] [{:-<8}]", p, p, p)
+    println("{:?}", p)
+    Secret s
+    s.name = "a \"q\"\n"
+    s.tags = [1, 2]
+    println("{:?}", s)
+    println("{:?} {:?} {:?}", Shape.Circle(2.5), Shape.Rect(1.0, 2.0), Shape.Empty)
+    println("{:?}", [p.copy(), p.copy()])
+    map<string, i64> ages
+    ages["anna"] = 30
+    println("{:?} {:?} {:?} {:?}", ages, "plain\t", i64(42), true)
+    Box<i64> b
+    b.item = 7
+    i64[3] numbers
+    numbers[1] = 5
+    println("{:?} {:?} {:?}", b, Nothing(), numbers)
+    show(p)
+    show([f64(1.5), 2.5])
+    string text = format("[{:>30?}]|{}", p, p)
+    println("{}", text)
+    ret 0
+}
