@@ -373,9 +373,10 @@ Each milestone lists the decisions still open that are needed **before** writing
 | **M17** | TLS, cryptography and the HTTPS client (D150) | none: D233–D236 |
 | **M18** | HTTP server and client, JSON (D150) | none: D251–D268 |
 | **M19** | Lightweight tasks under the same API as threads (D223) | none: D269–D284 |
+| **M20** | The archive for each system, the installation in one line and `cromo update` (D153, D237–D239) | none: D285–D289 |
 | **Last** | Compiler written in Cromo that compiles itself (§2, D147) | |
 
-Generics come before containers because `list<T>` is written in Cromo as a generic struct (D37, D39). After M9 the order is D152: the tools come first, because they help to write the library. `cromo update` (D153) comes when the resource on the network from which it downloads the new versions exists.
+Generics come before containers because `list<T>` is written in Cromo as a generic struct (D37, D39). After M9 the order is D152: the tools come first, because they help to write the library. `cromo update` (D153) downloads the versions from the manifests and the archives of cromolang.org (D285–D289), which must be published before it can be used.
 
 For JSON, networking and the utilities of the library (M14–M18) the reference is fcl, the C++ library of the author, in WSL at `/home/andrea/source/private/fcl`:
 - its HTTP server makes blocking calls on a pool of threads and keeps the idle connections in epoll, and handles about 330k requests per second on loopback: the model recommended for Cromo works (D150);

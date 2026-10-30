@@ -1470,6 +1470,30 @@ for {
 ### D284. `sleep(0)` in a task
 *2026-10-30.* It returns at once, as in a thread. There is no `thread.yield()`.
 
+### D285. The manifest of a version
+*2026-10-30.* It resolves where the archives are published (D153, D239). Each version has a manifest in JSON at `https://cromolang.org/release/<version>`, and `https://cromolang.org/latest` is a copy of the manifest of the last one. It gives the version, as a text, and for each system the address of the archive and its SHA-256:
+```
+{
+    "version": "0.19.0",
+    "archive": {
+        "win_x86_64": {"package": "https://cromolang.org/package/win_x86_64-0.19.0.zip", "sha256": "5ab5...e9"},
+        "linux_x86_64": {"package": "https://cromolang.org/package/linux_x86_64-0.19.0.tar.gz", "sha256": "0ef2...31"}
+    }
+}
+```
+
+### D286. A version is signed
+*2026-10-30.* It resolves how a download is checked (D153, D239). Next to each manifest, at its address with `.sig`, is the signature with Ed25519 of its exact bytes, as minisign and signify do. `cromo` contains the public key: it checks the signature of the manifest, then the SHA-256 of the archive, and refuses a version that does not pass both. The private key never goes on the site, so a site that is attacked cannot give an archive of its own.
+
+### D287. The archives: `.zip` on Windows, `.tar.gz` on Linux
+*2026-10-30.* It details D237. As for Go: the scripts of the installation (D238) open them with the tools of the system, `Expand-Archive` of PowerShell and `tar` of Linux, and `cromo` decompresses only Deflate.
+
+### D288. The active version is the link `~/.cromo/current`
+*2026-10-30.* It resolves how the active version is chosen (D239). `~/.cromo/current` points to the folder `~/.cromo/versions/<version>` of the active version: a junction on Windows, which needs no administrator, and a symbolic link on Linux. The `PATH` holds `~/.cromo/current/bin`, which the installation adds once (D238); changing version changes the link.
+
+### D289. `cromo update` and `cromo update <version>`
+*2026-10-30.* It details D239. `cromo update` takes the last version from `latest`; `cromo update 0.18.0` takes that version from its manifest, also to go back to an older one. A version already installed only becomes the active one; another is downloaded into `~/.cromo/versions/<version>`, checked (D286) and unpacked, then becomes the active one (D288).
+
 ---
 
 ## Open
@@ -1477,5 +1501,4 @@ for {
 The points still to be defined, each when its milestone needs it (D152):
 - the interface for making user-defined types printable (D38);
 - the content of the standard library;
-- `cromo update` (D153, D239): where the archives are published, how a download is checked before its version becomes the active one, and how the active version is chosen. Recommended: a signature of each archive, checked with a public key contained in `cromo`; a link `~/.cromo/current` to the folder of the active version, a junction on Windows, which needs no administrator, and a symbolic link on Linux, with `current/bin` in the `PATH`;
 - where the completion of the other names goes among the milestones (D171, D179);
