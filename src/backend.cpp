@@ -428,7 +428,9 @@ bool linkWindows(const std::string& objectPath, const std::string& tablePath, co
 // their C code can call memcpy and the other functions of mem_x64.S.
 bool linkLinux(const std::string& objectPath, const std::string& tablePath, const std::string& runtimePath,
                const BackendOptions& options, std::string& error) {
-    std::vector<std::string> args = {"ld.lld", "-o", options.outputPath, "-e", "_start", "-static", objectPath, tablePath};
+    // --eh-frame-hdr: the index of the unwind tables, for the stack traces (D375).
+    std::vector<std::string> args = {"ld.lld", "-o", options.outputPath, "-e", "_start", "-static", "--eh-frame-hdr",
+                                     objectPath, tablePath};
     if (!options.debugInfo) args.push_back("--strip-debug");  // D338: only the table of the stack traces
     for (const std::string& archive : options.archives) args.push_back(archive);
     args.push_back(runtimePath);

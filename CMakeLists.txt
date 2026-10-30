@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16...3.20)  # 3.16 in WSL for cromo for Linux, without the runtime
-project(cromo VERSION 0.27.0 LANGUAGES CXX)  # 0.milestone.fix (D157)
+project(cromo VERSION 0.27.1 LANGUAGES CXX)  # 0.milestone.fix (D157)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -31,16 +31,14 @@ if(WIN32)
 else()
   # cromo for Linux depends only on glibc (D292): the libraries that LLVM uses are
   # linked statically, defined before LLVM looks for them. libxml2, for the
-  # manifests of LLD, brings ICU with it.
+  # manifests of LLD, would bring ICU with it: src/llvm_trims.cpp takes its place.
   set(CROMO_SYSTEM_LIBS "/usr/lib/x86_64-linux-gnu" CACHE PATH "The static libraries of the system")
   set(ZLIB_LIBRARY "${CROMO_SYSTEM_LIBS}/libz.a" CACHE FILEPATH "" FORCE)
-  set(LIBXML2_LIBRARY "${CROMO_SYSTEM_LIBS}/libxml2.a" CACHE FILEPATH "" FORCE)
+  set(LIBXML2_LIBRARY "${CROMO_SYSTEM_LIBS}/libz.a" CACHE FILEPATH "" FORCE)
   foreach(target LibXml2::LibXml2 LibXml2::LibXml2Static)  # FindLibXml2 of LLVM defines both
-    add_library(${target} STATIC IMPORTED)
+    add_library(${target} INTERFACE IMPORTED)
     set_target_properties(${target} PROPERTIES
-      IMPORTED_LOCATION "${CROMO_SYSTEM_LIBS}/libxml2.a"
-      INTERFACE_LINK_LIBRARIES
-        "${CROMO_SYSTEM_LIBS}/libicui18n.a;${CROMO_SYSTEM_LIBS}/libicuuc.a;${CROMO_SYSTEM_LIBS}/libicudata.a;${CROMO_SYSTEM_LIBS}/liblzma.a;${CROMO_SYSTEM_LIBS}/libz.a;m;dl;pthread")
+      INTERFACE_LINK_LIBRARIES "${CROMO_SYSTEM_LIBS}/libz.a;m;dl;pthread")
   endforeach()
 endif()
 find_package(LLVM REQUIRED CONFIG)
@@ -67,8 +65,8 @@ set(CROMO_RT_LINUX_BASE_FLAGS --target=x86_64-unknown-linux-gnu -ffreestanding -
     -fno-stack-protector -fno-pic)
 # The unwind tables lead the stack traces of Windows through the runtime (D341).
 set(CROMO_RT_FLAGS ${CROMO_RT_BASE_FLAGS} -funwind-tables -Wall -Wextra)
-# The frame pointers lead the stack traces through the runtime too (D341).
-set(CROMO_RT_LINUX_FLAGS ${CROMO_RT_LINUX_BASE_FLAGS} -fno-omit-frame-pointer -Wall -Wextra)
+# The unwind tables lead the stack traces through the runtime too (D375).
+set(CROMO_RT_LINUX_FLAGS ${CROMO_RT_LINUX_BASE_FLAGS} -fasynchronous-unwind-tables -Wall -Wextra)
 file(MAKE_DIRECTORY "${CROMO_RT_DIR}")
 
 # ---- TLS and cryptography (D233, D236) ----
@@ -115,7 +113,7 @@ cromo_tls_objects(tls_linux "${CROMO_RT_LINUX_BASE_FLAGS}" CROMO_TLS_LINUX_OBJEC
 add_custom_command(
   OUTPUT "${CROMO_RT_DIR}/cromo_rt.obj"
   COMMAND "${CROMO_CLANG}" ${CROMO_RT_FLAGS} -c "${CMAKE_SOURCE_DIR}/runtime/cromo_rt.c" -o "${CROMO_RT_DIR}/cromo_rt.obj"
-  DEPENDS runtime/cromo_rt.c
+  DEPENDS runtime/cromo_rt.c runtime/ryu.h runtime/ryu_tables.h
   COMMENT "Compiling the Cromo runtime")
 add_custom_command(
   OUTPUT "${CROMO_RT_DIR}/mem_x64.obj"
@@ -133,7 +131,7 @@ add_custom_command(
 add_custom_command(
   OUTPUT "${CROMO_RT_DIR}/cromo_rt_linux.o"
   COMMAND "${CROMO_CLANG}" ${CROMO_RT_LINUX_FLAGS} -c "${CMAKE_SOURCE_DIR}/runtime/cromo_rt.c" -o "${CROMO_RT_DIR}/cromo_rt_linux.o"
-  DEPENDS runtime/cromo_rt.c
+  DEPENDS runtime/cromo_rt.c runtime/ryu.h runtime/ryu_tables.h
   COMMENT "Compiling the Cromo runtime for Linux")
 add_custom_command(
   OUTPUT "${CROMO_RT_DIR}/mem_x64_linux.o"
@@ -185,6 +183,7 @@ add_executable(cromo
   src/index.cpp
   src/lsp.cpp
   src/installation.cpp
+  src/llvm_trims.cpp
 )
 if(CROMO_BUILD_LIBRARY)
   add_dependencies(cromo cromo_library)
@@ -201,7 +200,8 @@ else()
   # As LLVM, without RTTI; the runtime of C++ inside cromo, so that cromo for
   # Linux depends only on glibc (D292).
   target_compile_options(cromo PRIVATE -Wall -Wextra -fno-rtti)
-  target_link_options(cromo PRIVATE -static-libstdc++ -static-libgcc)
+  # Without the symbols and the sections that nothing uses: a smaller archive (D286).
+  target_link_options(cromo PRIVATE -static-libstdc++ -static-libgcc -Wl,--gc-sections -s)
   target_link_libraries(cromo PRIVATE pthread)
   target_sources(cromo PRIVATE src/glibc_compat.cpp)
 endif()

@@ -1,0 +1,30 @@
+// Benchmark http: a server and its clients with keep-alive, against net/http of Go.
+// 8 tasks send it 5000 requests each, on the connections that their http.Client keeps.
+import std.http
+import std.os
+import std.thread
+
+i32 main() {
+    http.Server server = http.listen("127.0.0.1", 0)
+    string url = format("http://127.0.0.1:{}/hello", server.port())
+    thread.Thread t = thread.Thread([server]() {
+        server.serve([](ref http.Request req, ref http.Response res) {
+            res.write("hello, world")
+        })
+    })
+    t.start()
+    http.Client client
+    thread.Atomic<i64> bytes
+    thread.Group clients
+    for (i64 c = 0; c < 8; c++) {
+        clients.start([client, url, bytes]() {
+            for (i64 i = 0; i < 5000; i++) {
+                bytes.add(client.get(url).body.len())
+            }
+        })
+    }
+    clients.wait()
+    println("http {}", bytes.load())
+    os.exit(0)
+    ret 0
+}

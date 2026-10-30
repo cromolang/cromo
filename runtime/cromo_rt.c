@@ -723,6 +723,8 @@ static void exactDigits(const FloatParts* f, i32 significant, i32 decimals, Deci
     if (c > 0 || (c == 0 && (out->digit[out->count - 1] & 1))) incrementLast(out);
 }
 
+#include "ryu.h"  // the shortest digits of an f64
+
 // The digits of {:.Nf} without big integers when they fit: the value is m * 2^e,
 // so m * 10^p shifted right by -e bits, rounded half to even on what the shift
 // drops, is the exact result of exactDigits. 128 bits hold m * 10^p for p up to
@@ -836,8 +838,13 @@ static void formatFloat(i64 stream, const FloatParts* f, int negative, int isNan
     } else if (f->mantissa == 0) {
         text[n++] = '0';
     } else {
-        // Shortest form, in fixed or scientific notation, whichever is shorter (as std::format).
-        shortestDigits(f, &d);
+        // Shortest form, in fixed or scientific notation, whichever is shorter (as std::format):
+        // Ryu for an f64, the big integers for an f32.
+        if (f->mantissaBits == 53) {
+            ryuDigits(f, &d);
+        } else {
+            shortestDigits(f, &d);
+        }
         i32 k = d.exponent;
         i32 count = d.count;
         i32 fixedLength = k <= 0 ? 2 - k + count : (k >= count ? k : count + 1);
@@ -1100,22 +1107,281 @@ static u32 traceCapture(void** frames, u32 most) { return RtlCaptureStackBackTra
 
 #else
 
-// D341: the chain of the frame pointers, from `frame`: the frame pointer saved at
-// its address, then the return address.
-static u32 traceWalk(void** frame, void** frames, u32 count, u32 most) {
-    while (frame && count < most) {
-        void* back = frame[1];
-        if (!back) break;
-        frames[count++] = back;
-        void** next = (void**)frame[0];
-        if (next <= frame || (u64)((u8*)next - (u8*)frame) > ((u64)64 << 20) || ((u64)next & 7)) break;
-        frame = next;
+// D375: the unwind tables that LLVM writes for every function, .eh_frame, found
+// through .eh_frame_hdr (ld.lld --eh-frame-hdr), in the program headers that
+// __ehdr_start shows. For the address of a frame, the rules of DWARF say where
+// the frame of the caller starts (the CFA) and where the return address and rbp
+// were saved. The stack ends where an address has no rules: in _start and in
+// cromo_task_entry, which are in assembly, and after the first call of a thread.
+
+extern const u8 __ehdr_start[] __attribute__((weak));
+extern const u8 cromo_thread_bottom[];  // in cloneThread
+
+typedef struct {
+    u64 rip;
+    u64 rsp;
+    u64 rbp;
+} Registers;
+
+typedef struct {
+    i64 cfaRegister;  // 7 rsp, 6 rbp
+    i64 cfaOffset;
+    i64 raOffset;     // from the CFA
+    i64 rbpOffset;
+    int raSaved;
+    int rbpSaved;
+} Rules;
+
+static u64 readUnsigned(const u8* p, int size) {
+    u64 value = 0;
+    for (int i = 0; i < size; ++i) value |= (u64)p[i] << (8 * i);
+    return value;
+}
+
+static u64 readUleb(const u8** p) {
+    u64 value = 0;
+    for (int shift = 0;; shift += 7) {
+        u8 byte = *(*p)++;
+        if (shift < 64) value |= (u64)(byte & 0x7F) << shift;
+        if (!(byte & 0x80)) return value;
+    }
+}
+
+static i64 readSleb(const u8** p) {
+    i64 value = 0;
+    int shift = 0;
+    u8 byte;
+    do {
+        byte = *(*p)++;
+        if (shift < 64) value |= (i64)(byte & 0x7F) << shift;
+        shift += 7;
+    } while (byte & 0x80);
+    if (shift < 64 && (byte & 0x40)) value |= -((i64)1 << shift);
+    return value;
+}
+
+// A pointer of .eh_frame with its encoding (DW_EH_PE_*); 0 if it is not supported.
+static u64 readEncoded(const u8** p, u8 encoding, u64 dataBase) {
+    const u8* start = *p;
+    u64 value;
+    switch (encoding & 0x0F) {
+        case 0x00: value = readUnsigned(*p, 8); *p += 8; break;
+        case 0x01: value = readUleb(p); break;
+        case 0x02: value = readUnsigned(*p, 2); *p += 2; break;
+        case 0x03: value = readUnsigned(*p, 4); *p += 4; break;
+        case 0x04: value = readUnsigned(*p, 8); *p += 8; break;
+        case 0x09: value = (u64)readSleb(p); break;
+        case 0x0A: value = (u64)(i64)(short)readUnsigned(*p, 2); *p += 2; break;
+        case 0x0B: value = (u64)(i64)(i32)readUnsigned(*p, 4); *p += 4; break;
+        case 0x0C: value = readUnsigned(*p, 8); *p += 8; break;
+        default: return 0;
+    }
+    switch (encoding & 0x70) {
+        case 0x00: break;
+        case 0x10: value += (u64)start; break;  // pcrel
+        case 0x30: value += dataBase; break;    // datarel
+        default: return 0;
+    }
+    if (encoding & 0x80) value = readUnsigned((const u8*)value, 8);  // indirect
+    return value;
+}
+
+// .eh_frame_hdr, from the program headers: 0 without it.
+static const u8* frameIndex(void) {
+    if (!__ehdr_start) return 0;
+    const u8* header = __ehdr_start;
+    u64 table = readUnsigned(header + 32, 8);  // e_phoff
+    u64 size = readUnsigned(header + 54, 2);   // e_phentsize
+    u64 count = readUnsigned(header + 56, 2);  // e_phnum
+    u64 bias = 0;
+    for (u64 i = 0; i < count; ++i) {  // where the headers are linked: the load with offset 0
+        const u8* entry = header + table + i * size;
+        if (readUnsigned(entry, 4) == 1 && readUnsigned(entry + 8, 8) == 0) bias = (u64)header - readUnsigned(entry + 16, 8);
+    }
+    for (u64 i = 0; i < count; ++i) {
+        const u8* entry = header + table + i * size;
+        if (readUnsigned(entry, 4) == 0x6474E550) return (const u8*)(bias + readUnsigned(entry + 16, 8));  // PT_GNU_EH_FRAME
+    }
+    return 0;
+}
+
+// The rules at `pc`: the CIE, then the instructions of the FDE up to `pc`.
+static int findRules(u64 pc, Rules* rules) {
+    const u8* index = frameIndex();
+    if (!index || index[0] != 1 || index[3] != 0x3B) return 0;  // a table of 4-byte offsets from the index
+    const u8* p = index + 4;
+    readEncoded(&p, index[1], (u64)index);  // .eh_frame
+    u64 count = readEncoded(&p, index[2], (u64)index);
+    const u8* table = p;
+    u64 low = 0;
+    u64 high = count;
+    while (low < high) {  // the last function that starts at or before pc
+        u64 middle = (low + high) / 2;
+        if ((u64)index + (u64)(i64)(i32)readUnsigned(table + 8 * middle, 4) <= pc) {
+            low = middle + 1;
+        } else {
+            high = middle;
+        }
+    }
+    if (low == 0) return 0;
+    const u8* fde = index + (i64)(i32)readUnsigned(table + 8 * (low - 1) + 4, 4);
+    u64 fdeLength = readUnsigned(fde, 4);
+    if (fdeLength == 0 || fdeLength == 0xFFFFFFFF) return 0;
+    const u8* fdeEnd = fde + 4 + fdeLength;
+    p = fde + 4;
+    const u8* cie = p - readUnsigned(p, 4);
+    p += 4;
+
+    // The CIE: the alignments, the encoding of the addresses, the first rules.
+    u64 cieLength = readUnsigned(cie, 4);
+    if (cieLength == 0xFFFFFFFF) return 0;
+    const u8* cieEnd = cie + 4 + cieLength;
+    const u8* q = cie + 8;
+    u8 version = *q++;
+    const char* augmentation = (const char*)q;
+    while (*q) ++q;
+    ++q;
+    if (version >= 4) q += 2;  // the sizes of an address and of a segment
+    u64 codeAlign = readUleb(&q);
+    i64 dataAlign = readSleb(&q);
+    u64 raRegister = version == 1 ? *q++ : readUleb(&q);
+    u8 fdeEncoding = 0;
+    int hasData = augmentation[0] == 'z';
+    if (hasData) {
+        u64 dataLength = readUleb(&q);
+        const u8* dataEnd = q + dataLength;
+        for (const char* a = augmentation + 1; *a; ++a) {
+            if (*a == 'R') {
+                fdeEncoding = *q++;
+            } else if (*a == 'P') {
+                u8 encoding = *q++;
+                readEncoded(&q, encoding, 0);
+            } else if (*a == 'L') {
+                ++q;
+            }
+        }
+        q = dataEnd;
+    }
+    if (raRegister != 16) return 0;
+
+    u64 start = readEncoded(&p, fdeEncoding, 0);
+    u64 range = readEncoded(&p, fdeEncoding & 0x0F, 0);
+    if (pc < start || pc >= start + range) return 0;
+    if (hasData) {
+        u64 dataLength = readUleb(&p);
+        p += dataLength;
+    }
+
+    Rules initial = {7, 8, -8, 0, 1, 0};
+    Rules saved[4];
+    int depth = 0;
+    for (int pass = 0; pass < 2; ++pass) {  // the CIE, then the FDE
+        const u8* code = pass == 0 ? q : p;
+        const u8* end = pass == 0 ? cieEnd : fdeEnd;
+        Rules* r = rules;
+        if (pass == 0) *r = initial;
+        u64 location = start;
+        while (code < end) {
+            u8 op = *code++;
+            u8 operand = op & 0x3F;
+            u64 reg = 0;
+            i64 offset = 0;
+            switch (op & 0xC0) {
+                case 0x40:  // advance_loc
+                    location += operand * codeAlign;
+                    if (location > pc) return 1;
+                    continue;
+                case 0x80:  // offset
+                    reg = operand;
+                    offset = (i64)readUleb(&code) * dataAlign;
+                    goto setOffset;
+                case 0xC0:  // restore
+                    reg = operand;
+                    goto restore;
+            }
+            switch (op) {
+                case 0x00: continue;
+                case 0x01: location = readEncoded(&code, fdeEncoding, 0); if (location > pc) return 1; continue;
+                case 0x02: location += *code++ * codeAlign; if (location > pc) return 1; continue;
+                case 0x03: location += readUnsigned(code, 2) * codeAlign; code += 2; if (location > pc) return 1; continue;
+                case 0x04: location += readUnsigned(code, 4) * codeAlign; code += 4; if (location > pc) return 1; continue;
+                case 0x05: reg = readUleb(&code); offset = (i64)readUleb(&code) * dataAlign; goto setOffset;
+                case 0x06: reg = readUleb(&code); goto restore;
+                case 0x07:  // undefined: the return address has none at the end of the stack
+                case 0x08:  // same value
+                    reg = readUleb(&code);
+                    if (reg == 16) r->raSaved = 0;
+                    if (reg == 6) r->rbpSaved = 0;
+                    continue;
+                case 0x09: reg = readUleb(&code); readUleb(&code); if (reg == 6 || reg == 16) return 0; continue;
+                case 0x0A: if (depth == 4) return 0; saved[depth++] = *r; continue;
+                case 0x0B: if (depth == 0) return 0; *r = saved[--depth]; continue;
+                case 0x0C: r->cfaRegister = (i64)readUleb(&code); r->cfaOffset = (i64)readUleb(&code); continue;
+                case 0x0D: r->cfaRegister = (i64)readUleb(&code); continue;
+                case 0x0E: r->cfaOffset = (i64)readUleb(&code); continue;
+                case 0x10: reg = readUleb(&code); code += readUleb(&code); if (reg == 6 || reg == 16) return 0; continue;
+                case 0x11: reg = readUleb(&code); offset = readSleb(&code) * dataAlign; goto setOffset;
+                case 0x12: r->cfaRegister = (i64)readUleb(&code); r->cfaOffset = readSleb(&code) * dataAlign; continue;
+                case 0x13: r->cfaOffset = readSleb(&code) * dataAlign; continue;
+                case 0x14: case 0x15: reg = readUleb(&code); readUleb(&code); if (reg == 6 || reg == 16) return 0; continue;
+                case 0x16: reg = readUleb(&code); code += readUleb(&code); if (reg == 6 || reg == 16) return 0; continue;
+                case 0x2E: readUleb(&code); continue;  // GNU_args_size
+                case 0x2F: reg = readUleb(&code); offset = -(i64)readUleb(&code) * dataAlign; goto setOffset;
+                default: return 0;  // def_cfa_expression and the rest: not in the code of LLVM
+            }
+        setOffset:
+            if (reg == 16) {
+                r->raOffset = offset;
+                r->raSaved = 1;
+            } else if (reg == 6) {
+                r->rbpOffset = offset;
+                r->rbpSaved = 1;
+            }
+            continue;
+        restore:
+            if (reg == 16) {
+                r->raOffset = initial.raOffset;
+                r->raSaved = initial.raSaved;
+            } else if (reg == 6) {
+                r->rbpOffset = initial.rbpOffset;
+                r->rbpSaved = initial.rbpSaved;
+            }
+            continue;
+        }
+        if (pass == 0) initial = *r;
+    }
+    return 1;
+}
+
+// From the frame of `r` to that of its caller: 0 at the end of the stack. The
+// first frame is at its exact address, the others at their return address.
+static int unwindStep(Registers* r, int returned) {
+    Rules rules;
+    if (!findRules(returned ? r->rip - 1 : r->rip, &rules) || !rules.raSaved) return 0;
+    u64 base = rules.cfaRegister == 7 ? r->rsp : rules.cfaRegister == 6 ? r->rbp : 0;
+    if (!base) return 0;
+    u64 cfa = base + (u64)rules.cfaOffset;
+    if (cfa <= r->rsp || cfa - r->rsp > ((u64)16 << 20)) return 0;  // a frame larger than 16 MB is a mistake
+    u64 ra = readUnsigned((const u8*)(cfa + (u64)rules.raOffset), 8);
+    if (rules.rbpSaved) r->rbp = readUnsigned((const u8*)(cfa + (u64)rules.rbpOffset), 8);
+    r->rsp = cfa;
+    r->rip = ra;
+    return ra != 0 && ra != (u64)cromo_thread_bottom;
+}
+
+static u32 traceFrom(Registers* r, int returned, void** frames, u32 count, u32 most) {
+    while (count < most && unwindStep(r, returned)) {
+        frames[count++] = (void*)r->rip;
+        returned = 1;
     }
     return count;
 }
 
+// The first address is in the caller of this function, as on Windows.
 static __attribute__((noinline)) u32 traceCapture(void** frames, u32 most) {
-    return traceWalk((void**)__builtin_frame_address(0), frames, 0, most);
+    Registers r;
+    __asm__ volatile("lea 0(%%rip), %0\n\tmov %%rsp, %1\n\tmov %%rbp, %2" : "=r"(r.rip), "=r"(r.rsp), "=r"(r.rbp));
+    return traceFrom(&r, 0, frames, 0, most);
 }
 
 #endif
@@ -1498,7 +1764,7 @@ static void threadEntry(void* argument) { runThread(argument); }
 // clone() without the C library: the new thread starts on its own stack, takes the
 // function and its argument from there, and ends with exit(), never returning here.
 // Its fs points to the block of its record.
-static i64 cloneThread(ThreadRecord* thread, u8* top) {
+static __attribute__((noinline)) i64 cloneThread(ThreadRecord* thread, u8* top) {
     u64* sp = (u64*)top;
     *--sp = (u64)thread;
     *--sp = (u64)threadEntry;
@@ -1512,6 +1778,8 @@ static i64 cloneThread(ThreadRecord* thread, u8* top) {
                      "pop %%rax\n\t"
                      "pop %%rdi\n\t"
                      "call *%%rax\n\t"
+                     ".globl cromo_thread_bottom\n"  // the stack of the thread ends here (D375)
+                     "cromo_thread_bottom:\n\t"
                      "mov $60, %%eax\n\t"
                      "xor %%edi, %%edi\n\t"
                      "syscall\n\t"
@@ -1651,7 +1919,8 @@ static void crashHandler(i32 signal, void* info, void* context) {
     }
     void* frames[TRACE_FRAMES];
     frames[0] = (void*)(registers[16] + 1);  // where it stopped, as if a call returned there
-    stackOverflow(frames, traceWalk((void**)registers[10], frames, 1, TRACE_FRAMES));
+    Registers r = {registers[16], registers[15], registers[10]};
+    stackOverflow(frames, traceFrom(&r, 0, frames, 1, TRACE_FRAMES));
 }
 
 static void crashStack(ThreadRecord* thread) {
@@ -1805,6 +2074,7 @@ struct Worker {
     Task* current;   // the task it runs
     i32 ended;       // the task has returned
     i32 stuck;       // the monitor gave its place to another worker (D271)
+    i32 spun;        // it looked at the queue, which was empty: now it sleeps
     u64 switches;    // tasks entered and left: the monitor sees whether it moves
     u64 seen;        // the switches at the start of the tick of the monitor
     Worker* next;    // in the list of all the workers
@@ -1824,6 +2094,8 @@ static struct {
     i32 places;      // places without a worker
     i32 idle;        // workers with a place, waiting for a task
     i32 idleCalls;   // idle workers called for a task, not yet awake
+    i32 spinning;    // workers that look at the queue a little before they sleep
+    i32 claimed;     // spinning workers counted on for a task just queued
     i32 spares;      // workers without a place
     i32 spareCalls;  // spares given a place, not yet awake
     i32 workers;     // all the workers
@@ -2046,6 +2318,10 @@ static void startWorker(void);
 // Wakes a worker for a task just queued, or starts one, with the lock taken:
 // false when there is none to call.
 static i32 callWorker(void) {
+    if (scheduler.spinning > scheduler.claimed) {  // one that spins takes it, without a wake
+        ++scheduler.claimed;
+        return 1;
+    }
     if (scheduler.idle > 0) {
         --scheduler.idle;
         ++scheduler.idleCalls;
@@ -2096,7 +2372,7 @@ static void enqueue(Batch* batch) {
         scheduler.first = batch->first;
     }
     scheduler.last = batch->last;
-    scheduler.queued += batch->count;
+    __atomic_add_fetch(&scheduler.queued, batch->count, __ATOMIC_RELEASE);
     for (i64 i = 0; i < batch->count && callWorker(); ++i) {
     }
     lockRelease(&scheduler.lock);
@@ -2124,6 +2400,8 @@ static void wakeTask(Task* task, i32 ready, Batch* batch) {
     }
 }
 
+#define SPIN_ROUNDS 2000  // of pause: some tens of microseconds
+
 // The next task for a worker, with the lock taken: a worker whose place went to
 // another waits as a spare until it gets one back (D271).
 static Task* nextTask(Worker* worker) {
@@ -2142,9 +2420,26 @@ static Task* nextTask(Worker* worker) {
         if (task) {
             scheduler.first = task->next;
             if (!scheduler.first) scheduler.last = 0;
-            --scheduler.queued;
+            __atomic_sub_fetch(&scheduler.queued, 1, __ATOMIC_RELAXED);
+            worker->spun = 0;
             return task;
         }
+        // As Go: up to half of the workers look at the queue for a few tens of
+        // microseconds before they sleep, so that a task that another wakes soon,
+        // as through a channel, runs without the wake of a thread.
+        if (!worker->spun && scheduler.spinning * 2 < scheduler.target) {
+            ++scheduler.spinning;
+            lockRelease(&scheduler.lock);
+            for (u32 i = 0; i < SPIN_ROUNDS && __atomic_load_n(&scheduler.queued, __ATOMIC_ACQUIRE) == 0; ++i) {
+                __asm__ volatile("pause");
+            }
+            lockAcquire(&scheduler.lock);
+            if (scheduler.claimed > 0) --scheduler.claimed;
+            --scheduler.spinning;
+            worker->spun = 1;  // once, then it sleeps if there is still nothing
+            continue;
+        }
+        worker->spun = 0;
         ++scheduler.idle;
         while (scheduler.idleCalls == 0) conditionWait(&scheduler.work, &scheduler.lock);
         --scheduler.idleCalls;
@@ -2477,6 +2772,7 @@ typedef struct {
     u32 taken;
     u32 closed;
     u32 handover;  // capacity 0
+    u32 receivers;  // waiting for a value
 } Channel;
 
 // The channel of a Cromo Channel, made by the first use: the default value of the
@@ -2520,10 +2816,12 @@ i64 cromo_channel_send(Channel* channel, const void* value) {
     memcpy(channel->ring + tail * channel->size, value, channel->size);
     channel->count++;
     u64 number = ++channel->sent;
+    // A receiver that waits takes it for sure: then the value is handed over, as in Go.
+    int given = channel->receivers >= channel->count;
     channelChanged(&channel->values);
     lockRelease(&channel->lock);
     unpark(&channel->values, 0);
-    if (channel->handover) {  // until a receiver has it, or the channel is closed
+    if (channel->handover && !given) {  // until a receiver has it, or the channel is closed
         lockAcquire(&channel->lock);
         while (!channel->closed && channel->received < number) channelWait(channel, &channel->taken);
         lockRelease(&channel->lock);
@@ -2535,7 +2833,11 @@ i64 cromo_channel_send(Channel* channel, const void* value) {
 // closed and empty.
 i64 cromo_channel_receive(Channel* channel, void* value) {
     lockAcquire(&channel->lock);
-    while (!channel->closed && channel->count == 0) channelWait(channel, &channel->values);
+    while (!channel->closed && channel->count == 0) {
+        channel->receivers++;
+        channelWait(channel, &channel->values);
+        channel->receivers--;
+    }
     if (channel->count == 0) {
         lockRelease(&channel->lock);
         return 0;

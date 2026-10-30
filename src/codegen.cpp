@@ -817,10 +817,8 @@ private:
         return out.str();
     }
 
-    // D341: the tables of unwinding for Windows, the frame pointers for Linux.
-    std::string functionAttributes() const {
-        return options_.target == Target::Linux ? "nounwind uwtable \"frame-pointer\"=\"all\"" : "nounwind uwtable";
-    }
+    // D341, D375: the tables of unwinding, which the runtime reads for the stack traces.
+    std::string functionAttributes() const { return "nounwind uwtable"; }
 
     std::string generateFunction(const FunctionDecl& function) {
         startFunction(&function);

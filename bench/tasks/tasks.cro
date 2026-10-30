@@ -1,0 +1,46 @@
+// Benchmark tasks: tasks and channels, against the goroutines of Go.
+// 100 000 tasks started in a group, each sending its number on a channel, and two
+// tasks that hand a value back and forth 200 000 times on channels of capacity 0.
+import std.thread
+
+i64 spread() {
+    thread.Channel<i64> numbers = thread.Channel<i64>(1024)
+    thread.Group senders
+    for (i64 i = 0; i < 100000; i++) {
+        senders.start([numbers, i]() { numbers.send(i) })
+    }
+    i64 sum = 0
+    for (i64 i = 0; i < 100000; i++) {
+        sum += numbers.receive()
+    }
+    ret sum
+}
+
+i64 pingPong() {
+    thread.Channel<i64> ping
+    thread.Channel<i64> pong
+    thread.Atomic<i64> last
+    thread.Group players
+    players.start([ping, pong]() {
+        for (i64 v in ping) {
+            pong.send(v + 1)
+        }
+    })
+    players.start([ping, pong, last]() {
+        i64 value = 0
+        for (i64 i = 0; i < 200000; i++) {
+            ping.send(value)
+            value = pong.receive()
+        }
+        ping.close()
+        last.store(value)
+    })
+    players.wait()
+    ret last.load()
+}
+
+i32 main() {
+    i64 sum = spread()
+    println("tasks {} pingpong {}", sum, pingPong())
+    ret 0
+}

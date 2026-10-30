@@ -4,7 +4,9 @@
 # bench\results.
 #
 # A benchmark is a folder with the same program in four languages: name.cro,
-# name.cpp, name.go and name.rs, which prints a checksum of its work. The
+# name.cpp, name.go and name.rs, which prints a checksum of its work; a language
+# without its file is left out of that benchmark, as tasks and http, which only
+# Go has (a dash in the table). The
 # programs run on Linux, in WSL, where the reference compilers are: cromo
 # compiles on Windows with --target linux, the others in WSL. The times are
 # the median of several runs, taken inside WSL by linux.sh, after a first run
@@ -265,6 +267,12 @@ foreach ($benchmark in $benchmarks) {
     $folder = "$work/$($benchmark.Name)"
     foreach ($column in $columns) {
         $key = "$($benchmark.Name)|$($column.Key)"
+        if ($column.Kind -ne 'cromo' -and -not (Test-Path (Join-Path $PSScriptRoot "$($benchmark.Name)\$($benchmark.Name).$($column.Extension)"))) {
+            $results[$key] = [pscustomobject]@{
+                Compiled = $true; Missing = $true; CompileTimes = @(); CompileText = ''; RunTimes = @(); Output = $null; Problem = ''
+            }
+            continue
+        }
         if ($column.Kind -ne 'cromo') {
             $vary = if ($column.Kind -eq 'go') { "$($benchmark.Name).go" } else { '' }
             $compile = Measure-Linux $CompileRuns $folder "compile-$($column.Key).txt" $vary (Get-CompileCommand $column $benchmark.Name)
@@ -292,11 +300,11 @@ foreach ($benchmark in $benchmarks) {
     }
 
     # The output that most versions print is the right one; the others are wrong.
-    $outputs = @($columns | ForEach-Object { $results["$($benchmark.Name)|$($_.Key)"] } | Where-Object { -not $_.Problem })
+    $outputs = @($columns | ForEach-Object { $results["$($benchmark.Name)|$($_.Key)"] } | Where-Object { -not $_.Problem -and -not $_.Missing })
     $expected = ($outputs | Group-Object Output -CaseSensitive | Sort-Object Count -Descending | Select-Object -First 1).Name
     foreach ($column in $columns) {
         $result = $results["$($benchmark.Name)|$($column.Key)"]
-        if (-not $result.Problem -and $result.Output -cne $expected) {
+        if (-not $result.Problem -and -not $result.Missing -and $result.Output -cne $expected) {
             # The first line that differs, then the whole outputs.
             $mine = @($result.Output.TrimEnd() -split "`n")
             $right = @($expected.TrimEnd() -split "`n")
@@ -311,6 +319,7 @@ foreach ($benchmark in $benchmarks) {
 
 # A cell of the table: the median, or what went wrong.
 function Get-Cell($Result, [string]$What) {
+    if ($Result.Missing) { return '-' }
     if (-not $Result.Compiled) { return 'error' }
     if ($What -eq 'compile') { return Format-Milliseconds (Get-Median $Result.CompileTimes) }
     if ($Result.Problem -like 'wrong output*') { return 'wrong' }

@@ -896,6 +896,46 @@ FAIL  areaOfTheUnit
 - `assert(condition)` is a built-in function, as `panic`: when the condition is false it stops with a panic that writes the condition as written and, for a comparison of numbers or bools, the values of its sides that are not literals, each computed once (D351, D353). It works in any function, also with `--release`.
 - `cromo test [file.cro] [names]` builds one executable with the tests of the program and of its modules, and runs each in a process of its own, as many at a time as the processors: a panic, an exception or a stack overflow stops only its test (D352). It writes `ok` or `FAIL` for each test, in the order of the files, with the output of the tests that failed, and the count; its exit code is 1 if one failed (D354). The names after the file choose the tests whose name contains one of them (D355). The tests of a module are named after it: `geometry.areaOfSquare` (D356).
 
-## 24. Still to be written
+## 24. Packages (D376–D391)
+
+*Decided, not implemented yet: see the milestones in [compiler.md](compiler.md).*
+
+A package is a Git repository, named by its URL, and a version is a tag (D376). The dependencies of a project are lines of `cromo.mod`, next to `main.cro` (D377, D384):
+
+```
+// cromo.mod
+module github.com/anna/app
+
+require geometry github.com/anna/geometry v1.2.0
+require geometry2 github.com/anna/geometry v2.0.1   // v1 and v2 together (D382)
+require json5 github.com/bob/json5 v0.3.1
+```
+
+```cromo
+// main.cro
+import geometry                    // the root folder of github.com/anna/geometry (D383)
+import json5.parser               // the module parser of github.com/bob/json5
+
+i32 main() {
+    Circle c = Circle(2.0)
+    println("{}", area(c))
+    ret 0
+}
+```
+
+- **Versions:** of each package the program uses the highest of the minimal versions that the project and its dependencies require, the same every time, without a lock file (D378). `v1` and `v2` are two packages (D382).
+- **Integrity:** `cromo.sum` keeps the SHA-256 of each version used, written the first time and checked always; a tag moved on the server is an error (D380). The hash is of the files, not of the archive (D387).
+- **Downloads:** `cromo` downloads the archive of the tag over HTTPS from GitHub, GitLab or Codeberg and opens it itself; the other hosts and the private repositories go through `git` (D379, D386). The versions are kept in `~/.cromo/packages` (D388).
+- **Commands:** `cromo get url[@version] [name]` adds a dependency or raises its version; `cromo build`, `run` and `test` download what is missing (D381, D385, D389):
+
+```
+cromo get github.com/anna/geometry                  // the last version
+cromo get github.com/anna/geometry@v1.3.0           // that version
+cromo get github.com/anna/geometry@v2 geometry2     // the last v2, with its name (D389)
+```
+
+- **Development:** `require geometry ../geometry` uses a local folder in place of a version (D390).
+
+## 25. Still to be written
 
 - The rest of the standard library.

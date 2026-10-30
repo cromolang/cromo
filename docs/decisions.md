@@ -1687,6 +1687,7 @@ lines.close()
 *2026-10-30.* The exceptions of Cromo go up through the return values (D36), so when one reaches `main` the stack where it started is gone: `throw` saves the return addresses, and an exception that nobody catches prints them. `throw` without a value, in a `catch`, keeps the stack of the first one.
 
 ### D341. Walking the stack: frame pointers on Linux, the tables of Windows
+*Changed by D375: Linux reads the unwind tables too.*
 *2026-10-30.* On Linux every function keeps its frame pointer, and the runtime follows their chain: a few lines of C, about 1% slower, as Go and the distributions of Fedora and Ubuntu. On Windows LLVM places the frame pointer at a distance from the saved one that only the unwind tables know (`lea rbp, [rsp+128]`), so there the runtime asks `RtlCaptureStackBackTrace` of kernel32, which reads the tables that the ABI of Windows requires anyway: no cost when the program runs.
 
 ### D342. The form of a stack trace
@@ -1787,6 +1788,57 @@ lines.close()
 
 ### D374. The details of WebSocket
 *2026-10-30.* It details D368. `req.webSocket(work)` runs `work` inside the handler, on the task of the connection, so that it can read what the handler reads, as a mutex; a request that is not one of WebSocket gets 400. `receive()` gives a `websocket.Message`, `Text` or `Binary`, joins the fragments and answers the pings, and throws `websocket.Closed`, with `code` and `reason`, after a close or when the connection ends (1006); `close()` sends 1000 and waits for the answer. Without `timeout(ms)` a WebSocket waits as long as it takes; a message is at most 16 MB.
+
+### D375. Walking the stack on Linux: the unwind tables
+*2026-10-30.* It changes D341. The frame pointers cost about 20% on code made almost only of calls, as fib, not 1%: Linux too walks the stack with the tables that LLVM writes for every function (`.eh_frame`), read by the runtime, as Windows does with its own. Nothing is paid while the program runs; the runtime has an interpreter of the rules of DWARF for them.
+
+### D376. The packages are Git repositories with tags
+*2026-10-30.* As in Go: a dependency is named by the URL of its repository, `github.com/anna/geometry`, and a version by a tag, `v1.2.0`. There is no central registry to keep; one can come later above the same names.
+
+### D377. `cromo.mod`: the dependencies in lines
+*2026-10-30.* As go.mod: `module github.com/anna/app`, then a line for each dependency, `require geometry github.com/anna/geometry v1.2.0`, with comments `//`. Trivial to read and to write by hand.
+
+### D378. Minimal version selection
+*2026-10-30.* As Go (MVS): of each package, the highest of the minimal versions that the project and its dependencies require; the same every time, without a lock file. A newer version comes in only when someone asks for it.
+
+### D379. The packages arrive as archives over HTTPS
+*2026-10-30.* `cromo` asks the forge for the archive of the tag, as GitHub, GitLab and Codeberg give it, and opens it with its own gzip and a reader of tar: no git is needed, and `cromo` stays one program that needs nothing else (D237). For the other hosts it runs the command `git`, if there is one. A proxy on cromolang.org, as proxy.golang.org, can come later above the same names (D376).
+
+### D380. `cromo.sum`
+*2026-10-30.* As go.sum: next to `cromo.mod`, the SHA-256 of each version used, written the first time that version is downloaded and checked every time after. A tag moved on the server, which gives other files, is an error. Both files go in the repository of the project.
+
+### D381. `cromo get url[@version]`
+*2026-10-30.* It adds a dependency to `cromo.mod`, or raises its version. `cromo build`, `cromo run` and `cromo test` download on their own what is missing. `cromo update` stays the update of `cromo` itself (D153, D289).
+
+### D382. A package is a URL and a major version
+*2026-10-30.* `v1` and `v2` of the same repository are two packages: a program can use both, with two names in `cromo.mod`, and minimal version selection (D378) chooses one version of each. The URL does not change with the major version, unlike the `/v2` of Go.
+
+### D383. A dependency is the first name of an import
+*2026-10-30.* The name of a `require` line is the first name of the path: `import geometry` is the root folder of the repository, `import geometry.shapes` its file `shapes.cro` or its folder `shapes` (D130). A folder of the project with the name of a dependency is an error. Every package reads its own `cromo.mod`, so the names are local to the package that writes them.
+
+### D384. Where `cromo.mod` is
+*2026-10-30.* In the folder of the main file, which is already the root of the imports (D130); without `cromo.mod` a program has no dependencies, as today. The `module` line of a dependency must be the URL it was downloaded from.
+
+### D385. The versions
+*2026-10-30.* Tags `vX.Y.Z`, without pre-releases for now; `v0` is a major version as the others. `cromo get url` takes the last version of the major version already required, or the last of all for a new dependency; `@v2` the last `v2.x.y`, `@v1.4.0` that one.
+
+### D386. The tags, and the hosts
+*2026-10-30.* The tags are read with the HTTP protocol of git (`info/refs?service=git-upload-pack`), a list of lines that every host gives without its API. The archive comes from GitHub, GitLab or Codeberg by its address; another host, or a private repository whose archive needs a login, goes through `git`, with its credentials.
+
+### D387. The hash is of the files, not of the archive
+*2026-10-30.* The SHA-256 of the sorted list of the paths, each with the SHA-256 of its file, as the `h1:` of Go: an archive that the forge makes again with another compression, as GitHub did in 2023, and the files that come from git give the same hash. A line is `github.com/anna/geometry v1.2.0 sha256:5ab5...`; `cromo` writes the file again with only the versions that the selection uses.
+
+### D388. The cache
+*2026-10-30.* `~/.cromo/packages/github.com/anna/geometry@v1.2.0` (D238), shared by all the projects, read-only: a version is unpacked once, checked, and never changed.
+
+### D389. The name in `cromo get`
+*2026-10-30.* The last name of the URL, or the one written after it: `cromo get github.com/anna/geometry@v2 geometry2`. A name already taken by another package is an error. A dependency is removed by deleting its line.
+
+### D390. A local folder in place of a version
+*2026-10-30.* `require geometry ../geometry`, to develop two packages together: no version and no line in `cromo.sum`. It holds only in the project being built; a downloaded package with such a line is an error.
+
+### D391. The rest as in the modules of the project
+*2026-10-30.* A package can `import unsafe` and bring its `.lib`, `.a` and DLLs next to its modules (D127, D136). Its symbols have the URL in front, and the major version from `v2`: `@"github.com/anna/geometry.area"`, `@"github.com/anna/geometry@v2.area"` (D134).
 
 ---
 
