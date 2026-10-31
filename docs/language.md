@@ -638,7 +638,7 @@ i32 main() {
 }
 ```
 
-- The core (`list`, `string`, `map`, `format`, `join`, the numbers from text) is visible everywhere; `std.fs`, `std.time`, `std.os`, `std.process`, `std.thread`, `std.net`, `std.crypto`, `std.json`, `std.http`, `std.gzip` and `std.websocket` are imported (D201). The functions of the first three are in D211.
+- The core (`list`, `string`, `map`, `format`, `join`, the numbers from text) is visible everywhere; `std.fs`, `std.time`, `std.os`, `std.process`, `std.thread`, `std.net`, `std.crypto`, `std.json`, `std.jwt`, `std.http`, `std.gzip` and `std.websocket` are imported (D201). The functions of the first three are in D211.
 - `std.fs` has also `isFile`, `isLink`, `size`, `modified` (the seconds from 1970), `rename`, `copy`, `createFolders` with the folders above, `removeAll`, which never follows a link, and the parts of a path: `joinPath`, `parent`, `fileName` and `extension`.
 - Next to `fs.cro` a module can have `fs_windows.cro` and `fs_linux.cro`: only the file of the system the program is compiled for is used, and it shares the names of the module, also the private ones (D202). It holds for the library and for the programs.
 - In the modules with `import unsafe`, `s.cstring()` gives the address of a copy of the string ending with a zero, for the C functions, until the end of the statement (D204).
@@ -785,7 +785,7 @@ list<u8> signature = crypto.ed25519Sign(secret, data)
 bool valid = crypto.ed25519Verify(crypto.ed25519PublicKey(secret), data, signature)
 ```
 
-- Hashes: `md5`, `sha1`, `sha256`, `sha512`; `hmac` with the enum `Hash`; `Hasher` for data in parts.
+- Hashes: `md5`, `sha1`, `sha256`, `sha384`, `sha512`; `hmac` with the enum `Hash`; `Hasher` for data in parts.
 - `random(n)`: bytes from the generator of the system. `hex`, `base64` and `base64Url`, with `fromHex`, `fromBase64` and `fromBase64Url`.
 - `encrypt` and `decrypt` with AES-GCM or ChaCha20-Poly1305: the result has the tag of 16 bytes at the end, and `decrypt` throws if the data, or the extra data, are not those that were encrypted.
 - Ed25519 signs (`ed25519PublicKey`, `ed25519Sign`, `ed25519Verify`) and X25519 exchanges keys (`x25519PublicKey`, `x25519`); the private keys are 32 random bytes.
@@ -821,6 +821,42 @@ switch (v.get("items").at(0)) {
 - A case of an enum without data is its name, `"Empty"`; one with data is an object whose only member is the case, `{"Circle": {"radius": 2.5}}`, as serde. `[[json("circle")]]` before a case changes its name (D365, D371). A fixed array is an array of JSON with exactly its elements (D370).
 - `json.Value` is an enum: `Null`, `Bool`, `Int(i64)`, `UInt(u64)` for the integers above the `i64` (D369), `Float(f64)`, `Text`, `Array`, `Object`, with the members in their order. Its methods read it (`asInt`, `asFloat`, `asText`, `get`, `at`, `has`, `keys`, `len`, `isNull`) and build it (`json.object()`, `json.array()`, `set`, `add`); `json.fromValue<T>` and `json.toValue` convert it.
 - The errors are exceptions that say where: `cannot read JSON: line 3, column 7: expected ',' or '}'`, `cannot decode JSON: at users[2].age: expected an integer, found a string`.
+
+### JSON Web Tokens (D399–D402)
+
+```cromo
+import std.jwt
+import std.time
+
+struct Session {
+    string sub
+    string role
+    i64 exp
+}
+
+jwt.Key key = jwt.secret(jwt.Algorithm.Hs256, secret)  // at least 32 bytes
+Session s
+s.sub = "anna"
+s.exp = time.unix() + 3600
+string token = jwt.sign(s, key)
+Session back = jwt.verify<Session>(token, key)         // the signature, exp and nbf
+
+jwt.Verifier verifier                                  // the tokens of a provider
+verifier.keys = jwt.keySet(jwks)                       // its JWK Set, as text
+verifier.issuer = "https://auth.example.com"
+verifier.audience = "api"
+try {
+    Session user = verifier.verify<Session>(token)
+} catch (jwt.Invalid e) {
+    // e.reason: Expired, BadSignature, ...
+}
+```
+
+- HS256, HS384 and HS512 with `jwt.secret`; RS256, RS384, RS512, ES256, ES384 and EdDSA with `jwt.publicKey` and `jwt.privateKey`, from PEM (D399). The algorithm is the one of the key, never the one of the header: `none`, and a token in HS256 for a key of RSA, are refused (D402).
+- The claims are a struct, written and read as with `json.encode` and `json.decode<T>`; the library reads `exp`, `nbf`, `iss` and `aud` by itself. `exp` and `nbf` are checked when they are there, with the tolerance `verifier.leeway` in seconds; `iss` and `aud` when the verifier names them (D400, D402).
+- `jwt.keySet` reads a JWK Set, as Keycloak, Auth0 and Google publish them; a token takes the key with its `kid`, and one without a `kid` the first key of its algorithm. Downloading the set is up to the program, with `http.Client` (D401).
+- A refused token is a `jwt.Invalid`, whose `reason` is `Malformed`, `WrongAlgorithm`, `UnknownKey`, `BadSignature`, `Expired`, `NotYetValid`, `WrongIssuer` or `WrongAudience` (P15). A secret shorter than its hash, a key of RSA under 2048 bits and a key of another curve than its algorithm are refused when the key is made (P16).
+- A key keeps what mbedTLS has read, once: it is moved, not copied (P14). On x64 a verification takes about 4 µs in HS256, 90 µs in RS256, 130 µs in EdDSA and 1 ms in ES256, whose curve mbedTLS computes slowly.
 
 ## 22. HTTP, gzip and WebSocket (D252–D254, D258–D263, D270, D366–D368, D372–D374)
 

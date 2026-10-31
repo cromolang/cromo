@@ -74,6 +74,16 @@ public Instant now() {
     ret result
 }
 
+// The seconds from 1970-01-01 UTC (P17), as the times of a JSON Web Token.
+public i64 unix() {
+    i64 nanoseconds = unixNanoseconds()
+    i64 seconds = nanoseconds / 1000000000
+    if (nanoseconds % 1000000000 < 0) {
+        seconds--  // before 1970 too, the second that has begun
+    }
+    ret seconds
+}
+
 public DateTime utcNow() {
     ret dateTime(unixNanoseconds(), 0)
 }

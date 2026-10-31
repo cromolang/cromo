@@ -1861,6 +1861,18 @@ lines.close()
 ### D398. `[[cold]]`, in `unsafe`
 *2026-10-31.* Before a function of a module with `import unsafe`, `[[cold]]` says that it runs rarely, as `#[cold]` of Rust and `__attribute__((cold))` of GCC: LLVM keeps it out of its callers and optimizes them for the other path. It goes with `[[export]]`. The runtime in Cromo needs it: the heap of Linux, with its path that asks the system for memory put inline in `cromo_alloc`, was a third slower than the C, which clang had put all in one function; with `newBlock` cold it is within a twentieth.
 
+### D399. `std.jwt`
+*2026-10-31.* JSON Web Tokens (RFC 7519) in the compact form of JWS (RFC 7515), written in Cromo, to sign and to verify: HS256, HS384 and HS512, RS256, RS384 and RS512, ES256 and ES384, and EdDSA with Ed25519 (RFC 7518, RFC 8037). HMAC and Ed25519 are those of `std.crypto`, which gains SHA-384; RSA, with the padding of PKCS#1 v1.5, and ECDSA come from mbedTLS, through a small glue in the runtime, with the key read once. A backend verifies the tokens of the providers of identity, as Keycloak, Auth0 and Google, which sign in RS256 by default.
+
+### D400. The claims are a struct of the program
+*2026-10-31.* `jwt.sign(claims, key)` writes a struct that is `json.Data`, and the verification gives the struct asked for, as `json.decode<T>` (D255): no dynamic tables on the path of every request. The library reads `exp`, `nbf`, `iss` and `aud` from the payload by itself, for its checks.
+
+### D401. The keys of a provider (JWKS)
+*2026-10-31.* `jwt.keySet(text)` reads a JWK Set (RFC 7517): the keys of RSA from `n` and `e`, those of P-256 and P-384 from `x` and `y`, and those of Ed25519 (`OKP`), each with its `kid`. A key for encryption (`"use": "enc"`) or of another kind is left out, so that one set serves for all. The verification takes the key with the `kid` of the token. Downloading the set and renewing it is up to the program, with `http.Client`.
+
+### D402. What the verification checks
+*2026-10-31.* The algorithm comes from the key, never from the header: `none`, and a token in HS256 checked with a public key of RSA, are always rejected, as a header with `crit`, whose extensions the library does not know (RFC 7515). `exp` and `nbf` are checked when they are there, with a tolerance in seconds that is 0 unless the program sets it; `iss` and `aud` only when the program asks for them. As `jsonwebtoken` of Rust and `golang-jwt` of Go.
+
 ---
 
 ## Proposed
@@ -1878,6 +1890,20 @@ A built-in function of `unsafe` that gives the `addr` of a module variable, or o
 
 ### P13. An `addr` and an integer of 64 bits (D98)
 In `unsafe`, `addr(n)` makes an address from an `i64` or a `u64`, and `i64(p)` and `u64(p)` give the number of an address, as `as` in Rust: the runtime needs them for what `mmap` gives and for the alignment of the stacks. `addr(0)` is the null address, the default value of `addr`. No other type converts to or from `addr`.
+
+### P14. The interface of `std.jwt` (D399–D402)
+- `jwt.Algorithm`, with the cases `Hs256` ... `EdDsa`; a `jwt.Key` is made by `jwt.secret(algorithm, bytes)`, `jwt.publicKey(algorithm, pem)`, `jwt.privateKey(algorithm, pem)` and `jwt.keySet(jwks)`, and `key.id` is its `kid`, which `sign` writes in the header.
+- `jwt.sign(claims, key)` gives the token; `jwt.verify<T>(token, key)` checks it with one key and gives the claims; `jwt.Verifier`, with the fields `keys`, `issuer`, `audience` and `leeway`, does the same with several keys and the other checks, in `verifier.verify<T>(token)`.
+- A key of RSA or of a curve keeps the key read by mbedTLS until it is destroyed: a `Key` is moved, not copied.
+
+### P15. The errors of `std.jwt`
+A refused token is a `jwt.Invalid`, an `Exception` with a `reason`: `Malformed`, `WrongAlgorithm`, `UnknownKey`, `BadSignature`, `Expired`, `NotYetValid`, `WrongIssuer` or `WrongAudience`, so that a backend can answer that a token has expired apart from one that is not valid. It is not `jwt.Error`, which in the module would hide the `Error` of the core; a key that cannot be made is an `Error`, as in `std.crypto`.
+
+### P16. No weak keys
+A secret of HMAC shorter than its hash, 32 bytes for HS256 (RFC 7518 §3.2), a key of RSA under 2048 bits (§3.3) and a key of a curve that is not the one of its algorithm are refused, when the key is made.
+
+### P17. `time.unix()`
+The seconds from 1970-01-01 UTC, as an `i64`, for `exp` and `iat`; `std.time` already reads them from the system.
 
 ---
 

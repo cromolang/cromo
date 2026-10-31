@@ -13,6 +13,7 @@
 #include "mbedtls/entropy.h"
 #include "mbedtls/platform_time.h"
 #include "mbedtls/threading.h"
+#include "psa/crypto.h"
 #include "glue.h"
 
 // ---- Strings ----
@@ -377,4 +378,19 @@ static int mutexUnlock(mbedtls_threading_mutex_t* mutex) {
     return 0;
 }
 
-void cromo_tls_threads(void) { mbedtls_threading_set_alt(mutexInit, mutexFree, mutexLock, mutexUnlock); }
+// ---- mbedTLS starts once, with the mutexes of the runtime ----
+
+static uint64_t setupLock;
+static int setupState;  // 0 not yet, 1 ready, -1 failed
+
+int cromo_tls_setup(void) {
+    int state = __atomic_load_n(&setupState, __ATOMIC_ACQUIRE);
+    if (state) return state > 0;
+    cromo_mutex_lock(&setupLock);
+    if (!setupState) {
+        mbedtls_threading_set_alt(mutexInit, mutexFree, mutexLock, mutexUnlock);
+        __atomic_store_n(&setupState, psa_crypto_init() == PSA_SUCCESS ? 1 : -1, __ATOMIC_RELEASE);
+    }
+    cromo_mutex_unlock(&setupLock);
+    return __atomic_load_n(&setupState, __ATOMIC_ACQUIRE) > 0;
+}

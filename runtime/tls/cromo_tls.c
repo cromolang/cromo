@@ -27,23 +27,6 @@ enum {
     KEY_MISMATCH,
 };
 
-// ---- mbedTLS starts once, with the mutexes of the runtime ----
-
-static uint64_t setupLock;
-static int setupState;  // 0 not yet, 1 ready, -1 failed
-
-static int setup(void) {
-    int state = __atomic_load_n(&setupState, __ATOMIC_ACQUIRE);
-    if (state) return state > 0;
-    cromo_mutex_lock(&setupLock);
-    if (!setupState) {
-        cromo_tls_threads();
-        __atomic_store_n(&setupState, psa_crypto_init() == PSA_SUCCESS ? 1 : -1, __ATOMIC_RELEASE);
-    }
-    cromo_mutex_unlock(&setupLock);
-    return __atomic_load_n(&setupState, __ATOMIC_ACQUIRE) > 0;
-}
-
 // ---- The root certificates of the system (D234), loaded once ----
 //
 // SSL_CERT_FILE, as for OpenSSL and Go, names a file in PEM that replaces them (D247).
@@ -397,7 +380,7 @@ static Session* newSession(void) {
 void* cromo_tls_connect(const uint8_t* host, int64_t length) {
     Session* session = newSession();
     session->host = (char*)zeroEnded(host, length);
-    if (!setup()) {
+    if (!cromo_tls_setup()) {
         session->status.error = NO_RANDOM;
         return session;
     }
@@ -492,7 +475,7 @@ void* cromo_tls_server(const uint8_t* certificate, int64_t certificateLength, co
     mbedtls_ssl_config_init(&server->config);
     mbedtls_x509_crt_init(&server->chain);
     mbedtls_pk_init(&server->key);
-    if (!setup()) {
+    if (!cromo_tls_setup()) {
         server->status.error = NO_RANDOM;
         return server;
     }

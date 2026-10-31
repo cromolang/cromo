@@ -78,6 +78,10 @@ file(GLOB CROMO_TLS_THIRD_PARTY CONFIGURE_DEPENDS
      "${CMAKE_SOURCE_DIR}/third_party/mbedtls/library/*.c" "${CMAKE_SOURCE_DIR}/third_party/monocypher/*.c")
 file(GLOB CROMO_TLS_GLUE CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/runtime/tls/*.c")
 file(GLOB CROMO_TLS_HEADERS CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/runtime/tls/*.h" "${CMAKE_SOURCE_DIR}/runtime/libc/*.h")
+# Without the compatibility with MSVC, clang defines __GNUC__ for Windows too, and
+# mbedTLS multiplies its big integers with the assembly of x64, as on Linux: RSA
+# takes half the time. The headers are those of runtime/libc, not of the SDK.
+set(CROMO_TLS_WINDOWS_FLAGS ${CROMO_RT_BASE_FLAGS} -fno-ms-compatibility)
 set(CROMO_TLS_FLAGS -nostdlibinc -isystem "${CMAKE_SOURCE_DIR}/runtime/libc" "-I${CMAKE_SOURCE_DIR}/runtime/tls"
     "-I${CMAKE_SOURCE_DIR}/third_party/mbedtls/include" "-I${CMAKE_SOURCE_DIR}/third_party/monocypher"
     "-DMBEDTLS_USER_CONFIG_FILE=\"mbedtls_user_config.h\"")
@@ -107,7 +111,7 @@ function(cromo_tls_objects folder flags objects)
   file(CONFIGURE OUTPUT "${CROMO_RT_DIR}/${folder}.rsp" CONTENT "${listing}")
   set(${objects} ${result} PARENT_SCOPE)
 endfunction()
-cromo_tls_objects(tls_windows "${CROMO_RT_BASE_FLAGS}" CROMO_TLS_WINDOWS_OBJECTS)
+cromo_tls_objects(tls_windows "${CROMO_TLS_WINDOWS_FLAGS}" CROMO_TLS_WINDOWS_OBJECTS)
 cromo_tls_objects(tls_linux "${CROMO_RT_LINUX_BASE_FLAGS}" CROMO_TLS_LINUX_OBJECTS)
 
 add_custom_command(

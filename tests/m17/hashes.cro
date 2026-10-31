@@ -4,10 +4,12 @@
 // expect-output: a9993e364706816aba3e25717850c26c9cd0d89d
 // expect-output: ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
 // expect-output: ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f
+// expect-output: cb00753f45a35e8bb5a03d699ac65007272c32ab0eded1631a8b605a43ff5bed8086072ba1e7cc2358baeca134c825a7
 // expect-output: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
 // expect-output: 248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1
 // expect-output: b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7
 // expect-output: 87aa7cdea5ef619d4ff0b4241a1d6cb02379f4e2ce4ec2787ad0b30545e17cdedaa833b7d6b8a702038b274eaea3f4e4be9d914eeb61f1702e696c203a126854
+// expect-output: afd03944d84895626b0825f4ab46907f15f9dadbe4101ec682aa034c7cebc59cfaea9ea9076ede7f4af152e8b2fa9cb6
 // expect-output: effcdf6ae5eb2fa2d27416d5f184df9c259a7c79
 // expect-output: b617318655057264e28bc0b6fb378c8ef146be00
 // expect-output: 248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1
@@ -20,6 +22,7 @@ i32 main() {
     println("{}", crypto.hex(crypto.sha1(abc)))
     println("{}", crypto.hex(crypto.sha256(abc)))
     println("{}", crypto.hex(crypto.sha512(abc)))
+    println("{}", crypto.hex(crypto.sha384(abc)))
     println("{}", crypto.hex(crypto.sha256(list<u8>())))
     println("{}", crypto.hex(crypto.sha256("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq".bytes())))
 
@@ -30,6 +33,7 @@ i32 main() {
     list<u8> hiThere = "Hi There".bytes()
     println("{}", crypto.hex(crypto.hmac(crypto.Hash.Sha256, key, hiThere)))
     println("{}", crypto.hex(crypto.hmac(crypto.Hash.Sha512, key, hiThere)))
+    println("{}", crypto.hex(crypto.hmac(crypto.Hash.Sha384, key, hiThere)))
     // RFC 2202, HMAC-SHA1 with the key "Jefe"
     println("{}", crypto.hex(crypto.hmac(crypto.Hash.Sha1, "Jefe".bytes(), "what do ya want for nothing?".bytes())))
     println("{}", crypto.hex(crypto.hmac(crypto.Hash.Sha1, key, hiThere)))

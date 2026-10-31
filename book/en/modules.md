@@ -127,6 +127,7 @@ The core of the library, with `list`, `map`, `string`, `format` and `Exception`,
 | `std.websocket` | WebSocket client and server | 15 |
 | `std.json` | JSON | 16 |
 | `std.crypto` | hashes, random bytes, encryption, signatures | 15 |
+| `std.jwt` | JSON Web Tokens | 15 |
 | `std.gzip` | compression | 15 |
 
 After `import std.fs`, the functions of the module are written with its last name: `fs.readText(path)`.

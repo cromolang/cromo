@@ -1,0 +1,764 @@
+// The module std.jwt (D399-D402): JSON Web Tokens (RFC 7519) in the compact form
+// of JWS (RFC 7515), signed with HMAC, RSA, ECDSA or Ed25519 (RFC 7518, RFC 8037).
+// The claims are a struct of the program, written and read as JSON (D400); the
+// algorithm is always the one of the key, never the one of the header (D402).
+// HMAC and Ed25519 are those of std.crypto, RSA and ECDSA those of mbedTLS in the
+// runtime (runtime/tls/crypto_key.c), with the key read once.
+import unsafe
+import std.crypto
+import std.json
+import std.time
+
+extern "cromo" {
+    addr cromo_crypto_key_read(i32 isPrivate, addr data, i64 size)  // PEM ended by a zero, or DER
+    i32 cromo_crypto_key_kind(addr key)                             // 1 RSA, 2 P-256, 3 P-384, 0 another
+    i64 cromo_crypto_key_bits(addr key)
+    i32 cromo_crypto_key_verify(addr key, i32 hash, addr data, i64 size, addr signature, i64 signatureSize)
+    i64 cromo_crypto_key_sign(addr key, i32 hash, addr data, i64 size, addr signature, i64 capacity)
+    void cromo_crypto_key_free(addr key)
+}
+
+// ---- Algorithms (RFC 7518, RFC 8037) ----
+
+// In this order: the hash of an algorithm of HMAC, RSA or ECDSA follows from it.
+public enum Algorithm {
+    Hs256
+    Hs384
+    Hs512
+    Rs256
+    Rs384
+    Rs512
+    Es256
+    Es384
+    EdDsa
+
+    // Its name in the header of a token.
+    public string name() const {
+        switch {
+            case Hs256 {
+                ret "HS256"
+            }
+            case Hs384 {
+                ret "HS384"
+            }
+            case Hs512 {
+                ret "HS512"
+            }
+            case Rs256 {
+                ret "RS256"
+            }
+            case Rs384 {
+                ret "RS384"
+            }
+            case Rs512 {
+                ret "RS512"
+            }
+            case Es256 {
+                ret "ES256"
+            }
+            case Es384 {
+                ret "ES384"
+            }
+            case EdDsa {
+                ret "EdDSA"
+            }
+        }
+    }
+}
+
+enum Family {
+    Hmac
+    Rsa
+    Ecdsa
+    Ed25519
+}
+
+Family familyOf(Algorithm algorithm) {
+    i32 index = i32(algorithm)
+    if (index < 3) {
+        ret Family.Hmac
+    }
+    if (index < 6) {
+        ret Family.Rsa
+    }
+    if (index < 8) {
+        ret Family.Ecdsa
+    }
+    ret Family.Ed25519
+}
+
+// SHA-256, SHA-384 or SHA-512, in the order of the cases of each family.
+crypto.Hash hashOf(Algorithm algorithm) {
+    i32 rank = i32(algorithm) % 3
+    if (rank == 0) {
+        ret crypto.Hash.Sha256
+    }
+    if (rank == 1) {
+        ret crypto.Hash.Sha384
+    }
+    ret crypto.Hash.Sha512
+}
+
+i64 hashSize(Algorithm algorithm) {
+    ret 32 + 16 * i64(i32(algorithm) % 3)
+}
+
+// The algorithm with that name in a header or in a JWK, or -1.
+i32 algorithmNamed(string name) {
+    for (i32 i = 0; i < 9; i++) {
+        if (Algorithm(i).name() == name) {
+            ret i
+        }
+    }
+    ret -1
+}
+
+// ---- Keys (P14, P16) ----
+
+// A key to sign or to verify, of one algorithm: a secret of HMAC, a key of RSA or
+// of a curve, read once by mbedTLS, or a key of Ed25519. It is moved, not copied.
+public struct Key {
+    public string id  // the kid of the header (RFC 7515 §4.1.4), which sign writes
+    Algorithm algorithm
+    list<u8> secretBytes  // of HMAC, or the private key of Ed25519
+    list<u8> publicBytes  // of Ed25519
+    addr handle           // of mbedTLS, for RSA and ECDSA
+    bool signs            // a secret or a private key
+
+    ~Key() {
+        if (handle != addr(0)) {
+            cromo_crypto_key_free(handle)
+        }
+        wipe(ref secretBytes)
+    }
+}
+
+// A secret of HMAC, for HS256, HS384 or HS512, at least as long as the hash: 32
+// bytes for HS256, 48 for HS384, 64 for HS512 (RFC 7518 §3.2).
+public Key secret(Algorithm algorithm, list<u8> bytes) {
+    if (familyOf(algorithm) != Family.Hmac) {
+        throw Error(format("jwt.secret is for HS256, HS384 and HS512, not for {}, which reads a key in PEM",
+            algorithm.name()))
+    }
+    if (bytes.len() < hashSize(algorithm)) {
+        throw Error(format("a secret of {} has at least {} bytes, not {} (RFC 7518)", algorithm.name(),
+            hashSize(algorithm), bytes.len()))
+    }
+    Key key
+    key.algorithm = algorithm
+    key.secretBytes = bytes.copy()
+    key.signs = true
+    ret key
+}
+
+// A public key in PEM, which verifies: of RSA or of a curve as
+// SubjectPublicKeyInfo ("BEGIN PUBLIC KEY") or PKCS#1, of Ed25519 as
+// SubjectPublicKeyInfo (RFC 8410).
+public Key publicKey(Algorithm algorithm, string pem) {
+    ret readKey(algorithm, pem, false)
+}
+
+// A private key in PEM, which signs and verifies: PKCS#8 ("BEGIN PRIVATE KEY"),
+// or PKCS#1 for RSA and SEC 1 for a curve; of Ed25519 as PKCS#8 (RFC 8410).
+public Key privateKey(Algorithm algorithm, string pem) {
+    ret readKey(algorithm, pem, true)
+}
+
+Key readKey(Algorithm algorithm, string pem, bool isPrivate) {
+    string what = "public"
+    if (isPrivate) {
+        what = "private"
+    }
+    Family family = familyOf(algorithm)
+    if (family == Family.Hmac) {
+        throw Error(format("{} takes a secret, with jwt.secret, not a {} key", algorithm.name(), what))
+    }
+    Key key
+    key.algorithm = algorithm
+    key.signs = isPrivate
+    if (family == Family.Ed25519) {
+        list<u8> der = pemBytes(pem, what)
+        if (isPrivate) {
+            list<u8> seed = ed25519Field(der, "302e020100300506032b657004220420", what)
+            key.publicBytes = crypto.ed25519PublicKey(seed)
+            key.secretBytes = move seed
+        } else {
+            key.publicBytes = ed25519Field(der, "302a300506032b6570032100", what)
+        }
+        wipe(ref der)
+        ret key
+    }
+    list<u8> text = pem.bytes()
+    text.add(0)  // mbedTLS reads the PEM up to its zero
+    key.handle = readHandle(text, isPrivate)
+    wipe(ref text)
+    if (key.handle == addr(0)) {
+        throw Error(format("cannot read the {} key: it is not a key of RSA or of a curve in PEM", what))
+    }
+    string misfit = misfitOf(key)
+    if (misfit.len() > 0) {
+        throw Error(move misfit)
+    }
+    ret key
+}
+
+// What keeps a key of mbedTLS from its algorithm (P16), or "".
+string misfitOf(Key key) {
+    i32 kind = cromo_crypto_key_kind(key.handle)
+    string name = key.algorithm.name()
+    if (familyOf(key.algorithm) == Family.Rsa) {
+        if (kind != 1) {
+            ret format("{} takes a key of RSA, and this is not one", name)
+        }
+        i64 bits = cromo_crypto_key_bits(key.handle)
+        if (bits < 2048) {
+            ret format("a key of RSA has at least 2048 bits, not {} (RFC 7518)", bits)
+        }
+    } else if (key.algorithm == Algorithm.Es256 && kind != 2) {
+        ret "ES256 takes a key of the curve P-256, and this is not one"
+    } else if (key.algorithm == Algorithm.Es384 && kind != 3) {
+        ret "ES384 takes a key of the curve P-384, and this is not one"
+    }
+    ret ""
+}
+
+addr readHandle(list<u8> bytes, bool isPrivate) {
+    addr data = raw(bytes)
+    i32 which = 0
+    if (isPrivate) {
+        which = 1
+    }
+    addr handle = cromo_crypto_key_read(which, data, bytes.len())
+    forget(data, bytes.len())
+    ret handle
+}
+
+// The bytes of the block of a text in PEM, between its lines BEGIN and END.
+list<u8> pemBytes(string pem, string what) {
+    i64 begin = pem.find("-----BEGIN ")
+    i64 start = -1
+    if (begin >= 0) {
+        start = pem.findFrom("-----", begin + 11)
+    }
+    i64 end = -1
+    if (start >= 0) {
+        end = pem.findFrom("-----END ", start + 5)
+    }
+    if (end < 0) {
+        throw Error(format("cannot read the {} key: it is not in PEM", what))
+    }
+    string body = pem.slice(start + 5, end).replace("\r", "").replace("\n", "").replace(" ", "")
+    list<u8> bytes
+    try {
+        bytes = crypto.fromBase64(body)
+    } catch (Error e) {
+        throw Error(format("cannot read the {} key: {}", what, e.message()))
+    }
+    ret bytes
+}
+
+// The 32 bytes of a key of Ed25519 after the fixed start of its DER (RFC 8410).
+list<u8> ed25519Field(list<u8> der, string start, string what) {
+    list<u8> prefix = crypto.fromHex(start)
+    bool fits = der.len() == prefix.len() + 32
+    for (i64 i = 0; fits && i < prefix.len(); i++) {
+        fits = der[i] == prefix[i]
+    }
+    if (!fits) {
+        throw Error(format("cannot read the {} key: it is not a key of Ed25519", what))
+    }
+    list<u8> field
+    for (i64 i = prefix.len(); i < der.len(); i++) {
+        field.add(der[i])
+    }
+    ret field
+}
+
+// ---- The keys of a provider (D401) ----
+
+// The keys of a JWK Set (RFC 7517), as a provider of identity publishes it: RSA
+// from n and e, P-256 and P-384 from x and y, Ed25519 from x, each with its kid.
+// The keys for encryption, of another kind, or weak (P16) are left out.
+public list<Key> keySet(string text) {
+    json.Value set = json.parse(text)
+    json.Value entries = set.get("keys")
+    list<Key> keys
+    for (i64 i = 0; i < entries.len(); i++) {
+        try {
+            addJwk(entries.at(i), ref keys)
+        } catch (Error e) {
+            // A key that cannot be read is left out, as one of another kind.
+        }
+    }
+    ret keys
+}
+
+void addJwk(json.Value jwk, ref list<Key> keys) {
+    string use = member(jwk, "use")
+    if (use.len() > 0 && use != "sig") {
+        ret
+    }
+    string kty = member(jwk, "kty")
+    string curve = member(jwk, "crv")
+    string fallback = "RS256"
+    Family family = Family.Rsa
+    if (kty == "EC" && curve == "P-256") {
+        fallback = "ES256"
+        family = Family.Ecdsa
+    } else if (kty == "EC" && curve == "P-384") {
+        fallback = "ES384"
+        family = Family.Ecdsa
+    } else if (kty == "OKP" && curve == "Ed25519") {
+        fallback = "EdDSA"
+        family = Family.Ed25519
+    } else if (kty != "RSA") {
+        ret
+    }
+    string name = member(jwk, "alg")
+    if (name.len() == 0) {
+        name = move fallback
+    }
+    i32 index = algorithmNamed(name)
+    if (index < 0 || familyOf(Algorithm(index)) != family) {
+        ret
+    }
+    Key key
+    key.id = member(jwk, "kid")
+    key.algorithm = Algorithm(index)
+    if (family == Family.Ed25519) {
+        key.publicBytes = crypto.fromBase64Url(member(jwk, "x"))
+        if (key.publicBytes.len() == 32) {
+            keys.add(move key)
+        }
+        ret
+    }
+    list<u8> der
+    if (family == Family.Rsa) {
+        der = rsaPublicKey(crypto.fromBase64Url(member(jwk, "n")), crypto.fromBase64Url(member(jwk, "e")))
+    } else {
+        i64 size = 32
+        string oid = "06082a8648ce3d030107"  // P-256
+        if (curve == "P-384") {
+            size = 48
+            oid = "06052b81040022"
+        }
+        list<u8> x = crypto.fromBase64Url(member(jwk, "x"))
+        list<u8> y = crypto.fromBase64Url(member(jwk, "y"))
+        if (x.len() != size || y.len() != size) {
+            ret
+        }
+        der = curvePublicKey(oid, x, y)
+    }
+    key.handle = readHandle(der, false)
+    if (key.handle != addr(0) && misfitOf(key).len() == 0) {
+        keys.add(move key)
+    }
+}
+
+// The text of a member of an object of JSON, or "".
+string member(json.Value object, string name) {
+    if (!object.has(name)) {
+        ret ""
+    }
+    ret textOf(object.get(name))
+}
+
+string textOf(json.Value value) {
+    switch (value) {
+        case Text(string s) {
+            ret s.copy()
+        }
+        default {
+            ret ""
+        }
+    }
+}
+
+// SubjectPublicKeyInfo (RFC 5280) of a key of RSA (RFC 8017), from n and e.
+list<u8> rsaPublicKey(list<u8> n, list<u8> e) {
+    list<u8> numbers = derInteger(n)
+    append(ref numbers, derInteger(e))
+    list<u8> bits
+    bits.add(0)  // no unused bits
+    append(ref bits, der(0x30, numbers))
+    list<u8> info = crypto.fromHex("300d06092a864886f70d0101010500")  // rsaEncryption, NULL
+    append(ref info, der(0x03, bits))
+    ret der(0x30, info)
+}
+
+// SubjectPublicKeyInfo of a point of a curve (RFC 5480), not compressed.
+list<u8> curvePublicKey(string curve, list<u8> x, list<u8> y) {
+    list<u8> point
+    point.add(0)  // no unused bits
+    point.add(4)  // not compressed
+    append(ref point, x)
+    append(ref point, y)
+    list<u8> info = der(0x30, crypto.fromHex("06072a8648ce3d0201" + curve))  // ecPublicKey, the curve
+    append(ref info, der(0x03, point))
+    ret der(0x30, info)
+}
+
+// An element of DER (X.690): its tag, the length of its content, its content.
+list<u8> der(u8 tag, list<u8> content) {
+    list<u8> out
+    out.add(tag)
+    if (content.len() < 128) {
+        out.add(u8(content.len()))
+    } else {
+        list<u8> digits
+        for (i64 n = content.len(); n > 0; n = n >> 8) {
+            digits.insert(0, u8(n & 0xFF))
+        }
+        out.add(u8(0x80 + digits.len()))
+        append(ref out, digits)
+    }
+    append(ref out, content)
+    ret out
+}
+
+// A positive INTEGER of DER, from its bytes with the most significant first.
+list<u8> derInteger(list<u8> magnitude) {
+    i64 start = 0
+    for (start + 1 < magnitude.len() && magnitude[start] == 0) {
+        start++
+    }
+    list<u8> content
+    if (magnitude.len() == 0 || magnitude[start] >= 0x80) {
+        content.add(0)
+    }
+    for (i64 i = start; i < magnitude.len(); i++) {
+        content.add(magnitude[i])
+    }
+    ret der(0x02, content)
+}
+
+// ---- Signing (D400) ----
+
+// The token of the claims, signed with a secret or a private key; its header has
+// the kid of the key, when it has one.
+public string sign<T : json.Data>(T claims, Key key) {
+    if (!key.signs) {
+        throw Error(format("cannot sign with a public key of {}: jwt.privateKey reads one that signs",
+            key.algorithm.name()))
+    }
+    string header = "{\"alg\":\"" + key.algorithm.name() + "\",\"typ\":\"JWT\""
+    if (key.id.len() > 0) {
+        header += ",\"kid\":" + json.encode(key.id)
+    }
+    header += "}"
+    string input = crypto.base64Url(header.bytes()) + "." + crypto.base64Url(json.encode(claims).bytes())
+    ret input + "." + crypto.base64Url(signatureOf(key, input.bytes()))
+}
+
+list<u8> signatureOf(Key key, list<u8> data) {
+    Family family = familyOf(key.algorithm)
+    if (family == Family.Hmac) {
+        ret crypto.hmac(hashOf(key.algorithm), key.secretBytes, data)
+    }
+    if (family == Family.Ed25519) {
+        ret crypto.ed25519Sign(key.secretBytes, data)
+    }
+    i64 capacity = (cromo_crypto_key_bits(key.handle) + 7) / 8
+    if (family == Family.Ecdsa) {
+        capacity *= 2  // r and s
+    }
+    addr input = raw(data)
+    addr out = alloc(capacity)
+    i64 size = cromo_crypto_key_sign(key.handle, i32(hashOf(key.algorithm)), input, data.len(), out, capacity)
+    free(input)
+    if (size < 0) {
+        free(out)
+        throw Error(format("cannot sign with the key of {}", key.algorithm.name()))
+    }
+    list<u8> result = fromRaw(out, size)
+    free(out)
+    ret result
+}
+
+// ---- Verifying (D402) ----
+
+// Why a token is refused (P15).
+public enum Reason {
+    Malformed       // not three parts of base64url, or a header or claims that are not objects of JSON
+    WrongAlgorithm  // signed with another algorithm than the one of its key, as none
+    UnknownKey      // no key has the kid of the token
+    BadSignature
+    Expired      // exp has passed
+    NotYetValid  // nbf has not come
+    WrongIssuer
+    WrongAudience
+}
+
+// The exception of a token that is refused, with its reason (P15).
+public struct Invalid : Exception {
+    public Reason reason
+    string text
+
+    string message() const {
+        ret text.copy()
+    }
+}
+
+// The checks of the tokens (D402): the keys, of which a token takes the one with
+// its kid, or without a kid the first of its algorithm; the issuer and the
+// audience it must name, when they are set; the tolerance in seconds on exp and
+// nbf, for the clocks that differ.
+public struct Verifier {
+    public list<Key> keys
+    public string issuer
+    public string audience
+    public i64 leeway
+
+    // The claims of the token as the struct T, when the token is valid; otherwise
+    // jwt.Invalid, with its reason.
+    public T verify<T : json.Data>(string token) const {
+        Token parts = split(token)
+        i64 chosen = -1
+        for (i64 i = 0; i < keys.len() && chosen < 0; i++) {
+            bool named = parts.id.len() > 0 && keys[i].id == parts.id
+            bool fits = parts.id.len() == 0 && keys[i].algorithm.name() == parts.algorithm
+            if (named || fits) {
+                chosen = i
+            }
+        }
+        if (chosen < 0 && parts.id.len() > 0) {
+            throw invalid(Reason.UnknownKey, format("no key has the kid {} of the token", parts.id))
+        }
+        if (chosen < 0) {
+            throw invalid(Reason.WrongAlgorithm, format("no key is for {}, the algorithm of the token", parts.algorithm))
+        }
+        check(keys[chosen], parts)
+        ret claimsOf<T>(parts, issuer, audience, leeway)
+    }
+}
+
+// The claims of a token signed with the key, as the struct T, checking exp and nbf
+// without tolerance; otherwise jwt.Invalid, with its reason.
+public T verify<T : json.Data>(string token, Key key) {
+    Token parts = split(token)
+    check(key, parts)
+    ret claimsOf<T>(parts, "", "", 0)
+}
+
+// The parts of a token: what the signature covers, the signature, the alg and the
+// kid of the header, and the claims.
+struct Token {
+    string input
+    list<u8> signature
+    string algorithm
+    string id
+    json.Value claims
+}
+
+Invalid invalid(Reason reason, string text) {
+    Invalid result
+    result.reason = reason
+    result.text = text.copy()
+    ret result
+}
+
+Token split(string token) {
+    list<string> parts = token.split(".")
+    if (parts.len() != 3) {
+        throw invalid(Reason.Malformed, "a token has three parts separated by dots")
+    }
+    for (i64 i = 0; i < token.len(); i++) {
+        u8 c = token[i]
+        bool fits = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' ||
+            c == '_' || c == '.'
+        if (!fits) {
+            throw invalid(Reason.Malformed, "a token is written in base64url, without padding")
+        }
+    }
+    Token result
+    json.Value header = readObject(parts[0], "header")
+    if (header.has("crit")) {
+        throw invalid(Reason.Malformed, "the header has crit, with extensions that std.jwt does not know (RFC 7515)")
+    }
+    result.algorithm = member(header, "alg")
+    if (result.algorithm.len() == 0) {
+        throw invalid(Reason.Malformed, "the header has no alg")
+    }
+    result.id = member(header, "kid")
+    result.claims = readObject(parts[1], "claims")
+    result.signature = decodePart(parts[2], "signature")
+    result.input = token.slice(0, parts[0].len() + 1 + parts[1].len())
+    ret result
+}
+
+list<u8> decodePart(string part, string what) {
+    list<u8> bytes
+    try {
+        bytes = crypto.fromBase64Url(part)
+    } catch (Error e) {
+        throw invalid(Reason.Malformed, format("the {} of the token is not base64url: {}", what, e.message()))
+    }
+    ret bytes
+}
+
+json.Value readObject(string part, string what) {
+    string text = string(decodePart(part, what))
+    json.Value value
+    try {
+        value = json.parse(text)
+    } catch (Error e) {
+        throw invalid(Reason.Malformed, format("the {} of the token is not JSON: {}", what, e.message()))
+    }
+    if (!isObject(value)) {
+        throw invalid(Reason.Malformed, format("the {} of the token is not an object of JSON", what))
+    }
+    ret value
+}
+
+bool isObject(json.Value value) {
+    switch (value) {
+        case Object(list<json.Member> members) {
+            ret true
+        }
+        default {
+            ret false
+        }
+    }
+}
+
+void check(Key key, Token parts) {
+    if (key.algorithm.name() != parts.algorithm) {
+        throw invalid(Reason.WrongAlgorithm, format("the token is signed with {}, and its key is for {}",
+            parts.algorithm, key.algorithm.name()))
+    }
+    if (!signedWith(key, parts)) {
+        throw invalid(Reason.BadSignature, "the signature of the token is not valid")
+    }
+}
+
+bool signedWith(Key key, Token parts) {
+    list<u8> data = parts.input.bytes()
+    Family family = familyOf(key.algorithm)
+    if (family == Family.Hmac) {
+        ret sameBytes(crypto.hmac(hashOf(key.algorithm), key.secretBytes, data), parts.signature)
+    }
+    if (family == Family.Ed25519) {
+        ret crypto.ed25519Verify(key.publicBytes, data, parts.signature)
+    }
+    addr input = raw(data)
+    addr signature = raw(parts.signature)
+    i32 valid = cromo_crypto_key_verify(key.handle, i32(hashOf(key.algorithm)), input, data.len(), signature,
+        parts.signature.len())
+    free(input)
+    free(signature)
+    ret valid != 0
+}
+
+T claimsOf<T : json.Data>(Token parts, string issuer, string audience, i64 leeway) {
+    i64 now = time.unix()
+    if (parts.claims.has("exp") && f64(now - leeway) >= numericDate(parts.claims, "exp")) {
+        throw invalid(Reason.Expired, "the token has expired")
+    }
+    if (parts.claims.has("nbf") && f64(now + leeway) < numericDate(parts.claims, "nbf")) {
+        throw invalid(Reason.NotYetValid, "the token is not valid yet")
+    }
+    if (issuer.len() > 0 && member(parts.claims, "iss") != issuer) {
+        throw invalid(Reason.WrongIssuer, format("the token is not of the issuer {}", issuer))
+    }
+    if (audience.len() > 0 && !names(parts.claims, audience)) {
+        throw invalid(Reason.WrongAudience, format("the token is not for the audience {}", audience))
+    }
+    T claims
+    try {
+        claims = json.fromValue<T>(parts.claims)
+    } catch (Error e) {
+        throw invalid(Reason.Malformed, format("the claims of the token: {}", e.message()))
+    }
+    ret claims
+}
+
+// A NumericDate (RFC 7519 §2): the seconds from 1970, which can have a fraction.
+f64 numericDate(json.Value claims, string name) {
+    switch (claims.get(name)) {
+        case Int(i64 n) {
+            ret f64(n)
+        }
+        case UInt(u64 n) {
+            ret f64(n)
+        }
+        case Float(f64 x) {
+            ret x
+        }
+        default {
+            throw invalid(Reason.Malformed, format("the claim {} is not a number", name))
+        }
+    }
+}
+
+// Whether aud is the audience, or an array that has it (RFC 7519 §4.1.3).
+bool names(json.Value claims, string audience) {
+    if (!claims.has("aud")) {
+        ret false
+    }
+    json.Value aud = claims.get("aud")
+    switch (aud) {
+        case Array(list<json.Value> items) {
+            for (i64 i = 0; i < items.len(); i++) {
+                if (textOf(items[i]) == audience) {
+                    ret true
+                }
+            }
+            ret false
+        }
+        default {
+            ret textOf(aud) == audience
+        }
+    }
+}
+
+// ---- Helpers ----
+
+// The same bytes, compared in a time that does not depend on where they differ.
+bool sameBytes(list<u8> a, list<u8> b) {
+    if (a.len() != b.len()) {
+        ret false
+    }
+    u8 difference = 0
+    for (i64 i = 0; i < a.len(); i++) {
+        difference |= a[i] ^ b[i]
+    }
+    ret difference == 0
+}
+
+void append(ref list<u8> out, list<u8> more) {
+    for (u8 b in more) {
+        out.add(b)
+    }
+}
+
+void wipe(ref list<u8> bytes) {
+    for (i64 i = 0; i < bytes.len(); i++) {
+        bytes[i] = 0
+    }
+}
+
+// A copy of the bytes in memory, for the runtime: free it.
+addr raw(list<u8> bytes) {
+    addr data = alloc(bytes.len())
+    for (i64 i = 0; i < bytes.len(); i++) {
+        put<u8>(offset(data, i), bytes[i])
+    }
+    ret data
+}
+
+list<u8> fromRaw(addr data, i64 size) {
+    list<u8> bytes
+    bytes.reserve(size)
+    for (i64 i = 0; i < size; i++) {
+        bytes.add(copyAt<u8>(offset(data, i)))
+    }
+    ret bytes
+}
+
+// Zeroes the memory of a key before it is freed.
+void forget(addr data, i64 size) {
+    for (i64 i = 0; i < size; i++) {
+        put<u8>(offset(data, i), 0)
+    }
+    free(data)
+}

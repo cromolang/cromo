@@ -1,0 +1,138 @@
+// std.jwt with HMAC (D399-D402, P14-P16): the tokens made by the cryptography
+// package of Python are verified, and jwt.sign makes the same; exp, nbf, iss and
+// aud are checked; alg none, a changed token and a weak secret are refused.
+// expect-output: HS256 same: true, anna admin 4102444800
+// expect-output: HS384 same: true, anna admin 4102444800
+// expect-output: HS512 same: true, anna admin 4102444800
+// expect-output: Expired: the token has expired
+// expect-output: accepted: anna
+// expect-output: NotYetValid: the token is not valid yet
+// expect-output: accepted: anna
+// expect-output: WrongAudience: the token is not for the audience mobile
+// expect-output: WrongIssuer: the token is not of the issuer https://other.example
+// expect-output: WrongAlgorithm: the token is signed with none, and its key is for HS256
+// expect-output: WrongAlgorithm: no key is for none, the algorithm of the token
+// expect-output: BadSignature: the signature of the token is not valid
+// expect-output: Malformed: a token has three parts separated by dots
+// expect-output: Malformed: a token is written in base64url, without padding
+// expect-output: Malformed: the header has crit, with extensions that std.jwt does not know (RFC 7515)
+// expect-output: UnknownKey: no key has the kid other of the token
+// expect-output: a secret of HS256 has at least 32 bytes, not 5 (RFC 7518)
+// expect-output: jwt.secret is for HS256, HS384 and HS512, not for RS256, which reads a key in PEM
+import std.jwt
+
+struct Session {
+    string sub
+    string role
+    i64 exp
+}
+
+struct Subject {
+    string sub
+}
+
+string reasonOf(jwt.Reason reason) {
+    switch (reason) {
+        case Malformed {
+            ret "Malformed"
+        }
+        case WrongAlgorithm {
+            ret "WrongAlgorithm"
+        }
+        case UnknownKey {
+            ret "UnknownKey"
+        }
+        case BadSignature {
+            ret "BadSignature"
+        }
+        case Expired {
+            ret "Expired"
+        }
+        case NotYetValid {
+            ret "NotYetValid"
+        }
+        case WrongIssuer {
+            ret "WrongIssuer"
+        }
+        case WrongAudience {
+            ret "WrongAudience"
+        }
+    }
+}
+
+// What the verifier says of the token.
+void show(jwt.Verifier verifier, string token) {
+    try {
+        Subject s = verifier.verify<Subject>(token)
+        println("accepted: {}", s.sub)
+    } catch (jwt.Invalid e) {
+        println("{}: {}", reasonOf(e.reason), e.message())
+    }
+}
+
+i32 main() {
+    list<u8> secret = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".bytes()
+    Session session
+    session.sub = "anna"
+    session.role = "admin"
+    session.exp = 4102444800
+    list<string> names = ["HS256", "HS384", "HS512"]
+    list<jwt.Algorithm> algorithms = [jwt.Algorithm.Hs256, jwt.Algorithm.Hs384, jwt.Algorithm.Hs512]
+    list<string> tokens = [
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJhbm5hIiwicm9sZSI6ImFkbWluIiwiZXhwIjo0MTAyNDQ0ODAwfQ.PhRxc5uZRL8F_NqSkkpfBhc4Ufj28roWBY2lMNLhfYY",
+        "eyJhbGciOiJIUzM4NCIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJhbm5hIiwicm9sZSI6ImFkbWluIiwiZXhwIjo0MTAyNDQ0ODAwfQ.bBdc0srM7noivXo4m36bB2YnlRD1zUkjx2UZssOqGo02qsx0Nq8pRwD4NpkvEJDg",
+        "eyJhbGciOiJIUzUxMiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJhbm5hIiwicm9sZSI6ImFkbWluIiwiZXhwIjo0MTAyNDQ0ODAwfQ.TjfG4uyKVk_H4FgimS84grFxdx98SmrviqBlXgGbQFh7jZOiBWs8u8SYOuHi5O4ReEK2iyLUY9S2WqhKpAxbvA"
+    ]
+    for (i64 i = 0; i < 3; i++) {
+        jwt.Key key = jwt.secret(algorithms[i], secret)
+        Session back = jwt.verify<Session>(tokens[i], key)
+        println("{} same: {}, {} {} {}", names[i], jwt.sign(session, key) == tokens[i], back.sub, back.role, back.exp)
+    }
+
+    jwt.Verifier verifier
+    verifier.keys.add(jwt.secret(jwt.Algorithm.Hs256, secret))
+    string expired = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJhbm5hIiwiZXhwIjoxMDAwMDAwMDAwfQ.4x7rcDZ_O2e8Vg8O-MTMZmGDnjiOoDsy8tWZk-Oq3y8"
+    show(verifier, expired)
+    verifier.leeway = 2000000000
+    show(verifier, expired)
+    verifier.leeway = 0
+    show(verifier, "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJhbm5hIiwibmJmIjo0MTAyNDQ0ODAwfQ.IESkG6kH6s4RFrMugp1524MP7W0D3s7gVpyqMGRg-Dk")
+    string audience = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJhbm5hIiwiaXNzIjoiaHR0cHM6Ly9hdXRoLmV4YW1wbGUiLCJhdWQiOlsid2ViIiwiYXBpIl19.WUN2jPardaGmY3W9U2ARSkP0rRWVeDReyU7OeLe3t8w"
+    verifier.issuer = "https://auth.example"
+    verifier.audience = "api"
+    show(verifier, audience)
+    verifier.audience = "mobile"
+    show(verifier, audience)
+    verifier.audience = "web"
+    verifier.issuer = "https://other.example"
+    show(verifier, audience)
+    verifier.issuer = ""
+    verifier.audience = ""
+
+    string none = "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJzdWIiOiJhbm5hIiwicm9sZSI6ImFkbWluIiwiZXhwIjo0MTAyNDQ0ODAwfQ."
+    jwt.Key key = jwt.secret(jwt.Algorithm.Hs256, secret)
+    try {
+        Subject s = jwt.verify<Subject>(none, key)
+        println("accepted: {}", s.sub)
+    } catch (jwt.Invalid e) {
+        println("{}: {}", reasonOf(e.reason), e.message())
+    }
+    show(verifier, none)
+    show(verifier, "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJhbm5hIiwicm9sZSI6ImFkbWluIiwiZXhwIjo0MTAyNDQ0ODAwfQ.4x7rcDZ_O2e8Vg8O-MTMZmGDnjiOoDsy8tWZk-Oq3y8")
+    show(verifier, "abc")
+    show(verifier, tokens[0] + "=")
+    show(verifier, "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCIsImNyaXQiOlsiZXhwIl0sImV4cCI6MX0.eyJzdWIiOiJhbm5hIiwicm9sZSI6ImFkbWluIiwiZXhwIjo0MTAyNDQ0ODAwfQ.LCGmzVveVleuKOU8s83LSoxP3L6XLBkB0oC0JLN9LVM")
+    key.id = "other"
+    show(verifier, jwt.sign(session, key))
+    try {
+        jwt.Key weak = jwt.secret(jwt.Algorithm.Hs256, "short".bytes())
+    } catch (Error e) {
+        println("{}", e.message())
+    }
+    try {
+        jwt.Key wrong = jwt.secret(jwt.Algorithm.Rs256, secret)
+    } catch (Error e) {
+        println("{}", e.message())
+    }
+    ret 0
+}

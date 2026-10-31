@@ -207,13 +207,59 @@ aGVsbG8=
 3000 bytes again
 ```
 
-- Hashes: `md5`, `sha1`, `sha256`, `sha512`, and `hmac`; `random(n)` takes bytes from the generator of the system.
+- Hashes: `md5`, `sha1`, `sha256`, `sha384`, `sha512`, and `hmac`; `random(n)` takes bytes from the generator of the system.
 - `encrypt` and `decrypt` with AES-GCM or ChaCha20-Poly1305: `decrypt` throws if the data were changed.
 - Ed25519 signatures and X25519 key exchange; `hex` and `base64` with their inverses.
 - `gzip.decompressUpTo(data, limit)` refuses data that would grow beyond a limit, for data from the network.
+
+## Tokens: JWT
+
+A service that has many clients often recognizes them by a JSON Web Token, which it signs when they log in, or which a provider of identity such as Keycloak signs for it. `std.jwt` signs and verifies them, and the claims are a struct of the program:
+
+```cromo
+import std.jwt
+
+struct Session {
+    string sub
+    string role
+    i64 exp
+}
+
+i32 main() {
+    jwt.Key key = jwt.secret(jwt.Algorithm.Hs256, "a secret of at least 32 bytes!!!".bytes())
+    Session session
+    session.sub = "anna"
+    session.role = "admin"
+    session.exp = 4102444800  // 1 January 2100
+    string token = jwt.sign(session, key)
+    println("{}", token)
+
+    Session back = jwt.verify<Session>(token, key)
+    println("{} is {}", back.sub, back.role)
+
+    session.exp = 1000000000  // 2001
+    try {
+        Session old = jwt.verify<Session>(jwt.sign(session, key), key)
+    } catch (jwt.Invalid e) {
+        println("refused: {}", e.message())
+    }
+    ret 0
+}
+```
+
+```output
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJhbm5hIiwicm9sZSI6ImFkbWluIiwiZXhwIjo0MTAyNDQ0ODAwfQ._8C6CxM0js35LjfNm-nPjDEC94QszRTMVLAB4QtXlcQ
+anna is admin
+refused: the token has expired
+```
+
+- `jwt.secret` makes a key of HMAC, HS256, HS384 or HS512, at least as long as the hash; `jwt.publicKey` and `jwt.privateKey` read a key in PEM for RS256, RS384, RS512, ES256, ES384 or EdDSA.
+- The algorithm is the one of the key, never the one written in the token: a token with `"alg": "none"`, or signed in HS256 for a key of RSA, is refused.
+- `jwt.verify` checks the signature, and `exp` and `nbf` when they are there. A `jwt.Verifier` takes several keys, also from the JWK Set of a provider with `jwt.keySet(text)`, and checks the issuer and the audience too, with a `leeway` in seconds for the clocks that differ.
+- A refused token is a `jwt.Invalid`, whose `reason` says why: `Expired`, `BadSignature`, `UnknownKey`, and the others.
 
 ## Summary
 
 - `std.net` has TCP, UDP and TLS, with blocking calls that leave the thread to other tasks while they wait.
 - `http.serve` runs a handler for each request, on many tasks at once; `http.get` and `http.Client` make requests.
-- `std.websocket`, `std.crypto` and `std.gzip` complete the toolbox, with no external library.
+- `std.websocket`, `std.crypto`, `std.jwt` and `std.gzip` complete the toolbox, with no external library.

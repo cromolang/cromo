@@ -32,6 +32,7 @@ public enum Hash {
     Sha1
     Sha256
     Sha512
+    Sha384  // after Sha512, as the runtime counts them
 }
 
 public list<u8> md5(list<u8> data) {
@@ -44,6 +45,10 @@ public list<u8> sha1(list<u8> data) {
 
 public list<u8> sha256(list<u8> data) {
     ret digest(Hash.Sha256, data)
+}
+
+public list<u8> sha384(list<u8> data) {
+    ret digest(Hash.Sha384, data)
 }
 
 public list<u8> sha512(list<u8> data) {
@@ -308,6 +313,9 @@ i64 digestSize(Hash kind) {
     }
     if (index == 2) {
         ret 32
+    }
+    if (index == 4) {
+        ret 48
     }
     ret 64
 }

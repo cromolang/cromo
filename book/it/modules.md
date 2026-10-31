@@ -127,6 +127,7 @@ Il nucleo della libreria, con `list`, `map`, `string`, `format` ed `Exception`, 
 | `std.websocket` | client e server WebSocket | 15 |
 | `std.json` | JSON | 16 |
 | `std.crypto` | hash, byte casuali, cifratura, firme | 15 |
+| `std.jwt` | JSON Web Token | 15 |
 | `std.gzip` | compressione | 15 |
 
 Dopo `import std.fs`, le funzioni del modulo si scrivono precedute dall'ultima parte del suo nome: `fs.readText(path)`.

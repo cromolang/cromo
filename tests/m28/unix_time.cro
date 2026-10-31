@@ -1,0 +1,13 @@
+// time.unix() (P17): the seconds from 1970-01-01 UTC, which a JSON Web Token
+// writes in exp; the minute of the day is the one of the date in UTC.
+// expect-output: after 2026: true, before 2100: true, same minute: true
+import std.time
+
+i32 main() {
+    time.DateTime date = time.utcNow()
+    i64 seconds = time.unix()
+    i64 minute = seconds % 86400 / 60
+    bool same = minute == i64(date.hour) * 60 + i64(date.minute) || minute == (i64(date.hour) * 60 + i64(date.minute) + 1) % 1440
+    println("after 2026: {}, before 2100: {}, same minute: {}", seconds >= 1767225600, seconds < 4102444800, same)
+    ret 0
+}

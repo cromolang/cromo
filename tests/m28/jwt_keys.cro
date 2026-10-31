@@ -1,0 +1,158 @@
+// std.jwt with RSA, ECDSA and Ed25519 (D399-D402, P14, P16), against the keys
+// and the tokens made by the cryptography package of Python: the tokens are
+// verified with the keys in PEM and with the JWK Set; RS256 and EdDSA, which are
+// deterministic, come out the same from jwt.sign, and ECDSA verifies itself. The
+// keys that do not fit their algorithm are refused.
+// expect-output: RS256 verified anna, same: true
+// expect-output: RS384 verified anna, same: true
+// expect-output: RS512 verified anna, same: true
+// expect-output: EdDSA verified anna, same: true
+// expect-output: ES256 verified anna, signed and verified anna
+// expect-output: ES384 verified anna, signed and verified anna
+// expect-output: 4 keys: rsa-1 ec-256 ec-384 ed-1
+// expect-output: accepted: anna
+// expect-output: accepted: anna
+// expect-output: accepted: anna
+// expect-output: accepted: anna
+// expect-output: WrongAlgorithm: the token is signed with HS256, and its key is for RS256
+// expect-output: BadSignature: the signature of the token is not valid
+// expect-output: ES256 takes a key of the curve P-256, and this is not one
+// expect-output: RS256 takes a key of RSA, and this is not one
+// expect-output: cannot sign with a public key of RS256: jwt.privateKey reads one that signs
+// expect-output: cannot read the public key: it is not a key of RSA or of a curve in PEM
+// expect-output: cannot read the private key: it is not a key of Ed25519
+import std.jwt
+
+struct Session {
+    string sub
+    string role
+    i64 exp
+}
+
+struct Subject {
+    string sub
+}
+
+string reasonOf(jwt.Reason reason) {
+    switch (reason) {
+        case Malformed {
+            ret "Malformed"
+        }
+        case WrongAlgorithm {
+            ret "WrongAlgorithm"
+        }
+        case UnknownKey {
+            ret "UnknownKey"
+        }
+        case BadSignature {
+            ret "BadSignature"
+        }
+        case Expired {
+            ret "Expired"
+        }
+        case NotYetValid {
+            ret "NotYetValid"
+        }
+        case WrongIssuer {
+            ret "WrongIssuer"
+        }
+        case WrongAudience {
+            ret "WrongAudience"
+        }
+    }
+}
+
+// What the verifier says of the token.
+void show(jwt.Verifier verifier, string token) {
+    try {
+        Subject s = verifier.verify<Subject>(token)
+        println("accepted: {}", s.sub)
+    } catch (jwt.Invalid e) {
+        println("{}: {}", reasonOf(e.reason), e.message())
+    }
+}
+
+i32 main() {
+    Session session
+    session.sub = "anna"
+    session.role = "admin"
+    session.exp = 4102444800
+    string rsaPublic = "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA09r9tii1gQRm2Ugr1SyT\n7BBPm8YnxbHp+P2QxcBK012Kt1QZhffiyEmuiRbhXQlq2dlWvm6T9gaPjnL/4v1i\nq+mriDy/0Xz6qEL4S+/AqjUQcNn5OP0aXJF101w4e0cKkqFE8Tl8s/fL8dHUsD/L\n65dg4JcWiIfZLwbCGewA3thMjkVGLxBGgDIGcuGCXMT9jnfSE68ahiK9rc5kAFpm\nE70t9L3z8gf+piiOpVhimtGtDLMX1f04zk4fKTBhckT4HcHzWPmpuBqfbbj8vALn\nSol/PZLRD47sh4vkgsf7vjjGSe+eQTTspUIIAK/0/stEYd8FFxZDfyQCyByfWGoL\ngQIDAQAB\n-----END PUBLIC KEY-----\n"
+    string rsaPrivate = "-----BEGIN PRIVATE KEY-----\nMIIEvwIBADANBgkqhkiG9w0BAQEFAASCBKkwggSlAgEAAoIBAQDT2v22KLWBBGbZ\nSCvVLJPsEE+bxifFsen4/ZDFwErTXYq3VBmF9+LISa6JFuFdCWrZ2Va+bpP2Bo+O\ncv/i/WKr6auIPL/RfPqoQvhL78CqNRBw2fk4/RpckXXTXDh7RwqSoUTxOXyz98vx\n0dSwP8vrl2DglxaIh9kvBsIZ7ADe2EyORUYvEEaAMgZy4YJcxP2Od9ITrxqGIr2t\nzmQAWmYTvS30vfPyB/6mKI6lWGKa0a0MsxfV/TjOTh8pMGFyRPgdwfNY+am4Gp9t\nuPy8AudKiX89ktEPjuyHi+SCx/u+OMZJ755BNOylQggAr/T+y0Rh3wUXFkN/JALI\nHJ9YaguBAgMBAAECggEBAJEaIcGc+kvmjubtRpBYWuxJc60WuHDwXXdbfMfk35sL\nK5JLOLwIPzy9MpzUngCSDawt7vq5VAAjGDoRy+9Vazqh7gl+ykaaWjfavqOMD6LE\ne4E/2jHNMTwLqO7d8BWHX9d0O3sYy6+b3gS/mfQpjerLoN/Su+1BVmCeOV11xlba\nAeZGfMaDv9uZEW5mgWYexQ0b++WT6fwSOFgGXeZ3iVrdWwUAoXJeYpEbaCxzf8sk\njhPJ+8pmO9TLyb4/m2cw3pTx6mhT6sKSCgxAWPQu1Zcy0hKmB7Pd9fkzYk7vkSV0\nZvTdTsYXLL5yrp5gSsoP8I+dC9/ca8JCxAWGh8Bi6EECgYEA7f/KDEGlT7Tdaz0t\nqMqBech5KCGdmkOhoDxIJ6uDCyo8E8vzbRxVOWRh+lpPAvAMQA60B6hyYbfjRQWc\ncCRHiHvRvNOv8hXI808FKLDoOZMdpad18TjGwbmTNPkx4f9JBDso+X/VBIqws1l5\nFtvsrLNv3p/rOEndMu6xe5d0JckCgYEA4+D/t57WBFH+v/+ejiSPv6KPfzDsrYmj\nqxwb6UDyKUZZOGVN3ntQlxNCrfVXkDWKKwtC/DERGR/3fAe0TfouBG4tydyYt7pt\nekibfdSjx4MNVD+T0BTkS917bFWun7hHHJydADQ+SA6GmkE8WPnDJps71HoHiyCS\nKrSZ5Ju4c/kCgYEAuNDFSbdAdCDzQG+FoWmAGd3/l5ZjGIQkYpXtQkEBxg3KEWVz\nZut1ktfM7ehrKtDV8nh4fOnlyNRPfC3bSYoism3UdVm9a7RXE/ns+6hE7VC82QKt\np+B7F7zP/3bzsZfYT5zROM530MsSZHO6gHHP3FyLJsnwkwlo6EBLOrply2ECgYA6\nWIWg8h5CBOyBJGXoZxwXKPwsyM4QsMkjKpNK6cIXJ1f4xJdne5Nq2xebitHcrpit\n5LhF8ho6oKCxNRfJT2Ew6TT4Fm9Tu3wEb0rAsQ0uLDPhelXSVUcO1aqgVl/brUcn\n4EGip726nV2BaWqWLXz2CZEMGiKMUM6b+JnemrBjoQKBgQDQmHzcu5KWtKoG/BIV\nM3E0p+wDpbVc61gxXoTVy8cBSmJTq0jbyVlYw8cBX3GnIxBFwXtBuNcXmnCcHmlS\n84bERYjJAGb7chPSBED0YmFOqcCdA1EeSF7uPqD7/8roqmIj/wrz40OljQxIhaNP\nrJyKze77R/qdo2Q7gCBDwun2WA==\n-----END PRIVATE KEY-----\n"
+    list<string> rsaNames = ["RS256", "RS384", "RS512"]
+    list<jwt.Algorithm> rsaAlgorithms = [jwt.Algorithm.Rs256, jwt.Algorithm.Rs384, jwt.Algorithm.Rs512]
+    list<string> rsaTokens = [
+        "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6InJzYS0xIn0.eyJzdWIiOiJhbm5hIiwicm9sZSI6ImFkbWluIiwiZXhwIjo0MTAyNDQ0ODAwfQ.BIILVTyTygU4oirLQBeGXD5zNO3RCzWiulogN89S03llo81vbvL65dYIvloHipj0c2rCbkoSRNO60CXdkfiZl7Rjcp2oG553KZGAw_h9wU8FOIcrCwdBf-VCujS8WH3rtjt0ZQkotxjVYkKV7L05XX2Hb--BH9D0Q_atFzi20dp2BT832LeJ-Kwqd9lK5tb6ZMDv894et7tgcWMbHS3QE4i5yXAeNquT_-h7kXLKLb2SUTrz3hK5MudWUfFdjM6AW2eiprkjWjqPVauJZfC9opxyECQML6FOnT_TIQ-Ugz3FXFtcxs_gHODGqOQGSHROt9yZMQABuZP858ysA4X-UQ",
+        "eyJhbGciOiJSUzM4NCIsInR5cCI6IkpXVCIsImtpZCI6InJzYS0xIn0.eyJzdWIiOiJhbm5hIiwicm9sZSI6ImFkbWluIiwiZXhwIjo0MTAyNDQ0ODAwfQ.YuVbvrGeFT0gMWieLKES9d46kyXQrfqBeO924tJDwK202bB6Mww4E_DVkXPo9HYTQVz6BVheuEa9Hy70NSrtcwDjOoUolRKgix4SN1SGPyMs7zTLNXgwX6M5TAjl5ByeUMxHWZCXbAHIyyto7h7Sw5ecgCkebWau2hXFHiDWk1xR8CSrkgjwSL_cXsIUGkPQIpP2DiDhNMqGfWvKAYl8_nyMcMW4ExdfVFH0_cpU8Mr1e2de7pwfFD65H6gK0Y7UPmy24orrVtY-vcD13TmeMjaA3MqaHJQom-Gtw-Lf3zNrwmG_8R3fWbJthNVUl1n8QXhV0VtRHBZvmKwBPSreKg",
+        "eyJhbGciOiJSUzUxMiIsInR5cCI6IkpXVCIsImtpZCI6InJzYS0xIn0.eyJzdWIiOiJhbm5hIiwicm9sZSI6ImFkbWluIiwiZXhwIjo0MTAyNDQ0ODAwfQ.Qu_bXx0GBrO39WNWKvAezMmteHpxQ-bsAv55qA4dXh3sSJEIcF0gb7HNcku760ILzceSlJyAZ3bzBDqNyT2xUmiX6j8HIVl1gqM5eW9zmOqiZHwfwPvxCOONZ5qo6IhynBMzauqFmgKe1bvOInYPNnFhpm4DXIf61Jxi8QaHfJXOX2TPxMYEQ3gQFS0Gxyw9pQJi0Kj0Y5RJ5o92mGtOfnBYYrj76Y3E0uceYEJ4nSXFzpy6zQ8ixeHc2nq0mJ7rMV2hFruqr9dmagCJIftkjupQoHv6ol3wmrCOD0w-Z7PvDntBGP12OqBwrWaNYGFkJ_efbNxLT6RyWbHlsWFB0Q"
+    ]
+    for (i64 i = 0; i < 3; i++) {
+        jwt.Key verifying = jwt.publicKey(rsaAlgorithms[i], rsaPublic)
+        jwt.Key signing = jwt.privateKey(rsaAlgorithms[i], rsaPrivate)
+        signing.id = "rsa-1"
+        Session back = jwt.verify<Session>(rsaTokens[i], verifying)
+        println("{} verified {}, same: {}", rsaNames[i], back.sub, jwt.sign(session, signing) == rsaTokens[i])
+    }
+
+    string edToken = "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCIsImtpZCI6ImVkLTEifQ.eyJzdWIiOiJhbm5hIiwicm9sZSI6ImFkbWluIiwiZXhwIjo0MTAyNDQ0ODAwfQ.LGml0jLiK0Re4QFEaN-UXA-7B6v8v7Yf8EHa4PetnVQToFnA5BgCNn2JIv2nBzqMWHuMDMlI3rleasYdtIkfAA"
+    jwt.Key edPublic = jwt.publicKey(jwt.Algorithm.EdDsa, "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAbVMIx7bt3E2oCHmJF+Rf5sjL2fixJ7Ud//z2n5A/iDc=\n-----END PUBLIC KEY-----\n")
+    jwt.Key edPrivate = jwt.privateKey(jwt.Algorithm.EdDsa, "-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEIAApBUmJ3dL80nQ2YheN9cbUvaOsEKf5G4kpMLTy37qJ\n-----END PRIVATE KEY-----\n")
+    edPrivate.id = "ed-1"
+    println("EdDSA verified {}, same: {}", jwt.verify<Session>(edToken, edPublic).sub, jwt.sign(session, edPrivate) == edToken)
+
+    list<string> ecNames = ["ES256", "ES384"]
+    list<jwt.Algorithm> ecAlgorithms = [jwt.Algorithm.Es256, jwt.Algorithm.Es384]
+    list<string> ecPublic = ["-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEea1Y3tTA+WuUUMRf0yMczzP7gcOL\nlzXtBQGF2cEW8Ck2v2AFqyfQ4tmgr2y6E7w3ZVxbWcKc/SuXjE5gXHHOFQ==\n-----END PUBLIC KEY-----\n", "-----BEGIN PUBLIC KEY-----\nMHYwEAYHKoZIzj0CAQYFK4EEACIDYgAEqu6+yGrg5jDA58QpmomSi27tqZI2m+la\nfbNHYamCdaMMqzMj5a/YAyohBzUK5iStr7362eozlo6Es5i5Co7xVOKAcYWfxnNo\ngJntg8KmB6udLYh6Q21BELeVwzkTbSVM\n-----END PUBLIC KEY-----\n"]
+    list<string> ecPrivate = ["-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQg96VIgeCq+dRqM9dm\nqXC9t/edJjMmtrYEbxL1w2CihBWhRANCAAR5rVje1MD5a5RQxF/TIxzPM/uBw4uX\nNe0FAYXZwRbwKTa/YAWrJ9Di2aCvbLoTvDdlXFtZwpz9K5eMTmBccc4V\n-----END PRIVATE KEY-----\n", "-----BEGIN PRIVATE KEY-----\nMIG2AgEAMBAGByqGSM49AgEGBSuBBAAiBIGeMIGbAgEBBDAJcB9NBfTdQfD3X7bj\nKZG3/uhctz26a1x8GearOlhFZFDkcyQlg52hwfvYprMpbj2hZANiAASq7r7IauDm\nMMDnxCmaiZKLbu2pkjab6Vp9s0dhqYJ1owyrMyPlr9gDKiEHNQrmJK2vvfrZ6jOW\njoSzmLkKjvFU4oBxhZ/Gc2iAme2DwqYHq50tiHpDbUEQt5XDORNtJUw=\n-----END PRIVATE KEY-----\n"]
+    list<string> ecTokens = ["eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6ImVjLTI1NiJ9.eyJzdWIiOiJhbm5hIiwicm9sZSI6ImFkbWluIiwiZXhwIjo0MTAyNDQ0ODAwfQ.p9wU18LtmgWmf66bz-Ht9iNe-PmegrbwblzosFjqH5TuHrO3F-iWnpAPHvZto0RF7d353BNBGc2hBCOaBmTJqA", "eyJhbGciOiJFUzM4NCIsInR5cCI6IkpXVCIsImtpZCI6ImVjLTM4NCJ9.eyJzdWIiOiJhbm5hIiwicm9sZSI6ImFkbWluIiwiZXhwIjo0MTAyNDQ0ODAwfQ.LKRFXyEGxdvUj8mY3YNvpt0EFKy_3ChMSoH6B-H7YmE1dQL-O-pgkOkYzrnR0t3p3NswvivFIPynm4GkXhdlVGbX_dqfk4Nh5yHSVoehoOZlxxLOOHDRPkhfxGkdXoO7"]
+    for (i64 i = 0; i < 2; i++) {
+        jwt.Key verifying = jwt.publicKey(ecAlgorithms[i], ecPublic[i])
+        jwt.Key signing = jwt.privateKey(ecAlgorithms[i], ecPrivate[i])
+        string mine = jwt.sign(session, signing)
+        println("{} verified {}, signed and verified {}", ecNames[i], jwt.verify<Session>(ecTokens[i], verifying).sub,
+            jwt.verify<Session>(mine, verifying).sub)
+    }
+
+    jwt.Verifier verifier
+    verifier.keys = jwt.keySet("{\"keys\":[{\"kty\":\"RSA\",\"use\":\"enc\",\"kid\":\"rsa-enc\",\"alg\":\"RSA-OAEP\",\"n\":\"09r9tii1gQRm2Ugr1SyT7BBPm8YnxbHp-P2QxcBK012Kt1QZhffiyEmuiRbhXQlq2dlWvm6T9gaPjnL_4v1iq-mriDy_0Xz6qEL4S-_AqjUQcNn5OP0aXJF101w4e0cKkqFE8Tl8s_fL8dHUsD_L65dg4JcWiIfZLwbCGewA3thMjkVGLxBGgDIGcuGCXMT9jnfSE68ahiK9rc5kAFpmE70t9L3z8gf-piiOpVhimtGtDLMX1f04zk4fKTBhckT4HcHzWPmpuBqfbbj8vALnSol_PZLRD47sh4vkgsf7vjjGSe-eQTTspUIIAK_0_stEYd8FFxZDfyQCyByfWGoLgQ\",\"e\":\"AQAB\"},{\"kty\":\"RSA\",\"use\":\"sig\",\"kid\":\"rsa-1\",\"alg\":\"RS256\",\"n\":\"09r9tii1gQRm2Ugr1SyT7BBPm8YnxbHp-P2QxcBK012Kt1QZhffiyEmuiRbhXQlq2dlWvm6T9gaPjnL_4v1iq-mriDy_0Xz6qEL4S-_AqjUQcNn5OP0aXJF101w4e0cKkqFE8Tl8s_fL8dHUsD_L65dg4JcWiIfZLwbCGewA3thMjkVGLxBGgDIGcuGCXMT9jnfSE68ahiK9rc5kAFpmE70t9L3z8gf-piiOpVhimtGtDLMX1f04zk4fKTBhckT4HcHzWPmpuBqfbbj8vALnSol_PZLRD47sh4vkgsf7vjjGSe-eQTTspUIIAK_0_stEYd8FFxZDfyQCyByfWGoLgQ\",\"e\":\"AQAB\"},{\"kty\":\"EC\",\"kid\":\"ec-256\",\"crv\":\"P-256\",\"x\":\"ea1Y3tTA-WuUUMRf0yMczzP7gcOLlzXtBQGF2cEW8Ck\",\"y\":\"Nr9gBasn0OLZoK9suhO8N2VcW1nCnP0rl4xOYFxxzhU\"},{\"kty\":\"EC\",\"kid\":\"ec-384\",\"crv\":\"P-384\",\"x\":\"qu6-yGrg5jDA58QpmomSi27tqZI2m-lafbNHYamCdaMMqzMj5a_YAyohBzUK5iSt\",\"y\":\"r7362eozlo6Es5i5Co7xVOKAcYWfxnNogJntg8KmB6udLYh6Q21BELeVwzkTbSVM\"},{\"kty\":\"OKP\",\"kid\":\"ed-1\",\"crv\":\"Ed25519\",\"x\":\"bVMIx7bt3E2oCHmJF-Rf5sjL2fixJ7Ud__z2n5A_iDc\"},{\"kty\":\"oct\",\"kid\":\"secret\",\"k\":\"MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWYwMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZg\"}]}")
+    string ids
+    for (i64 i = 0; i < verifier.keys.len(); i++) {
+        ids += " " + verifier.keys[i].id
+    }
+    println("{} keys:{}", verifier.keys.len(), ids)
+    show(verifier, rsaTokens[0])
+    show(verifier, ecTokens[0])
+    show(verifier, ecTokens[1])
+    show(verifier, edToken)
+    show(verifier, "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6InJzYS0xIn0.eyJzdWIiOiJhbm5hIiwicm9sZSI6ImFkbWluIiwiZXhwIjo0MTAyNDQ0ODAwfQ.88Axkg2pJf7T9GSeZ8pavUmtjkdMv3DAqxN1vA_OVls")
+    list<string> parts = ecTokens[0].split(".")
+    show(verifier, parts[0] + "." + parts[1] + "." + rsaTokens[0].split(".")[2])
+
+    try {
+        jwt.Key wrong = jwt.publicKey(jwt.Algorithm.Es256, ecPublic[1])
+    } catch (Error e) {
+        println("{}", e.message())
+    }
+    try {
+        jwt.Key wrong = jwt.publicKey(jwt.Algorithm.Rs256, ecPublic[0])
+    } catch (Error e) {
+        println("{}", e.message())
+    }
+    try {
+        jwt.Key verifying = jwt.publicKey(jwt.Algorithm.Rs256, rsaPublic)
+        println("{}", jwt.sign(session, verifying))
+    } catch (Error e) {
+        println("{}", e.message())
+    }
+    try {
+        jwt.Key wrong = jwt.publicKey(jwt.Algorithm.Rs256, "-----BEGIN PUBLIC KEY-----\nAAAA\n-----END PUBLIC KEY-----\n")
+    } catch (Error e) {
+        println("{}", e.message())
+    }
+    try {
+        jwt.Key wrong = jwt.privateKey(jwt.Algorithm.EdDsa, rsaPrivate)
+    } catch (Error e) {
+        println("{}", e.message())
+    }
+    ret 0
+}
