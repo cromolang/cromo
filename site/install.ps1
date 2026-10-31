@@ -74,6 +74,10 @@
         if ($vsix) {
             & code --install-extension $vsix.FullName --force | Out-Null
             Write-Host 'Installed the extension for Visual Studio Code.'
+            # Up to 0.27 the extension was cromo.cromo-lang: two would both start cromo lsp.
+            if ($vsix.Name -notlike 'cromo-lang-*' -and ((& code --list-extensions) -contains 'cromo.cromo-lang')) {
+                & code --uninstall-extension cromo.cromo-lang | Out-Null
+            }
         }
     }
 

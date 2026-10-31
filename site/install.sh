@@ -89,6 +89,13 @@ main() {
             [ -f "$vsix" ] || continue
             code --install-extension "$vsix" --force >/dev/null 2>&1 &&
                 say "Installed the extension for Visual Studio Code."
+            # Up to 0.27 the extension was cromo.cromo-lang: two would both start cromo lsp.
+            case "$(basename "$vsix")" in
+                cromo-lang-*) ;;
+                *) if code --list-extensions 2>/dev/null | grep -qx 'cromo.cromo-lang'; then
+                       code --uninstall-extension cromo.cromo-lang >/dev/null 2>&1 || true
+                   fi ;;
+            esac
             break
         done
     fi

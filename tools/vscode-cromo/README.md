@@ -1,19 +1,53 @@
-# Cromo for VS Code
+# Cromo for Visual Studio Code
 
-Syntax highlighting for `.cro` files of the Cromo language: keywords, types, numbers, strings with format placeholders (`{}`, `{:.2f}`), comments, functions and destructors. It also provides comment toggling (`Ctrl+/`), auto-closing brackets and indentation after `{`.
+Support for [Cromo](https://cromolang.org), a general-purpose language with the syntax of C and C++, ownership without a garbage collector, lightweight tasks, and one tool that compiles and links.
 
-It starts the language server `cromo lsp` (D170): the errors while writing, the type or the signature under the mouse, *Go to Definition* (F12), the outline of the file, the fields and methods proposed after a dot (D179) and formatting, also when a file is saved (D171, D164). It runs the `cromo.exe` of the setting `cromo.path`; without it, `build\cromo.exe` in a folder of the workspace, as in the folder of cromo itself, or else `cromo` from PATH. If it cannot start, a message says so. On Windows the server runs from a copy of `cromo.exe` in the temporary folder, so that `cromo.exe` can be built again while VS Code is open; when it changes, the server starts again. The messages of the server are in the *Cromo* output panel; with `cromo.trace` also every message of the protocol.
+## Features
 
-## Installation
+- **Syntax highlighting** of the `.cro` files: keywords, types, numbers, strings with their format placeholders (`{}`, `{:.2f}`), comments, attributes and functions.
+- **Errors as you type**, from the compiler itself.
+- **Hover**: the type of a value or the signature of a function under the mouse.
+- **Go to Definition** (F12) and the **outline** of the file.
+- **Completion** of the fields and the methods after a dot.
+- **Formatting** with the rules of `cromo fmt`, also when a file is saved.
+- Comment toggling (`Ctrl+/`), closing brackets and indentation after `{`.
 
-From PowerShell, in the project folder:
+## Requirements
+
+Everything but the colors comes from the language server of the compiler, `cromo lsp`, so the extension needs `cromo`. It is one command:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File tools\vscode-cromo\build-vsix.ps1 -Install
+irm https://cromolang.org/install.ps1 | iex          # Windows, in PowerShell
 ```
 
-The script creates `tools/vscode-cromo/dist/cromo-lang-<version>.vsix` and installs it with `code --install-extension`. If VS Code is open, reload the window (command *Developer: Reload Window*).
+```sh
+curl -sSf https://cromolang.org/install.sh | sh     # Linux
+```
 
-## Maintenance
+The installers also install this extension, when the command `code` is there.
 
-The grammar is in `syntaxes/cromo.tmLanguage.json`. When keywords or built-in types change in `docs/decisions.md`, update it too; then bump `version` in `package.json` and run the script again.
+## Settings
+
+| Setting | Meaning |
+|---|---|
+| `cromo.path` | The `cromo` executable that runs the language server. Empty: `build\cromo.exe` in a folder of the workspace, as while working on Cromo itself, else `cromo` from `PATH`. |
+| `cromo.trace` | Writes every message between VS Code and `cromo lsp` in the *Cromo* output panel. |
+
+Files of Cromo are formatted when they are saved (`editor.formatOnSave`); turn it off for `[cromo]` in the settings, if you prefer.
+
+If `cromo` cannot start, a message says so. On Windows the server runs from a copy of `cromo.exe` in the temporary folder, so that `cromo.exe` can be built again while VS Code is open; when it changes, the server starts again.
+
+## Learn more
+
+- [The Cromo Guide](https://cromolang.org/book/), in English and in Italian, also as a PDF.
+- The sources of the language, of this extension and the issues are on [GitHub](https://github.com/cromolang/cromo).
+
+## Building the extension
+
+From the folder of the repository, in PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\vscode-cromo\build-vsix.ps1 -Install
+```
+
+The script writes `tools/vscode-cromo/dist/cromo-<version>.vsix`, without npm, and with `-Install` installs it with `code --install-extension`. The grammar is in `syntaxes/cromo.tmLanguage.json`: when the keywords or the built-in types change, update it and raise `version` in `package.json`.

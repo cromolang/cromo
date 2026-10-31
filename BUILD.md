@@ -104,7 +104,13 @@ build-linux/cromo version
 powershell -ExecutionPolicy Bypass -File tools\vscode-cromo\build-vsix.ps1 -Install
 ```
 
-It writes `tools\vscode-cromo\dist\cromo-lang-<version>.vsix` and, with `-Install`, installs it with `code --install-extension`. The extension runs `cromo lsp`: the one of the setting `cromo.path`, else `build\cromo.exe` of the open folder, as while working on Cromo, else the one on the `PATH`. When the grammar changes, raise `version` in `tools\vscode-cromo\package.json`.
+It writes `tools\vscode-cromo\dist\cromo-<version>.vsix`, without npm, and with `-Install` installs it with `code --install-extension`, in place of `cromo.cromo-lang`, its name up to 0.9. The extension runs `cromo lsp`: the one of the setting `cromo.path`, else `build\cromo.exe` of the open folder, as while working on Cromo, else the one on the `PATH`. When the grammar changes, raise `version` in `tools\vscode-cromo\package.json`. `-Icon` draws `images\icon.png` again from `images\icon.svg`, with Edge.
+
+The extension is `cromolang.cromo` in the [Visual Studio Marketplace](https://marketplace.visualstudio.com/manage/publishers/cromolang) and in [Open VSX](https://open-vsx.org/namespace/cromolang). A new version goes to the Marketplace by uploading the `.vsix` in the page of the publisher (*Update* on the extension), and to Open VSX with its command line, which needs Node.js and the token of the namespace:
+
+```powershell
+npx ovsx publish tools\vscode-cromo\dist\cromo-<version>.vsix -p <token>
+```
 
 ## Making a release
 

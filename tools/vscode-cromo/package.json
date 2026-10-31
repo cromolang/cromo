@@ -1,14 +1,31 @@
 {
-  "name": "cromo-lang",
+  "name": "cromo",
   "displayName": "Cromo",
-  "description": "Syntax highlighting, errors, hover, definitions and formatting for the Cromo language, with cromo lsp",
-  "version": "0.9.1",
-  "publisher": "cromo",
+  "description": "The Cromo language: syntax highlighting, errors as you type, hover, go to definition, outline, completion and formatting, with the language server of cromo",
+  "version": "0.10.0",
+  "publisher": "cromolang",
   "license": "(MIT OR Apache-2.0)",
+  "icon": "images/icon.png",
+  "galleryBanner": {
+    "color": "#0e131b",
+    "theme": "dark"
+  },
+  "homepage": "https://cromolang.org",
+  "bugs": {
+    "url": "https://github.com/cromolang/cromo/issues"
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/cromolang/cromo"
   },
+  "keywords": [
+    "cromo",
+    "cro",
+    "language server",
+    "lsp",
+    "llvm",
+    "systems programming"
+  ],
   "engines": {
     "vscode": "^1.60.0"
   },
@@ -52,7 +69,7 @@
         "cromo.path": {
           "type": "string",
           "default": "",
-          "description": "The cromo executable that runs the language server, for example C:\\dati\\projects\\cromo\\build\\cromo.exe. Empty: build\\cromo.exe in a folder of the workspace, if there is one, else cromo from PATH."
+          "description": "The cromo executable that runs the language server, for example C:\\cromo\\bin\\cromo.exe. Empty: build\\cromo.exe in a folder of the workspace, if there is one, else cromo from PATH."
         }
       }
     },
