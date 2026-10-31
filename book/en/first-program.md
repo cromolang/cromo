@@ -13,54 +13,56 @@ on silent haunches and then moves on.
 The fog, the cat, the city: on and on.
 ```
 
-And here is the program, `words.cro`:
+And here is the heart of the program, `words.cro`: its `main`. The functions that it calls stand in place of `// ...`, and the rest of the chapter shows them one at a time; on the site, *Show all* opens the whole file.
 
 ```cromo file=words.cro args=poem.txt
 import std.fs
 
-// A word is made of letters; the bytes of UTF-8 above 127 count as letters.
-bool isLetter(u8 c) {
-    ret (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c >= 128
-}
-
-// The words of a text, in lower case.
-list<string> words(string text) {
-    list<string> found
-    i64 start = -1
-    for (i64 i = 0; i <= text.len(); i++) {
-        bool letter = i < text.len() && isLetter(text[i])
-        if (letter && start < 0) {
-            start = i
-        } else if (!letter && start >= 0) {
-            found.add(text.slice(start, i).lower())
-            start = -1
-        }
-    }
-    ret found
-}
-
-struct Count {
-    string word
-    i64 times
-}
-
-// The most frequent first; with the same count, in alphabetical order.
-bool before(Count a, Count b) {
-    if (a.times != b.times) {
-        ret a.times > b.times
-    }
-    ret a.word < b.word
-}
-
-void sort(ref list<Count> counts) {
-    for (i64 i = 1; i < counts.len(); i++) {
-        for (i64 j = i; j > 0 && before(counts[j], counts[j - 1]); j--) {
-            Count moving = move counts[j]
-            counts[j] = move counts[j - 1]
-            counts[j - 1] = move moving
-        }
-    }
-}
+// ...
+#
+# // A word is made of letters; the bytes of UTF-8 above 127 count as letters.
+# bool isLetter(u8 c) {
+#     ret (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c >= 128
+# }
+#
+# // The words of a text, in lower case.
+# list<string> words(string text) {
+#     list<string> found
+#     i64 start = -1
+#     for (i64 i = 0; i <= text.len(); i++) {
+#         bool letter = i < text.len() && isLetter(text[i])
+#         if (letter && start < 0) {
+#             start = i
+#         } else if (!letter && start >= 0) {
+#             found.add(text.slice(start, i).lower())
+#             start = -1
+#         }
+#     }
+#     ret found
+# }
+#
+# struct Count {
+#     string word
+#     i64 times
+# }
+#
+# // The most frequent first; with the same count, in alphabetical order.
+# bool before(Count a, Count b) {
+#     if (a.times != b.times) {
+#         ret a.times > b.times
+#     }
+#     ret a.word < b.word
+# }
+#
+# void sort(ref list<Count> counts) {
+#     for (i64 i = 1; i < counts.len(); i++) {
+#         for (i64 j = i; j > 0 && before(counts[j], counts[j - 1]); j--) {
+#             Count moving = move counts[j]
+#             counts[j] = move counts[j - 1]
+#             counts[j - 1] = move moving
+#         }
+#     }
+# }
 
 i32 main(list<string> args) {
     if (args.len() < 2) {

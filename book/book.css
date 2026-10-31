@@ -138,7 +138,7 @@ ul, ol { margin: 0 0 18px; padding-left: 26px; }
 li { margin: 5px 0; }
 strong { font-weight: 600; }
 code {
-  font-family: var(--mono); font-size: 0.86em; color: var(--inline-code);
+  font-family: var(--mono); font-size: 0.86em; color: var(--inline-code); font-variant-ligatures: none;
   background: rgba(var(--accent-rgb), 0.08); border: 1px solid rgba(var(--accent-rgb), 0.16);
   padding: 0.08em 0.35em; border-radius: 6px;
 }
@@ -158,7 +158,7 @@ blockquote p:last-child { margin-bottom: 0; }
 .code:has(+ .output) { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
 .does-not-compile { border-color: color-mix(in srgb, var(--error) 55%, var(--border)); }
 .does-not-compile + .output pre { color: var(--error); }
-pre { margin: 0; padding: 16px 18px; overflow-x: auto; font: 13.8px/1.62 var(--mono); color: var(--code-text); tab-size: 4; scrollbar-width: thin; }
+pre { margin: 0; padding: 16px 18px; overflow-x: auto; font: 13.8px/1.62 var(--mono); color: var(--code-text); tab-size: 4; scrollbar-width: thin; font-variant-ligatures: none; }
 pre code { all: unset; font: inherit; white-space: pre; }
 .code-name { font: 500 12.5px/1 var(--mono); color: var(--dim); padding: 10px 18px 0; }
 .code-lang { position: absolute; top: 8px; right: 12px; font: 11.5px/1 var(--mono); color: var(--dim); text-transform: lowercase; user-select: none; }
@@ -168,6 +168,13 @@ pre code { all: unset; font: inherit; white-space: pre; }
 }
 .code:hover .copy { opacity: 1; }
 .code:hover .code-lang { opacity: 0; }
+.toggle {
+  position: absolute; top: 6px; right: 66px; font: 500 12px/1 var(--sans); padding: 6px 9px; border-radius: 7px;
+  border: 1px solid var(--border-2); background: var(--surface); color: var(--muted); cursor: pointer; opacity: 0; transition: opacity 0.15s;
+}
+.code:hover .toggle { opacity: 1; }
+.hidden-line { display: none; }
+.code.expanded .hidden-line { display: inline; opacity: 0.6; }
 .tk-k { color: var(--tk-k); } .tk-s { color: var(--tk-s); } .tk-n { color: var(--tk-n); }
 .tk-c { color: var(--tk-c); font-style: italic; } .tk-t { color: var(--tk-t); } .tk-f { color: var(--tk-f); } .tk-a { color: var(--tk-a); }
 
@@ -205,25 +212,94 @@ footer a { color: var(--dim); }
   .brand b { display: none; }
 }
 
-/* The print version: one page with every chapter, for the PDF */
-@page { size: A4; margin: 20mm 18mm 22mm; @bottom-center { content: counter(page); font: 10pt "Inter", sans-serif; color: #7a8597; } }
-@page :first { @bottom-center { content: none; } }
-body.print { background: #ffffff; color: #121826; font-size: 11pt; line-height: 1.55; }
-body.print .cover { height: 245mm; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; break-after: page; }
-body.print .cover h1 { font-size: 34pt; margin: 28px 0 10px; }
-body.print .cover p { color: #4d596b; font: 500 13pt var(--mono); }
-body.print .contents { break-after: page; }
-body.print .contents ul { list-style: none; padding: 0; font-size: 12pt; line-height: 2; }
-body.print .contents .num { display: inline-block; min-width: 2.2em; color: #7a8597; }
-body.print .chapter { break-before: page; }
-body.print h1 { font-size: 26pt; }
-body.print h2 { font-size: 17pt; margin-top: 26px; break-after: avoid; }
-body.print h3 { font-size: 13.5pt; break-after: avoid; }
-body.print .anchor { display: none; }
-body.print .code, body.print .output { break-inside: avoid; border-color: #d5dce5; }
-body.print pre { font-size: 8.8pt; white-space: pre-wrap; overflow: visible; }
-body.print pre code { white-space: pre-wrap; }
-body.print .code-lang, body.print .copy { display: none; }
+/* The print version (print.html): a book of 178 x 235 mm, which tools/book.py prints to PDF */
+@page {
+  size: 178mm 235mm;
+  margin: 19mm 19mm 21mm;
+  @bottom-left { font: 500 7pt/1 "Inter", sans-serif; color: #8a94a3; letter-spacing: 0.08em; text-transform: uppercase; vertical-align: top; padding-top: 6.4mm; }
+  @bottom-right { content: counter(page); font: 600 8pt/1 "Inter", sans-serif; color: #4d596b; vertical-align: top; padding-top: 6mm; }
+}
+@page cover { margin: 0; @bottom-right { content: none; } }
+@page front { @bottom-right { content: none; } }
+body.print {
+  background: #ffffff; color: #1b2230; font: 10pt/1.5 "Source Serif 4", Georgia, serif; -webkit-font-smoothing: auto;
+  -webkit-print-color-adjust: exact; print-color-adjust: exact;
+}
 body.print a { color: #0a7d99; }
-body.print table { font-size: 9.5pt; }
-body.print code { font-size: 0.85em; }
+
+/* Cover and colophon */
+body.print .cover {
+  page: cover; position: relative; overflow: hidden; height: 235mm; padding: 26mm 22mm 20mm;
+  display: flex; flex-direction: column; justify-content: space-between;
+  background: radial-gradient(120% 80% at 85% 10%, #1d2a3b 0%, #0e131b 55%, #0a0e14 100%); color: #e6ebf2;
+}
+body.print .cover .orbit { stroke: #c9d1dc; }
+body.print .cover-orbit { position: absolute; width: 190mm; height: 190mm; right: -62mm; top: -38mm; opacity: 0.13; }
+body.print .cover-top { display: flex; align-items: center; gap: 4mm; font: 700 17pt/1 var(--display); letter-spacing: -0.02em; }
+body.print .cover-logo { width: 15mm; height: 15mm; }
+body.print .cover-title h1 { font: 700 34pt/1.08 var(--display); letter-spacing: -0.03em; margin: 0 0 6mm; color: #ffffff; }
+body.print .cover-title p { font: 400 13pt/1.4 "Inter", sans-serif; color: #a3afbf; margin: 0; }
+body.print .cover-title::before { content: ""; display: block; width: 22mm; height: 1.4mm; border-radius: 1mm; margin-bottom: 9mm; background: linear-gradient(90deg, #0ea5c6, #4cc3e0); }
+body.print .cover-bottom { display: flex; justify-content: space-between; font: 500 9pt/1 var(--mono); color: #7c889a; }
+body.print .colophon {
+  page: front; break-before: page; height: 190mm; display: flex; flex-direction: column; justify-content: flex-end;
+  font: 8.5pt/1.55 "Inter", sans-serif; color: #4d596b;
+}
+body.print .colophon p { margin: 0 0 4mm; max-width: 110mm; text-align: left; hyphens: manual; }
+body.print .colophon strong { color: #1b2230; font-weight: 600; }
+
+/* Contents */
+body.print .contents { break-before: page; }
+body.print .contents h1 { font: 700 22pt/1.1 var(--display); letter-spacing: -0.02em; margin: 6mm 0 9mm; }
+body.print .toc-print, body.print .toc-print ol { list-style: none; margin: 0; padding: 0; }
+body.print .toc-print a { display: flex; align-items: baseline; color: inherit; }
+body.print .toc-print .n { flex: none; width: 9mm; color: #0a8fae; font-variant-numeric: tabular-nums; }
+body.print .toc-print .t { flex: none; max-width: 100mm; }
+body.print .toc-print .dots { flex: 1; min-width: 4mm; margin: 0 2mm; border-bottom: 0.7pt dotted #b4bdc9; transform: translateY(-1.2mm); }
+body.print .toc-print .p { flex: none; width: 8mm; text-align: right; font-variant-numeric: tabular-nums; }
+body.print .toc-chapter { margin-top: 3.2mm; break-inside: avoid-page; }
+body.print .toc-chapter > a { font: 600 9.8pt/1.45 "Inter", sans-serif; color: #121826; }
+body.print .toc-section a { font: 400 8.6pt/1.6 "Inter", sans-serif; color: #4d596b; }
+body.print .toc-section .n { width: 9mm; margin-left: 9mm; color: #8a94a3; }
+body.print .toc-section .dots { border-bottom-color: #d5dce5; }
+
+/* Chapters */
+body.print .chapter { break-before: page; }
+body.print .opener { padding-top: 16mm; margin-bottom: 11mm; }
+body.print .opener .label { font: 600 7.5pt/1 "Inter", sans-serif; letter-spacing: 0.2em; text-transform: uppercase; color: #0a8fae; }
+body.print .opener .number { font: 700 52pt/1 var(--display); color: #d3dae3; margin: 2mm 0 1mm; letter-spacing: -0.02em; }
+body.print .opener h1 { font: 700 23pt/1.15 var(--display); letter-spacing: -0.025em; margin: 0; padding-bottom: 5mm; border-bottom: 1.2pt solid #1b2230; }
+body.print h2 { font: 600 13pt/1.3 "Inter", sans-serif; letter-spacing: -0.01em; margin: 7mm 0 2.5mm; padding: 0; break-after: avoid; }
+body.print h3 { font: 600 10.5pt/1.35 "Inter", sans-serif; margin: 5mm 0 1.5mm; break-after: avoid; }
+body.print h4 { font: 600 10pt/1.35 "Inter", sans-serif; margin: 4mm 0 1mm; break-after: avoid; }
+body.print .section-number { color: #0a8fae; margin-right: 2.6mm; font-variant-numeric: tabular-nums; }
+body.print p { margin: 0 0 2.6mm; text-align: justify; hyphens: auto; orphans: 3; widows: 3; }
+body.print ul, body.print ol { margin: 0 0 3mm; padding-left: 5mm; }
+body.print li { margin: 0.8mm 0; text-align: justify; hyphens: auto; }
+body.print .contents li { margin: 0; text-align: left; hyphens: manual; }
+body.print strong { font-weight: 600; }
+body.print code { font-size: 0.84em; color: #0b5d72; background: #eef4f7; border: 0; padding: 0.05em 0.28em; border-radius: 2px; hyphens: manual; }
+body.print blockquote { margin: 3.5mm 0; padding: 2.5mm 4mm; border: 0; border-left: 2pt solid #0ea5c6; border-radius: 0 3px 3px 0; background: #f1f8fa; break-inside: avoid; }
+
+/* Code */
+body.print .code, body.print .output { margin: 0 0 3.5mm; border: 0; border-radius: 3px; overflow: visible; }
+body.print .code { background: #f4f6f9; border-left: 2pt solid #0ea5c6; }
+body.print .output { background: #ffffff; border: 0.6pt solid #d9e0e8; border-left: 2pt solid #b4bdc9; }
+body.print .code + .output { margin-top: -3.5mm; border-radius: 0 0 3px 3px; border-top: 0; }
+body.print .code:has(+ .output) { border-radius: 3px 3px 0 0; }
+body.print .does-not-compile { border-left-color: #d23a4f; }
+body.print .does-not-compile + .output { border-left-color: #d23a4f; }
+body.print pre { padding: 2.4mm 3.4mm; font: 7.8pt/1.45 var(--mono); color: #263142; white-space: pre-wrap; overflow: visible; orphans: 6; widows: 6; font-variant-ligatures: none; }
+body.print pre code { white-space: pre-wrap; background: none; padding: 0; color: inherit; font-size: inherit; }
+body.print .output pre { color: #4d596b; }
+body.print .keep { break-inside: avoid; }
+body.print .code-name { font: 500 7pt/1 var(--mono); color: #6b7686; padding: 2.4mm 3.4mm 0; }
+body.print .hidden-line, body.print .code-lang, body.print .copy, body.print .toggle { display: none; }
+
+/* Tables */
+body.print .table-wrap { margin: 1mm 0 4mm; border: 0; border-radius: 0; overflow: visible; }
+body.print table { font: 8.4pt/1.45 "Inter", sans-serif; border-top: 1pt solid #1b2230; border-bottom: 1pt solid #1b2230; }
+body.print th { background: none; font-weight: 600; border-bottom: 0.6pt solid #1b2230; padding: 1.6mm 2.4mm; }
+body.print td { padding: 1.4mm 2.4mm; border-bottom: 0.5pt solid #e1e6ed; }
+body.print tr { break-inside: avoid; }
+body.print td code, body.print th code { font-size: 0.92em; }

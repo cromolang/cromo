@@ -114,7 +114,7 @@ Some details:
 
 ## The whole program
 
-Here is the complete service. To try it without a browser, its `main` also starts a client that sends some requests and prints the answers; a real service would only call `serve`.
+Here is the `main` of the service: the declarations of the previous sections stand in place of `// ...`, and on the site *Show all* opens the whole file. To try the service without a browser, `main` also starts a client that sends some requests and prints the answers; a real service would only call `serve`.
 
 ```cromo file=todo.cro
 import std.http
@@ -122,77 +122,78 @@ import std.json
 import std.os
 import std.thread
 
-struct Todo {
-    i64 id
-    string title
-    bool done
-}
-
-struct NewTodo {
-    string title
-}
-
-// The todos of the service, kept in memory.
-struct Store {
-    list<Todo> items
-    i64 next = 1
-
-    Todo add(string title) {
-        Todo todo
-        todo.id = next
-        todo.title = title.copy()
-        next++
-        items.add(todo.copy())
-        ret todo
-    }
-
-    bool complete(i64 id) {
-        for (ref Todo todo in items) {
-            if (todo.id == id) {
-                todo.done = true
-                ret true
-            }
-        }
-        ret false
-    }
-}
-
-[[test]]
-void addGivesNewIds() {
-    Store store
-    Todo first = store.add("a")
-    Todo second = store.add("b")
-    assert(second.id == first.id + 1)
-    assert(store.complete(first.id))
-    assert(!store.complete(99))
-}
-
-void handle(thread.Mutex<Store> store, ref http.Request req, ref http.Response res) {
-    if (req.matches("GET /todos")) {
-        store.lock([ref res](ref Store s) { res.writeJson(json.encode(s.items)) })
-    } else if (req.matches("POST /todos")) {
-        NewTodo input = json.decode<NewTodo>(req.text())
-        if (input.title == "") {
-            res.status = 400
-            res.write("a todo needs a title")
-            ret
-        }
-        store.lock([ref res, input](ref Store s) {
-            res.status = 201
-            res.writeJson(json.encode(s.add(input.title)))
-        })
-    } else if (req.matches("POST /todos/{id}/done")) {
-        i64 id = i64(req.param("id"))
-        bool found = false
-        store.lock([ref found, id](ref Store s) { found = s.complete(id) })
-        res.status = 404
-        if (found) {
-            res.status = 204
-        }
-    } else {
-        res.status = 404
-    }
-}
+// ...
+# struct Todo {
+#     i64 id
+#     string title
+#     bool done
+# }
+#
+# struct NewTodo {
+#     string title
+# }
+#
+# // The todos of the service, kept in memory.
+# struct Store {
+#     list<Todo> items
+#     i64 next = 1
+#
+#     Todo add(string title) {
+#         Todo todo
+#         todo.id = next
+#         todo.title = title.copy()
+#         next++
+#         items.add(todo.copy())
+#         ret todo
+#     }
+#
+#     bool complete(i64 id) {
+#         for (ref Todo todo in items) {
+#             if (todo.id == id) {
+#                 todo.done = true
+#                 ret true
+#             }
+#         }
+#         ret false
+#     }
+# }
+#
+# [[test]]
+# void addGivesNewIds() {
+#     Store store
+#     Todo first = store.add("a")
+#     Todo second = store.add("b")
+#     assert(second.id == first.id + 1)
+#     assert(store.complete(first.id))
+#     assert(!store.complete(99))
+# }
+#
+# void handle(thread.Mutex<Store> store, ref http.Request req, ref http.Response res) {
+#     if (req.matches("GET /todos")) {
+#         store.lock([ref res](ref Store s) { res.writeJson(json.encode(s.items)) })
+#     } else if (req.matches("POST /todos")) {
+#         NewTodo input = json.decode<NewTodo>(req.text())
+#         if (input.title == "") {
+#             res.status = 400
+#             res.write("a todo needs a title")
+#             ret
+#         }
+#         store.lock([ref res, input](ref Store s) {
+#             res.status = 201
+#             res.writeJson(json.encode(s.add(input.title)))
+#         })
+#     } else if (req.matches("POST /todos/{id}/done")) {
+#         i64 id = i64(req.param("id"))
+#         bool found = false
+#         store.lock([ref found, id](ref Store s) { found = s.complete(id) })
+#         res.status = 404
+#         if (found) {
+#             res.status = 204
+#         }
+#     } else {
+#         res.status = 404
+#     }
+# }
 
 i32 main() {
     thread.Mutex<Store> store
@@ -210,20 +211,21 @@ i32 main() {
     client.post(base + "/todos", "{\"title\": \"publish it\"}", "application/json")
     http.Response done = client.post(base + "/todos/1/done", "", "text/plain")
     println("{}", done.status)
-
-    http.Response all = client.get(base + "/todos")
-    println("{}", all.text())
-    list<Todo> todos = json.decode<list<Todo>>(all.text())
-    for (Todo t in todos) {
-        string mark = " "
-        if (t.done) {
-            mark = "x"
-        }
-        println("[{}] {}", mark, t.title)
-    }
-
-    http.Response bad = client.post(base + "/todos", "{}", "application/json")
-    println("{} {}", bad.status, bad.text())
+    // ...
+#
+#     http.Response all = client.get(base + "/todos")
+#     println("{}", all.text())
+#     list<Todo> todos = json.decode<list<Todo>>(all.text())
+#     for (Todo t in todos) {
+#         string mark = " "
+#         if (t.done) {
+#             mark = "x"
+#         }
+#         println("[{}] {}", mark, t.title)
+#     }
+#
+#     http.Response bad = client.post(base + "/todos", "{}", "application/json")
+#     println("{} {}", bad.status, bad.text())
     os.exit(0)
     ret 0
 }

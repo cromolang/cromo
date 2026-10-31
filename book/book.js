@@ -26,16 +26,31 @@
     });
   }
 
-  // A button that copies the code of a block.
+  // A button that shows the hidden lines of an example, the whole program.
+  var italian = document.body.dataset.language === 'it';
+  document.querySelectorAll('.code.has-hidden').forEach(function (block) {
+    var button = document.createElement('button');
+    button.className = 'toggle';
+    button.type = 'button';
+    var label = italian ? ['Mostra tutto', 'Mostra meno'] : ['Show all', 'Show less'];
+    button.textContent = label[0];
+    button.addEventListener('click', function () {
+      var expanded = block.classList.toggle('expanded');
+      button.textContent = label[expanded ? 1 : 0];
+    });
+    block.appendChild(button);
+  });
+
+  // A button that copies the code of a block, with its hidden lines.
   document.querySelectorAll('.code').forEach(function (block) {
     if (block.classList.contains('does-not-compile')) return;
     var button = document.createElement('button');
     button.className = 'copy';
     button.type = 'button';
-    var label = document.body.dataset.language === 'it' ? ['Copia', 'Copiato'] : ['Copy', 'Copied'];
+    var label = italian ? ['Copia', 'Copiato'] : ['Copy', 'Copied'];
     button.textContent = label[0];
     button.addEventListener('click', function () {
-      var text = block.querySelector('pre').innerText;
+      var text = block.querySelector('pre').textContent;
       navigator.clipboard.writeText(text).then(function () {
         button.textContent = label[1];
         setTimeout(function () { button.textContent = label[0]; }, 1500);

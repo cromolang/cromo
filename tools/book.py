@@ -24,12 +24,21 @@ A code block says its language and some flags after the backticks:
     ```cromo args=notes.txt   the arguments of the program, separated by commas
     ```output                 what the program before prints, or the errors of an error block
 
+A line of a cromo block that starts with `# ` (or is only `#`) is hidden: it is part
+of the program that --check compiles and runs, but the page shows it only when the
+reader asks for the whole program, and the PDF never. So an example can show only
+the lines that matter, and stay a complete program.
+
 --check compiles and runs every program of every language, and compares what it
 prints with the output block that follows it. --pdf prints print.html of each
-language to <out>/book/<file>.pdf with Microsoft Edge or Chrome, headless.
+language to <out>/book/<file>.pdf with Microsoft Edge or Chrome, headless, as a
+book: a cover, the contents with the pages, and a chapter on each new page. It
+prints twice: the pages of the chapters and of their sections come from the first
+PDF, from the destinations of its links.
 """
 
 import argparse
+import datetime
 import html
 import json
 import os
@@ -38,6 +47,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import urllib.parse
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BOOK = os.path.join(ROOT, 'book')
@@ -49,14 +59,26 @@ LANGUAGES = {
         'previous': 'Previous', 'next': 'Next', 'search': 'Search the guide',
         'pdf_link': 'PDF', 'contents': 'Contents', 'theme': 'Light or dark theme',
         'site': 'cromolang.org', 'source': 'Source', 'no_results': 'No results',
-        'menu': 'Chapters', 'chapter': 'Chapter',
+        'menu': 'Chapters', 'chapter': 'Chapter', 'appendix': 'Appendix',
+        'subtitle': 'The Cromo programming language',
+        'version': 'Version {} · {}',
+        'months': 'January February March April May June July August September October November December',
+        'license': 'The text and the examples are part of the sources of Cromo, under the MIT or the Apache 2.0 license.',
+        'checked': 'Every example of this guide was compiled and run with cromo {}, and its output checked, when the guide was made.',
     },
     'it': {
         'name': 'Italiano', 'pdf': 'cromo-guida-it.pdf',
         'previous': 'Precedente', 'next': 'Successivo', 'search': 'Cerca nella guida',
         'pdf_link': 'PDF', 'contents': 'Indice', 'theme': 'Tema chiaro o scuro',
         'site': 'cromolang.org', 'source': 'Sorgenti', 'no_results': 'Nessun risultato',
-        'menu': 'Capitoli', 'chapter': 'Capitolo',
+        'menu': 'Capitoli', 'chapter': 'Capitolo', 'appendix': 'Appendice',
+        'subtitle': 'Il linguaggio di programmazione Cromo',
+        'version': 'Versione {} · {}',
+        'months': 'gennaio febbraio marzo aprile maggio giugno luglio agosto settembre ottobre novembre dicembre',
+        'license': 'Il testo e gli esempi fanno parte dei sorgenti di Cromo, con la licenza MIT o Apache 2.0.',
+        'checked': 'Ogni esempio di questa guida è stato compilato ed eseguito con cromo {}, e il suo output verificato, '
+                   'quando la guida è stata generata.',
+        'print_contents': 'Sommario',
     },
 }
 
@@ -146,6 +168,14 @@ def inline(text, links):
         part = re.sub(r'\[([^\]]+)\]\(([^)\s]+)\)', link, part)
         out.append(part)
     return ''.join(out)
+
+
+HIDDEN = re.compile(r'^#(?: |$)')
+
+
+def program(text):
+    """The whole program of a cromo block, with its hidden lines."""
+    return '\n'.join(HIDDEN.sub('', line, count=1) for line in text.split('\n'))
 
 
 class Block:
@@ -252,8 +282,18 @@ def render(blocks, links, headings):
         elif b.kind == 'quote':
             out.append('<blockquote>' + render(b.blocks, links, []) + '</blockquote>')
         elif b.kind == 'code':
+            lines = b.text.split('\n')
+            hidden = 0
             if b.language == 'cromo':
-                code = highlight(b.text)
+                parts = []
+                for line in lines:
+                    if HIDDEN.match(line):
+                        hidden += 1
+                        parts.append(f'<span class="hidden-line">{highlight(HIDDEN.sub("", line, count=1))}\n</span>')
+                    else:
+                        parts.append(highlight(line) + '\n')
+                code = ''.join(parts)
+                code = code[:-1] if code.endswith('\n') else code
             elif b.language in ('sh', 'shell', 'powershell', 'console'):
                 code = highlight_shell(b.text)
             else:
@@ -261,6 +301,10 @@ def render(blocks, links, headings):
             css = 'output' if b.language in ('output', 'text') else 'code'
             if b.flags.get('error'):
                 css += ' does-not-compile'
+            if hidden:
+                css += ' has-hidden'
+            if len(lines) - hidden <= 16:
+                css += ' keep'  # printed on one page
             name = b.flags.get('file')
             caption = f'<div class="code-name">{html.escape(name)}</div>' if isinstance(name, str) else ''
             label = {'output': '', 'text': '', 'cromo': 'cromo'}.get(b.language, b.language)
@@ -383,34 +427,132 @@ def page(language, title, book_title, chapters, index, body, headings, previous,
 '''
 
 
-def print_page(language, book_title, chapters, bodies):
+PRINT_FONTS = FONTS.replace('&display=swap', '&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400'
+                                             '&display=swap')
+
+
+def version():
+    text = open(os.path.join(ROOT, 'CMakeLists.txt'), encoding='utf-8').read()
+    return re.search(r'project\(cromo VERSION ([0-9.]+)', text).group(1)
+
+
+def chapter_parts(language, index, title):
+    """The label, the number and the title of a chapter in the book: ('Chapter', '3',
+    'Ownership'), ('Appendix', 'A', 'The command cromo'), or ('', '', 'Introduction')."""
     words = LANGUAGES[language]
-    numbered = NUMBERED[language]
-    toc = ''.join(f'<li><span class="num">{f"{i}." if 0 < i < numbered else ""}</span><a href="#chapter-{i}">{html.escape(t)}</a></li>'
-                  for i, (t, _) in enumerate(chapters))
-    content = ''.join(f'<section class="chapter" id="chapter-{i}">{b}</section>' for i, b in enumerate(bodies))
+    m = re.match(r'^(?:Appendix|Appendice)\s+([A-Z])\s*[:.]\s*(.*)$', title)
+    if m:
+        return words['appendix'], m.group(1), m.group(2)
+    if 0 < index < NUMBERED[language]:
+        return words['chapter'], str(index), title
+    return '', '', title
+
+
+def print_chapter(language, chapters, index, body, headings):
+    """A chapter of the book: the ids take the chapter in front, as the same section
+    can be in several chapters; the links between the pages become anchors; the
+    first heading opens the chapter, and the sections take their number."""
+    label, number, title = chapter_parts(language, index, chapters[index][0])
+    pages = {page_name(i, source): i for i, (_, source) in enumerate(chapters)}
+    body = re.sub(r'id="([^"]+)"', lambda m: f'id="c{index}-{m.group(1)}"', body)
+    body = re.sub(r'href="#([^"]+)"', lambda m: f'href="#c{index}-{m.group(1)}"', body)
+
+    def link(m):
+        target = pages.get(m.group(1) + '.html')
+        if target is None:
+            return m.group(0)
+        return f'href="#c{target}-{m.group(2)}"' if m.group(2) else f'href="#chapter-{target}"'
+    body = re.sub(r'href="([\w-]+)\.html(?:#([^"]*))?"', link, body)
+    opener = '<header class="opener">'
+    if label:
+        opener += f'<div class="label">{html.escape(label)}</div><div class="number">{number}</div>'
+    opener += f'<h1>{html.escape(title)}</h1></header>'
+    body = re.sub(r'<h1 id="[^"]*">.*?</h1>', lambda m: opener, body, count=1, flags=re.S)
+    sections = []
+
+    def section(m):
+        sections.append((m.group(1), re.sub(r'<[^>]+>', '', m.group(2))))
+        mark = f'<span class="section-number">{number}.{len(sections)}</span>' if number else ''
+        return f'<h2 id="{m.group(1)}">{mark}{m.group(2)}</h2>'
+    body = re.sub(r'<h2 id="([^"]+)"><a class="anchor" href="#[^"]*">#</a>(.*?)</h2>', section, body, flags=re.S)
+    body = re.sub(r'<a class="anchor" href="#[^"]*">#</a>', '', body)
+    running = f'{number} · {title}' if number else title
+    return {'label': label, 'number': number, 'title': title, 'running': running, 'body': body,
+            'sections': [(f'{number}.{k + 1}' if number else '', anchor, text) for k, (anchor, text) in enumerate(sections)]}
+
+
+def print_page(language, book_title, parts, pages, checked):
+    """The whole guide in one page, printed as a book. `pages` gives the page of each
+    anchor, from a first print; without it the contents leave the numbers empty, in a
+    column of the same width, so that the pages do not move."""
+    words = LANGUAGES[language]
+    today = datetime.date.today()
+    month = words['months'].split()[today.month - 1]
+    edition = words['version'].format(version(), f'{month} {today.year}')
+
+    def entry(css, number, title, anchor):
+        page = pages.get(anchor, '')
+        return (f'<li class="{css}"><a href="#{anchor}"><span class="n">{html.escape(number)}</span>'
+                f'<span class="t">{html.escape(title)}</span><span class="dots"></span><span class="p">{page}</span></a>')
+    toc = []
+    for i, part in enumerate(parts):
+        toc.append(entry('toc-chapter' + (' toc-appendix' if part['number'].isalpha() else ''), part['number'],
+                         part['title'], f'chapter-{i}'))
+        if part['sections']:
+            toc.append('<ol>' + ''.join(entry('toc-section', n, t, a) + '</li>' for n, a, t in part['sections']) + '</ol>')
+        toc.append('</li>')
+    css = []
+    content = []
+    for i, part in enumerate(parts):
+        # The chapter at the foot of its pages: Chrome has no first page of a named
+        # page, so a running head would stand above the title of the chapter.
+        running = json.dumps(part['running'], ensure_ascii=False)
+        css.append(f'.chapter-{i} {{ page: c{i}; }}\n@page c{i} {{ @bottom-left {{ content: {running}; }} }}')
+        content.append(f'<section class="chapter chapter-{i}" id="chapter-{i}">{part["body"]}</section>')
+    contents_title = words.get('print_contents', words['contents'])
+    mark = LOGO[LOGO.index('>') + 1:]
+    checked_line = f'<p>{html.escape(words["checked"].format(version()))}</p>' if checked else ''
     return f'''<!doctype html>
 <html lang="{language}">
 <head>
 <meta charset="utf-8">
 <title>{html.escape(book_title)}</title>
-{FONTS}
+{PRINT_FONTS}
 <link rel="stylesheet" href="../book.css">
+<style>
+{chr(10).join(css)}
+</style>
 </head>
 <body class="print">
 <section class="cover">
-  <svg width="120" height="120" viewBox="0 0 64 64">{LOGO[LOGO.index('>') + 1:]}
-  <h1>{html.escape(book_title)}</h1>
-  <p>cromolang.org</p>
+  <svg class="cover-orbit" viewBox="0 0 64 64" aria-hidden="true">{mark}
+  <div class="cover-top"><svg class="cover-logo" viewBox="0 0 64 64" aria-hidden="true">{mark}<span>cromo</span></div>
+  <div class="cover-title">
+    <h1>{html.escape(book_title)}</h1>
+    <p>{html.escape(words['subtitle'])}</p>
+  </div>
+  <div class="cover-bottom"><span>{html.escape(edition)}</span><span>cromolang.org</span></div>
 </section>
-<section class="contents"><h2>{words['contents']}</h2><ul>{toc}</ul></section>
-{content}
+<section class="colophon">
+  <p><strong>{html.escape(book_title)}</strong><br>{html.escape(edition)}</p>
+  <p>cromolang.org<br>{REPOSITORY.replace('https://', '')}</p>
+  <p>{html.escape(words['license'])}</p>
+  {checked_line}
+</section>
+<section class="contents">
+  <h1>{html.escape(contents_title)}</h1>
+  <ol class="toc-print">{''.join(toc)}</ol>
+</section>
+{''.join(content)}
 </body>
 </html>
 '''
 
 
-def build(out):
+PRINT = {}  # for each language: the title of the book and its chapters, for the PDF
+
+
+def build(out, checked=False):
     target = os.path.join(out, 'book')
     os.makedirs(target, exist_ok=True)
     shutil.copy(os.path.join(BOOK, 'book.css'), target)
@@ -422,14 +564,12 @@ def build(out):
             shutil.rmtree(folder)
         os.makedirs(folder)
         links = chapter_links(chapters)
-        rendered, search, print_bodies = [], [], []
+        rendered, search = [], []
         for i, (title, source) in enumerate(chapters):
             text = open(os.path.join(BOOK, language, source), encoding='utf-8').read()
             headings = []
             body = render(parse(text), links, headings)
             rendered.append((body, headings))
-            # In the single page of the PDF the links between chapters become anchors.
-            print_bodies.append(re.sub(r'href="(?:index|[\w-]+)\.html(#[^"]*)?"', lambda m: f'href="{m.group(1) or "#"}"', body))
             plain = re.sub(r'<[^>]+>', ' ', body)
             for level, anchor, heading in headings:
                 search.append({'title': heading, 'chapter': title, 'url': page_name(i, source) + ('#' + anchor if level > 1 else '')})
@@ -440,8 +580,10 @@ def build(out):
             following = (page_name(i + 1, chapters[i + 1][1]), chapters[i + 1][0]) if i + 1 < len(chapters) else None
             with open(os.path.join(folder, page_name(i, source)), 'w', encoding='utf-8', newline='\n') as f:
                 f.write(page(language, title, book_title, chapters, i, body, headings, previous, following))
+        parts = [print_chapter(language, chapters, i, body, headings) for i, (body, headings) in enumerate(rendered)]
+        PRINT[language] = (book_title, parts, checked)
         with open(os.path.join(folder, 'print.html'), 'w', encoding='utf-8', newline='\n') as f:
-            f.write(print_page(language, book_title, chapters, print_bodies))
+            f.write(print_page(language, book_title, parts, {}, checked))
         with open(os.path.join(folder, 'search.json'), 'w', encoding='utf-8', newline='\n') as f:
             json.dump(search, f, ensure_ascii=False, separators=(',', ':'))
     with open(os.path.join(target, 'index.html'), 'w', encoding='utf-8', newline='\n') as f:
@@ -481,16 +623,17 @@ def check(cromo):
                     continue
                 if b.language != 'cromo' or b.flags.get('ignore'):
                     continue
-                is_program = re.search(r'^(i32|void)\s+main\s*\(', b.text, re.M)
+                text = program(b.text)
+                is_program = re.search(r'^(i32|void)\s+main\s*\(', text, re.M)
                 if isinstance(name, str):
-                    open(os.path.join(work, name), 'w', encoding='utf-8', newline='\n').write(b.text + '\n')
+                    open(os.path.join(work, name), 'w', encoding='utf-8', newline='\n').write(text + '\n')
                 if not is_program:
                     continue
                 number += 1
                 total += 1
                 file = name if isinstance(name, str) else f'example{number}.cro'
                 path = os.path.join(work, file)
-                open(path, 'w', encoding='utf-8', newline='\n').write(b.text + '\n')
+                open(path, 'w', encoding='utf-8', newline='\n').write(text + '\n')
                 expected = None
                 following = blocks[i + 1] if i + 1 < len(blocks) else None
                 if following is not None and following.kind == 'code' and following.language == 'output':
@@ -545,17 +688,61 @@ def browser():
     sys.exit('no Edge or Chrome found for the PDF')
 
 
+def print_pdf(exe, profile, source, target):
+    url = 'file:///' + source.replace('\\', '/').lstrip('/')
+    subprocess.run([exe, '--headless=new', '--disable-gpu', f'--user-data-dir={profile}', '--no-pdf-header-footer',
+                    '--generate-pdf-document-outline', '--virtual-time-budget=20000', '--run-all-compositor-stages-before-draw',
+                    f'--print-to-pdf={target}', url], check=True, capture_output=True)
+
+
+def destinations(path):
+    """The page, from 1, of each anchor of a PDF of Chrome: the catalog names the
+    destinations of the links, each a page object, and the tree of the pages gives
+    their order. Also the number of pages."""
+    data = open(path, 'rb').read()
+
+    def obj(number):
+        m = re.search(rb'(?:^|\n)%d 0 obj\s*(.*?)\s*endobj' % number, data, re.S)
+        return m.group(1) if m else b''
+    catalog = obj(int(re.findall(rb'/Root (\d+) 0 R', data)[-1]))
+    order = []
+
+    def walk(number):
+        node = obj(number)
+        kids = re.search(rb'/Kids\s*\[([^\]]*)\]', node)
+        if kids:
+            for kid in re.findall(rb'(\d+) 0 R', kids.group(1)):
+                walk(int(kid))
+        else:
+            order.append(number)
+    walk(int(re.search(rb'/Pages (\d+) 0 R', catalog).group(1)))
+    page = {number: i + 1 for i, number in enumerate(order)}
+    dests = re.search(rb'/Dests (\d+) 0 R', catalog)
+    found = {}
+    for name, target in re.findall(rb'/([^\s\[/<>()]+)\s*\[(\d+) 0 R', obj(int(dests.group(1))) if dests else b''):
+        # A name of PDF escapes its bytes with #, and Chrome escapes the id as in a URL.
+        name = re.sub(rb'#([0-9A-Fa-f]{2})', lambda m: bytes([int(m.group(1), 16)]), name).decode('utf-8', 'replace')
+        found[urllib.parse.unquote(name)] = page.get(int(target), '')
+    return found, len(order)
+
+
 def pdf(out):
     exe = browser()
     profile = tempfile.mkdtemp(prefix='book-pdf-')
     for language, words in LANGUAGES.items():
+        book_title, parts, checked = PRINT[language]
         source = os.path.abspath(os.path.join(out, 'book', language, 'print.html'))
         target = os.path.abspath(os.path.join(out, 'book', words['pdf']))
-        url = 'file:///' + source.replace('\\', '/').lstrip('/')
-        subprocess.run([exe, '--headless=new', '--disable-gpu', f'--user-data-dir={profile}', '--no-pdf-header-footer',
-                        '--virtual-time-budget=15000', '--run-all-compositor-stages-before-draw',
-                        f'--print-to-pdf={target}', url], check=True, capture_output=True)
-        print(f'pdf: {target} ({os.path.getsize(target) // 1024} KB)')
+        print_pdf(exe, profile, source, target)
+        pages, _ = destinations(target)
+        with open(source, 'w', encoding='utf-8', newline='\n') as f:
+            f.write(print_page(language, book_title, parts, pages, checked))
+        print_pdf(exe, profile, source, target)
+        again, count = destinations(target)
+        moved = [name for name in pages if again.get(name) != pages[name]]
+        if moved:
+            print(f'warning: {len(moved)} anchors moved between the two prints, as {moved[0]}')
+        print(f'pdf: {target} ({count} pages, {os.path.getsize(target) // 1024} KB)')
     shutil.rmtree(profile, ignore_errors=True)
 
 
@@ -568,7 +755,7 @@ def main():
     options = parser.parse_args()
     if options.check and not check(options.cromo):
         sys.exit(1)
-    build(options.out)
+    build(options.out, options.check)
     if options.pdf:
         pdf(options.out)
 

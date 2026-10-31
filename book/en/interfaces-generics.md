@@ -28,21 +28,23 @@ struct Circle : Shape {
     }
 }
 
-struct Square : Shape {
-    f64 side
-
-    Square(f64 s) {
-        side = s
-    }
-
-    f64 area() const {
-        ret side * side
-    }
-
-    string name() const {
-        ret "square"
-    }
-}
+// ...
+#
+# struct Square : Shape {
+#     f64 side
+#
+#     Square(f64 s) {
+#         side = s
+#     }
+#
+#     f64 area() const {
+#         ret side * side
+#     }
+#
+#     string name() const {
+#         ret "square"
+#     }
+# }
 
 void describe(Shape s) {
     println("{} with area {:.2f}", s.name(), s.area())
@@ -80,13 +82,15 @@ struct Circle : Shape {
     }
 }
 
-struct Square : Shape {
-    f64 side
-
-    f64 area() const {
-        ret side * side
-    }
-}
+// ...
+#
+# struct Square : Shape {
+#     f64 side
+#
+#     f64 area() const {
+#         ret side * side
+#     }
+# }
 
 i32 main() {
     Circle small
