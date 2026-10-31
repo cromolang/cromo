@@ -71,20 +71,20 @@ file(MAKE_DIRECTORY "${CROMO_RT_DIR}")
 
 # ---- TLS and cryptography (D233, D236) ----
 # mbedTLS and Monocypher (third_party), with the pieces of the C library that they
-# use and the glue of std.net and std.crypto (runtime/tls), with gzip for std.gzip
-# and std.http (runtime/gzip, D367), compiled like the
+# use and the glue of std.net and std.crypto (runtime/tls), compiled like the
 # runtime and added to its archives: a program links only the objects it uses.
 # Only runtime/libc is searched for the headers of C, not the Windows SDK.
 file(GLOB CROMO_TLS_THIRD_PARTY CONFIGURE_DEPENDS
      "${CMAKE_SOURCE_DIR}/third_party/mbedtls/library/*.c" "${CMAKE_SOURCE_DIR}/third_party/monocypher/*.c")
-file(GLOB CROMO_TLS_GLUE CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/runtime/tls/*.c" "${CMAKE_SOURCE_DIR}/runtime/gzip/*.c")
+file(GLOB CROMO_TLS_GLUE CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/runtime/tls/*.c")
 file(GLOB CROMO_TLS_HEADERS CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/runtime/tls/*.h" "${CMAKE_SOURCE_DIR}/runtime/libc/*.h")
 set(CROMO_TLS_FLAGS -nostdlibinc -isystem "${CMAKE_SOURCE_DIR}/runtime/libc" "-I${CMAKE_SOURCE_DIR}/runtime/tls"
     "-I${CMAKE_SOURCE_DIR}/third_party/mbedtls/include" "-I${CMAKE_SOURCE_DIR}/third_party/monocypher"
     "-DMBEDTLS_USER_CONFIG_FILE=\"mbedtls_user_config.h\"")
 
 # The objects for one system, in <folder>, and a response file that lists them
-# for the archiver: their command line would be too long for Windows.
+# for the archiver: their command line would be too long for Windows. The archive
+# depends on the response file too, so that a source removed leaves it.
 function(cromo_tls_objects folder flags objects)
   set(result)
   set(listing "")
@@ -125,7 +125,7 @@ add_custom_command(
   COMMAND "${CMAKE_COMMAND}" -E rm -f "${CROMO_RT_DIR}/cromo_rt.lib"
   COMMAND "${CROMO_LLVM_LIB}" /nologo "/out:${CROMO_RT_DIR}/cromo_rt.lib" "${CROMO_RT_DIR}/cromo_rt.obj" "${CROMO_RT_DIR}/mem_x64.obj"
           "@${CROMO_RT_DIR}/tls_windows.rsp"
-  DEPENDS "${CROMO_RT_DIR}/cromo_rt.obj" "${CROMO_RT_DIR}/mem_x64.obj" ${CROMO_TLS_WINDOWS_OBJECTS}
+  DEPENDS "${CROMO_RT_DIR}/cromo_rt.obj" "${CROMO_RT_DIR}/mem_x64.obj" ${CROMO_TLS_WINDOWS_OBJECTS} "${CROMO_RT_DIR}/tls_windows.rsp"
   COMMENT "Archiving the Cromo runtime")
 
 add_custom_command(
@@ -143,7 +143,7 @@ add_custom_command(
   COMMAND "${CMAKE_COMMAND}" -E rm -f "${CROMO_RT_DIR}/libcromo_rt.a"
   COMMAND "${CROMO_LLVM_AR}" rcs "${CROMO_RT_DIR}/libcromo_rt.a" "${CROMO_RT_DIR}/cromo_rt_linux.o" "${CROMO_RT_DIR}/mem_x64_linux.o"
           "@${CROMO_RT_DIR}/tls_linux.rsp"
-  DEPENDS "${CROMO_RT_DIR}/cromo_rt_linux.o" "${CROMO_RT_DIR}/mem_x64_linux.o" ${CROMO_TLS_LINUX_OBJECTS}
+  DEPENDS "${CROMO_RT_DIR}/cromo_rt_linux.o" "${CROMO_RT_DIR}/mem_x64_linux.o" ${CROMO_TLS_LINUX_OBJECTS} "${CROMO_RT_DIR}/tls_linux.rsp"
   COMMENT "Archiving the Cromo runtime for Linux")
 # ---- lib/ of the build, as in the archive (D237) ----
 # cromo reads the library and the runtime from lib/: next to its folder bin/ in

@@ -138,6 +138,7 @@ struct BinaryExpr : Expr {
     ExprPtr lhs;
     ExprPtr rhs;
     Type operandType;  // set by sema: the common type of the two operands
+    bool wrap = false;  // `wrapAdd(a, b)` and the others (D396): no overflow check
     size_t opBegin = 0;  // the bytes of a comparison operator in the source, for assert (D351)
     size_t opEnd = 0;
 };
@@ -154,6 +155,8 @@ enum class Intrinsic {
     JsonWrite, JsonRead,  // std.json (D251): for a real type, a call of the function that converts it
     DebugWrite,           // the form of debug (D319): for a real type, a call of the function that writes it
     HashNumber,  // `x.hash()` of a number or a bool (D198): made by the compiler, not named
+    FloatBits,      // `x.bits()` of an f64 or an f32 (D397)
+    FloatFromBits,  // `f64.fromBits(b)`, `f32.fromBits(b)` (D397): the type in typeArg
 };
 
 // Pairs of arguments that must not be the same element of a list: when the
@@ -526,8 +529,9 @@ struct FunctionDecl {
     bool isLambda = false;        // the body of a lambda, or the signature of a function type (D183)
     std::vector<TypeParam> typeParams;  // a generic function (D39)
     Block body;
-    std::vector<Attribute> attributes;  // `[[test]]` (D349)
+    std::vector<Attribute> attributes;  // `[[test]]` (D349), `[[export("name")]]` (D395)
     bool isTest = false;                // set by sema
+    bool isExported = false;            // set by sema: called by C with its name, in symbol (D395)
 
     // Set by sema.
     std::string symbol;           // its name in the IR, with its module in front

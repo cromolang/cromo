@@ -1,0 +1,15 @@
+// C has no exceptions (D395).
+// expect-error: the exported function 'check' can throw, and C has no exceptions: catch them inside it (D395)
+import unsafe
+
+[[export("check_value")]]
+i64 check(i64 x) {
+    if (x < 0) {
+        throw Error("negative")
+    }
+    ret x
+}
+
+i32 main() {
+    ret i32(check(1))
+}

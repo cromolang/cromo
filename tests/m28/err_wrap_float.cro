@@ -1,0 +1,7 @@
+// wrapMul is for integers (D396).
+// expect-error: wrapMul() works on integers, not on f64 (D396)
+i32 main() {
+    f64 x = 2.5
+    println("{}", wrapMul(x, 2.0))
+    ret 0
+}

@@ -1,0 +1,12 @@
+// The parameters of an exported function are those of C (D395).
+// expect-error: the parameters of an exported function are numbers, bool or addr, passed by value (D395)
+import unsafe
+
+[[export("count_words")]]
+i64 countWords(string text) {
+    ret text.len()
+}
+
+i32 main() {
+    ret 0
+}

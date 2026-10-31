@@ -1,0 +1,15 @@
+// wrapAdd, wrapSub and wrapMul (D396): the low bits, without the check of the
+// overflow, also in debug; a literal takes the type of the other value.
+// expect-output: 18446744073709551613 1 255 -128
+// expect-output: 4932904490461320209
+i32 main() {
+    u64 h = 0xFFFFFFFFFFFFFFFF
+    i8 small = 127
+    println("{} {} {} {}", wrapMul(h, 3), wrapAdd(h, 2), wrapSub(u8(0), u8(1)), wrapAdd(small, 1))
+    u64 hash = 0xCBF29CE484222325
+    for (i64 i = 0; i < 4; i++) {
+        hash = wrapMul(hash ^ u64(i), 0x100000001B3)
+    }
+    println("{}", hash)
+    ret 0
+}

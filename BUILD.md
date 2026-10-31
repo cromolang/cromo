@@ -158,7 +158,7 @@ Publishing is copying `dist\site` to the folder of the server, `/var/www/cromola
 | Folder | Content |
 |---|---|
 | `src/` | The compiler, in C++: lexer, parser, semantic analysis, generation of LLVM IR, backend, formatter, language server |
-| `runtime/` | The runtime in C, without the C library: memory, threads and tasks, stack traces, TLS and gzip |
+| `runtime/` | The runtime in C, without the C library: memory, threads and tasks, stack traces and TLS |
 | `library/` | The standard library, in Cromo |
 | `third_party/` | Mbed TLS and Monocypher, with their licenses |
 | `tests/` | The tests of the compiler |

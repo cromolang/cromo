@@ -1,0 +1,390 @@
+// The runtime written in Cromo (D393): the functions that the generated code and
+// the runtime in C call with their names of C (D395). Every program has it, through
+// the core; the programs cannot import it.
+import unsafe
+
+// ---- Hashes for the keys of a map (D198) ----
+
+// The finalizer of SplitMix64: every bit of the input changes half of the output.
+[[export("cromo_hash_bits")]]
+u64 mixBits(u64 value) {
+    u64 x = value
+    x ^= x >> 30
+    x = wrapMul(x, 0xBF58476D1CE4E5B9)
+    x ^= x >> 27
+    x = wrapMul(x, 0x94D049BB133111EB)
+    ret x ^ x >> 31
+}
+
+// Eight bytes at a time, each word multiplied in, and the length; then mixed by
+// mixBits, so that the low bits depend on all of them.
+[[export("cromo_hash_bytes")]]
+u64 hashMemory(addr data, i64 size) {
+    u64 hash = 0xCBF29CE484222325 ^ u64(size)
+    i64 i = 0
+    for (i + 8 <= size) {
+        hash = wrapMul(hash ^ wordAt(data, i, 8), 0x9E3779B97F4A7C15)
+        hash ^= hash >> 29
+        i += 8
+    }
+    hash = wrapMul(hash ^ wordAt(data, i, size - i), 0x9E3779B97F4A7C15)
+    ret mixBits(hash)
+}
+
+// `count` bytes from `data + at`, the first the lowest, as the load of a word on x64.
+u64 wordAt(addr data, i64 at, i64 count) {
+    u64 value = 0
+    for (i64 k = 0; k < count; k++) {
+        value |= u64(byteAt(data, at + k)) << (8 * k)
+    }
+    ret value
+}
+
+u8 byteAt(addr data, i64 at) {
+    ret copyAt<u8>(offset(data, at))
+}
+
+// ---- Numbers from text (D199) ----
+
+// The nearest f64 (bits 64) or f32 (bits 32) to a text that the library has already
+// checked: [+|-] digits [. digits] [e [+|-] digits], inf, infinity or nan. The value
+// r / s is divided with big integers, so the rounding, half to even, is always
+// exact. Too large a value gives an infinity: the library reports it.
+[[export("cromo_parse_float")]]
+f64 parseFloat(addr text, i64 size, i64 bits) {
+    i64 i = 0
+    bool negative = false
+    if (i < size && (byteAt(text, i) == '+' || byteAt(text, i) == '-')) {
+        negative = byteAt(text, i) == '-'
+        i++
+    }
+    f64 sign = 1.0
+    if (negative) {
+        sign = -1.0
+    }
+    f64 infinity = f64.fromBits(0x7FF0000000000000)
+    if (sameWord(text, i, size, "nan")) {
+        ret f64.fromBits(0x7FF8000000000000)
+    }
+    if (sameWord(text, i, size, "inf") || sameWord(text, i, size, "infinity")) {
+        ret sign * infinity
+    }
+
+    // value = digits * 10^exponent, the digits without the zeros in front; more
+    // than the 767 that can decide the rounding of an f64 are not kept.
+    u8[800] digits
+    i32 count = 0
+    bool dropped = false  // nonzero digits beyond the ones kept
+    i64 exponent = 0
+    bool point = false
+    for (i < size && byteAt(text, i) != 'e' && byteAt(text, i) != 'E') {
+        u8 c = byteAt(text, i)
+        if (c == '.') {
+            point = true
+        } else if (count == 0 && c == '0') {
+            if (point) {
+                exponent--
+            }
+        } else if (count < 800) {
+            digits[count] = c - '0'
+            count++
+            if (point) {
+                exponent--
+            }
+        } else {
+            if (c != '0') {
+                dropped = true
+            }
+            if (!point) {
+                exponent++
+            }
+        }
+        i++
+    }
+    if (i < size) {
+        i++
+        bool down = false
+        if (byteAt(text, i) == '+' || byteAt(text, i) == '-') {
+            down = byteAt(text, i) == '-'
+            i++
+        }
+        i64 written = 0
+        for (i < size) {
+            if (written < 100000) {
+                written = written * 10 + i64(byteAt(text, i) - '0')
+            }
+            i++
+        }
+        if (down) {
+            exponent -= written
+        } else {
+            exponent += written
+        }
+    }
+    if (count == 0) {
+        ret sign * 0.0
+    }
+    if (count + exponent > 310) {  // above 10^309
+        ret sign * infinity
+    }
+    if (count + exponent < -330) {  // below 10^-330, half of the smallest
+        ret sign * 0.0
+    }
+
+    i32 mantissaBits = 53
+    i32 minExponent = -1074  // of the last bit of the subnormal numbers
+    i32 maxExponent = 1023   // of the first bit of the largest number
+    if (bits == 32) {
+        mantissaBits = 24
+        minExponent = -149
+        maxExponent = 127
+    }
+    Big r
+    Big s
+    for (i32 k = 0; k < count; k++) {
+        r.mulSmall(10)
+        r.addSmall(u32(digits[k]))
+    }
+    s.set(1)
+    if (exponent >= 0) {
+        r.mulPow10(i32(exponent))
+    } else {
+        s.mulPow10(i32(-exponent))
+    }
+
+    // q = floor(r / s / 2^t) gets at least two bits more than the mantissa; the
+    // subnormal numbers have fewer, down to the last bit and one to round.
+    i32 t = r.bitLength() - s.bitLength() - (mantissaBits + 2)
+    if (t < minExponent - 1) {
+        t = minExponent - 1
+    }
+    if (t < 0) {
+        r.shiftLeft(-t)
+    } else {
+        s.shiftLeft(t)
+    }
+    Big divisor = s.copy()
+    divisor.shiftLeft(56)
+    u64 q = 0
+    for (i32 b = 56; b >= 0; b--) {
+        q <<= 1
+        if (r.compare(divisor) >= 0) {
+            r.subtract(divisor)
+            q |= 1
+        }
+        divisor.shiftRightOne()
+    }
+    bool inexact = dropped || r.used > 0
+    for (q >= u64(1) << (mantissaBits + 1)) {  // the mantissa and the bit to round
+        if ((q & 1) != 0) {
+            inexact = true
+        }
+        q >>= 1
+        t++
+    }
+    u64 mantissa = q >> 1
+    if ((q & 1) != 0 && (inexact || (mantissa & 1) != 0)) {
+        mantissa++
+    }
+    i32 last = t + 1  // value = mantissa * 2^last
+    if (mantissa == u64(1) << mantissaBits) {
+        mantissa >>= 1
+        last++
+    }
+    if (mantissa == 0) {
+        ret sign * 0.0
+    }
+    if (last + significantBits(mantissa) - 1 > maxExponent) {
+        ret sign * infinity
+    }
+    bool normal = mantissa >> (mantissaBits - 1) != 0
+    if (bits == 32) {
+        u32 pattern = u32(mantissa)
+        if (normal) {
+            pattern = u32(last + 23 + 127) << 23 | u32(mantissa) & 0x7FFFFF
+        }
+        if (negative) {
+            pattern |= 0x80000000
+        }
+        ret f64(f32.fromBits(pattern))
+    }
+    u64 pattern = mantissa
+    if (normal) {
+        pattern = u64(last + 52 + 1023) << 52 | mantissa & 0xFFFFFFFFFFFFF
+    }
+    if (negative) {
+        pattern |= u64(1) << 63
+    }
+    ret f64.fromBits(pattern)
+}
+
+// The text at `from` is `word`, in any case.
+bool sameWord(addr text, i64 from, i64 size, string word) {
+    if (size - from != word.len()) {
+        ret false
+    }
+    for (i64 k = 0; k < word.len(); k++) {
+        if ((byteAt(text, from + k) | 0x20) != word[k]) {
+            ret false
+        }
+    }
+    ret true
+}
+
+i32 significantBits(u64 value) {
+    i32 bits = 0
+    u64 rest = value
+    for (rest != 0) {
+        bits++
+        rest >>= 1
+    }
+    ret bits
+}
+
+// ---- Big integers ----
+
+// 4096 bits: enough for 10^324 * 2^55, for 2^1024 * 10, and for the 800 digits of
+// a text with 10^1124 * 2^56 when it is read.
+struct Big {
+    u32[128] word
+    i32 used
+
+    void set(u64 value) {
+        used = 0
+        u64 rest = value
+        for (rest != 0) {
+            word[used] = u32(rest & 0xFFFFFFFF)
+            used++
+            rest >>= 32
+        }
+    }
+
+    void mulSmall(u32 factor) {
+        u64 carry = 0
+        for (i32 i = 0; i < used; i++) {
+            u64 product = u64(word[i]) * u64(factor) + carry
+            word[i] = u32(product & 0xFFFFFFFF)
+            carry = product >> 32
+        }
+        if (carry != 0) {
+            word[used] = u32(carry)
+            used++
+        }
+    }
+
+    void addSmall(u32 value) {
+        u64 carry = u64(value)
+        for (i32 i = 0; i < used && carry != 0; i++) {
+            u64 sum = u64(word[i]) + carry
+            word[i] = u32(sum & 0xFFFFFFFF)
+            carry = sum >> 32
+        }
+        if (carry != 0) {
+            word[used] = u32(carry)
+            used++
+        }
+    }
+
+    void mulPow10(i32 exponent) {
+        i32 left = exponent
+        for (left >= 9) {
+            mulSmall(1000000000)
+            left -= 9
+        }
+        u32 power = 1
+        for (i32 k = 0; k < left; k++) {
+            power *= 10
+        }
+        if (power > 1) {
+            mulSmall(power)
+        }
+    }
+
+    void shiftLeft(i32 bits) {
+        if (used == 0 || bits == 0) {
+            ret
+        }
+        i32 words = bits / 32
+        i32 rest = bits % 32
+        if (rest != 0) {
+            u32 carry = 0
+            for (i32 i = 0; i < used; i++) {
+                u32 w = word[i]
+                word[i] = w << rest | carry
+                carry = w >> (32 - rest)
+            }
+            if (carry != 0) {
+                word[used] = carry
+                used++
+            }
+        }
+        if (words != 0) {
+            for (i32 i = used - 1; i >= 0; i--) {
+                word[i + words] = word[i]
+            }
+            for (i32 i = 0; i < words; i++) {
+                word[i] = 0
+            }
+            used += words
+        }
+    }
+
+    void shiftRightOne() {
+        for (i32 i = 0; i < used; i++) {
+            u32 high = 0
+            if (i + 1 < used) {
+                high = word[i + 1] << 31
+            }
+            word[i] = word[i] >> 1 | high
+        }
+        if (used > 0 && word[used - 1] == 0) {
+            used--
+        }
+    }
+
+    i32 compare(Big other) const {
+        if (used != other.used) {
+            if (used < other.used) {
+                ret -1
+            }
+            ret 1
+        }
+        for (i32 i = used - 1; i >= 0; i--) {
+            if (word[i] != other.word[i]) {
+                if (word[i] < other.word[i]) {
+                    ret -1
+                }
+                ret 1
+            }
+        }
+        ret 0
+    }
+
+    // this -= other, with this >= other.
+    void subtract(Big other) {
+        i64 borrow = 0
+        for (i32 i = 0; i < used; i++) {
+            i64 taken = borrow
+            if (i < other.used) {
+                taken += i64(other.word[i])
+            }
+            i64 difference = i64(word[i]) - taken
+            borrow = 0
+            if (difference < 0) {
+                borrow = 1
+                difference += i64(1) << 32
+            }
+            word[i] = u32(difference)
+        }
+        for (used > 0 && word[used - 1] == 0) {
+            used--
+        }
+    }
+
+    i32 bitLength() const {
+        if (used == 0) {
+            ret 0
+        }
+        ret (used - 1) * 32 + significantBits(u64(word[used - 1]))
+    }
+}

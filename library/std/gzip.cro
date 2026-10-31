@@ -1,23 +1,82 @@
-// The module std.gzip (D367): the format of gzip (RFC 1952), whose deflate (RFC
-// 1951) is in the runtime (runtime/gzip). compress finds the repeats in a window
-// of 32 KB and writes them with the fixed codes of deflate; decompress reads any
-// gzip, also of several members.
-import unsafe
-
-extern "cromo" {
-    addr cromo_gzip_compress(addr data, i64 size, addr result)
-    addr cromo_gzip_decompress(addr data, i64 size, i64 limit, addr result)  // null: the problem in result
-}
+// The module std.gzip (D367, D392): the format of gzip (RFC 1952) with deflate (RFC
+// 1951), in Cromo. compress finds the repeats with chains of hashes in a window of
+// 32 KB and writes them with the fixed codes of deflate, in one block; decompress
+// reads the three kinds of block, and any gzip, also of several members.
 
 public list<u8> compress(list<u8> data) {
-    addr input = raw(data)
-    addr size = alloc(8)
-    addr out = cromo_gzip_compress(input, data.len(), size)
-    list<u8> result = fromRaw(out, copyAt<i64>(size))
-    free(input)
-    free(size)
-    free(out)
-    ret result
+    Writer w
+    w.out.reserve(data.len() / 2 + 64)
+    list<u8> header = [0x1F, 0x8B, 8, 0, 0, 0, 0, 0, 0, 255]
+    for (u8 b in header) {
+        w.out.add(b)
+    }
+    w.putBits(1, 1)  // the last block
+    w.putBits(1, 2)  // with the fixed codes
+    list<i64> heads
+    heads.reserve(hashes())
+    for (i64 i = 0; i < hashes(); i++) {
+        heads.add(-1)
+    }
+    list<i64> previous
+    previous.reserve(window())
+    for (i64 i = 0; i < window(); i++) {
+        previous.add(-1)
+    }
+    i64 size = data.len()
+    i64 at = 0
+    for (at < size) {
+        i64 bestLength = 0
+        i64 bestDistance = 0
+        if (at + 3 <= size) {
+            i64 candidate = heads[hash3(data, at)]
+            i64 longest = 258
+            if (size - at < longest) {
+                longest = size - at
+            }
+            for (i64 steps = 0; candidate >= 0 && at - candidate <= window() && steps < 128; steps++) {
+                if (data[candidate + bestLength] == data[at + bestLength]) {
+                    i64 length = 0
+                    for (length < longest && data[candidate + length] == data[at + length]) {
+                        length++
+                    }
+                    if (length > bestLength) {
+                        bestLength = length
+                        bestDistance = at - candidate
+                        if (length == longest) {
+                            break
+                        }
+                    }
+                }
+                i64 next = previous[candidate % window()]
+                if (next >= candidate) {
+                    break
+                }
+                candidate = next
+            }
+        }
+        i64 step = 1
+        if (bestLength >= 3) {
+            w.putMatch(i32(bestLength), i32(bestDistance))
+            step = bestLength
+        } else {
+            w.putLiteral(i32(data[at]))
+        }
+        for (i64 i = 0; i < step; i++) {  // every position of the match can be found again
+            if (at + 3 <= size) {
+                i64 h = hash3(data, at)
+                previous[at % window()] = heads[h]
+                heads[h] = at
+            }
+            at++
+        }
+    }
+    w.putLiteral(256)  // the end of the block
+    if (w.count > 0) {
+        w.putBits(0, 8 - w.count)
+    }
+    w.putWord(crc32(data, 0, size))
+    w.putWord(u32(size))
+    ret move w.out
 }
 
 // Throws when the data are not gzip, or are damaged.
@@ -28,47 +87,426 @@ public list<u8> decompress(list<u8> data) {
 // As decompress, but throws when the result would be larger than `limit`: for data
 // that come from the network, which can be small and become huge.
 public list<u8> decompressUpTo(list<u8> data, i64 limit) {
-    addr input = raw(data)
-    addr size = alloc(8)
-    addr out = cromo_gzip_decompress(input, data.len(), limit, size)
-    i64 count = copyAt<i64>(size)
-    free(input)
-    free(size)
-    addr none
-    if (out == none) {
-        switch (count) {
-            case -1 {
+    Reader r
+    r.limit = limit
+    i64 size = data.len()
+    for {
+        i64 at = r.at
+        if (size - at < 18 || data[at] != 0x1F || data[at + 1] != 0x8B || data[at + 2] != 8) {
+            if (at == 0) {
                 throw Error("cannot decompress: the data are not gzip")
             }
-            case -3 {
-                throw Error("cannot decompress: the data are damaged, their check does not match")
+            throw damaged()
+        }
+        u8 flags = data[at + 3]
+        at += 10
+        if ((flags & 4) != 0) {  // FEXTRA
+            if (at + 2 > size) {
+                throw damaged()
             }
-            case -4 {
-                throw Error(format("cannot decompress: the data are larger than {} bytes", limit))
+            at += 2 + (i64(data[at]) | i64(data[at + 1]) << 8)
+        }
+        list<u8> texts = [8, 16]
+        for (u8 field in texts) {  // FNAME, FCOMMENT: texts ended by a zero
+            if ((flags & field) != 0) {
+                for (at < size && data[at] != 0) {
+                    at++
+                }
+                at++
             }
-            default {
-                throw Error("cannot decompress: the data of gzip are damaged or cut")
+        }
+        if ((flags & 2) != 0) {  // FHCRC
+            at += 2
+        }
+        if (at >= size) {
+            throw damaged()
+        }
+        i64 start = r.out.len()
+        r.at = at
+        r.bits = 0
+        r.count = 0
+        r.inflate(data)
+        at = r.at
+        if (at + 8 > size) {
+            throw damaged()
+        }
+        u32 crc = word(data, at)
+        u32 length = word(data, at + 4)
+        at += 8
+        if (crc != crc32(r.out, start, r.out.len()) || length != u32(r.out.len() - start)) {
+            throw Error("cannot decompress: the data are damaged, their check does not match")
+        }
+        for (at < size && data[at] == 0) {  // the zeros that some writers add at the end
+            at++
+        }
+        r.at = at
+        if (at >= size) {
+            ret move r.out
+        }
+    }
+}
+
+Error damaged() {
+    ret Error("cannot decompress: the data of gzip are damaged or cut")
+}
+
+i64 window() {
+    ret 32768
+}
+
+i64 hashes() {
+    ret 65536
+}
+
+// The three bytes at `at`, multiplied in 32 bits: a number below 65536.
+i64 hash3(list<u8> data, i64 at) {
+    u64 key = u64(data[at]) << 16 | u64(data[at + 1]) << 8 | u64(data[at + 2])
+    ret i64((key * 2654435761 & 0xFFFFFFFF) >> 16)
+}
+
+// The four bytes at `at`, the lowest first.
+u32 word(list<u8> data, i64 at) {
+    ret u32(data[at]) | u32(data[at + 1]) << 8 | u32(data[at + 2]) << 16 | u32(data[at + 3]) << 24
+}
+
+u32 crc32(list<u8> data, i64 from, i64 to) {
+    u32[256] table
+    for (i64 n = 0; n < 256; n++) {
+        u32 c = u32(n)
+        for (i32 k = 0; k < 8; k++) {
+            if ((c & 1) != 0) {
+                c = 0xEDB88320 ^ c >> 1
+            } else {
+                c >>= 1
+            }
+        }
+        table[n] = c
+    }
+    u32 crc = 0xFFFFFFFF
+    for (i64 i = from; i < to; i++) {
+        crc = table[i64((crc ^ u32(data[i])) & 0xFF)] ^ crc >> 8
+    }
+    ret crc ^ 0xFFFFFFFF
+}
+
+// The lengths and the distances of deflate: the first value of each code, and how
+// many bits follow it.
+struct Tables {
+    list<i32> lengthBase = [3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258]
+    list<i32> lengthExtra = [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0]
+    list<i32> distanceBase = [1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577]
+    list<i32> distanceExtra = [0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13]
+}
+
+// ---- Inflate ----
+
+// A canonical code: how many codes of each length, and the symbols in their order.
+struct Huffman {
+    i32[16] counts
+    i32[288] symbols
+
+    // The code of `n` lengths from `from`; throws when they give more codes than
+    // their lengths allow.
+    void build(u8[320] lengths, i32 from, i32 n) {
+        for (i32 i = 0; i < n; i++) {
+            counts[i64(lengths[from + i])]++
+        }
+        counts[0] = 0
+        i32 left = 1
+        for (i32 length = 1; length < 16; length++) {
+            left = (left << 1) - counts[length]
+            if (left < 0) {
+                throw damaged()
+            }
+        }
+        i32[16] offsets
+        for (i32 length = 1; length < 15; length++) {
+            offsets[length + 1] = offsets[length] + counts[length]
+        }
+        for (i32 i = 0; i < n; i++) {
+            u8 length = lengths[from + i]
+            if (length != 0) {
+                symbols[offsets[length]] = i
+                offsets[length]++
             }
         }
     }
-    list<u8> result = fromRaw(out, count)
-    free(out)
-    ret result
 }
 
-addr raw(list<u8> bytes) {
-    addr data = alloc(bytes.len() + 1)
-    for (i64 i = 0; i < bytes.len(); i++) {
-        put<u8>(offset(data, i), bytes[i])
+// The state of inflate: the next byte of the input, the bits already read from it,
+// and the output.
+struct Reader {
+    i64 at
+    u32 bits
+    i32 count
+    i64 limit
+    list<u8> out
+    Tables tables
+
+    void inflate(list<u8> data) {
+        for {
+            bool last = readBits(data, 1) == 1
+            u32 kind = readBits(data, 2)
+            if (kind == 0) {
+                stored(data)
+            } else if (kind == 1) {
+                fixed(data)
+            } else if (kind == 2) {
+                dynamic(data)
+            } else {
+                throw damaged()
+            }
+            if (last) {
+                ret
+            }
+        }
     }
-    ret data
+
+    u32 readBits(list<u8> data, i32 n) {
+        for (count < n) {
+            if (at >= data.len()) {
+                throw damaged()
+            }
+            bits |= u32(data[at]) << count
+            at++
+            count += 8
+        }
+        u32 value = bits & (1 << n) - 1
+        bits >>= n
+        count -= n
+        ret value
+    }
+
+    // The codes are read a bit at a time, the first bit the highest of the code.
+    i32 decode(list<u8> data, Huffman code) {
+        i32 value = 0
+        i32 first = 0
+        i32 index = 0
+        for (i32 length = 1; length < 16; length++) {
+            if (count == 0) {
+                if (at >= data.len()) {
+                    throw damaged()
+                }
+                bits = u32(data[at])
+                at++
+                count = 8
+            }
+            value |= i32(bits & 1)
+            bits >>= 1
+            count--
+            i32 counted = code.counts[length]
+            if (value - counted < first) {
+                ret code.symbols[index + value - first]
+            }
+            index += counted
+            first = (first + counted) << 1
+            value <<= 1
+        }
+        throw damaged()
+    }
+
+    // From the next byte: its length, the complement, and the bytes as they are.
+    void stored(list<u8> data) {
+        bits = 0
+        count = 0
+        if (at + 4 > data.len()) {
+            throw damaged()
+        }
+        i64 length = i64(data[at]) | i64(data[at + 1]) << 8
+        i64 complement = i64(data[at + 2]) | i64(data[at + 3]) << 8
+        at += 4
+        if (length != (complement ^ 0xFFFF) || at + length > data.len()) {
+            throw damaged()
+        }
+        room(length)
+        for (i64 i = 0; i < length; i++) {
+            out.add(data[at + i])
+        }
+        at += length
+    }
+
+    void fixed(list<u8> data) {
+        u8[320] lengths
+        for (i32 i = 0; i < 288; i++) {
+            if (i < 144) {
+                lengths[i] = 8
+            } else if (i < 256) {
+                lengths[i] = 9
+            } else if (i < 280) {
+                lengths[i] = 7
+            } else {
+                lengths[i] = 8
+            }
+        }
+        for (i32 i = 288; i < 318; i++) {
+            lengths[i] = 5
+        }
+        Huffman literals
+        Huffman distances
+        literals.build(lengths, 0, 288)
+        distances.build(lengths, 288, 30)
+        codes(data, literals, distances)
+    }
+
+    void dynamic(list<u8> data) {
+        i32 literalCount = i32(readBits(data, 5)) + 257
+        i32 distanceCount = i32(readBits(data, 5)) + 1
+        i32 codeCount = i32(readBits(data, 4)) + 4
+        if (literalCount > 286 || distanceCount > 30) {
+            throw damaged()
+        }
+        list<i32> order = [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15]
+        u8[320] lengths
+        for (i32 i = 0; i < codeCount; i++) {
+            lengths[order[i]] = u8(readBits(data, 3))
+        }
+        Huffman lengthCode
+        lengthCode.build(lengths, 0, 19)
+        for (i32 i = 0; i < 19; i++) {
+            lengths[i] = 0
+        }
+        i32 total = literalCount + distanceCount
+        i32 index = 0
+        for (index < total) {
+            i32 symbol = decode(data, lengthCode)
+            if (symbol < 16) {
+                lengths[index] = u8(symbol)
+                index++
+                continue
+            }
+            u8 repeated = 0
+            i32 times = 0
+            if (symbol == 16) {
+                if (index == 0) {
+                    throw damaged()
+                }
+                repeated = lengths[index - 1]
+                times = 3 + i32(readBits(data, 2))
+            } else if (symbol == 17) {
+                times = 3 + i32(readBits(data, 3))
+            } else {
+                times = 11 + i32(readBits(data, 7))
+            }
+            if (index + times > total) {
+                throw damaged()
+            }
+            for (i32 i = 0; i < times; i++) {
+                lengths[index] = repeated
+                index++
+            }
+        }
+        if (lengths[256] == 0) {  // no end of the block
+            throw damaged()
+        }
+        Huffman literals
+        Huffman distances
+        literals.build(lengths, 0, literalCount)
+        distances.build(lengths, literalCount, distanceCount)
+        codes(data, literals, distances)
+    }
+
+    void codes(list<u8> data, Huffman literals, Huffman distances) {
+        for {
+            i32 symbol = decode(data, literals)
+            if (symbol < 256) {
+                if (out.len() >= limit) {
+                    room(1)
+                }
+                out.add(u8(symbol))
+                continue
+            }
+            if (symbol == 256) {
+                ret
+            }
+            i32 place = symbol - 257
+            if (place >= 29) {
+                throw damaged()
+            }
+            i64 length = i64(tables.lengthBase[place]) + i64(readBits(data, tables.lengthExtra[place]))
+            i32 code = decode(data, distances)
+            if (code >= 30) {
+                throw damaged()
+            }
+            i64 distance = i64(tables.distanceBase[code]) + i64(readBits(data, tables.distanceExtra[code]))
+            if (distance > out.len()) {
+                throw damaged()
+            }
+            room(length)
+            for (i64 i = 0; i < length; i++) {  // the copy can overlap what it writes
+                u8 b = out[out.len() - distance]
+                out.add(b)
+            }
+        }
+    }
+
+    // Room for `extra` more bytes, within the limit.
+    void room(i64 extra) {
+        if (out.len() + extra > limit) {
+            throw Error(format("cannot decompress: the data are larger than {} bytes", limit))
+        }
+        out.reserve(out.len() + extra)
+    }
 }
 
-list<u8> fromRaw(addr data, i64 size) {
-    list<u8> bytes
-    bytes.reserve(size)
-    for (i64 i = 0; i < size; i++) {
-        bytes.add(copyAt<u8>(offset(data, i)))
+// ---- Deflate ----
+
+// The output of deflate, with the bits not yet in a byte.
+struct Writer {
+    list<u8> out
+    u32 bits
+    i32 count
+    Tables tables
+
+    void putBits(u32 value, i32 n) {
+        bits |= value << count
+        count += n
+        for (count >= 8) {
+            out.add(u8(bits & 0xFF))
+            bits >>= 8
+            count -= 8
+        }
     }
-    ret bytes
+
+    // A code of Huffman goes out with its first bit the highest.
+    void putCode(u32 code, i32 length) {
+        u32 reversed = 0
+        for (i32 i = 0; i < length; i++) {
+            reversed |= (code >> i & 1) << (length - 1 - i)
+        }
+        putBits(reversed, length)
+    }
+
+    void putLiteral(i32 symbol) {
+        if (symbol < 144) {
+            putCode(u32(0x30 + symbol), 8)
+        } else if (symbol < 256) {
+            putCode(u32(0x190 + symbol - 144), 9)
+        } else if (symbol < 280) {
+            putCode(u32(symbol - 256), 7)
+        } else {
+            putCode(u32(0xC0 + symbol - 280), 8)
+        }
+    }
+
+    void putMatch(i32 length, i32 distance) {
+        i32 index = 28
+        for (tables.lengthBase[index] > length) {
+            index--
+        }
+        putLiteral(257 + index)
+        putBits(u32(length - tables.lengthBase[index]), tables.lengthExtra[index])
+        i32 place = 29
+        for (tables.distanceBase[place] > distance) {
+            place--
+        }
+        putCode(u32(place), 5)
+        putBits(u32(distance - tables.distanceBase[place]), tables.distanceExtra[place])
+    }
+
+    // Four bytes, the lowest first.
+    void putWord(u32 value) {
+        for (i32 i = 0; i < 4; i++) {
+            out.add(u8(value >> (8 * i) & 0xFF))
+        }
+    }
 }

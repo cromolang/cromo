@@ -1,0 +1,19 @@
+// [[export("name")]] (D395): a function with the name and the convention of C,
+// which Cromo can call too.
+// expect-output: 42 true
+import unsafe
+
+[[export("cromo_test_twice")]]
+i64 twice(i64 x) {
+    ret x * 2
+}
+
+[[export("cromo_test_positive")]]
+bool positive(i32 x) {
+    ret x > 0
+}
+
+i32 main() {
+    println("{} {}", twice(21), positive(3))
+    ret 0
+}

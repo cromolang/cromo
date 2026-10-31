@@ -1,0 +1,8 @@
+// fromBits takes the integer of the same width (D397).
+// expect-error: a value of type i64 cannot be used as u64 without an explicit conversion
+i32 main() {
+    i64 b = 5
+    f64 x = f64.fromBits(b)
+    println("{}", x)
+    ret 0
+}

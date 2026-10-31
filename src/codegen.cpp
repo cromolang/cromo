@@ -111,7 +111,7 @@ bool implementsInterfaceMethod(const FunctionDecl& function) {
 
 bool tracksCaller(const FunctionDecl& function) {
     return function.loc.file == kLibraryFile && function.kind != FunctionKind::Destructor && !function.isGenerated &&
-           !function.isExtern && !function.isLambda && !implementsInterfaceMethod(function);
+           !function.isExtern && !function.isLambda && !function.isExported && !implementsInterfaceMethod(function);
 }
 
 // The data captured by a lambda: the function that destroys them, then the captures (D183).
@@ -334,32 +334,41 @@ public:
         out << releaseBodies_;
         out << globals_.str() << "\n";
         for (const FunctionDecl* function : externs) out << externDeclaration(*function);
-        out << "declare void @cromo_write(i64, ptr, i64) nounwind\n";
-        out << "declare void @cromo_fmt_int(i64, i64, i32, ptr) nounwind\n";
-        out << "declare void @cromo_fmt_f64(i64, double, ptr) nounwind\n";
-        out << "declare void @cromo_fmt_f32(i64, float, ptr) nounwind\n";
-        out << "declare void @cromo_fmt_bool(i64, i32, ptr) nounwind\n";
-        out << "declare void @cromo_fmt_str(i64, ptr, i64, ptr) nounwind\n";
-        out << "declare void @cromo_print_begin() nounwind\n";
-        out << "declare void @cromo_print_end(i64, i32) nounwind\n";
-        out << "declare double @cromo_parse_float(ptr, i64, i64) nounwind\n";
-        out << "declare i64 @cromo_hash_bytes(ptr, i64) nounwind readonly\n";
-        out << "declare i64 @cromo_hash_bits(i64) nounwind readnone\n";
-        out << "declare void @cromo_exit(i32) noreturn nounwind\n";
-        out << "declare void @cromo_panic(ptr, i64, ptr) noreturn nounwind cold\n";
-        out << "declare void @cromo_panic_index(i64, i64, ptr) noreturn nounwind cold\n";
-        out << "declare ptr @cromo_alloc(i64) nounwind\n";
-        out << "declare ptr @cromo_realloc(ptr, i64) nounwind\n";
-        out << "declare void @cromo_free(ptr) nounwind\n";
+        // The functions of the runtime, but those that a module of the library
+        // defines in Cromo and exports with their name (D393, D395).
+        std::set<std::string> exported;
+        for (const FunctionDecl* function : functions) {
+            if (function->isExported) exported.insert(function->symbol);
+        }
+        auto runtime = [&](const std::string& name, const std::string& declaration) {
+            if (!exported.count(name)) out << declaration << "\n";
+        };
+        runtime("cromo_write", "declare void @cromo_write(i64, ptr, i64) nounwind");
+        runtime("cromo_fmt_int", "declare void @cromo_fmt_int(i64, i64, i32, ptr) nounwind");
+        runtime("cromo_fmt_f64", "declare void @cromo_fmt_f64(i64, double, ptr) nounwind");
+        runtime("cromo_fmt_f32", "declare void @cromo_fmt_f32(i64, float, ptr) nounwind");
+        runtime("cromo_fmt_bool", "declare void @cromo_fmt_bool(i64, i32, ptr) nounwind");
+        runtime("cromo_fmt_str", "declare void @cromo_fmt_str(i64, ptr, i64, ptr) nounwind");
+        runtime("cromo_print_begin", "declare void @cromo_print_begin() nounwind");
+        runtime("cromo_print_end", "declare void @cromo_print_end(i64, i32) nounwind");
+        runtime("cromo_parse_float", "declare double @cromo_parse_float(ptr, i64, i64) nounwind");
+        runtime("cromo_hash_bytes", "declare i64 @cromo_hash_bytes(ptr, i64) nounwind readonly");
+        runtime("cromo_hash_bits", "declare i64 @cromo_hash_bits(i64) nounwind readnone");
+        runtime("cromo_exit", "declare void @cromo_exit(i32) noreturn nounwind");
+        runtime("cromo_panic", "declare void @cromo_panic(ptr, i64, ptr) noreturn nounwind cold");
+        runtime("cromo_panic_index", "declare void @cromo_panic_index(i64, i64, ptr) noreturn nounwind cold");
+        runtime("cromo_alloc", "declare ptr @cromo_alloc(i64) nounwind");
+        runtime("cromo_realloc", "declare ptr @cromo_realloc(ptr, i64) nounwind");
+        runtime("cromo_free", "declare void @cromo_free(ptr) nounwind");
         if (!declared.count("memcmp")) out << "declare i32 @memcmp(ptr, ptr, i64) nounwind\n";
-        out << "declare void @cromo_uncaught(ptr, i64, ptr) noreturn nounwind cold\n";
-        out << "declare ptr @cromo_exception_new(i64) nounwind\n";
-        out << "declare void @cromo_runtime_start() nounwind\n";
-        if (options_.tests) out << "declare i64 @cromo_test_index() nounwind\n";
-        out << "declare void @cromo_exception_free(ptr) nounwind\n";
-        out << "declare i64 @cromo_arg_count() nounwind\n";
-        out << "declare i64 @cromo_arg_length(i64) nounwind\n";
-        out << "declare ptr @cromo_arg_data(i64) nounwind\n";
+        runtime("cromo_uncaught", "declare void @cromo_uncaught(ptr, i64, ptr) noreturn nounwind cold");
+        runtime("cromo_exception_new", "declare ptr @cromo_exception_new(i64) nounwind");
+        runtime("cromo_runtime_start", "declare void @cromo_runtime_start() nounwind");
+        if (options_.tests) runtime("cromo_test_index", "declare i64 @cromo_test_index() nounwind");
+        runtime("cromo_exception_free", "declare void @cromo_exception_free(ptr) nounwind");
+        runtime("cromo_arg_count", "declare i64 @cromo_arg_count() nounwind");
+        runtime("cromo_arg_length", "declare i64 @cromo_arg_length(i64) nounwind");
+        runtime("cromo_arg_data", "declare ptr @cromo_arg_data(i64) nounwind");
         for (const std::string& declaration : intrinsics_) out << declaration << "\n";
         out << finishDebug();
         return out.str();
@@ -805,11 +814,13 @@ private:
         }
     }
 
-    std::string finishFunction(const std::string& returnType, const std::string& symbol, const std::vector<std::string>& params) {
+    std::string finishFunction(const std::string& returnType, const std::string& symbol, const std::vector<std::string>& params,
+                               bool exported = false) {
         std::ostringstream out;
         // Internal: a function that nothing calls is removed (backend.cpp), with
-        // the C code that only it uses, as mbedTLS for connectTls (D241).
-        out << "define internal " << returnType << " " << symbol << "(";
+        // the C code that only it uses, as mbedTLS for connectTls (D241). An
+        // exported one is called by C (D395).
+        out << (exported ? "define " : "define internal ") << returnType << " " << symbol << "(";
         for (size_t i = 0; i < params.size(); ++i) out << (i ? ", " : "") << params[i];
         out << ") " << functionAttributes();
         if (!subprogram_.empty()) out << " !dbg " << subprogram_;
@@ -842,7 +853,8 @@ private:
             } else if (byAddress(param, type)) {
                 params.push_back(std::string("ptr noalias ") + (param.mode == ParamMode::Read ? "readonly " : "") + arg);
             } else {
-                params.push_back(llvmType(type) + " " + arg);
+                // The bool of C is a byte with 0 or 1 (D129).
+                params.push_back(llvmType(type) + (function.isExported && type.isBool() ? " zeroext " : " ") + arg);
             }
         }
         tracksCaller_ = tracksCaller(function);
@@ -924,7 +936,9 @@ private:
         } else if (!terminated_) {
             term(ret.isVoid() || byPointer(ret) ? "ret void" : "unreachable");
         }
-        return finishFunction(byPointer(ret) ? "void" : llvmType(ret), symbolOf(function), params);
+        std::string returned = byPointer(ret) ? "void" : llvmType(ret);
+        if (function.isExported && ret.isBool()) returned = "zeroext " + returned;
+        return finishFunction(returned, symbolOf(function), params, function.isExported);
     }
 
     void dropFieldsOf(const StructDecl& decl) {
@@ -2576,6 +2590,17 @@ private:
             inst(result + " = call i64 @cromo_hash_bits(i64 " + bits + ")");
             return {result, Type::intType(64, false)};
         }
+        case Intrinsic::FloatBits: {  // D397
+            Value value = generateExpr(*call.args[0]);
+            Type bits = Type::intType(value.type.bits, false);
+            inst(result + " = bitcast " + llvmType(value.type) + " " + value.ref + " to " + llvmType(bits));
+            return {result, bits};
+        }
+        case Intrinsic::FloatFromBits: {
+            Value value = generateExpr(*call.args[0]);
+            inst(result + " = bitcast " + llvmType(value.type) + " " + value.ref + " to " + llvmType(call.typeArg));
+            return {result, call.typeArg};
+        }
         case Intrinsic::DecimalToFloat: {  // D199
             std::string data = arg(0);
             std::string length = arg(1);
@@ -2803,7 +2828,7 @@ private:
         Value rhs = generateExpr(*binary.rhs);
         if (binary.op == BinaryOp::Add || binary.op == BinaryOp::Sub || binary.op == BinaryOp::Mul ||
             binary.op == BinaryOp::Div || binary.op == BinaryOp::Rem || binary.op >= BinaryOp::BitAnd) {
-            return arithmetic(binary.op, lhs, rhs, binary.loc);
+            return arithmetic(binary.op, lhs, rhs, binary.loc, binary.wrap);
         }
 
         return compare(binary.op, binary.operandType, lhs, rhs);
@@ -2899,7 +2924,7 @@ private:
         return {result, type};
     }
 
-    Value arithmetic(BinaryOp op, Value lhs, Value rhs, SourceLocation loc) {
+    Value arithmetic(BinaryOp op, Value lhs, Value rhs, SourceLocation loc, bool wrap = false) {
         Type type = lhs.type;
         std::string t = llvmType(type);
         std::string result = temp();
@@ -2920,7 +2945,7 @@ private:
 
         if (op == BinaryOp::Add || op == BinaryOp::Sub || op == BinaryOp::Mul) {
             const char* name = op == BinaryOp::Add ? "add" : op == BinaryOp::Sub ? "sub" : "mul";
-            if (options_.release) {  // D57: integers wrap around
+            if (options_.release || wrap) {  // D57, D396: integers wrap around
                 inst(result + " = " + name + " " + t + " " + lhs.ref + ", " + rhs.ref);
                 return {result, type};
             }

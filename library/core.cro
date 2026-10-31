@@ -11,6 +11,7 @@
 // and place, for `m[k]` and `for` (D197); and on the functions that read numbers
 // and bytes (D199, D200).
 
+import std.runtime
 import unsafe
 
 // A dynamic array with its elements contiguous on the heap (D13).

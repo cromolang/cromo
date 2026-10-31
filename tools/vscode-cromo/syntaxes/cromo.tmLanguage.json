@@ -145,7 +145,7 @@
         },
         {
           "name": "support.function.builtin.cromo",
-          "match": "\\b(?:print|println|eprint|eprintln|format|panic|assert)\\b(?=\\s*\\()"
+          "match": "\\b(?:print|println|eprint|eprintln|format|panic|assert|wrapAdd|wrapSub|wrapMul)\\b(?=\\s*\\()"
         },
         {
           "name": "entity.name.function.cromo",

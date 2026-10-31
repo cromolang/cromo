@@ -1840,6 +1840,24 @@ lines.close()
 ### D391. The rest as in the modules of the project
 *2026-10-30.* A package can `import unsafe` and bring its `.lib`, `.a` and DLLs next to its modules (D127, D136). Its symbols have the URL in front, and the major version from `v2`: `@"github.com/anna/geometry.area"`, `@"github.com/anna/geometry@v2.area"` (D134).
 
+### D392. gzip in Cromo
+*2026-10-30.* It amends D367. `std.gzip` is written in Cromo, without `unsafe`, and `runtime/gzip` is removed. D93 keeps the C only where Cromo cannot yet do the work, and the bitwise operators and the arrays are there; gzip is not the code of others, as Mbed TLS and Monocypher, which stay in C. It is also a test of the language on code made of bits, tables and buffers: with the same algorithm it writes the same bytes as the C, and it is as fast, in `--release` and within a tenth in debug.
+
+### D393. The runtime in Cromo, where it can be
+*2026-10-31.* It amends D93. The runtime in C passes to Cromo `unsafe`, a part at a time. In C stays the code of others, Mbed TLS and Monocypher, with the pieces of the C library that they use and their glue; in assembly, what Cromo cannot write: `memcpy` and its relatives (D19), the entry point and the switch between the stacks of the tasks. The generated code calls the same functions, with the same names (D395).
+
+### D394. Module variables, in `unsafe`
+*2026-10-31.* A module with `import unsafe` can declare variables outside the functions, as the `static mut` of Rust: the state of the whole program, as the heap and the queue of the tasks. The normal code has none, so it has neither global state nor data races between threads.
+
+### D395. `[[export("name")]]`, in `unsafe`
+*2026-10-31.* A function of a module with `import unsafe` can be exported with the calling convention of C and a fixed name, which the C and the generated code call. Its address, an `addr`, can be given to `CreateThread` or to a handler of signals. Its parameters and its result are those of the C functions (D128): numbers, `bool` and `addr`.
+
+### D396. `wrapAdd`, `wrapSub` and `wrapMul`
+*2026-10-31.* Functions of the core, for every program: `wrapMul(x, k)` multiplies two integers of the same type and keeps the low bits, without the overflow check of D30, in debug too, as `wrapping_mul` of Rust. They serve the hashes, the checks of the data and the random numbers.
+
+### D397. The bits of a floating-point number
+*2026-10-31.* `x.bits()` gives the bits of an `f64` as a `u64`, and of an `f32` as a `u32`; `f64.fromBits(b)` and `f32.fromBits(b)` make the number again, as `to_bits` and `from_bits` of Rust.
+
 ---
 
 ## Open

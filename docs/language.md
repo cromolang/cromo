@@ -55,9 +55,10 @@
 
 - **There are no pointer types** (D4) **and no types whose size depends on the platform** such as `usize` (D9): every type has the same size on all platforms. Indices and lengths are `i64` (D12).
 - **Numeric conversions** (D33): implicit only when no information is lost (`i32` → `i64`, `i32` → `f64`), otherwise explicit: `i32(x)`, `f64(n)`.
-- **Overflow** (D30): in debug it stops the program, in release the value wraps around from the other end of the range.
+- **Overflow** (D30): in debug it stops the program, in release the value wraps around from the other end of the range. `wrapAdd(a, b)`, `wrapSub(a, b)` and `wrapMul(a, b)` wrap around always, for the hashes and the checks of the data (D396).
 - **Operators** (D59, D193–D195): from the strongest, `* / %`, `+ -`, `<< >>`, `&`, `^`, `|`, the comparisons, `&&`, `||`. The bitwise operators bind more than the comparisons, so `flags & MASK == 0` is `(flags & MASK) == 0`. `!` negates a `bool` and inverts the bits of an integer. A shift beyond the width of the type is a panic in debug, and in release its count is taken modulo the width; `>>` keeps the sign of a signed integer.
 - **Numbers from text** (D199): `i64("42")`, `f64("2.5")` read a number, and throw an exception when the text is not a number of the type.
+- **The bits of a floating-point number** (D397): `x.bits()` is a `u64` for an `f64` and a `u32` for an `f32`; `f64.fromBits(b)` and `f32.fromBits(b)` make the number again.
 
 ## 4. Variables
 
@@ -543,6 +544,8 @@ public struct Stopwatch {
 - When compiling for Linux, `extern "name"` is the static library `libname.a` next to the module (D143). Shared libraries and the C library of Linux are not supported yet.
 - They take and return numbers, `bool` and `addr`; a `ref` parameter is a C pointer to a number or to a struct of numbers, which have the layout of C (D129). The `BOOL` of Windows is an `i32`.
 - C resources are wrapped in structs with a destructor (D42): see `examples/05_c_interop.cro`.
+- `[[export("name")]]` before a function gives it that name and the convention of C, so that C calls it: its parameters and its result are numbers, `bool` and `addr`, and it cannot let an exception out (D395). The runtime written in Cromo uses it (D393).
+- A module with `import unsafe` can declare variables outside its functions, for the state of the whole program (D394). *Decided, not implemented yet.*
 - Strings cannot be passed to C yet: it is an open question in [decisions.md](decisions.md).
 
 ## 15. Anonymous functions (D183–D186)

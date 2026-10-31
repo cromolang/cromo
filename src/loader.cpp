@@ -36,8 +36,9 @@ std::string sourceKey(const std::string& path) {
 namespace {
 
 // The modules of the library that serve only the library: std.winsock declares
-// `connect` and `listen` of C apart from those of std.net.
-const char* const kInternalModules[] = {"std.winsock"};
+// `connect` and `listen` of C apart from those of std.net; std.runtime is the
+// runtime written in Cromo, which the core imports for every program (D393).
+const char* const kInternalModules[] = {"std.winsock", "std.runtime"};
 
 // The suffix of the files of a system (D202): `fs_windows.cro`.
 const char* systemSuffix(Target target) { return target == Target::Linux ? "_linux" : "_windows"; }

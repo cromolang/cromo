@@ -1,0 +1,7 @@
+// wrapAdd takes two values (D396).
+// expect-error: wrapAdd() takes two integers of the same type (D396)
+i32 main() {
+    i64 x = 5
+    println("{}", wrapAdd(x))
+    ret 0
+}

@@ -1,0 +1,12 @@
+// x.bits() and f64.fromBits(b), f32.fromBits(b) (D397).
+// expect-output: 4591870180066957722 0.1 1069547520 1.5
+// expect-output: -0 9218868437227405312 true
+i32 main() {
+    f64 x = 0.1
+    f32 y = 1.5
+    println("{} {} {} {}", x.bits(), f64.fromBits(x.bits()), y.bits(), f32.fromBits(0x3FC00000))
+    f64 negativeZero = f64.fromBits(u64(1) << 63)
+    f64 infinity = f64.fromBits(0x7FF0000000000000)
+    println("{} {} {}", negativeZero, infinity.bits(), infinity > 1e308)
+    ret 0
+}

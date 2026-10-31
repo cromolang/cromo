@@ -1,0 +1,10 @@
+// Only a module with import unsafe exports (D395).
+// expect-error: [[export]] is only for the modules with 'import unsafe' (D395)
+[[export("twice")]]
+i64 twice(i64 x) {
+    ret x * 2
+}
+
+i32 main() {
+    ret i32(twice(2))
+}

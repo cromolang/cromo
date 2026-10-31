@@ -31,7 +31,11 @@ bool isPrintFunction(const std::string& name) {
 }
 
 // The functions that every program can call without declaring them (D38, D102).
-bool isBuiltinFunction(const std::string& name) { return isPrintFunction(name) || name == "panic" || name == "assert"; }
+bool isWrapFunction(const std::string& name) { return name == "wrapAdd" || name == "wrapSub" || name == "wrapMul"; }
+
+bool isBuiltinFunction(const std::string& name) {
+    return isPrintFunction(name) || name == "panic" || name == "assert" || isWrapFunction(name);
+}
 
 // The built-in functions of the `unsafe` dialect, only in the standard library (D98).
 std::optional<Intrinsic> findIntrinsic(const std::string& name) {
@@ -1356,7 +1360,12 @@ private:
         }
 
         for (FunctionDecl& function : module_.functions) {
-            if (!function.attributes.empty()) readTestAttribute(function);
+            if (function.attributes.empty()) continue;
+            if (function.attributes[0].name == "export") {
+                readExport(function);
+            } else {
+                readTestAttribute(function);
+            }
         }
 
         auto main = modules_[0].functions.find("main");
@@ -1384,11 +1393,51 @@ private:
         }
     }
 
+    // `[[export("cromo_alloc")]]` (D395): a function that C and the generated code
+    // call with that name, with the types of C and without hidden parameters.
+    void readExport(FunctionDecl& function) {
+        const Attribute& attribute = function.attributes[0];
+        if (!isUnsafe(function.loc)) {
+            diag_->error(attribute.loc, "[[export]] is only for the modules with 'import unsafe' (D395)");
+            return;
+        }
+        if (function.attributes.size() > 1) {
+            diag_->error(function.attributes[1].loc, "an exported function has no other attributes (D395)");
+            return;
+        }
+        bool named = attribute.args.size() == 1 && attribute.args[0].isText && !attribute.args[0].text.empty();
+        for (char c : named ? attribute.args[0].text : std::string()) {
+            if (!std::isalnum(static_cast<unsigned char>(c)) && c != '_') named = false;
+        }
+        if (!named || std::isdigit(static_cast<unsigned char>(attribute.args[0].text[0]))) {
+            diag_->error(attribute.loc, "[[export]] takes the name of the function in C, as [[export(\"cromo_alloc\")]] (D395)");
+            return;
+        }
+        if (!function.typeParams.empty()) {
+            diag_->error(function.loc, "an exported function cannot be generic: C calls it as it is (D395)");
+            return;
+        }
+        for (size_t i = 0; i < function.params.size(); ++i) {
+            if (function.params[i].mode != ParamMode::Read || !isCType(function.paramTypes[i])) {
+                diag_->error(function.params[i].loc, "the parameters of an exported function are numbers, bool or addr, "
+                                                     "passed by value (D395)");
+                return;
+            }
+        }
+        if (!function.resolvedReturn.isVoid() && !isCType(function.resolvedReturn)) {
+            diag_->error(function.loc, "an exported function returns a number, a bool, an addr or nothing (D395)");
+            return;
+        }
+        function.isExported = true;
+        function.symbol = attribute.args[0].text;
+    }
+
     // `[[test]] void name()` (D349): what cromo test runs.
     void readTestAttribute(FunctionDecl& function) {
         for (const Attribute& attribute : function.attributes) {
             if (attribute.name != "test" || !attribute.args.empty()) {
-                diag_->error(attribute.loc, "unknown attribute '" + attribute.name + "': a function has only [[test]] (D349)");
+                diag_->error(attribute.loc, "unknown attribute '" + attribute.name + "': a function has only [[test]] (D349)" +
+                                                std::string(isUnsafe(function.loc) ? ", or [[export(\"name\")]] (D395)" : ""));
                 return;
             }
         }
@@ -2473,6 +2522,12 @@ private:
         }
         // A function value is called as if it could throw: every lambda takes the slot (D186).
         for (LambdaExpr* lambda : module_.lambdas) lambda->function->canThrow = true;
+        for (const FunctionDecl& function : module_.functions) {
+            if (function.isExported && function.canThrow) {
+                diag_->error(function.loc, "the exported function '" + function.name + "' can throw, and C has no exceptions: "
+                                           "catch them inside it (D395)");
+            }
+        }
     }
 
     // `for ([ref] T x in v)` (D25, D101).
@@ -3148,8 +3203,13 @@ private:
         if (std::optional<Type> named = enumNamed(*call.object)) {
             return checkEnumCase(expr, *named, call.method, &call.args, call.loc);
         }
+        if (call.object->kind == ExprKind::Name && call.method == "fromBits") {  // `f64.fromBits(b)` (D397)
+            std::optional<Type> type = findBuiltinType(static_cast<NameExpr&>(*call.object).name);
+            if (type && type->isFloat()) return checkFromBits(expr, *type);
+        }
         Type object = checkExpr(call.object, std::nullopt);
         if (object.isError()) return object;
+        if (object.isFloat() && call.method == "bits") return checkBits(expr, object);
         // `x.copy()` of a number or a bool is the value itself, so that generics can copy any T (D89).
         if (call.method == "copy" && (object.isNumeric() || object.isBool())) {
             if (!call.args.empty()) {
@@ -3360,6 +3420,41 @@ private:
         return Type::boolType();
     }
 
+    // `x.bits()` (D397): the bits of an f64 as a u64, of an f32 as a u32.
+    Type checkBits(ExprPtr& expr, Type object) {
+        auto& call = static_cast<MethodCallExpr&>(*expr);
+        if (!call.args.empty()) {
+            diag_->error(call.loc, "bits() takes no arguments");
+            checkIgnored(call.args);
+            return Type::error();
+        }
+        SourceLocation loc = call.loc;
+        auto bits = std::make_unique<CallExpr>(loc, "bits");
+        bits->intrinsic = Intrinsic::FloatBits;
+        bits->args.push_back(std::move(call.object));
+        expr = std::move(bits);
+        return Type::intType(object.bits, false);
+    }
+
+    // `f64.fromBits(b)` (D397): the number of those bits, a u64 for an f64, a u32 for an f32.
+    Type checkFromBits(ExprPtr& expr, Type type) {
+        auto& call = static_cast<MethodCallExpr&>(*expr);
+        Type bits = Type::intType(type.bits, false);
+        if (call.args.size() != 1) {
+            diag_->error(call.loc, "fromBits() takes the bits of the number, a " + bits.name() + " (D397)");
+            checkIgnored(call.args);
+            return Type::error();
+        }
+        if (!coerce(call.args[0], bits)) return Type::error();
+        SourceLocation loc = call.loc;
+        auto made = std::make_unique<CallExpr>(loc, "fromBits");
+        made->intrinsic = Intrinsic::FloatFromBits;
+        made->typeArg = type;
+        made->args.push_back(std::move(call.args[0]));
+        expr = std::move(made);
+        return type;
+    }
+
     // `a.len()` is the size written in the type, `a.copy()` a copy of an array of
     // simple values (D196).
     Type checkArrayMethod(ExprPtr& expr, Type object) {
@@ -3472,6 +3567,31 @@ private:
             return Type::error();
         }
         return type;
+    }
+
+    // `wrapMul(a, b)` (D396): the binary operation on two integers of the same type,
+    // which keeps the low bits instead of checking the overflow.
+    Type checkWrap(ExprPtr& expr) {
+        auto& call = static_cast<CallExpr&>(*expr);
+        if (call.args.size() != 2) {
+            diag_->error(call.loc, call.callee + "() takes two integers of the same type (D396)");
+            checkIgnored(call.args);
+            return Type::error();
+        }
+        BinaryOp op = call.callee == "wrapAdd" ? BinaryOp::Add : call.callee == "wrapSub" ? BinaryOp::Sub : BinaryOp::Mul;
+        std::string name = call.callee;
+        SourceLocation loc = call.loc;
+        auto binary = std::make_unique<BinaryExpr>(loc, op, std::move(call.args[0]), std::move(call.args[1]));
+        binary->wrap = true;
+        expr = std::move(binary);
+        Type operand = unify(static_cast<BinaryExpr&>(*expr), std::nullopt);
+        if (operand.isError()) return operand;
+        if (!operand.isInt()) {
+            diag_->error(loc, name + "() works on integers, not on " + operand.name() + " (D396)");
+            return Type::error();
+        }
+        static_cast<BinaryExpr&>(*expr).operandType = operand;
+        return operand;
     }
 
     Type checkBinary(ExprPtr& expr, std::optional<Type> expected) {
@@ -4235,7 +4355,9 @@ private:
             params = {{ParamMode::Read, "data", addr}, {ParamMode::Read, "length", i64}};
             result = Type::intType(64, false);
             break;
-        case Intrinsic::HashNumber: break;
+        case Intrinsic::HashNumber:
+        case Intrinsic::FloatBits:
+        case Intrinsic::FloatFromBits: break;
         case Intrinsic::SystemCall:  // Linux only (D202): the number, then six arguments
             params = {{ParamMode::Read, "number", i64}, {ParamMode::Read, "a", i64}, {ParamMode::Read, "b", i64},
                       {ParamMode::Read, "c", i64},      {ParamMode::Read, "d", i64}, {ParamMode::Read, "e", i64},
@@ -4631,6 +4753,7 @@ private:
             if (isPrintFunction(call.callee)) return checkPrint(expr);
             if (call.callee == "panic") return checkIntrinsic(call, Intrinsic::Panic);
             if (call.callee == "assert") return checkAssert(call);
+            if (isWrapFunction(call.callee)) return checkWrap(expr);
         }
         if (!qualified && isUnsafe(call.loc)) {
             if (std::optional<Intrinsic> intrinsic = findIntrinsic(call.callee)) return checkIntrinsic(call, *intrinsic);
