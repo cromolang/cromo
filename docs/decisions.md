@@ -1860,6 +1860,21 @@ lines.close()
 
 ---
 
+## Proposed
+
+Choices of detail made while writing the code, to be confirmed by the author.
+
+### P10. How a module variable is written (D394)
+As a local variable, outside the functions: `i64 count`, `bool ready = true`. It is private to its module, which sees it in all its files, also those of a system (D202); `public` and the attributes are errors.
+
+### P11. What a module variable holds (D394)
+Numbers, `bool`, `addr`, and arrays and structs of them whose fields have no initial values; its value at the start is the default one or a literal, written in the executable: no code runs before `main` and none at its end, so there is no destructor. A type that needs code, as `string`, is an error.
+
+### P12. `variableAddress(x)` (D394)
+A built-in function of `unsafe` that gives the `addr` of a module variable, or of a field or an element of one, for the atomics and the C functions. A local variable has none: its place ends with its block.
+
+---
+
 ## Open
 
 The points still to be defined, each when its milestone needs it (D152):

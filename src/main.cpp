@@ -77,6 +77,7 @@ struct Compilation {
     cromo::BackendOptions options;
     cromo::CodegenOptions codegen;
     bool emitIr = false;
+    bool runtime = false;  // --runtime: the object of std.runtime, for the archive of the runtime (D393)
     std::vector<std::string> filters;  // cromo test: the names of the tests to run (D352)
     std::vector<std::string> tests;    // cromo test: the names of the tests, by their number
 };
@@ -89,16 +90,25 @@ int build(Compilation& compilation) {
     codegen.target = options.target;
 
     std::deque<cromo::SourceFile> sources;
-    sources.push_back({inputPath, {}});
-    if (!cromo::readSourceFile(inputPath, sources[0].text)) {
-        std::fprintf(stderr, "cromo: cannot read %s\n", inputPath.c_str());
-        return 2;
-    }
-
     // The standard library is compiled together with the program (D97), from lib/ (D237).
     if (cromo::libraryFolder().empty()) {
         std::fputs("cromo: cannot find the library: lib/ is missing next to the folder of cromo (D237)\n", stderr);
         return 2;
+    }
+    if (compilation.runtime) {
+        // D393: the runtime written in Cromo is std.runtime, which only a file of the
+        // library can import; it is compiled once, with the build of cromo, and
+        // goes in the archive of the runtime next to the C, as in --release.
+        sources.push_back({cromo::libraryFile("runtime-object.cro").string(), "import std.runtime\n"});
+        codegen.release = true;
+        codegen.runtime = true;
+        options.objectOnly = true;
+    } else {
+        sources.push_back({inputPath, {}});
+        if (!cromo::readSourceFile(inputPath, sources[0].text)) {
+            std::fprintf(stderr, "cromo: cannot read %s\n", inputPath.c_str());
+            return 2;
+        }
     }
     sources.push_back({cromo::libraryFile("core.cro").string(), {}});
     if (!cromo::readSourceFile(sources[1].path, sources[1].text)) {
@@ -109,7 +119,8 @@ int build(Compilation& compilation) {
     diag.addFile(sources[1]);
     bool tests = codegen.tests;
     cromo::Module module = cromo::loadProgram(sources, diag, options.target, nullptr, tests);
-    if (diag.hasErrors() || !cromo::check(module, diag, !tests) || !cromo::checkMoves(module, diag)) return 1;
+    bool requireMain = !tests && !compilation.runtime;
+    if (diag.hasErrors() || !cromo::check(module, diag, requireMain) || !cromo::checkMoves(module, diag)) return 1;
     if (tests) {  // in the order of the entry point of the tests (codegen.cpp)
         std::string program = module.files[0].name + ".";
         for (const cromo::FunctionDecl& function : module.functions) {
@@ -125,7 +136,7 @@ int build(Compilation& compilation) {
     options.archives = libraries.archives;
     options.imports = libraries.imports;
 
-    std::string sourceName = fs::path(inputPath).filename().string();
+    std::string sourceName = fs::path(sources[0].path).filename().string();
     // In the messages of the program, a file of the library is named without the
     // folder where cromo is installed: "cromo:std/fs.cro".
     for (const cromo::SourceFile& source : sources) {
@@ -180,6 +191,8 @@ bool readOptions(const std::vector<std::string>& args, size_t first, size_t last
             compilation.codegen.release = true;  // D57
         } else if (arg == "--emit-ir") {
             compilation.emitIr = true;
+        } else if (arg == "--runtime" && !run && !test) {
+            compilation.runtime = true;  // D393: only for the build of cromo, not in the help
         } else if (arg.size() == 3 && arg[0] == '-' && arg[1] == 'O' && arg[2] >= '0' && arg[2] <= '3') {
             options.optLevel = arg[2] - '0';
         } else if (arg[0] != '-' && compilation.inputPath.empty() && (!test || fs::path(arg).extension() == ".cro")) {
@@ -193,6 +206,13 @@ bool readOptions(const std::vector<std::string>& args, size_t first, size_t last
         }
     }
     bool windows = options.target == cromo::Target::Windows;
+    if (compilation.runtime) {
+        if (options.outputPath.empty() || !compilation.inputPath.empty()) {
+            std::fputs("cromo: cromo build --runtime [--target system] -o <object>, for the build of cromo (D393)\n", stderr);
+            return false;
+        }
+        return true;
+    }
     if (compilation.inputPath.empty()) {
         // D155: main.cro of this folder, and the executable named after the folder.
         std::error_code ec;

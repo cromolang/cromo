@@ -47,6 +47,7 @@ enum class VariableKind {
     Element,    // the element of a `for` over a list: read-only, or `ref` (D25)
     Binding,    // the data of a case in a `switch`: read-only, or `ref` (D107)
     Caught,     // the exception of a `catch`: read-only (D114)
+    Module,     // declared outside the functions, in a module with `import unsafe` (D394)
 };
 
 // A local variable or a parameter, created by sema.
@@ -64,6 +65,7 @@ struct Variable {
     // A thread or a task of its block (D215, D269): the lambda it runs.
     const struct LambdaExpr* blockThread = nullptr;
     bool group = false;  // a thread.Group (D273)
+    std::string symbol;  // Module: its name in the IR, with the module in front (D394)
 };
 
 // ---- Expressions ----
@@ -157,6 +159,7 @@ enum class Intrinsic {
     HashNumber,  // `x.hash()` of a number or a bool (D198): made by the compiler, not named
     FloatBits,      // `x.bits()` of an f64 or an f32 (D397)
     FloatFromBits,  // `f64.fromBits(b)`, `f32.fromBits(b)` (D397): the type in typeArg
+    VariableAddress,  // `variableAddress(x)`: the addr of a module variable, or of a part of it (D394)
 };
 
 // Pairs of arguments that must not be the same element of a list: when the
@@ -696,10 +699,21 @@ struct CallValueExpr : Expr {
     OverlapChecks overlaps;
 };
 
+// `i64 count = 0` outside the functions of a module with `import unsafe` (D394):
+// the state of the whole program, which the module alone sees.
+struct GlobalDecl {
+    TypeName typeName;
+    std::string name;
+    SourceLocation loc;  // the name
+    ExprPtr init;        // a literal, or null for the default value
+    std::unique_ptr<Variable> variable;  // set by sema, of kind Module
+};
+
 struct Module {
     std::vector<InterfaceDecl> interfaces;
     std::vector<StructDecl> structs;
     std::vector<FunctionDecl> functions;
+    std::vector<GlobalDecl> globals;
     std::vector<ModuleFile> files;  // by SourceLocation::file
 
     // Instances of generic structs and functions, created by sema (D39).
@@ -715,6 +729,7 @@ struct Module {
         for (InterfaceDecl& decl : other.interfaces) interfaces.push_back(std::move(decl));
         for (StructDecl& decl : other.structs) structs.push_back(std::move(decl));
         for (FunctionDecl& function : other.functions) functions.push_back(std::move(function));
+        for (GlobalDecl& global : other.globals) globals.push_back(std::move(global));
         if (files.size() < other.files.size()) files.resize(other.files.size());
         for (size_t i = 0; i < other.files.size(); ++i) {
             if (!other.files[i].name.empty() || !other.files[i].imports.empty() || other.files[i].isUnsafe) {

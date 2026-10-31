@@ -494,6 +494,7 @@ bool buildExecutable(const std::string& irText, const std::string& moduleName, c
     }
 
     bool linux = options.target == Target::Linux;
+    if (options.objectOnly) return emitObject(*module, *machine, options.outputPath, error);
     std::string objectPath = options.outputPath + (linux ? ".o" : ".obj");
     std::string runtimePath = runtimeLibraryPath(options.target).string();  // in lib/ (D237)
     if (!emitObject(*module, *machine, objectPath, error)) return false;

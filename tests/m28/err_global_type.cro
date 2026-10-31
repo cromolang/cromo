@@ -1,0 +1,9 @@
+// A module variable needs no code to be made (D394).
+// expect-error: a module variable holds numbers, bool, addr, or arrays and structs of them whose fields have no initial values, not string
+import unsafe
+
+string name
+
+i32 main() {
+    ret 0
+}

@@ -1,0 +1,9 @@
+// The initial value of a module variable is a literal (D394).
+// expect-error: the initial value of a module variable is a number, a character, true or false (D394)
+import unsafe
+
+i64 start = 2 + 3
+
+i32 main() {
+    ret 0
+}

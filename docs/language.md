@@ -545,7 +545,7 @@ public struct Stopwatch {
 - They take and return numbers, `bool` and `addr`; a `ref` parameter is a C pointer to a number or to a struct of numbers, which have the layout of C (D129). The `BOOL` of Windows is an `i32`.
 - C resources are wrapped in structs with a destructor (D42): see `examples/05_c_interop.cro`.
 - `[[export("name")]]` before a function gives it that name and the convention of C, so that C calls it: its parameters and its result are numbers, `bool` and `addr`, and it cannot let an exception out (D395). The runtime written in Cromo uses it (D393).
-- A module with `import unsafe` can declare variables outside its functions, for the state of the whole program (D394). *Decided, not implemented yet.*
+- A module with `import unsafe` can declare variables outside its functions, for the state of the whole program (D394), as `i64 count`, `u8[4096] buffer` or `bool ready = true`. Only that module sees them; they hold numbers, `bool`, `addr`, and arrays and structs of them whose fields have no initial values, and start from their default value or from a literal, without any code before `main`. `variableAddress(x)` gives the `addr` of one of them, or of a field or an element of one, as for the atomics or for a C function.
 - Strings cannot be passed to C yet: it is an open question in [decisions.md](decisions.md).
 
 ## 15. Anonymous functions (D183–D186)

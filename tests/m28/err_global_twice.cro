@@ -1,0 +1,10 @@
+// Two module variables with the same name (D394).
+// expect-error: module variable 'count' is already defined
+import unsafe
+
+i64 count
+i32 count
+
+i32 main() {
+    ret 0
+}

@@ -57,6 +57,7 @@ std::optional<Intrinsic> findIntrinsic(const std::string& name) {
         {"taskStart", Intrinsic::TaskStart}, {"groupStart", Intrinsic::GroupStart},
         {"atomicLoad", Intrinsic::AtomicLoad}, {"atomicStore", Intrinsic::AtomicStore}, {"atomicAdd", Intrinsic::AtomicAdd},
         {"atomicExchange", Intrinsic::AtomicExchange}, {"atomicCompareExchange", Intrinsic::AtomicCompareExchange},
+        {"variableAddress", Intrinsic::VariableAddress},
     };
     auto found = intrinsics.find(name);
     if (found == intrinsics.end()) return std::nullopt;
@@ -271,6 +272,7 @@ struct ModuleScope {
     std::map<std::string, StructDecl*> structs;
     std::map<std::string, InterfaceDecl*> interfaces;
     std::map<std::string, FunctionDecl*> functions;
+    std::map<std::string, GlobalDecl*> globals;  // the module variables (D394)
 };
 
 class Checker {
@@ -303,6 +305,7 @@ public:
             if (decl.typeParams.empty()) completeStruct(decl);
         }
         declareFunctions();
+        declareGlobals();
         checkPublicSignatures();
         // A method with type parameters of its own is checked once, with them as types (D52, D92).
         for (StructDecl& decl : module_.structs) {
@@ -413,6 +416,79 @@ private:
                 scope.functions[function.name] = &function;
             }
         }
+        for (GlobalDecl& global : module_.globals) {
+            ModuleScope& scope = modules_[scopeOf(global.loc.file)];
+            if (!isUnsafe(global.loc)) {
+                diag_->error(global.loc, "a variable outside the functions is only for the modules with 'import unsafe' (D394)");
+            } else if (scope.globals.count(global.name)) {
+                diag_->error(global.loc, "module variable '" + global.name + "' is already defined");
+            } else if (findBuiltinType(global.name) || isBuiltinFunction(global.name)) {
+                diag_->error(global.loc, "'" + global.name + "' is a built-in name");
+            } else if (scope.functions.count(global.name) || scope.structs.count(global.name) ||
+                       scope.interfaces.count(global.name)) {
+                diag_->error(global.loc, "'" + global.name + "' is already the name of a function or a type of the module");
+            } else {
+                scope.globals[global.name] = &global;
+            }
+        }
+    }
+
+    // D394: a module variable needs no code to be made, so it holds numbers, bool,
+    // addr, or arrays and structs of them whose fields have no initial values; it
+    // starts from its default value, or from a literal.
+    void declareGlobals() {
+        for (GlobalDecl& global : module_.globals) {
+            const ModuleScope& scope = modules_[scopeOf(global.loc.file)];
+            auto found = scope.globals.find(global.name);
+            if (found == scope.globals.end() || found->second != &global) continue;
+            auto variable = std::make_unique<Variable>();
+            variable->name = global.name;
+            variable->loc = global.loc;
+            variable->kind = VariableKind::Module;
+            variable->symbol = symbolFor(global.loc, global.name);
+            std::optional<Type> type = resolveType(global.typeName);
+            variable->type = type ? *type : Type::error();
+            if (type && !isStaticType(*type)) {
+                diag_->error(global.typeName.loc, "a module variable holds numbers, bool, addr, or arrays and structs of them "
+                                                  "whose fields have no initial values, not " + type->name() +
+                                                  ": no code runs to make it (D394)");
+                variable->type = Type::error();
+            }
+            if (global.init && !variable->type.isError()) {
+                const Expr& init = *global.init;
+                const Expr* number = &init;
+                if (init.kind == ExprKind::Unary && static_cast<const UnaryExpr&>(init).op == UnaryOp::Negate) {
+                    number = static_cast<const UnaryExpr&>(init).operand.get();
+                }
+                bool literal = number->kind == ExprKind::IntLiteral || number->kind == ExprKind::FloatLiteral ||
+                               (init.kind == ExprKind::BoolLiteral);
+                Type target = variable->type;
+                if (!literal || !(target.isNumeric() || target.isBool())) {
+                    diag_->error(init.loc, "the initial value of a module variable is a number, a character, true or false "
+                                           "(D394)");
+                } else if (!coerce(global.init, target)) {
+                    variable->type = Type::error();
+                }
+            }
+            global.variable = std::move(variable);
+        }
+    }
+
+    static bool isStaticType(Type type) {
+        if (type.isNumeric() || type.isBool() || type.kind == TypeKind::Addr) return true;
+        if (type.isArray()) return isStaticType(type.array->element);
+        if (!type.isStruct() || type.structDecl->isEnum || type.structDecl->needsDestruction) return false;
+        for (const FieldDecl& field : type.structDecl->fields) {
+            if (field.init || !isStaticType(field.resolved)) return false;
+        }
+        return true;
+    }
+
+    // The module variable of this name, in the module of `loc` (D394).
+    Variable* findGlobal(const std::string& name, SourceLocation loc) {
+        const ModuleScope& scope = modules_[scopeOf(loc.file)];
+        auto found = scope.globals.find(name);
+        return found != scope.globals.end() && found->second->variable ? found->second->variable.get() : nullptr;
     }
 
     const ModuleFile& fileOf(int file) const {
@@ -2879,6 +2955,10 @@ private:
             expr = std::make_unique<FieldExpr>(loc, std::make_unique<SelfExpr>(loc), field);
             return checkField(expr);
         }
+        if (Variable* global = findGlobal(name.name, name.loc)) {  // D394
+            name.variable = global;
+            return global->type;
+        }
         if (findDecl(&ModuleScope::functions, name.name, name.loc) || isPrintFunction(name.name) ||
             (current_->owner && current_->owner->methods.count(name.name))) {
             diag_->error(name.loc, "'" + name.name + "' is a function: call it with '()'");
@@ -3418,6 +3498,31 @@ private:
         equal->operandType = object;
         expr = std::move(equal);
         return Type::boolType();
+    }
+
+    // `variableAddress(x)` (D394): the addr of a module variable, or of a field or an
+    // element of one, which stays the same for the whole program; a local variable
+    // has none, as it ends with its block.
+    Type checkVariableAddress(CallExpr& call) {
+        call.intrinsic = Intrinsic::VariableAddress;
+        if (call.args.size() != 1 || !call.typeArgs.empty()) {
+            diag_->error(call.loc, "variableAddress() takes a module variable (D394)");
+            checkIgnored(call.args);
+            return Type::error();
+        }
+        Type type = checkExpr(call.args[0], std::nullopt);
+        if (type.isError()) return type;
+        const Expr* place = call.args[0].get();
+        while (place->kind == ExprKind::Field || place->kind == ExprKind::Index) {
+            place = place->kind == ExprKind::Field ? static_cast<const FieldExpr*>(place)->object.get()
+                                                   : static_cast<const IndexExpr*>(place)->object.get();
+        }
+        const Variable* variable = place->kind == ExprKind::Name ? static_cast<const NameExpr*>(place)->variable : nullptr;
+        if (!variable || variable->kind != VariableKind::Module) {
+            diag_->error(call.args[0]->loc, "variableAddress() takes a module variable, or a field or an element of one (D394)");
+            return Type::error();
+        }
+        return Type::addrType();
     }
 
     // `x.bits()` (D397): the bits of an f64 as a u64, of an f32 as a u32.
@@ -4357,7 +4462,8 @@ private:
             break;
         case Intrinsic::HashNumber:
         case Intrinsic::FloatBits:
-        case Intrinsic::FloatFromBits: break;
+        case Intrinsic::FloatFromBits:
+        case Intrinsic::VariableAddress: break;
         case Intrinsic::SystemCall:  // Linux only (D202): the number, then six arguments
             params = {{ParamMode::Read, "number", i64}, {ParamMode::Read, "a", i64}, {ParamMode::Read, "b", i64},
                       {ParamMode::Read, "c", i64},      {ParamMode::Read, "d", i64}, {ParamMode::Read, "e", i64},
@@ -4756,7 +4862,10 @@ private:
             if (isWrapFunction(call.callee)) return checkWrap(expr);
         }
         if (!qualified && isUnsafe(call.loc)) {
-            if (std::optional<Intrinsic> intrinsic = findIntrinsic(call.callee)) return checkIntrinsic(call, *intrinsic);
+            if (std::optional<Intrinsic> intrinsic = findIntrinsic(call.callee)) {
+                if (*intrinsic == Intrinsic::VariableAddress) return checkVariableAddress(call);
+                return checkIntrinsic(call, *intrinsic);
+            }
         }
 
         if (!typed && !qualified) {

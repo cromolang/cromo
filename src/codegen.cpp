@@ -250,8 +250,8 @@ public:
         out << "source_filename = " << quoted(options_.sourcePaths[0]) << "\n";
         out << "target triple = \"" << targetTriple(options_.target) << "\"\n";
         // Where the code of the program starts: the table of the stack traces
-        // counts from here (D339, backend.cpp).
-        out << "module asm \".text\"\nmodule asm \".globl cromo_code\"\nmodule asm \"cromo_code:\"\n\n";
+        // counts from here (D339, backend.cpp). The runtime has no table of its own.
+        if (!options_.runtime) out << "module asm \".text\"\nmodule asm \".globl cromo_code\"\nmodule asm \"cromo_code:\"\n\n";
         startDebug();
 
         for (const InterfaceDecl& iface : module.interfaces) {
@@ -301,6 +301,14 @@ public:
             out << (decl->fields.empty() ? "}\n" : " }\n");
         }
         if (!structs.empty()) out << "\n";
+        // The module variables (D394): their default value, or the literal they start from.
+        for (const GlobalDecl& global : module.globals) {
+            if (!global.variable || global.variable->type.isError()) continue;
+            Type type = global.variable->type;
+            std::string value = global.init ? literalConstant(*global.init, type) : "zeroinitializer";
+            out << llvmName('@', global.variable->symbol) << " = internal global " << llvmType(type) << " " << value << "\n";
+        }
+        if (!module.globals.empty()) out << "\n";
         for (const LambdaExpr* lambda : module.lambdas) {
             if (!lambda->function->isAbstract && lambda->function->bodyChecked) out << lambdaType(*lambda);
             enclosing_[lambda->function.get()] = lambda->enclosing;
@@ -1908,7 +1916,11 @@ private:
     // lives until the end of the statement (D68).
     std::string addressOf(const Expr& expr) {
         switch (expr.kind) {
-        case ExprKind::Name: return addresses_[static_cast<const NameExpr&>(expr).variable->id];
+        case ExprKind::Name: {
+            const Variable& variable = *static_cast<const NameExpr&>(expr).variable;
+            if (variable.kind == VariableKind::Module) return llvmName('@', variable.symbol);  // D394
+            return addresses_[variable.id];
+        }
         case ExprKind::Self: return "%self";
         case ExprKind::Field: {
             const auto& field = static_cast<const FieldExpr&>(expr);
@@ -2590,6 +2602,8 @@ private:
             inst(result + " = call i64 @cromo_hash_bits(i64 " + bits + ")");
             return {result, Type::intType(64, false)};
         }
+        case Intrinsic::VariableAddress:  // D394: the module variable is a global of the program
+            return {addressOf(*call.args[0]), Type::addrType()};
         case Intrinsic::FloatBits: {  // D397
             Value value = generateExpr(*call.args[0]);
             Type bits = Type::intType(value.type.bits, false);

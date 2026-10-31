@@ -1,0 +1,56 @@
+// Module variables in a module with import unsafe (D394): numbers, bool, addr,
+// arrays and structs of them, from their default value or a literal; read and
+// written by several functions and lambdas, and their addr with variableAddress.
+// expect-output: 0 -5 2.5 97 true
+// expect-output: calls 3, total 60
+// expect-output: 10 20 30 0
+// expect-output: 7 1.5 true
+// expect-output: atomic 42, same place: true
+import unsafe
+
+struct Point {
+    i64 x
+    f64 y
+    bool seen
+}
+
+i64 calls
+i64 shift = -5
+f64 ratio = 2.5
+u8 letter = 'a'
+bool ready = true
+i64 total
+i64[4] slots
+Point origin
+addr nowhere
+
+void count(i64 amount) {
+    calls++
+    total += amount
+}
+
+i32 main() {
+    println("{} {} {} {} {}", calls, shift, ratio, letter, ready)
+    count(10)
+    count(20)
+    func(i64) step = [](i64 n) { count(n) }
+    step(30)
+    println("calls {}, total {}", calls, total)
+    for (i64 i = 0; i < 3; i++) {
+        slots[i] = (i + 1) * 10
+    }
+    println("{} {} {} {}", slots[0], slots[1], slots[2], slots[3])
+    origin.x = 7
+    origin.y = 1.5
+    origin.seen = nowhere == none()
+    println("{} {} {}", origin.x, origin.y, origin.seen)
+    atomicStore<i64>(variableAddress(total), 40)
+    atomicAdd<i64>(variableAddress(total), 2)
+    println("atomic {}, same place: {}", total, variableAddress(slots[1]) == offset(variableAddress(slots), 8))
+    ret 0
+}
+
+addr none() {
+    addr empty
+    ret empty
+}

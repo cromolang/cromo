@@ -124,8 +124,9 @@ add_custom_command(
   OUTPUT "${CROMO_RT_DIR}/cromo_rt.lib"
   COMMAND "${CMAKE_COMMAND}" -E rm -f "${CROMO_RT_DIR}/cromo_rt.lib"
   COMMAND "${CROMO_LLVM_LIB}" /nologo "/out:${CROMO_RT_DIR}/cromo_rt.lib" "${CROMO_RT_DIR}/cromo_rt.obj" "${CROMO_RT_DIR}/mem_x64.obj"
-          "@${CROMO_RT_DIR}/tls_windows.rsp"
-  DEPENDS "${CROMO_RT_DIR}/cromo_rt.obj" "${CROMO_RT_DIR}/mem_x64.obj" ${CROMO_TLS_WINDOWS_OBJECTS} "${CROMO_RT_DIR}/tls_windows.rsp"
+          "${CROMO_RT_DIR}/runtime_cromo.obj" "@${CROMO_RT_DIR}/tls_windows.rsp"
+  DEPENDS "${CROMO_RT_DIR}/cromo_rt.obj" "${CROMO_RT_DIR}/mem_x64.obj" "${CROMO_RT_DIR}/runtime_cromo.obj" ${CROMO_TLS_WINDOWS_OBJECTS}
+          "${CROMO_RT_DIR}/tls_windows.rsp"
   COMMENT "Archiving the Cromo runtime")
 
 add_custom_command(
@@ -142,8 +143,9 @@ add_custom_command(
   OUTPUT "${CROMO_RT_DIR}/libcromo_rt.a"
   COMMAND "${CMAKE_COMMAND}" -E rm -f "${CROMO_RT_DIR}/libcromo_rt.a"
   COMMAND "${CROMO_LLVM_AR}" rcs "${CROMO_RT_DIR}/libcromo_rt.a" "${CROMO_RT_DIR}/cromo_rt_linux.o" "${CROMO_RT_DIR}/mem_x64_linux.o"
-          "@${CROMO_RT_DIR}/tls_linux.rsp"
-  DEPENDS "${CROMO_RT_DIR}/cromo_rt_linux.o" "${CROMO_RT_DIR}/mem_x64_linux.o" ${CROMO_TLS_LINUX_OBJECTS} "${CROMO_RT_DIR}/tls_linux.rsp"
+          "${CROMO_RT_DIR}/runtime_cromo_linux.o" "@${CROMO_RT_DIR}/tls_linux.rsp"
+  DEPENDS "${CROMO_RT_DIR}/cromo_rt_linux.o" "${CROMO_RT_DIR}/mem_x64_linux.o" "${CROMO_RT_DIR}/runtime_cromo_linux.o"
+          ${CROMO_TLS_LINUX_OBJECTS} "${CROMO_RT_DIR}/tls_linux.rsp"
   COMMENT "Archiving the Cromo runtime for Linux")
 # ---- lib/ of the build, as in the archive (D237) ----
 # cromo reads the library and the runtime from lib/: next to its folder bin/ in
@@ -152,16 +154,36 @@ set(CROMO_LIB_DIR "${CMAKE_BINARY_DIR}/lib")
 file(GLOB CROMO_STD_MODULES CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/library/std/*.cro")
 add_custom_command(
   OUTPUT "${CROMO_RT_DIR}/library.stamp"
-  COMMAND "${CMAKE_COMMAND}" -E rm -rf "${CROMO_LIB_DIR}"
+  COMMAND "${CMAKE_COMMAND}" -E rm -rf "${CROMO_LIB_DIR}/std"
   COMMAND "${CMAKE_COMMAND}" -E make_directory "${CROMO_LIB_DIR}/std" "${CROMO_LIB_DIR}/windows" "${CROMO_LIB_DIR}/linux"
   COMMAND "${CMAKE_COMMAND}" -E copy "${CMAKE_SOURCE_DIR}/library/core.cro" "${CROMO_LIB_DIR}"
   COMMAND "${CMAKE_COMMAND}" -E copy ${CROMO_STD_MODULES} "${CROMO_LIB_DIR}/std"
+  COMMAND "${CMAKE_COMMAND}" -E touch "${CROMO_RT_DIR}/library.stamp"
+  DEPENDS library/core.cro ${CROMO_STD_MODULES}
+  COMMENT "Placing the library in lib/")
+add_custom_target(cromo_library ALL DEPENDS "${CROMO_RT_DIR}/library.stamp")
+
+# The runtime written in Cromo, std.runtime (D393): compiled once by the cromo just
+# built, as in --release, into an object of the archive of the runtime of each
+# system, next to the C, so that the programs only link it.
+add_custom_command(
+  OUTPUT "${CROMO_RT_DIR}/runtime_cromo.obj"
+  COMMAND cromo build --runtime --target windows -o "${CROMO_RT_DIR}/runtime_cromo.obj"
+  DEPENDS cromo "${CROMO_RT_DIR}/library.stamp"
+  COMMENT "Compiling the runtime written in Cromo")
+add_custom_command(
+  OUTPUT "${CROMO_RT_DIR}/runtime_cromo_linux.o"
+  COMMAND cromo build --runtime --target linux -o "${CROMO_RT_DIR}/runtime_cromo_linux.o"
+  DEPENDS cromo "${CROMO_RT_DIR}/library.stamp"
+  COMMENT "Compiling the runtime written in Cromo for Linux")
+add_custom_command(
+  OUTPUT "${CROMO_RT_DIR}/runtime.stamp"
   COMMAND "${CMAKE_COMMAND}" -E copy "${CROMO_RT_DIR}/cromo_rt.lib" "${CROMO_LIB_DIR}/windows"
   COMMAND "${CMAKE_COMMAND}" -E copy "${CROMO_RT_DIR}/libcromo_rt.a" "${CROMO_LIB_DIR}/linux"
-  COMMAND "${CMAKE_COMMAND}" -E touch "${CROMO_RT_DIR}/library.stamp"
-  DEPENDS library/core.cro ${CROMO_STD_MODULES} "${CROMO_RT_DIR}/cromo_rt.lib" "${CROMO_RT_DIR}/libcromo_rt.a"
-  COMMENT "Placing the library and the runtime in lib/")
-add_custom_target(cromo_library ALL DEPENDS "${CROMO_RT_DIR}/library.stamp")
+  COMMAND "${CMAKE_COMMAND}" -E touch "${CROMO_RT_DIR}/runtime.stamp"
+  DEPENDS "${CROMO_RT_DIR}/cromo_rt.lib" "${CROMO_RT_DIR}/libcromo_rt.a" "${CROMO_RT_DIR}/library.stamp"
+  COMMENT "Placing the runtime in lib/")
+add_custom_target(cromo_runtime ALL DEPENDS "${CROMO_RT_DIR}/runtime.stamp")
 
 endif()
 

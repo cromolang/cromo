@@ -14,6 +14,7 @@ struct CodegenOptions {
     bool release = false;    // D57: no overflow checks, integers wrap around; D338: only the lines
     bool optimized = true;
     bool tests = false;      // D352: the entry point runs the test given by its number, not main
+    bool runtime = false;    // D393: the object of std.runtime, which goes in the archive of the runtime
     Target target = hostTarget();
 };
 

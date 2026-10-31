@@ -58,7 +58,7 @@ private:
 
     // A read of a variable: it must not have been moved on any path.
     void use(const Variable* variable, SourceLocation loc) {
-        if (!variable || !state_.reachable) return;
+        if (!variable || !state_.reachable || variable->kind == VariableKind::Module) return;
         uint8_t& bits = state_.variables[variable->id];
         if (!(bits & kMoved)) return;
         if (report_) {
@@ -73,7 +73,7 @@ private:
     }
 
     void set(const Variable* variable, uint8_t bits) {
-        if (variable && state_.reachable) state_.variables[variable->id] = bits;
+        if (variable && state_.reachable && variable->kind != VariableKind::Module) state_.variables[variable->id] = bits;
     }
 
     // ---- Statements ----

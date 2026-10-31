@@ -50,7 +50,7 @@ The last command prints `cromo 0.27.1 (LLVM 23.1.4)`, with the version of the so
 The script finds Visual Studio with `vswhere`, loads the environment of `vcvars64.bat` and configures CMake with Ninja and the toolchain of vcpkg (triplet `x64-windows-static`). It removes from `PATH` the MinGW toolchains, such as the one of Strawberry Perl, whose zlib CMake would otherwise find. Then it builds:
 
 - `build\cromo.exe`, from `src\`, with the static C runtime (`/MT`) and without RTTI, as the LLVM libraries: `cromo.exe` needs no Visual C++ Redistributable;
-- `build\lib\`, with `core.cro` and `std\` copied from `library\`, and the runtime compiled from `runtime\` and `third_party\` by the clang of LLVM: `windows\cromo_rt.lib` and `linux\libcromo_rt.a`.
+- `build\lib\`, with `core.cro` and `std\` copied from `library\`, and the runtime: the C of `runtime\` and `third_party\` compiled by the clang of LLVM, and `std.runtime`, the part written in Cromo, compiled by the `cromo.exe` just built, in `windows\cromo_rt.lib` and `linux\libcromo_rt.a`.
 
 Rebuild after any change to `library\` or `runtime\`: `cromo` reads them from `build\lib`. Debug builds are not supported, since the LLVM libraries are release builds.
 

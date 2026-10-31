@@ -70,6 +70,24 @@ private:
             if (!decl) return skipToNextDeclaration();
             decl->isPublic = isPublic;
             module.interfaces.push_back(std::move(*decl));
+        } else if (startsModuleVariable()) {
+            if (isPublic || !attributes.empty()) {
+                diag_.error(isPublic ? peek().loc : attributes[0].loc,
+                            "a module variable has no attributes and is not public: only its module sees it (D394)");
+            }
+            StmtPtr decl = parseVarDecl();
+            if (!decl) return skipToNextDeclaration();
+            auto& variable = static_cast<VarDeclStmt&>(*decl);
+            GlobalDecl global;
+            global.typeName = std::move(variable.typeName);
+            global.name = std::move(variable.name);
+            global.loc = variable.nameLoc;
+            global.init = std::move(variable.init);
+            module.globals.push_back(std::move(global));
+            if (!check(TokenKind::Newline) && !check(TokenKind::EndOfFile)) {
+                errorAtCurrent("a newline after the module variable");
+                skipToNextDeclaration();
+            }
         } else if (auto function = parseFunction()) {
             function->isPublic = isPublic;
             function->attributes = std::move(attributes);
@@ -77,6 +95,15 @@ private:
         } else {
             skipToNextDeclaration();
         }
+    }
+
+    // `i64 count = 0` or `u8[4096] buffer` outside the functions (D394): a type and a
+    // name, followed by `=` or by the end of the line, where a function has `(`.
+    bool startsModuleVariable() const {
+        size_t afterType = check(TokenKind::Identifier) || check(TokenKind::KwFunc) ? skipType(0) : 0;
+        if (!afterType || peek(afterType).kind != TokenKind::Identifier) return false;
+        TokenKind next = peek(afterType + 1).kind;
+        return next == TokenKind::Assign || next == TokenKind::Newline || next == TokenKind::EndOfFile;
     }
 
     // import := 'import' (name {'.' name} | 'unsafe')   (D50, D127)

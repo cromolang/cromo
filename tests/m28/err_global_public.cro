@@ -1,0 +1,9 @@
+// A module variable is seen only by its module (D394).
+// expect-error: a module variable has no attributes and is not public: only its module sees it (D394)
+import unsafe
+
+public i64 count
+
+i32 main() {
+    ret 0
+}

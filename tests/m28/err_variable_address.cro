@@ -1,0 +1,9 @@
+// A local variable has no address that lasts (D394).
+// expect-error: variableAddress() takes a module variable, or a field or an element of one (D394)
+import unsafe
+
+i32 main() {
+    i64 local = 5
+    addr place = variableAddress(local)
+    ret 0
+}
