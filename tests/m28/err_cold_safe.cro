@@ -1,0 +1,11 @@
+// [[cold]] is a hint for the code of the runtime, in the unsafe dialect (D398).
+// expect-error: [[cold]] is only for the modules with 'import unsafe' (D398)
+
+[[cold]]
+void rarely() {
+}
+
+i32 main() {
+    rarely()
+    ret 0
+}

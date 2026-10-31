@@ -1,0 +1,177 @@
+// std.runtime on Linux (D202, D393): the system calls, through systemCall.
+import unsafe
+
+extern "cromo" {
+    void cromo_pause()  // in assembly: the hint of a loop that waits for another thread
+}
+
+// ---- The heap (D98) ----
+//
+// A simple allocator on top of mmap, under the lock of the heap. Every block
+// starts with 16 bytes that hold how many bytes it can contain. The small blocks,
+// up to 128 KB with those 16 bytes, have a size that is a power of two from 32
+// bytes: they are cut from areas of 4 MB, whose pages the system gives when they
+// are used, and the freed ones are kept in a list for each size, linked through
+// their first 8 bytes. The larger blocks have a mapping of their own, as for
+// malloc of glibc: a mapping for every block of a few KB costs two system calls,
+// which wait for each other in a process with threads.
+
+addr[13] freeBlocks  // of 32 bytes, 64, ..., 128 KB
+addr areaNext
+u64 areaLeft
+u32 heapLock  // 0 free, 1 taken, 2 taken with threads waiting
+
+// A freed block of the right size when there is one, else a new one.
+addr heapAlloc(u64 size) {
+    u64 total = size + 16
+    if (total <= smallLimit()) {
+        i64 index = sizeIndex(total)
+        total = u64(32) << index
+        addr block = freeBlocks[index]
+        if (block != addr(0)) {
+            freeBlocks[index] = copyAt<addr>(block)
+            put<u64>(block, total - 16)  // where the list kept the next block
+            ret offset(block, 16)
+        }
+    } else {
+        total = pagesFor(total)
+    }
+    ret newBlock(total)
+}
+
+// A small block cut from the area, or a large one mapped on its own. It is cold, so
+// that heapAlloc stays short and goes inline into cromo_alloc.
+[[cold]]
+addr newBlock(u64 total) {
+    addr block
+    if (total <= smallLimit()) {
+        if (areaLeft < total) {  // the rest of the old area is not used, nor touched
+            addr area = mapPages(areaSize())
+            if (area == addr(0)) {
+                ret area
+            }
+            areaNext = area
+            areaLeft = areaSize()
+        }
+        block = areaNext
+        areaNext = offset(areaNext, i64(total))
+        areaLeft -= total
+    } else {
+        block = mapPages(total)
+        if (block == addr(0)) {
+            ret block
+        }
+    }
+    put<u64>(block, total - 16)
+    ret offset(block, 16)
+}
+
+void heapFree(addr memory) {
+    addr block = offset(memory, -16)
+    u64 total = copyAt<u64>(block) + 16
+    if (total <= smallLimit()) {
+        i64 index = sizeIndex(total)
+        put<addr>(block, freeBlocks[index])
+        freeBlocks[index] = block
+    } else {
+        systemCall(11, block, i64(total), 0, 0, 0, 0)  // munmap
+    }
+}
+
+addr heapResize(addr memory, u64 size) {
+    addr block = offset(memory, -16)
+    u64 capacity = copyAt<u64>(block)
+    if (size <= capacity) {
+        ret memory
+    }
+    if (capacity + 16 > smallLimit()) {  // a large block grows with its mapping
+        u64 total = pagesFor(size + 16)
+        addr moved = mapped(systemCall(25, block, i64(capacity + 16), i64(total), 1, 0, 0))  // mremap, MREMAP_MAYMOVE
+        if (moved == addr(0)) {
+            ret moved
+        }
+        put<u64>(moved, total - 16)
+        ret offset(moved, 16)
+    }
+    addr result = heapAlloc(size)
+    if (result == addr(0)) {
+        ret result
+    }
+    copyMemory(result, memory, i64(capacity))
+    heapFree(memory)
+    ret result
+}
+
+// The list of a small block: 0 for 32 bytes, 1 for 64, and so on.
+i64 sizeIndex(u64 total) {
+    i64 index = 0
+    for (u64(32) << index < total) {
+        index++
+    }
+    ret index
+}
+
+u64 smallLimit() {
+    ret 131072  // 128 KB
+}
+
+u64 areaSize() {
+    ret 4194304  // 4 MB
+}
+
+u64 pagesFor(u64 size) {
+    ret size + 4095 & !u64(4095)
+}
+
+// Pages of a mapping of their own, readable and writable, or addr(0).
+addr mapPages(u64 size) {
+    ret mapped(systemCall(9, 0, i64(size), 3, 0x22, -1, 0))  // mmap: PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS
+}
+
+// The address that mmap and mremap give, or addr(0) for an error, from -4095 to -1.
+addr mapped(i64 result) {
+    if (result < 0 && result > -4096) {
+        ret addr(0)
+    }
+    ret addr(result)
+}
+
+// ---- The lock of the heap (Drepper, "Futexes are tricky") ----
+//
+// It is held briefly: a short spin before sleeping, as the SRWLOCK of Windows
+// does, avoids a sleep and a wake for each allocation.
+
+void lockHeap() {
+    if (!threaded) {
+        ret
+    }
+    addr state = variableAddress(heapLock)
+    if (atomicCompareExchange<u32>(state, 0, 1)) {
+        ret
+    }
+    u32 seen = atomicLoad<u32>(state)
+    for (i64 spins = 0; spins < 100 && seen != 2; spins++) {
+        cromo_pause()
+        seen = atomicLoad<u32>(state)
+        if (seen == 0 && atomicCompareExchange<u32>(state, 0, 1)) {
+            ret
+        }
+    }
+    if (seen != 2) {
+        seen = atomicExchange<u32>(state, 2)
+    }
+    for (seen != 0) {
+        systemCall(202, state, 128, 2, 0, 0, 0)  // futex: FUTEX_WAIT | FUTEX_PRIVATE, while it is 2
+        seen = atomicExchange<u32>(state, 2)
+    }
+}
+
+void unlockHeap() {
+    if (!threaded) {
+        ret
+    }
+    addr state = variableAddress(heapLock)
+    if (atomicExchange<u32>(state, 0) == 2) {
+        systemCall(202, state, 129, 1, 0, 0, 0)  // futex: FUTEX_WAKE | FUTEX_PRIVATE, one thread
+    }
+}

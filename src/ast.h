@@ -535,6 +535,7 @@ struct FunctionDecl {
     std::vector<Attribute> attributes;  // `[[test]]` (D349), `[[export("name")]]` (D395)
     bool isTest = false;                // set by sema
     bool isExported = false;            // set by sema: called by C with its name, in symbol (D395)
+    bool isCold = false;                // set by sema: [[cold]], it runs rarely (D398)
 
     // Set by sema.
     std::string symbol;           // its name in the IR, with its module in front

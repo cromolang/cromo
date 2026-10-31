@@ -1858,6 +1858,9 @@ lines.close()
 ### D397. The bits of a floating-point number
 *2026-10-31.* `x.bits()` gives the bits of an `f64` as a `u64`, and of an `f32` as a `u32`; `f64.fromBits(b)` and `f32.fromBits(b)` make the number again, as `to_bits` and `from_bits` of Rust.
 
+### D398. `[[cold]]`, in `unsafe`
+*2026-10-31.* Before a function of a module with `import unsafe`, `[[cold]]` says that it runs rarely, as `#[cold]` of Rust and `__attribute__((cold))` of GCC: LLVM keeps it out of its callers and optimizes them for the other path. It goes with `[[export]]`. The runtime in Cromo needs it: the heap of Linux, with its path that asks the system for memory put inline in `cromo_alloc`, was a third slower than the C, which clang had put all in one function; with `newBlock` cold it is within a twentieth.
+
 ---
 
 ## Proposed
@@ -1872,6 +1875,9 @@ Numbers, `bool`, `addr`, and arrays and structs of them whose fields have no ini
 
 ### P12. `variableAddress(x)` (D394)
 A built-in function of `unsafe` that gives the `addr` of a module variable, or of a field or an element of one, for the atomics and the C functions. A local variable has none: its place ends with its block.
+
+### P13. An `addr` and an integer of 64 bits (D98)
+In `unsafe`, `addr(n)` makes an address from an `i64` or a `u64`, and `i64(p)` and `u64(p)` give the number of an address, as `as` in Rust: the runtime needs them for what `mmap` gives and for the alignment of the stacks. `addr(0)` is the null address, the default value of `addr`. No other type converts to or from `addr`.
 
 ---
 

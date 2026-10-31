@@ -544,7 +544,9 @@ public struct Stopwatch {
 - When compiling for Linux, `extern "name"` is the static library `libname.a` next to the module (D143). Shared libraries and the C library of Linux are not supported yet.
 - They take and return numbers, `bool` and `addr`; a `ref` parameter is a C pointer to a number or to a struct of numbers, which have the layout of C (D129). The `BOOL` of Windows is an `i32`.
 - C resources are wrapped in structs with a destructor (D42): see `examples/05_c_interop.cro`.
+- `[[cold]]` before a function says that it runs rarely, as `#[cold]` of Rust: the compiler keeps it out of its callers and optimizes them for the other path (D398).
 - `[[export("name")]]` before a function gives it that name and the convention of C, so that C calls it: its parameters and its result are numbers, `bool` and `addr`, and it cannot let an exception out (D395). The runtime written in Cromo uses it (D393).
+- `addr(n)` makes an address from an `i64` or a `u64`, and `i64(p)` and `u64(p)` give the number of an address; `addr(0)` is the null address, the default value of `addr` (P13).
 - A module with `import unsafe` can declare variables outside its functions, for the state of the whole program (D394), as `i64 count`, `u8[4096] buffer` or `bool ready = true`. Only that module sees them; they hold numbers, `bool`, `addr`, and arrays and structs of them whose fields have no initial values, and start from their default value or from a literal, without any code before `main`. `variableAddress(x)` gives the `addr` of one of them, or of a field or an element of one, as for the atomics or for a C function.
 - Strings cannot be passed to C yet: it is an open question in [decisions.md](decisions.md).
 

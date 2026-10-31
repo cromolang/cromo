@@ -1,0 +1,59 @@
+// The heap written in Cromo (D393): a list that grows past the small blocks, into
+// a mapping of its own on Linux; strings of every size, freed and made again; and
+// four threads that allocate at the same time, under the lock of the heap.
+// expect-output: 300000 44999850000
+// expect-output: 2000 lengths, 999000 bytes
+// expect-output: threads 4 x 20000
+import std.thread
+
+i64 strings() {
+    i64 bytes = 0
+    for (i64 round = 0; round < 2; round++) {
+        list<string> kept
+        for (i64 n = 0; n < 1000; n++) {
+            string s
+            for (i64 i = 0; i < n; i++) {
+                s.append("x")
+            }
+            kept.add(move s)
+        }
+        for (string s in kept) {
+            bytes += s.len()
+        }
+    }
+    ret bytes
+}
+
+i32 main() {
+    list<i64> numbers
+    for (i64 i = 0; i < 300000; i++) {
+        numbers.add(i)
+    }
+    i64 sum = 0
+    for (i64 n in numbers) {
+        sum += n
+    }
+    println("{} {}", numbers.len(), sum)
+    println("2000 lengths, {} bytes", strings())
+
+    list<thread.Thread> workers
+    for (i64 t = 0; t < 4; t++) {
+        workers.add(thread.Thread([]() {
+            for (i64 i = 0; i < 20000; i++) {
+                list<i64> small = [i, i + 1, i + 2]
+                string text = "item {i}"
+                if (small.len() + text.len() < 0) {
+                    println("never")
+                }
+            }
+        }))
+    }
+    for (i64 t = 0; t < 4; t++) {
+        workers[t].start()
+    }
+    for (i64 t = 0; t < 4; t++) {
+        workers[t].join()
+    }
+    println("threads 4 x 20000")
+    ret 0
+}

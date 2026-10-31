@@ -1,0 +1,36 @@
+// [[cold]] (D398): functions that run rarely, alone and with [[export]], called
+// from a loop; they work as the others.
+// expect-output: 4950 slow 2
+// expect-output: rare 7
+import unsafe
+
+i64 slowCalls
+
+[[cold]]
+i64 slow(i64 x) {
+    slowCalls++
+    ret x * 2
+}
+
+[[cold]]
+[[export("cromo_test_rare")]]
+i64 rare(i64 x) {
+    ret x + 1
+}
+
+i64 fast(i64 x) {
+    if (x % 50 == 49) {
+        ret slow(x) - x
+    }
+    ret x
+}
+
+i32 main() {
+    i64 sum = 0
+    for (i64 i = 0; i < 100; i++) {
+        sum += fast(i)
+    }
+    println("{} slow {}", sum, slowCalls)
+    println("rare {}", rare(6))
+    ret 0
+}

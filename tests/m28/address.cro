@@ -1,0 +1,18 @@
+// An addr and an integer of 64 bits, in both directions (P13): the address of a
+// block of the heap, moved by a number and back, and addr(0), the null address.
+// expect-output: aligned true, back true, null true
+// expect-output: 4096 18446744073709551615 -1
+import unsafe
+
+i32 main() {
+    addr block = alloc(64)
+    i64 at = i64(block)
+    u64 same = u64(block)
+    put<i64>(addr(at + 8), 42)
+    bool back = copyAt<i64>(offset(block, 8)) == 42 && addr(same) == block
+    addr none
+    println("aligned {}, back {}, null {}", at % 16 == 0, back, none == addr(0))
+    free(block)
+    println("{} {} {}", i64(addr(4096)), u64(addr(-1)), i64(addr(u64(18446744073709551615))))
+    ret 0
+}

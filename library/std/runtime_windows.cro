@@ -1,0 +1,30 @@
+// std.runtime on Windows (D202, D393): the functions of kernel32, which the build
+// declares with dllimport, as the runtime in C does.
+import unsafe
+
+extern "kernel32" {
+    addr GetProcessHeap()
+    addr HeapAlloc(addr heap, u32 flags, u64 size)
+    addr HeapReAlloc(addr heap, u32 flags, addr memory, u64 size)
+    i32 HeapFree(addr heap, u32 flags, addr memory)
+}
+
+// ---- The heap (D98): the one of the process, which has its own lock ----
+
+addr heapAlloc(u64 size) {
+    ret HeapAlloc(GetProcessHeap(), 0, size)
+}
+
+addr heapResize(addr memory, u64 size) {
+    ret HeapReAlloc(GetProcessHeap(), 0, memory, size)
+}
+
+void heapFree(addr memory) {
+    HeapFree(GetProcessHeap(), 0, memory)
+}
+
+void lockHeap() {
+}
+
+void unlockHeap() {
+}

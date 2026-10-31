@@ -6,9 +6,18 @@
 #   The file also has the stack probe __chkstk.
 # - Linux: the arguments arrive in rdi, rsi, rdx, and every register used here
 #   can be changed. The file also has the entry point _start.
+# On both systems it has the instructions that the runtime written in Cromo
+# cannot write (D393).
 
     .intel_syntax noprefix
     .text
+
+# void cromo_pause(void): the hint of a loop that waits for another thread.
+    .globl cromo_pause
+    .p2align 4
+cromo_pause:
+    pause
+    ret
 
 #ifdef _WIN32
 

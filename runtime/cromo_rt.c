@@ -1,4 +1,4 @@
-// Bootstrap runtime of Cromo (D58, D93): printing, panics, heap, threads, tasks and program exit.
+// Bootstrap runtime of Cromo (D58, D93): printing, panics, threads, tasks and program exit.
 // Freestanding C without the C library (D19): it talks to Windows through
 // kernel32.dll, and to Linux with system calls (D142). CMake compiles it once for
 // each system. It will be rewritten in Cromo `unsafe` when extern (M7), the
@@ -27,10 +27,6 @@ __declspec(dllimport) int WINAPI WriteConsoleW(void* console, const u16* text, u
 __declspec(dllimport) int WINAPI MultiByteToWideChar(u32 codePage, u32 flags, const char* text, int size, u16* out,
                                                      int outSize);
 __declspec(dllimport) __declspec(noreturn) void WINAPI ExitProcess(u32 code);
-__declspec(dllimport) void* WINAPI GetProcessHeap(void);
-__declspec(dllimport) void* WINAPI HeapAlloc(void* heap, u32 flags, u64 size);
-__declspec(dllimport) void* WINAPI HeapReAlloc(void* heap, u32 flags, void* memory, u64 size);
-__declspec(dllimport) int WINAPI HeapFree(void* heap, u32 flags, void* memory);
 __declspec(dllimport) u16* WINAPI GetCommandLineW(void);
 __declspec(dllimport) int WINAPI WideCharToMultiByte(u32 codePage, u32 flags, const u16* text, int size, char* out,
                                                      int outSize, const char* defaultChar, int* usedDefault);
@@ -84,7 +80,6 @@ int _fltused = 0;
 #define SYS_munmap 11
 #define SYS_rt_sigaction 13
 #define SYS_sched_yield 24
-#define SYS_mremap 25
 #define SYS_nanosleep 35
 #define SYS_clone 56
 #define SYS_exit 60
@@ -105,7 +100,9 @@ int _fltused = 0;
 
 static i64 systemCall(i64 number, i64 a, i64 b, i64 c, i64 d, i64 e, i64 f);
 
-// For the modules of the library for Linux (D202): the result, or -errno.
+// For the glue of Mbed TLS (runtime/tls): the result, or -errno. The library
+// written in Cromo makes its system calls itself: the compiler writes the
+// instruction for systemCall (D202).
 i64 cromo_system_call(i64 number, i64 a, i64 b, i64 c, i64 d, i64 e, i64 f) {
     return systemCall(number, a, b, c, d, e, f);
 }
@@ -1341,156 +1338,18 @@ NORETURN void cromo_uncaught(const u8* message, u64 size, const void* object) {
 }
 
 // ---- Heap, for list and string (D98) ----
+//
+// cromo_alloc, cromo_realloc and cromo_free are written in Cromo, in std.runtime
+// (D393); the heap takes its lock from the first thread on.
+
+void* cromo_alloc(i64 size);
+void cromo_free(void* memory);
+void cromo_heap_threaded(void);
 
 // Without the lock of printing: memory can run out while a format holds it.
-static NORETURN void outOfMemory(void) {
+NORETURN void cromo_out_of_memory(void) {
     writeRaw(2, (const u8*)"panic: out of memory\n", 21);
     exitProcess(101);
-}
-
-#ifdef _WIN32
-
-static void* heapAlloc(u64 size) { return HeapAlloc(GetProcessHeap(), 0, size); }
-static void* heapRealloc(void* memory, u64 size) { return HeapReAlloc(GetProcessHeap(), 0, memory, size); }
-static void heapFree(void* memory) { HeapFree(GetProcessHeap(), 0, memory); }
-
-#else
-
-// A simple allocator on top of mmap, under the lock of the heap. Every block
-// starts with 16 bytes that hold how many bytes it can contain. The small blocks,
-// up to 128 KB with those 16 bytes, have a size that is a power of two from 32
-// bytes: they are cut from areas of 4 MB, whose pages the system gives when they
-// are used, and the freed ones are kept in a list for each size. The larger
-// blocks have a mapping of their own, as for malloc of glibc: a mapping for every
-// block of a few KB costs two system calls, which wait for each other in a
-// process with threads.
-
-#define PROT_READ 1
-#define PROT_WRITE 2
-#define MAP_PRIVATE 2
-#define MAP_ANONYMOUS 0x20
-#define MREMAP_MAYMOVE 1
-#define HEADER 16
-#define SMALL_LIMIT (128u << 10)
-#define SMALL_SIZES 13  // 32, 64, ..., 128 KB
-#define AREA_SIZE (4u << 20)
-
-typedef struct FreeBlock {
-    struct FreeBlock* next;
-} FreeBlock;
-
-static FreeBlock* freeBlocks[SMALL_SIZES];
-static u8* areaNext;
-static u8* areaEnd;
-
-static u8* mapPages(u64 size) {
-    i64 result = systemCall(SYS_mmap, 0, (i64)size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    return result < 0 && result > -4096 ? 0 : (u8*)result;
-}
-
-static u64 pagesFor(u64 size) { return (size + 4095) & ~(u64)4095; }
-
-static i32 sizeIndex(u64 total) {
-    i32 index = 0;
-    while (((u64)32 << index) < total) ++index;
-    return index;
-}
-
-static u64* headerOf(void* memory) { return (u64*)((u8*)memory - HEADER); }
-
-static void* heapAlloc(u64 size) {
-    u64 total = size + HEADER;
-    u8* block;
-    if (total <= SMALL_LIMIT) {
-        i32 index = sizeIndex(total);
-        total = (u64)32 << index;
-        if (freeBlocks[index]) {
-            block = (u8*)freeBlocks[index];
-            freeBlocks[index] = freeBlocks[index]->next;
-        } else {
-            if ((u64)(areaEnd - areaNext) < total) {  // the rest of the old area is not used, nor touched
-                areaNext = mapPages(AREA_SIZE);
-                if (!areaNext) return 0;
-                areaEnd = areaNext + AREA_SIZE;
-            }
-            block = areaNext;
-            areaNext += total;
-        }
-    } else {
-        total = pagesFor(total);
-        block = mapPages(total);
-        if (!block) return 0;
-    }
-    *(u64*)block = total - HEADER;
-    return block + HEADER;
-}
-
-static void heapFree(void* memory) {
-    u64 total = *headerOf(memory) + HEADER;
-    if (total <= SMALL_LIMIT) {
-        FreeBlock* block = (FreeBlock*)headerOf(memory);
-        i32 index = sizeIndex(total);
-        block->next = freeBlocks[index];
-        freeBlocks[index] = block;
-    } else {
-        systemCall(SYS_munmap, (i64)headerOf(memory), (i64)total, 0, 0, 0, 0);
-    }
-}
-
-static void* heapRealloc(void* memory, u64 size) {
-    u64 capacity = *headerOf(memory);
-    if (size <= capacity) return memory;
-    if (capacity + HEADER > SMALL_LIMIT) {  // a large block grows with its mapping
-        u64 total = pagesFor(size + HEADER);
-        i64 block = systemCall(SYS_mremap, (i64)headerOf(memory), (i64)(capacity + HEADER), (i64)total, MREMAP_MAYMOVE,
-                               0, 0);
-        if (block < 0 && block > -4096) return 0;
-        *(u64*)block = total - HEADER;
-        return (u8*)block + HEADER;
-    }
-    void* result = heapAlloc(size);
-    if (!result) return 0;
-    memcpy(result, memory, capacity);
-    heapFree(memory);
-    return result;
-}
-
-#endif
-
-// The heap of Windows has its own lock; the allocator for Linux takes this one.
-#ifdef _WIN32
-static void heapLockAcquire(void) {}
-static void heapLockRelease(void) {}
-#else
-static Lock heapLock;
-static void heapLockAcquire(void) { sharedAcquire(&heapLock); }
-static void heapLockRelease(void) { sharedRelease(&heapLock); }
-#endif
-
-void* cromo_alloc(i64 size) {
-    if (size < 0) outOfMemory();
-    heapLockAcquire();
-    void* memory = heapAlloc((u64)size);
-    heapLockRelease();
-    if (!memory) outOfMemory();
-    return memory;
-}
-
-void* cromo_realloc(void* memory, i64 size) {
-    if (!memory) return cromo_alloc(size);
-    if (size < 0) outOfMemory();
-    heapLockAcquire();
-    void* result = heapRealloc(memory, (u64)size);
-    heapLockRelease();
-    if (!result) outOfMemory();
-    return result;
-}
-
-void cromo_free(void* memory) {
-    if (!memory) return;
-    heapLockAcquire();
-    heapFree(memory);
-    heapLockRelease();
 }
 
 // The object of an exception, made by throw with the stack where it is (D340).
@@ -2450,6 +2309,7 @@ static void startScheduler(void) {
     if (state == 2) return;
     if (state == 0 && __atomic_compare_exchange_n(&scheduler.state, &state, 1, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
         threaded = 1;  // from now on the locks are taken
+        cromo_heap_threaded();
 #ifdef _WIN32
         __atomic_store_n(&tlsIndex, TlsAlloc(), __ATOMIC_RELEASE);
 #endif
@@ -2718,6 +2578,7 @@ void cromo_channel_free(Channel* channel) {
 void* cromo_thread_start(void* code, void* env) {
     ThreadRecord* thread = newThreadRecord(code, env);
     threaded = 1;  // from now on the locks are taken
+    cromo_heap_threaded();
     startSystemThread(thread);
     return thread;
 }

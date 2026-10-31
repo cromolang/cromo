@@ -148,7 +148,11 @@ std::string literalConstant(const Expr& expr, Type type) {
     }
     case ExprKind::FloatLiteral: return floatConstant(static_cast<const FloatLiteralExpr&>(expr).value, type.bits);
     case ExprKind::BoolLiteral: return static_cast<const BoolLiteralExpr&>(expr).value ? "true" : "false";
-    case ExprKind::Conversion: return literalConstant(*static_cast<const ConversionExpr&>(expr).operand, type);
+    case ExprKind::Conversion: {
+        const Expr& operand = *static_cast<const ConversionExpr&>(expr).operand;
+        if (type.kind == TypeKind::Addr) return "inttoptr (i64 " + literalConstant(operand, Type::intType(64, true)) + " to ptr)";
+        return literalConstant(operand, type);
+    }
     default: return "undef";
     }
 }
@@ -159,9 +163,13 @@ std::string defaultConstant(Type type);
 // A C function (D128, D129): a `ref` is a pointer, and a bool is a byte, as in C.
 std::string cType(Type type) { return type.isBool() ? "i8" : llvmType(type); }
 
-std::string externDeclaration(const FunctionDecl& function) {
+// The runtime written in Cromo declares the functions of kernel32 with dllimport,
+// as the runtime in C does: the linker of a program finds them among the `__imp_`
+// symbols that the runtime leaves undefined (backend.cpp).
+std::string externDeclaration(const FunctionDecl& function, bool imported) {
     Type ret = function.resolvedReturn;
-    std::string out = "declare " + (ret.isVoid() ? std::string("void") : cType(ret)) + " " + symbolOf(function) + "(";
+    std::string out = std::string(imported ? "declare dllimport " : "declare ") +
+                      (ret.isVoid() ? std::string("void") : cType(ret)) + " " + symbolOf(function) + "(";
     for (size_t i = 0; i < function.params.size(); ++i) {
         out += (i ? ", " : "") + (function.params[i].mode == ParamMode::Ref ? std::string("ptr") : cType(function.paramTypes[i]));
     }
@@ -341,7 +349,10 @@ public:
         if (freesExceptions_) out << freeExceptionFunction();
         out << releaseBodies_;
         out << globals_.str() << "\n";
-        for (const FunctionDecl* function : externs) out << externDeclaration(*function);
+        for (const FunctionDecl* function : externs) {
+            bool imported = options_.runtime && options_.target == Target::Windows && function->library != "cromo";
+            out << externDeclaration(*function, imported);
+        }
         // The functions of the runtime, but those that a module of the library
         // defines in Cromo and exports with their name (D393, D395).
         std::set<std::string> exported;
@@ -823,14 +834,14 @@ private:
     }
 
     std::string finishFunction(const std::string& returnType, const std::string& symbol, const std::vector<std::string>& params,
-                               bool exported = false) {
+                               bool exported = false, bool cold = false) {
         std::ostringstream out;
         // Internal: a function that nothing calls is removed (backend.cpp), with
         // the C code that only it uses, as mbedTLS for connectTls (D241). An
         // exported one is called by C (D395).
         out << (exported ? "define " : "define internal ") << returnType << " " << symbol << "(";
         for (size_t i = 0; i < params.size(); ++i) out << (i ? ", " : "") << params[i];
-        out << ") " << functionAttributes();
+        out << ") " << functionAttributes() << (cold ? " cold" : "");  // D398
         if (!subprogram_.empty()) out << " !dbg " << subprogram_;
         out << " {\nentry:\n" << allocas_.str() << body_.str() << "}\n\n";
         return out.str();
@@ -946,7 +957,7 @@ private:
         }
         std::string returned = byPointer(ret) ? "void" : llvmType(ret);
         if (function.isExported && ret.isBool()) returned = "zeroext " + returned;
-        return finishFunction(returned, symbolOf(function), params, function.isExported);
+        return finishFunction(returned, symbolOf(function), params, function.isExported, function.isCold);
     }
 
     void dropFieldsOf(const StructDecl& decl) {
@@ -2532,9 +2543,16 @@ private:
                 }
                 args += (i ? ", i64 " : "i64 ") + number;
             }
-            std::string fn = intrinsic("declare i64 @cromo_system_call(i64, i64, i64, i64, i64, i64, i64) nounwind",
-                                       "@cromo_system_call");
-            inst(result + " = call i64 " + fn + "(" + args + ")");
+            // The instruction itself, as the C library does: from -4095 to -1 the
+            // result is an error, -errno. Windows has no such function: linking fails.
+            if (options_.target == Target::Windows) {
+                std::string fn = intrinsic("declare i64 @cromo_system_call(i64, i64, i64, i64, i64, i64, i64) nounwind",
+                                           "@cromo_system_call");
+                inst(result + " = call i64 " + fn + "(" + args + ")");
+                return {result, i64};
+            }
+            inst(result + " = call i64 asm sideeffect \"syscall\", \"={rax},{rax},{rdi},{rsi},{rdx},{r10},{r8},{r9},"
+                          "~{rcx},~{r11},~{memory},~{dirflag},~{fpsr},~{flags}\"(" + args + ")");
             return {result, i64};
         }
         case Intrinsic::Environment: {
@@ -3025,6 +3043,10 @@ private:
             inst(result + " = " + (to.bits > from.bits ? "fpext " : "fptrunc ") + source + " to " + target);
         } else if (from.isFloat() && to.isInt()) {
             return floatToInt(value, to, loc);
+        } else if (from.kind == TypeKind::Addr && to.isInt()) {  // P13
+            inst(result + " = ptrtoint " + source + " to " + target);
+        } else if (from.isInt() && to.kind == TypeKind::Addr) {
+            inst(result + " = inttoptr " + source + " to " + target);
         } else {
             return value;
         }

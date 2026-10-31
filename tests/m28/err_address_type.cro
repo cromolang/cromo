@@ -1,0 +1,9 @@
+// An addr converts only to an integer of 64 bits, and back (P13).
+// expect-error: cannot convert addr to u32: an addr converts to i64 or u64, and back (P13)
+import unsafe
+
+i32 main() {
+    addr block = alloc(8)
+    u32 low = u32(block)
+    ret 0
+}

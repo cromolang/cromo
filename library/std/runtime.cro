@@ -1,7 +1,68 @@
 // The runtime written in Cromo (D393): the functions that the generated code and
-// the runtime in C call with their names of C (D395). Every program has it, through
-// the core; the programs cannot import it.
+// the runtime in C call with their names of C (D395). The build of cromo compiles
+// it once into the archive of the runtime; the programs cannot import it. What
+// each system does is in runtime_windows.cro and runtime_linux.cro.
 import unsafe
+
+extern "cromo" {
+    void cromo_out_of_memory()  // in the runtime in C, with the output: it does not return
+}
+
+// ---- The heap, for lists and strings (D98) ----
+//
+// Each system has heapAlloc, heapResize and heapFree, and the lock of the heap,
+// which Windows does not need and Linux takes only when the program has threads,
+// as glibc does.
+
+// The runtime in C says when the first thread starts, from the thread that starts
+// it, never inside an allocation.
+bool threaded
+
+[[export("cromo_heap_threaded")]]
+void heapThreaded() {
+    threaded = true
+}
+
+[[export("cromo_alloc")]]
+addr allocate(i64 size) {
+    if (size < 0) {
+        cromo_out_of_memory()
+    }
+    lockHeap()
+    addr memory = heapAlloc(u64(size))
+    unlockHeap()
+    if (memory == addr(0)) {
+        cromo_out_of_memory()
+    }
+    ret memory
+}
+
+[[export("cromo_realloc")]]
+addr reallocate(addr memory, i64 size) {
+    if (memory == addr(0)) {
+        ret allocate(size)
+    }
+    if (size < 0) {
+        cromo_out_of_memory()
+    }
+    lockHeap()
+    addr result = heapResize(memory, u64(size))
+    unlockHeap()
+    if (result == addr(0)) {
+        cromo_out_of_memory()
+    }
+    ret result
+}
+
+[[export("cromo_free")]]
+void release(addr memory) {
+    if (memory == addr(0)) {
+        ret
+    }
+    lockHeap()
+    heapFree(memory)
+    unlockHeap()
+}
 
 // ---- Hashes for the keys of a map (D198) ----
 

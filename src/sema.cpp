@@ -1436,6 +1436,7 @@ private:
         }
 
         for (FunctionDecl& function : module_.functions) {
+            readCold(function);
             if (function.attributes.empty()) continue;
             if (function.attributes[0].name == "export") {
                 readExport(function);
@@ -1508,12 +1509,37 @@ private:
         function.symbol = attribute.args[0].text;
     }
 
+    // `[[cold]]` (D398): a function that runs rarely, as the slow path of the heap.
+    // LLVM keeps it out of its callers and optimizes them for the other path. It
+    // goes with the other attributes, so it is taken out of the list here.
+    void readCold(FunctionDecl& function) {
+        std::vector<Attribute>& attributes = function.attributes;
+        for (auto it = attributes.begin(); it != attributes.end();) {
+            if (it->name != "cold") {
+                ++it;
+                continue;
+            }
+            if (!isUnsafe(function.loc)) {
+                diag_->error(it->loc, "[[cold]] is only for the modules with 'import unsafe' (D398)");
+            } else if (!it->args.empty()) {
+                diag_->error(it->loc, "[[cold]] takes no arguments (D398)");
+            } else if (function.isCold) {
+                diag_->error(it->loc, "the function '" + function.name + "' already has [[cold]] (D398)");
+            } else {
+                function.isCold = true;
+            }
+            it = attributes.erase(it);
+        }
+    }
+
     // `[[test]] void name()` (D349): what cromo test runs.
     void readTestAttribute(FunctionDecl& function) {
         for (const Attribute& attribute : function.attributes) {
             if (attribute.name != "test" || !attribute.args.empty()) {
                 diag_->error(attribute.loc, "unknown attribute '" + attribute.name + "': a function has only [[test]] (D349)" +
-                                                std::string(isUnsafe(function.loc) ? ", or [[export(\"name\")]] (D395)" : ""));
+                                                std::string(isUnsafe(function.loc)
+                                                                ? ", [[export(\"name\")]] (D395) or [[cold]] (D398)"
+                                                                : ""));
                 return;
             }
         }
@@ -4856,6 +4882,11 @@ private:
 
         if (!typed && !qualified) {
             if (std::optional<Type> target = findBuiltinType(call.callee)) return checkConversion(expr, *target);
+            if (call.callee == "addr" && !findDecl(&ModuleScope::structs, call.callee, call.loc)) {  // P13
+                if (isUnsafe(call.loc)) return checkConversion(expr, Type::addrType());
+                diag_->error(call.loc, "'addr' belongs to the unsafe dialect: the module must write 'import unsafe' (D127)");
+                return Type::error();
+            }
             if (isPrintFunction(call.callee)) return checkPrint(expr);
             if (call.callee == "panic") return checkIntrinsic(call, Intrinsic::Panic);
             if (call.callee == "assert") return checkAssert(call);
@@ -5160,15 +5191,25 @@ private:
         }
         ExprPtr operand = std::move(call.args[0]);
         Type type;
+        bool toAddress = target.kind == TypeKind::Addr;
         if (isUntypedLiteral(*operand)) {
             // A literal takes the target type directly (D55); a decimal literal
-            // converted to an integer first becomes an f64.
-            type = checkExpr(operand, target);
+            // converted to an integer first becomes an f64, and one converted to
+            // an address an i64.
+            type = checkExpr(operand, toAddress ? Type::intType(64, true) : target);
             if (type.kind == TypeKind::UntypedFloat) type = checkExpr(operand, Type::floatType(64));
         } else {
             type = checkExpr(operand, std::nullopt);
         }
         if (type.isError()) return type;
+        if (toAddress || type.kind == TypeKind::Addr) {  // P13: an address and an integer of 64 bits
+            Type number = toAddress ? type : target;
+            if (number.kind != TypeKind::Addr && !(number.isInt() && number.bits == 64)) {
+                diag_->error(call.loc, "cannot convert " + type.name() + " to " + target.name() +
+                                           ": an addr converts to i64 or u64, and back (P13)");
+                return Type::error();
+            }
+        }
         if (type.isStruct() && type.structDecl->isEnum && withoutData(*type.structDecl) && target.isInt()) {
             expr = std::make_unique<ConversionExpr>(call.loc, std::move(operand), target, true);  // the value of the case (D135)
             return target;
