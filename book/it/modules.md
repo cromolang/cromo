@@ -120,6 +120,7 @@ Il nucleo della libreria, con `list`, `map`, `string`, `format` ed `Exception`, 
 | `std.fs` | file e cartelle | 14 |
 | `std.os` | l'ambiente del processo | 14 |
 | `std.process` | eseguire altri programmi | 14 |
+| `std.zip`, `std.tar` | leggere gli archivi | 14 |
 | `std.time` | orologi, date, pause | 14 |
 | `std.thread` | thread, task, mutex, canali, atomici | 13 |
 | `std.net` | TCP, UDP, TLS | 15 |

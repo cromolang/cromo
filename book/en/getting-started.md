@@ -28,6 +28,8 @@ cromo 0.27.1 (LLVM 23.1.4)
 
 That is all. `cromo` contains the compiler and the linker: it needs no C compiler, no Visual Studio and no Windows SDK, and the programs it writes do not depend on the C runtime of the system.
 
+When a new version comes out, `cromo update` installs it next to the one you have, after checking its signature, and makes it the active one; `cromo update 0.27.1` goes back to an older one.
+
 > **Note:** the archive can also be installed by hand: download it from [cromolang.org](https://cromolang.org), unpack it anywhere and add its `bin` folder to the `PATH`. `cromo` finds the library in the `lib` folder next to `bin`.
 
 ## Hello, world!

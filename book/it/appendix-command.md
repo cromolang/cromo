@@ -17,6 +17,7 @@ Se non indichi un file, i comandi usano il `main.cro` della cartella corrente.
 | `cromo test [file.cro] [names]` | esegue le funzioni `[[test]]` del programma e dei suoi moduli; i nomi selezionano i test che li contengono |
 | `cromo fmt [--check] [files and folders \| -]` | formatta il codice, di default quello della cartella corrente e delle sue sottocartelle; `--check` si limita a elencare i file da formattare; `-` formatta lo standard input |
 | `cromo lsp` | il language server, per gli editor, su standard input e standard output |
+| `cromo update [version]` | installa l'ultima versione di Cromo, o quella indicata, anche più vecchia, e la rende attiva; le altre restano in `~/.cromo/versions` |
 | `cromo version` | stampa la versione di `cromo` e di LLVM |
 | `cromo help` | elenca i comandi |
 

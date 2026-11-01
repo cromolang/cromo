@@ -638,8 +638,9 @@ i32 main() {
 }
 ```
 
-- The core (`list`, `string`, `map`, `format`, `join`, the numbers from text) is visible everywhere; `std.fs`, `std.time`, `std.os`, `std.process`, `std.thread`, `std.net`, `std.crypto`, `std.json`, `std.jwt`, `std.http`, `std.gzip` and `std.websocket` are imported (D201). The functions of the first three are in D211.
+- The core (`list`, `string`, `map`, `format`, `join`, the numbers from text) is visible everywhere; `std.fs`, `std.time`, `std.os`, `std.process`, `std.thread`, `std.net`, `std.crypto`, `std.json`, `std.jwt`, `std.http`, `std.gzip`, `std.zip`, `std.tar` and `std.websocket` are imported (D201). The functions of the first three are in D211.
 - `std.fs` has also `isFile`, `isLink`, `size`, `modified` (the seconds from 1970), `rename`, `copy`, `createFolders` with the folders above, `removeAll`, which never follows a link, and the parts of a path: `joinPath`, `parent`, `fileName` and `extension`.
+- `fs.createLink(target, path)` makes a link to a folder, a symbolic link on Linux and a junction on Windows, which needs no administrator; `fs.readLink(path)` gives where it points, and `fs.makeExecutable(path)` lets a file run on Linux (P18).
 - Next to `fs.cro` a module can have `fs_windows.cro` and `fs_linux.cro`: only the file of the system the program is compiled for is used, and it shares the names of the module, also the private ones (D202). It holds for the library and for the programs.
 - In the modules with `import unsafe`, `s.cstring()` gives the address of a copy of the string ending with a zero, for the C functions, until the end of the statement (D204).
 
@@ -657,6 +658,20 @@ p.wait()
 ```
 
 - `process.run` waits for the end of the program and gives its exit code, its output and its errors; `process.start` gives a `Process` with `write`, `closeInput`, `read`, `readAll`, `wait` and `kill`, whose errors go where the ones of this program go (D307). A program is found in the folders of `PATH`. An exit code other than 0 is a value; a program that cannot start is an exception.
+
+```cromo
+import std.fs
+import std.gzip
+import std.tar
+import std.zip
+
+for (zip.Entry entry in zip.read(fs.readBytes("photos.zip"))) {
+    println("{}: {} bytes", entry.name, entry.data.len())
+}
+tar.extract(gzip.decompress(fs.readBytes("site.tar.gz")), "site")
+```
+
+- `zip.read` and `tar.read` give the entries of an archive, each with `name`, `folder`, `link`, `executable` and `data`; `zip.extract` and `tar.extract` write its files and folders in a folder, without the links, and refuse a name that would leave it, as `../x` (D404, P21). A zip can be stored, with deflate or Zip64; a tar ustar, of GNU or of pax.
 
 ## 18. Threads, tasks and channels (D214–D217, D269–D284, D326–D337)
 
@@ -887,7 +902,8 @@ User u = json.decode<User>(r.text())
 - `http.get(url)`, `http.post(url, body, type)` and `http.send(request)` open a connection for each request, with TLS for `https`, and follow the redirects (D254). A status of error is a response; an exception is a failure of the network.
 - `Request` and `Response` have `headers`, compared without case, `body`, `text()`, and `write`, `writeJson` and `writeBytes`, which also set the `Content-Type`.
 - `http.Client client` has `get`, `post` and `send`, and keeps up to 8 connections for each host, to use them for the next requests, also from several tasks; a kept connection that the server closed meanwhile is replaced, and the request goes again (D366, D372).
-- The client asks for gzip and decompresses the body by itself, when the request does not name an `Accept-Encoding` (D367, D373). `std.gzip` has `compress`, `decompress` and `decompressUpTo(data, limit)`, for data that come from the network.
+- The client asks for gzip and decompresses the body by itself, when the request does not name an `Accept-Encoding` (D367, D373). `std.gzip` has `compress`, `decompress` and `decompressUpTo(data, limit)`, for data that come from the network, and `inflate(data, limit)` and `crc32(data)` for deflate without gzip, as in a zip (P20).
+- A response is at most 16 MB, also once decompressed, unless `client.bodyLimit` says another (P19).
 
 ```cromo
 http.serve("0.0.0.0", 8080, [](ref http.Request req, ref http.Response res) {

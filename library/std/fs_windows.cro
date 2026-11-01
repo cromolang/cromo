@@ -18,6 +18,9 @@ extern "kernel32" {
     i64 FindFirstFileW(addr pattern, addr data)
     i32 FindNextFileW(i64 find, addr data)
     i32 FindClose(i64 find)
+    i32 DeviceIoControl(i64 device, u32 code, addr input, u32 inputSize, addr output, u32 outputSize, ref u32 done,
+        addr overlapped)
+    u32 GetFullPathNameW(addr name, u32 size, addr buffer, addr part)
     i32 MultiByteToWideChar(u32 page, u32 flags, addr text, i32 size, addr wide, i32 wideSize)
     i32 WideCharToMultiByte(u32 page, u32 flags, addr wide, i32 size, addr text, i32 textSize, addr fallback, addr used)
 }
@@ -222,6 +225,130 @@ public list<string> listFolder(string path) {
     FindClose(find)
     free(data)
     ret names
+}
+
+// A junction (D288): an empty folder with a reparse point that names the target as
+// \??\C:\path, as mklink /J writes it.
+public void createLink(string target, string path) {
+    addr none
+    if (!isFolder(target)) {
+        throw fileError("link to", target, "on Windows a link is a junction, to a folder")
+    }
+    string full = fullPath(target)
+    addr substitute = wide("\\??\\" + full)
+    addr print = wide(full)
+    i64 substituteSize = wideLength(substitute) * 2
+    i64 printSize = wideLength(print) * 2
+    i64 size = 16 + substituteSize + 2 + printSize + 2  // REPARSE_DATA_BUFFER of a mount point
+    addr data = alloc(size)
+    put<u32>(data, 0xA0000003)  // IO_REPARSE_TAG_MOUNT_POINT
+    put<u16>(offset(data, 4), u16(size - 8))
+    put<u16>(offset(data, 6), 0)
+    put<u16>(offset(data, 8), 0)
+    put<u16>(offset(data, 10), u16(substituteSize))
+    put<u16>(offset(data, 12), u16(substituteSize + 2))
+    put<u16>(offset(data, 14), u16(printSize))
+    for (i64 i = 0; i < substituteSize + 2; i++) {
+        put<u8>(offset(data, 16 + i), copyAt<u8>(offset(substitute, i)))
+    }
+    for (i64 i = 0; i < printSize + 2; i++) {
+        put<u8>(offset(data, 16 + substituteSize + 2 + i), copyAt<u8>(offset(print, i)))
+    }
+    free(print)
+    free(substitute)
+    try {
+        createFolder(path)
+    } catch (Exception e) {
+        free(data)
+        throw
+    }
+    addr name = wide(path)
+    i64 folder = CreateFileW(name, 0x40000000, 0, none, 3, 0x02200000, none)  // OPEN_REPARSE_POINT | BACKUP_SEMANTICS
+    free(name)
+    u32 code = GetLastError()
+    i32 done = 0
+    if (folder != -1) {
+        u32 returned = 0
+        done = DeviceIoControl(folder, 0x000900A4, data, u32(size), none, 0, ref returned, none)  // FSCTL_SET_REPARSE_POINT
+        code = GetLastError()
+        CloseHandle(folder)
+    }
+    free(data)
+    if (done == 0) {
+        remove(path)
+        throw failure("link", path, code)
+    }
+}
+
+// The target of a junction or of a symbolic link, without the \??\ of Windows.
+public string readLink(string path) {
+    addr none
+    addr name = wide(path)
+    i64 file = CreateFileW(name, 0, 7, none, 3, 0x02200000, none)  // OPEN_REPARSE_POINT | BACKUP_SEMANTICS
+    free(name)
+    if (file == -1) {
+        throw failure("read the link", path, GetLastError())
+    }
+    addr data = alloc(16384)  // MAXIMUM_REPARSE_DATA_BUFFER_SIZE
+    u32 returned = 0
+    i32 done = DeviceIoControl(file, 0x000900A8, none, 0, data, 16384, ref returned, none)  // FSCTL_GET_REPARSE_POINT
+    u32 code = GetLastError()
+    CloseHandle(file)
+    u32 tag = copyAt<u32>(data)
+    if (done == 0 || (tag != 0xA0000003 && tag != 0xA000000C)) {  // a mount point, a symbolic link
+        free(data)
+        if (done == 0 && code != 4390) {  // ERROR_NOT_A_REPARSE_POINT
+            throw failure("read the link", path, code)
+        }
+        throw fileError("read the link", path, "it is not a link")
+    }
+    i64 names = 16
+    if (tag == 0xA000000C) {
+        names = 20  // after the flags of a symbolic link
+    }
+    i64 at = i64(copyAt<u16>(offset(data, 8)))
+    i64 length = i64(copyAt<u16>(offset(data, 10)))
+    string target = narrow(offset(data, names + at), i32(length / 2))
+    free(data)
+    if (target.startsWith("\\??\\UNC\\")) {
+        ret "\\\\" + target.slice(8, target.len())
+    }
+    if (target.startsWith("\\??\\")) {
+        ret target.slice(4, target.len())
+    }
+    ret target
+}
+
+// Windows runs a file by its extension: there are no permissions to change.
+public void makeExecutable(string path) {
+    if (!isFile(path)) {
+        throw failure("make executable", path, 2)
+    }
+}
+
+// The absolute path, without a separator at the end unless it is the root, "C:\".
+string fullPath(string path) {
+    addr none
+    addr name = wide(path)
+    u32 size = GetFullPathNameW(name, 0, none, none)
+    addr buffer = alloc(i64(size) * 2)
+    u32 length = GetFullPathNameW(name, size, buffer, none)
+    free(name)
+    string full = narrow(buffer, i32(length))
+    free(buffer)
+    if (full.len() > 3 && isSeparator(full[full.len() - 1])) {
+        ret full.slice(0, full.len() - 1)
+    }
+    ret full
+}
+
+// The characters of a text in UTF-16, before its zero.
+i64 wideLength(addr text) {
+    i64 n = 0
+    for (copyAt<u16>(offset(text, n * 2)) != 0) {
+        n++
+    }
+    ret n
 }
 
 u32 attributes(string path) {

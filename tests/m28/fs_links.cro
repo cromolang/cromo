@@ -1,0 +1,69 @@
+// fs.createLink, fs.readLink and fs.makeExecutable (P18): a link to a folder, a
+// symbolic link on Linux and a junction on Windows (D288), read through, read back
+// and removed without what it points to.
+// program-env: OUT={dir}/../out/fs_links
+// expect-output: a link: true, a folder: true
+// expect-output: it points to target: true
+// expect-output: through the link: file.txt
+// expect-output: twice: it exists already
+// expect-output: not a link: it is not a link
+// expect-output: after the removal: target true, link false
+// expect-output: executable: true
+// expect-output: missing: no such file or folder
+import std.fs
+import std.os
+
+bool says(string text, string part) {
+    ret text.contains(part)
+}
+
+i32 main() {
+    string out = os.env("OUT")
+    fs.removeAll(out)
+    string target = fs.joinPath(out, "target")
+    string link = fs.joinPath(out, "link")
+    fs.createFolders(target)
+    fs.writeText(fs.joinPath(target, "file.txt"), "in the target\n")
+    fs.createLink(target, link)
+    println("a link: {}, a folder: {}", fs.isLink(link), fs.isFolder(link))
+    println("it points to target: {}", fs.fileName(fs.readLink(link)) == "target")
+    for (string name in fs.listFolder(link)) {
+        println("through the link: {}", name)
+    }
+    try {
+        fs.createLink(target, link)
+    } catch (Error e) {
+        if (says(e.message(), "it exists already")) {
+            println("twice: it exists already")
+        } else {
+            println("twice: {}", e.message())
+        }
+    }
+    try {
+        fs.readLink(target)
+    } catch (Error e) {
+        if (says(e.message(), "it is not a link")) {
+            println("not a link: it is not a link")
+        } else {
+            println("not a link: {}", e.message())
+        }
+    }
+    fs.remove(link)
+    println("after the removal: target {}, link {}", fs.isFile(fs.joinPath(target, "file.txt")), fs.isLink(link))
+
+    string script = fs.joinPath(out, "script")
+    fs.writeText(script, "#!/bin/sh\n")
+    fs.makeExecutable(script)
+    println("executable: {}", fs.isFile(script))
+    try {
+        fs.makeExecutable(fs.joinPath(out, "missing"))
+    } catch (Error e) {
+        if (says(e.message(), "no such file or folder")) {
+            println("missing: no such file or folder")
+        } else {
+            println("missing: {}", e.message())
+        }
+    }
+    fs.removeAll(out)
+    ret 0
+}

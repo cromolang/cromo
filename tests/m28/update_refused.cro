@@ -1,0 +1,66 @@
+// cromo update refuses what the key of Cromo has not signed (D286, D403): a server
+// of this test plays the site, with a signature of zeros for the latest version and
+// none for 1.2.3, and nothing is installed in the home that the test gives to
+// cromo. On Windows only: the cromo of the tests is the one of Windows.
+// target: windows
+// program-env: CROMO={cromo}
+// program-env: CROMO_SITE=http://127.0.0.1:{port}
+// program-env: PORT={port}
+// program-env: USERPROFILE={dir}/../out/update_home
+// expect-output: latest: 1, the signature is not valid
+// expect-output: 1.2.3: 1, no signature
+// expect-output: 9.9.9: 1, no such version
+// expect-output: x: 1, not a version
+// expect-output: two versions: 2, at most one
+// expect-output: installed: false, active: false
+import std.fs
+import std.http
+import std.os
+import std.process
+import std.thread
+
+string manifest(string version) {
+    ret "{\"version\": \"" + version + "\", \"archive\": {}}\n"
+}
+
+// The exit code of cromo update, and whether its errors say `part`.
+void check(string label, list<string> args, string part, string meaning) {
+    process.Output result = process.run(os.env("CROMO"), args)
+    if (result.err.contains(part)) {
+        println("{}: {}, {}", label, result.code, meaning)
+    } else {
+        println("{}: {}, {}", label, result.code, result.err.trim())
+    }
+}
+
+i32 main() {
+    string home = os.env("USERPROFILE")
+    fs.removeAll(home)
+    fs.createFolders(home)
+    http.Server server = http.listen("127.0.0.1", i32(os.env("PORT")))
+    thread.Thread t = thread.Thread([server]() {
+        server.serve([](ref http.Request req, ref http.Response res) {
+            if (req.path == "/latest") {
+                res.write(manifest("0.99.0"))
+            } else if (req.path == "/latest.sig") {
+                res.write("00".repeat(64) + "\n")
+            } else if (req.path == "/release/1.2.3") {
+                res.write(manifest("1.2.3"))
+            } else {
+                res.status = 404
+            }
+        })
+    })
+    t.start()
+
+    check("latest", ["update"], "is not valid: the version is refused", "the signature is not valid")
+    check("1.2.3", ["update", "1.2.3"], "has no signature", "no signature")
+    check("9.9.9", ["update", "9.9.9"], "there is no version 9.9.9", "no such version")
+    check("x", ["update", "x"], "'x' is not a version", "not a version")
+    check("two versions", ["update", "1.0.0", "2.0.0"], "takes at most a version", "at most one")
+    string root = fs.joinPath(home, ".cromo")
+    println("installed: {}, active: {}", fs.exists(fs.joinPath(root, "versions")), fs.isLink(fs.joinPath(root, "current")))
+    fs.removeAll(home)
+    os.exit(0)
+    ret 0
+}

@@ -210,6 +210,40 @@ public list<string> listFolder(string path) {
     ret names
 }
 
+public void createLink(string target, string path) {
+    i64 status = systemCall(88, target.cstring(), path.cstring(), 0, 0, 0, 0)  // symlink
+    if (status < 0) {
+        throw failure("link", path, status)
+    }
+}
+
+public string readLink(string path) {
+    addr buffer = alloc(4096)
+    i64 length = systemCall(89, path.cstring(), buffer, 4096, 0, 0, 0)  // readlink
+    if (length < 0) {
+        free(buffer)
+        if (length == -22) {  // EINVAL
+            throw fileError("read the link", path, "it is not a link")
+        }
+        throw failure("read the link", path, length)
+    }
+    string target = string(buffer, length)
+    free(buffer)
+    ret target
+}
+
+// x for those who can read the file, as chmod +x with the usual umask.
+public void makeExecutable(string path) {
+    i64 bits = mode(path)
+    if (bits < 0) {
+        throw failure("make executable", path, bits)
+    }
+    i64 status = systemCall(90, path.cstring(), bits & 0xFFF | (bits & 0x124) >> 2, 0, 0, 0, 0)  // chmod, 0444 >> 2
+    if (status < 0) {
+        throw failure("make executable", path, status)
+    }
+}
+
 // The st_mode of the file, or -errno.
 i64 mode(string path) {
     addr info = alloc(144)

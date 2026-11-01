@@ -1,0 +1,87 @@
+// std.zip (D404, P21): an archive made by the zipfile of Python, with a folder, a
+// file with deflate, a file stored with the permissions 0755, an empty file and a
+// symbolic link; one with the records of Zip64; and the archives that are refused.
+// program-env: OUT={dir}/../out/zip_test
+// expect-output: dir: folder
+// expect-output: hello.txt: 240 bytes, hello, zip! hello, zip!
+// expect-output: dir/run.sh: 19 bytes, executable
+// expect-output: empty.txt: 0 bytes
+// expect-output: link: link to hello.txt
+// expect-output: extracted: hello.txt true, dir/run.sh true, empty.txt true, link false
+// expect-output: big.txt: 10 bytes, zip64 data
+// expect-output: cannot extract the zip: the name '../evil.txt' would leave the folder
+// expect-output: evil.txt outside: false
+// expect-output: cannot read the zip: dir/run.sh is damaged, its check does not match
+// expect-output: cannot read the zip: the data are not a zip
+import std.crypto
+import std.fs
+import std.os
+import std.zip
+
+void show(zip.Entry entry) {
+    if (entry.folder) {
+        println("{}: folder", entry.name)
+    } else if (entry.link.len() > 0) {
+        println("{}: link to {}", entry.name, entry.link)
+    } else if (entry.executable) {
+        println("{}: {} bytes, executable", entry.name, entry.data.len())
+    } else if (entry.data.len() > 0) {
+        string text = string(entry.data.copy())
+        if (text.len() > 23) {
+            text = text.slice(0, 23)
+        }
+        println("{}: {} bytes, {}", entry.name, entry.data.len(), text)
+    } else {
+        println("{}: 0 bytes", entry.name)
+    }
+}
+
+void tryRead(list<u8> archive) {
+    try {
+        zip.read(archive)
+        println("read")
+    } catch (Error e) {
+        println("{}", e.message())
+    }
+}
+
+i32 main() {
+    string out = os.env("OUT")
+    fs.removeAll(out)
+    for (zip.Entry entry in zip.read(crypto.fromHex(zipBasic()))) {
+        show(entry)
+    }
+    zip.extract(crypto.fromHex(zipBasic()), out)
+    println("extracted: hello.txt {}, dir/run.sh {}, empty.txt {}, link {}",
+        fs.readText(fs.joinPath(out, "hello.txt")).startsWith("hello, zip!"), fs.isFile(fs.joinPath(out, "dir/run.sh")),
+        fs.isFile(fs.joinPath(out, "empty.txt")), fs.exists(fs.joinPath(out, "link")))
+    for (zip.Entry entry in zip.read(crypto.fromHex(zip64()))) {
+        show(entry)
+    }
+    try {
+        zip.extract(crypto.fromHex(zipEvil()), fs.joinPath(out, "inner"))
+    } catch (Error e) {
+        println("{}", e.message())
+    }
+    println("evil.txt outside: {}", fs.exists(fs.joinPath(out, "evil.txt")))
+    tryRead(crypto.fromHex(zipDamaged()))
+    tryRead("this is not a zip, nor anything else".bytes())
+    fs.removeAll(out)
+    ret 0
+}
+
+string zipBasic() {
+    ret "504b030414000000000000002100000000000000000000000000040000006469722f504b030414000000080000002100b79e0c5c11000000f00000000900000068656c6c6f2e747874cb48cdc9c9d751a8ca2c5054c818016c00504b03041400000000000000210010a9c9a913000000130000000a0000006469722f72756e2e736823212f62696e2f73680a6563686f2072616e0a504b03041400000008000000210000000000020000000000000009000000656d7074792e7478740300504b030414000000000000002100bbce60120900000009000000040000006c696e6b68656c6c6f2e747874504b01021400140000000000000021000000000000000000000000000400000000000000000000008001000000006469722f504b0102140314000000080000002100b79e0c5c11000000f0000000090000000000000000000000a4812200000068656c6c6f2e747874504b010214031400000000000000210010a9c9a913000000130000000a0000000000000000000000ed815a0000006469722f72756e2e7368504b0102140014000000080000002100000000000200000000000000090000000000000000000000800195000000656d7074792e747874504b0102140314000000000000002100bbce60120900000009000000040000000000000000000000ffa1be0000006c696e6b504b050600000000050005000a010000e90000000000"
+}
+
+string zip64() {
+    ret "504b03042d000000000000000000e00d5f47ffffffffffffffff070014006269672e747874010010000a000000000000000a000000000000007a697036342064617461504b01022d002d000000000000000000e00d5f47ffffffffffffffff07001c0000000000000000000000ffffffff6269672e747874010018000a000000000000000a000000000000000000000000000000504b06062c000000000000002d002d0000000000000000000100000000000000010000000000000051000000000000004300000000000000504b060700000000940000000000000001000000504b050600000000ffffffffffffffffffffffff0000"
+}
+
+string zipEvil() {
+    ret "504b0304140000000000aa4e615d996deab903000000030000000b0000002e2e2f6576696c2e7478746f7574504b01021400140000000000aa4e615d996deab903000000030000000b00000000000000000000008001000000002e2e2f6576696c2e747874504b05060000000001000100390000002c0000000000"
+}
+
+string zipDamaged() {
+    ret "504b030414000000000000002100000000000000000000000000040000006469722f504b030414000000080000002100b79e0c5c11000000f00000000900000068656c6c6f2e747874cb48cdc9c9d751a8ca2c5054c818016c00504b03041400000000000000210010a9c9a913000000130000000a0000006469722f72756e2e736822212f62696e2f73680a6563686f2072616e0a504b03041400000008000000210000000000020000000000000009000000656d7074792e7478740300504b030414000000000000002100bbce60120900000009000000040000006c696e6b68656c6c6f2e747874504b01021400140000000000000021000000000000000000000000000400000000000000000000008001000000006469722f504b0102140314000000080000002100b79e0c5c11000000f0000000090000000000000000000000a4812200000068656c6c6f2e747874504b010214031400000000000000210010a9c9a913000000130000000a0000000000000000000000ed815a0000006469722f72756e2e7368504b0102140014000000080000002100000000000200000000000000090000000000000000000000800195000000656d7074792e747874504b0102140314000000000000002100bbce60120900000009000000040000000000000000000000ffa1be0000006c696e6b504b050600000000050005000a010000e90000000000"
+}

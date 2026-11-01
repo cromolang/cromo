@@ -120,6 +120,7 @@ The core of the library, with `list`, `map`, `string`, `format` and `Exception`,
 | `std.fs` | files and folders | 14 |
 | `std.os` | the environment of the process | 14 |
 | `std.process` | running other programs | 14 |
+| `std.zip`, `std.tar` | reading archives | 14 |
 | `std.time` | clocks, dates, pauses | 14 |
 | `std.thread` | threads, tasks, mutexes, channels, atomics | 13 |
 | `std.net` | TCP, UDP, TLS | 15 |

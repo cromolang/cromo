@@ -12,6 +12,13 @@
 //   list<string> listFolder(string path)  the names in the folder, in no order
 //   void rename(string from, string to)   replaces `to` if it is a file
 //   void copy(string from, string to)     a file, over `to` if it exists
+//   void createLink(string target, string path)  `path` becomes a link to `target`
+//                                      (P18): a symbolic link, or on Windows a
+//                                      junction, only to a folder, which needs no
+//                                      administrator and keeps the absolute path
+//   string readLink(string path)       where a link points
+//   void makeExecutable(string path)   on Linux, the x of chmod for those who can
+//                                      read the file; on Windows nothing to do
 //   bool isSeparator(u8 c)             / and, on Windows, \
 //   string separator()
 import unsafe

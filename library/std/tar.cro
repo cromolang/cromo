@@ -1,0 +1,265 @@
+// The module std.tar (D404): reads the archives of tar, the ustar of POSIX with the
+// long names of GNU and of pax, as GNU tar, bsdtar and the forges make them. A
+// .tar.gz is tar.read(gzip.decompress(bytes)). It does not write them.
+import std.fs
+
+// A file, a folder or a symbolic link of an archive (P21). A hard link becomes a
+// copy of its file; the devices and the pipes are left out.
+public struct Entry {
+    public string name  // with '/', as in the archive, without one at the end: "bin/cromo"
+    public bool folder
+    public string link      // the target of a symbolic link, "" for the others
+    public bool executable  // by its permissions
+    public list<u8> data
+}
+
+// The entries of an archive, in its order, up to the first block of zeros. Throws
+// when the data are not a tar, or are damaged: the check of each header is checked.
+public list<Entry> read(list<u8> archive) {
+    list<Entry> entries
+    string longName  // of the next entry, from an entry of GNU or of pax
+    string longLink
+    i64 longSize = -1
+    i64 at = 0
+    for (at < archive.len()) {
+        i64 header = at
+        bool whole = header + 512 <= archive.len()
+        if (whole && empty(archive, header)) {
+            break
+        }
+        if (!whole || sum(archive, header) != octal(archive, header + 148, 8)) {
+            if (header == 0) {
+                throw Error("cannot read the tar: the data are not a tar")
+            }
+            throw damaged()
+        }
+        u8 kind = archive[header + 156]
+        i64 size = number(archive, header + 124, 12)
+        if (longSize >= 0) {
+            size = longSize
+            longSize = -1
+        }
+        i64 start = header + 512
+        if (size < 0 || start + size > archive.len()) {
+            throw damaged()
+        }
+        at = start + (size + 511) / 512 * 512
+        if (kind == 'L' || kind == 'K') {  // a long name of GNU, for the next entry
+            string value = field(archive, start, size)
+            if (kind == 'L') {
+                longName = move value
+            } else {
+                longLink = move value
+            }
+            continue
+        }
+        if (kind == 'x' || kind == 'g') {  // pax: the records of the next entry, or of all
+            for (Record record in records(archive, start, size)) {
+                if (kind == 'g') {
+                    continue
+                }
+                if (record.key == "path") {
+                    longName = record.value.copy()
+                } else if (record.key == "linkpath") {
+                    longLink = record.value.copy()
+                } else if (record.key == "size") {
+                    longSize = i64(record.value)
+                }
+            }
+            continue
+        }
+        Entry entry
+        entry.name = field(archive, header, 100)
+        bool posix = field(archive, header + 257, 6) == "ustar"  // not the "ustar  " of the old GNU
+        if (posix && archive[header + 345] != 0) {
+            entry.name = field(archive, header + 345, 155) + "/" + entry.name
+        }
+        string linkName = field(archive, header + 157, 100)
+        if (longName.len() > 0) {
+            entry.name = move longName
+            longName = ""
+        }
+        if (longLink.len() > 0) {
+            linkName = move longLink
+            longLink = ""
+        }
+        entry.name = clean(entry.name)
+        if (entry.name.len() == 0 || entry.name == ".") {
+            continue  // the folder of the archive itself
+        }
+        i64 mode = octal(archive, header + 100, 8)
+        if (kind == '5') {
+            entry.folder = true
+        } else if (kind == '2') {
+            entry.link = move linkName
+        } else if (kind == '1') {
+            linkName = clean(linkName)
+            bool found = false
+            for (i64 i = entries.len() - 1; i >= 0 && !found; i--) {
+                if (entries[i].name == linkName && !entries[i].folder) {
+                    entry.data = entries[i].data.copy()
+                    found = true
+                }
+            }
+            if (!found) {
+                throw Error(format("cannot read the tar: {} is a link to {}, which comes not before it", entry.name, linkName))
+            }
+            entry.executable = (mode & 0x49) != 0  // 0111
+        } else if (kind == '0' || kind == 0 || kind == '7') {
+            entry.data = part(archive, start, start + size)
+            entry.executable = (mode & 0x49) != 0
+        } else {
+            continue  // a device, a pipe, or a kind not known
+        }
+        entries.add(move entry)
+    }
+    ret entries
+}
+
+// Writes the files and the folders of the archive in `folder`, created if it is
+// missing (P21). The links are left out, as they could point outside the folder,
+// and a name that would leave it, as "../x" or "/x", stops the extraction.
+public void extract(list<u8> archive, string folder) {
+    list<Entry> entries = read(archive)
+    fs.createFolders(folder)
+    for (Entry entry in entries) {
+        string path = place(folder, entry.name)
+        if (entry.folder) {
+            fs.createFolders(path)
+        } else if (entry.link.len() == 0) {
+            fs.createFolders(fs.parent(path))
+            fs.writeBytes(path, entry.data)
+            if (entry.executable) {
+                fs.makeExecutable(path)
+            }
+        }
+    }
+}
+
+// The path of an entry in the folder, refused when it would leave the folder.
+string place(string folder, string name) {
+    bool outside = name[0] == '/' || name.contains("\\") || name.contains(":")
+    for (string piece in name.split("/")) {
+        outside = outside || piece == ".."
+    }
+    if (outside) {
+        throw Error(format("cannot extract the tar: the name '{}' would leave the folder", name))
+    }
+    ret fs.joinPath(folder, name)
+}
+
+// A name without "./" at the start and "/" at the end.
+string clean(string name) {
+    string result = name.copy()
+    if (result.startsWith("./")) {
+        result = result.slice(2, result.len())
+    }
+    if (result.endsWith("/")) {
+        result = result.slice(0, result.len() - 1)
+    }
+    ret result
+}
+
+// A record of pax: "30 path=a/very/long/name\n".
+struct Record {
+    string key
+    string value
+}
+
+list<Record> records(list<u8> archive, i64 start, i64 size) {
+    list<Record> found
+    i64 at = start
+    i64 end = start + size
+    for (at < end && archive[at] != 0) {
+        i64 length = 0
+        i64 i = at
+        for (i < end && archive[i] >= '0' && archive[i] <= '9') {
+            length = length * 10 + i64(archive[i] - '0')
+            i++
+        }
+        if (i >= end || archive[i] != ' ' || length <= i - at || at + length > end) {
+            throw damaged()
+        }
+        string record = string(part(archive, i + 1, at + length - 1))  // without the '\n'
+        i64 equals = record.find("=")
+        if (equals > 0) {
+            Record item
+            item.key = record.slice(0, equals)
+            item.value = record.slice(equals + 1, record.len())
+            found.add(move item)
+        }
+        at += length
+    }
+    ret found
+}
+
+Error damaged() {
+    ret Error("cannot read the tar: the archive is damaged or cut")
+}
+
+// A block of 512 zeros: the end of the archive.
+bool empty(list<u8> archive, i64 at) {
+    for (i64 i = at; i < at + 512; i++) {
+        if (archive[i] != 0) {
+            ret false
+        }
+    }
+    ret true
+}
+
+// The check of a header: the sum of its bytes, with the field of the check as spaces.
+i64 sum(list<u8> archive, i64 at) {
+    i64 total = 0
+    for (i64 i = 0; i < 512; i++) {
+        if (i >= 148 && i < 156) {
+            total += 32
+        } else {
+            total += i64(archive[at + i])
+        }
+    }
+    ret total
+}
+
+// A number of the header: in octal, or in base 256 when the first bit is set, as GNU
+// writes the sizes above 8 GB.
+i64 number(list<u8> archive, i64 at, i64 count) {
+    if ((archive[at] & 0x80) != 0) {
+        i64 value = i64(archive[at] & 0x7F)
+        for (i64 i = 1; i < count; i++) {
+            value = value << 8 | i64(archive[at + i])
+        }
+        ret value
+    }
+    ret octal(archive, at, count)
+}
+
+i64 octal(list<u8> archive, i64 at, i64 count) {
+    i64 value = 0
+    i64 i = at
+    for (i < at + count && archive[i] == ' ') {
+        i++
+    }
+    for (i < at + count && archive[i] >= '0' && archive[i] <= '7') {
+        value = value * 8 + i64(archive[i] - '0')
+        i++
+    }
+    ret value
+}
+
+// A text of the header, up to its first zero.
+string field(list<u8> archive, i64 at, i64 count) {
+    i64 end = at
+    for (end < at + count && archive[end] != 0) {
+        end++
+    }
+    ret string(part(archive, at, end))
+}
+
+list<u8> part(list<u8> data, i64 from, i64 to) {
+    list<u8> bytes
+    bytes.reserve(to - from)
+    for (i64 i = from; i < to; i++) {
+        bytes.add(data[i])
+    }
+    ret bytes
+}

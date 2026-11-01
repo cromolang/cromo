@@ -1,0 +1,29 @@
+// fs.makeExecutable on Linux (P18): a script written with the permissions 0644
+// cannot run, and runs after it; in /tmp, since the files of /mnt/c of WSL can all
+// be run.
+// target: linux
+// program-env: OUT=/tmp/cromo-fs-executable
+// expect-output: before: refused
+// expect-output: after: ran
+import std.fs
+import std.os
+import std.process
+
+i32 main() {
+    string out = os.env("OUT")
+    fs.removeAll(out)
+    fs.createFolders(out)
+    string script = fs.joinPath(out, "script")
+    fs.writeText(script, "#!/bin/sh\necho ran\n")
+    list<string> none
+    try {
+        process.run(script, none)
+        println("before: ran")
+    } catch (Error e) {
+        println("before: refused")
+    }
+    fs.makeExecutable(script)
+    println("after: {}", process.run(script, none).out.trim())
+    fs.removeAll(out)
+    ret 0
+}

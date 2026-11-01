@@ -114,6 +114,29 @@ Il programma viene cercato nelle cartelle del `PATH`, e gli argomenti vengono pa
 
 `process.start` avvia un programma senza attenderlo, e restituisce un `process.Process` con cui comunicare: `write` e `closeInput` per il suo standard input, `read` e `readAll` per il suo output, `wait` per attenderne la fine e `kill` per fermarlo.
 
+## Archivi
+
+`std.zip` e `std.tar` leggono gli archivi, e con `std.gzip` i `.tar.gz`:
+
+```cromo norun
+import std.fs
+import std.gzip
+import std.tar
+import std.zip
+
+i32 main() {
+    for (zip.Entry entry in zip.read(fs.readBytes("photos.zip"))) {
+        println("{}: {} bytes", entry.name, entry.data.len())
+    }
+    tar.extract(gzip.decompress(fs.readBytes("site.tar.gz")), "site")
+    ret 0
+}
+```
+
+- `zip.read` e `tar.read` restituiscono le voci di un archivio, ciascuna con `name`, `folder`, `link`, `executable` e `data`.
+- `zip.extract` e `tar.extract` scrivono i file e le cartelle di un archivio in una cartella, creata se manca. Tralasciano i link, e si fermano davanti a un nome che uscirebbe dalla cartella, come `../x`: un archivio che arriva dalla rete non può scrivere altrove.
+- Leggono i file zip di Windows, di macOS e delle forge, anche oltre i 4 GB, e i file tar di GNU e di POSIX; non scrivono archivi.
+
 ## Il tempo
 
 ```cromo
@@ -145,4 +168,5 @@ the year has four digits: true
 - `std.fs` legge e scrive file e cartelle; gli errori sono eccezioni con un messaggio chiaro.
 - `std.os` fornisce l'ambiente; gli argomenti arrivano in `main(list<string> args)`.
 - `std.process` esegue altri programmi, senza passare da una shell.
+- `std.zip` e `std.tar` leggono ed estraggono gli archivi.
 - `std.time` misura le durate e fornisce la data e l'ora.

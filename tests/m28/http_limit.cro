@@ -1,0 +1,42 @@
+// http.Client.bodyLimit (P19): a response of 17 MB is refused by a client with the
+// limit of 16 MB, which it has unless the program says another, and read by a
+// client with a larger limit.
+// expect-output: default: the body is larger than 16777216 bytes
+// expect-output: larger limit: 200, 17825792 bytes
+import std.http
+import std.os
+import std.thread
+
+i32 main() {
+    list<u8> big
+    big.reserve(17825792)
+    for (i64 i = 0; i < 17825792; i++) {
+        big.add(u8(i % 251))
+    }
+    http.Server server = http.listen("127.0.0.1", 0)
+    string address = format("http://127.0.0.1:{}/big", server.port())
+    thread.Thread t = thread.Thread([server, big]() {
+        server.serve([big](ref http.Request req, ref http.Response res) {
+            res.writeBytes(big.copy(), "application/octet-stream")
+        })
+    })
+    t.start()
+
+    http.Client standard
+    try {
+        standard.get(address)
+        println("default: read")
+    } catch (Error e) {
+        if (e.message().contains("the body is larger than 16777216 bytes")) {
+            println("default: the body is larger than 16777216 bytes")
+        } else {
+            println("default: {}", e.message())
+        }
+    }
+    http.Client large
+    large.bodyLimit = 33554432
+    http.Response res = large.get(address)
+    println("larger limit: {}, {} bytes", res.status, res.body.len())
+    os.exit(0)
+    ret 0
+}

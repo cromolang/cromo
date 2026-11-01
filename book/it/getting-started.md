@@ -28,6 +28,8 @@ cromo 0.27.1 (LLVM 23.1.4)
 
 Tutto qui. `cromo` contiene il compilatore e il linker: non ha bisogno di un compilatore C, di Visual Studio né del Windows SDK, e i programmi che produce non dipendono dal runtime C del sistema.
 
+Quando esce una nuova versione, `cromo update` la installa accanto a quella che hai, dopo averne verificato la firma, e la rende attiva; `cromo update 0.27.1` torna a una versione precedente.
+
 > **Nota:** l'archivio si può installare anche a mano: scaricalo da [cromolang.org](https://cromolang.org), estrailo dove preferisci e aggiungi la sua cartella `bin` al `PATH`. `cromo` trova la libreria nella cartella `lib` accanto a `bin`.
 
 ## Hello, world!

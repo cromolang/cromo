@@ -55,6 +55,8 @@ void printUsage(FILE* out) {
         "  fmt        formats the .cro files, by default of this folder and its subfolders;\n"
         "             --check only lists the ones to format, - formats the standard input\n"
         "  lsp        the language server for editors, on the standard input and output\n"
+        "  update     installs the latest version of cromo and makes it the active one; with a\n"
+        "             version, as cromo update 0.28.0, that one, also an older one\n"
         "  version    prints the version of cromo and of LLVM\n"
         "  help       prints this text\n"
         "\n"
@@ -694,8 +696,21 @@ int main(int argc, char** argv) {
         return 0;
     }
     if (command == "update") {
-        std::fputs("cromo: update comes when the resource with the new versions exists (D153)\n", stderr);
-        return 2;
+        // D403: a program written in Cromo, in the library of this cromo, compiled
+        // and run as by cromo run, with the version asked (D289).
+        if (args.size() > 3) {
+            std::fputs("cromo: cromo update takes at most a version, as cromo update 0.28.0 (D289)\n", stderr);
+            return 2;
+        }
+        Compilation compilation;
+        compilation.inputPath = cromo::libraryFile("tools/update.cro").string();
+        compilation.options.outputPath = "update";
+#ifdef _WIN32
+        std::vector<std::wstring> programArgs(wide.begin() + 2, wide.end());
+#else
+        std::vector<std::string> programArgs(args.begin() + 2, args.end());
+#endif
+        return run(compilation, programArgs);
     }
     if (command == "fmt") return formatCommand(args);
     if (command == "lsp") return cromo::runLanguageServer();  // D170

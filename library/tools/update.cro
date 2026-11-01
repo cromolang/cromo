@@ -1,0 +1,306 @@
+// cromo update and cromo update <version> (D153, D239, D285-D289, D403): cromo
+// compiles this program with the library of the version in use, and runs it with
+// the version asked, if any. It reads the manifest of the version from the site,
+// checks its signature and then the SHA-256 of the archive, unpacks the archive in
+// ~/.cromo/versions/<version> and makes it the active version, the link
+// ~/.cromo/current; the old version stays (P22). CROMO_SITE names another site,
+// as for the scripts of the installation (D238).
+import std.crypto
+import std.fs
+import std.gzip
+import std.http
+import std.json
+import std.os
+import std.process
+import std.tar
+import std.zip
+
+// The public key of the versions of Cromo (D286, D300): the private one is never on
+// the site.
+string releaseKey() {
+    ret "45fc304d9ce6b0e33413ff1c9081e52b43f4546d88508203aeafd6a9074d0487"
+}
+
+// What the manifest of a version says for this system (D285).
+struct Release {
+    string version
+    string package
+    string sha256
+}
+
+i32 main(list<string> args) {
+    try {
+        string asked
+        if (args.len() > 1) {
+            asked = args[1].copy()
+            if (!isVersion(asked)) {
+                throw Error(format("'{}' is not a version, as 0.28.0", asked))
+            }
+        }
+        update(asked)
+    } catch (Exception e) {
+        eprintln("cromo update: {}", e.message())
+        ret 1
+    }
+    ret 0
+}
+
+void update(string asked) {
+    string root = fs.joinPath(home(), ".cromo")
+    string versions = fs.joinPath(root, "versions")
+    string current = fs.joinPath(root, "current")
+    string active = activeVersion(current)
+    if (asked.len() > 0 && asked == active) {
+        println("Cromo {} is already the active version.", active)
+        ret
+    }
+    string version = asked.copy()
+    string target = fs.joinPath(versions, asked)
+    if (asked.len() > 0 && installed(target)) {  // D289: it only becomes the active one
+        println("Cromo {} is already installed in {}.", asked, target)
+    } else {
+        Release release = readRelease(site(), asked)
+        if (asked.len() == 0) {
+            if (release.version == active) {
+                println("Cromo {} is the latest version, and the active one.", active)
+                ret
+            }
+            // A site can give an old manifest, signed when it was the latest one: going
+            // back is only for the version named (P22).
+            if (isVersion(active) && compareVersions(release.version, active) < 0) {
+                throw Error(format("the latest version is {}, older than the active one, {}: cromo update {} goes back to it",
+                    release.version, active, release.version))
+            }
+        }
+        version = release.version.copy()
+        target = fs.joinPath(versions, version)
+        if (installed(target)) {
+            println("Cromo {} is already installed in {}.", version, target)
+        } else {
+            install(release, target)
+        }
+    }
+    activate(target, current)
+    installExtension(target)
+    if (active.len() > 0) {
+        println("Cromo {} is the active version; {} stays in {}.", version, active, versions)
+    } else {
+        println("Cromo {} is the active version: add {} to the PATH.", version, fs.joinPath(current, "bin"))
+    }
+}
+
+// The manifest of the version asked, or of the latest one, with its signature
+// checked (D285, D286).
+Release readRelease(string base, string asked) {
+    string address = base + "/latest"
+    if (asked.len() > 0) {
+        address = base + "/release/" + asked
+    }
+    http.Client client
+    http.Response manifest = client.get(address)
+    if (manifest.status == 404 && asked.len() > 0) {
+        throw Error(format("there is no version {} on {}", asked, base))
+    }
+    if (manifest.status != 200) {
+        throw Error(format("cannot read {}: the status is {}", address, manifest.status))
+    }
+    http.Response signature = client.get(address + ".sig")
+    if (signature.status != 200) {
+        throw Error(format("{} has no signature: the version is refused (D286)", address))
+    }
+    if (!signed(manifest.body, signature.text())) {
+        throw Error(format("the signature of {} is not valid: the version is refused (D286)", address))
+    }
+    json.Value text = json.parse(manifest.text())
+    Release release
+    release.version = text.get("version").asText()
+    if (!isVersion(release.version) || (asked.len() > 0 && release.version != asked)) {
+        throw Error(format("{} is the manifest of the version '{}'", address, release.version))
+    }
+    string system = "linux_x86_64"
+    if (os.name() == "windows") {
+        system = "win_x86_64"
+    }
+    json.Value archives = text.get("archive")
+    if (!archives.has(system)) {
+        throw Error(format("Cromo {} has no archive for {}", release.version, system))
+    }
+    json.Value archive = archives.get(system)
+    release.package = archive.get("package").asText()
+    release.sha256 = archive.get("sha256").asText().lower()
+    ret release
+}
+
+bool signed(list<u8> manifest, string signature) {
+    try {
+        ret crypto.ed25519Verify(crypto.fromHex(releaseKey()), manifest, crypto.fromHex(signature.trim()))
+    } catch (Exception e) {
+        ret false  // a signature that is not hex
+    }
+}
+
+// Downloads the archive, checks its SHA-256 and unpacks it next to the target,
+// which it becomes only when it is complete.
+void install(Release release, string target) {
+    println("Downloading Cromo {}...", release.version)
+    http.Client client
+    client.bodyLimit = 1073741824
+    http.Request request = http.Request("GET", release.package)
+    request.headers.set("Accept-Encoding", "identity")  // the bytes that the manifest checks
+    http.Response archive = client.send(request)
+    if (archive.status != 200) {
+        throw Error(format("cannot download {}: the status is {}", release.package, archive.status))
+    }
+    string sum = crypto.hex(crypto.sha256(archive.body))
+    if (sum != release.sha256) {
+        throw Error(format("the archive {} is damaged: its SHA-256 is {} instead of {}", release.package, sum,
+            release.sha256))
+    }
+    string partial = target + ".partial"
+    fs.removeAll(partial)
+    if (os.name() == "windows") {
+        zip.extract(archive.body, partial)  // D287
+    } else {
+        tar.extract(gzip.decompress(archive.body), partial)
+    }
+    if (!installed(partial)) {
+        fs.removeAll(partial)
+        throw Error(format("the archive {} has no {}", release.package, executable()))
+    }
+    fs.rename(partial, target)
+}
+
+// Makes the link current point to the version (D288). On Linux the new link takes
+// the place of the old one in one step; a junction of Windows cannot, so there the
+// old one goes first.
+void activate(string target, string current) {
+    if (fs.exists(current) && !fs.isLink(current)) {
+        throw Error(format("{} is not a link: cromo update does not replace it", current))
+    }
+    string next = current + ".next"
+    fs.removeAll(next)
+    fs.createLink(target, next)
+    if (os.name() == "windows" && fs.isLink(current)) {
+        fs.remove(current)
+    }
+    fs.rename(next, current)
+}
+
+// The extension for VS Code of the version, as the installation does (D238), when
+// the command code is there.
+void installExtension(string target) {
+    string folder = fs.joinPath(target, "extension")
+    if (!fs.isFolder(folder)) {
+        ret
+    }
+    for (string name in fs.listFolder(folder)) {
+        string vsix = fs.joinPath(folder, name)
+        // cmd reads % and " also between quotes.
+        if (fs.extension(name) != ".vsix" || vsix.contains("%") || vsix.contains("\"")) {
+            continue
+        }
+        try {
+            if (code(["--install-extension", move vsix, "--force"]).code == 0) {
+                println("Installed the extension for Visual Studio Code.")
+            }
+        } catch (Exception e) {
+            // no Visual Studio Code
+        }
+        ret
+    }
+}
+
+// The command code of VS Code; on Windows it is the script code.cmd, which cmd runs.
+process.Output code(list<string> args) {
+    if (os.name() != "windows") {
+        ret process.run("code", args)
+    }
+    list<string> line = ["/d", "/c", "code"]
+    for (string arg in args) {
+        line.add(arg.copy())
+    }
+    ret process.run("cmd", line)
+}
+
+// The version that ~/.cromo/current points to, "" when there is none.
+string activeVersion(string current) {
+    if (!fs.isLink(current)) {
+        ret ""
+    }
+    ret fs.fileName(fs.readLink(current))
+}
+
+bool installed(string folder) {
+    ret fs.isFile(fs.joinPath(folder, executable()))
+}
+
+string executable() {
+    if (os.name() == "windows") {
+        ret fs.joinPath("bin", "cromo.exe")
+    }
+    ret fs.joinPath("bin", "cromo")
+}
+
+string home() {
+    string name = "HOME"
+    if (os.name() == "windows") {
+        name = "USERPROFILE"
+    }
+    string folder = os.env(name)
+    if (folder.len() == 0) {
+        throw Error(format("{} is not set: there is no ~/.cromo", name))
+    }
+    ret folder
+}
+
+string site() {
+    string address = os.env("CROMO_SITE")
+    if (address.len() == 0) {
+        ret "https://cromolang.org"
+    }
+    for (address.endsWith("/")) {
+        address = address.slice(0, address.len() - 1)
+    }
+    ret address
+}
+
+// A version as 0.28.0: numbers between points.
+bool isVersion(string text) {
+    if (text.len() == 0 || text.len() > 32) {
+        ret false
+    }
+    for (string piece in text.split(".")) {
+        if (piece.len() == 0) {
+            ret false
+        }
+        for (i64 i = 0; i < piece.len(); i++) {
+            if (piece[i] < '0' || piece[i] > '9') {
+                ret false
+            }
+        }
+    }
+    ret true
+}
+
+// Below 0 when a is older than b, by its numbers in order.
+i32 compareVersions(string a, string b) {
+    list<string> first = a.split(".")
+    list<string> second = b.split(".")
+    for (i64 i = 0; i < first.len() || i < second.len(); i++) {
+        i64 x = 0
+        i64 y = 0
+        if (i < first.len()) {
+            x = i64(first[i])
+        }
+        if (i < second.len()) {
+            y = i64(second[i])
+        }
+        if (x != y) {
+            if (x < y) {
+                ret -1
+            }
+            ret 1
+        }
+    }
+    ret 0
+}

@@ -455,18 +455,18 @@ i32 readRequest(ref net.Connection connection, ref Incoming input, ref Request r
         connection.writeText("HTTP/1.1 100 Continue\r\n\r\n")
     }
     try {
-        req.body = readBody(ref connection, ref input, req.headers, false)
+        req.body = readBody(ref connection, ref input, req.headers, false, maxBody())
     } catch (TooLarge e) {
         ret 413
     }
     ret 0
 }
 
-// The body of a message, by its Content-Length or in chunks; with `untilEnd`, a
-// response without either goes on until the connection ends.
-list<u8> readBody(ref net.Connection connection, ref Incoming input, Headers headers, bool untilEnd) {
+// The body of a message, by its Content-Length or in chunks, at most `limit` bytes;
+// with `untilEnd`, a response without either goes on until the connection ends.
+list<u8> readBody(ref net.Connection connection, ref Incoming input, Headers headers, bool untilEnd, i64 limit) {
     if (sameName(headers.get("transfer-encoding"), "chunked")) {
-        ret readChunks(ref connection, ref input)
+        ret readChunks(ref connection, ref input, limit)
     }
     if (headers.has("content-length")) {
         i64 length = -1
@@ -477,8 +477,8 @@ list<u8> readBody(ref net.Connection connection, ref Incoming input, Headers hea
         if (length < 0) {
             throw Error("the Content-Length of the message is not a number")
         }
-        if (length > maxBody()) {
-            throw TooLarge()
+        if (length > limit) {
+            throw tooLarge(limit)
         }
         input.fill(ref connection, length)
         ret input.take(length)
@@ -486,8 +486,8 @@ list<u8> readBody(ref net.Connection connection, ref Incoming input, Headers hea
     list<u8> body
     if (untilEnd) {
         for (input.more(ref connection)) {
-            if (input.available() > maxBody()) {
-                throw TooLarge()
+            if (input.available() > limit) {
+                throw tooLarge(limit)
             }
         }
         body = input.take(input.available())
@@ -495,7 +495,7 @@ list<u8> readBody(ref net.Connection connection, ref Incoming input, Headers hea
     ret body
 }
 
-list<u8> readChunks(ref net.Connection connection, ref Incoming input) {
+list<u8> readChunks(ref net.Connection connection, ref Incoming input, i64 limit) {
     list<u8> body
     for {
         string line = input.line(ref connection)
@@ -509,8 +509,8 @@ list<u8> readChunks(ref net.Connection connection, ref Incoming input) {
             }
             ret body
         }
-        if (body.len() + size > maxBody()) {
-            throw TooLarge()
+        if (body.len() + size > limit) {
+            throw tooLarge(limit)
         }
         input.fill(ref connection, size + 2)
         for (u8 b in input.take(size)) {
@@ -543,11 +543,19 @@ i64 hexNumber(string text) {
     ret n
 }
 
-// A body larger than maxBody().
+// A body larger than its limit.
 struct TooLarge : Exception {
+    i64 limit
+
     string message() const {
-        ret format("the body is larger than {} bytes", maxBody())
+        ret format("the body is larger than {} bytes", limit)
     }
+}
+
+TooLarge tooLarge(i64 limit) {
+    TooLarge e
+    e.limit = limit
+    ret e
 }
 
 // Writes the response in one piece, with its Content-Length.
@@ -697,7 +705,8 @@ struct Kept {
 // the next requests. Several tasks can use the same client: they read it.
 public struct Client {
     thread.Mutex<list<Kept>> idle
-    bool single  // the functions of the module: a connection for each request (D254)
+    bool single                      // the functions of the module: a connection for each request (D254)
+    public i64 bodyLimit = 16777216  // the largest body of a response, also decompressed (P19)
 
     public Response get(string url) const {
         ret send(Request("GET", url))
@@ -754,14 +763,14 @@ public struct Client {
         Incoming input
         Response res
         try {
-            res = talk(ref connection, ref input, single, target, method, headers, body)
+            res = talk(ref connection, ref input, single, target, method, headers, body, bodyLimit)
         } catch (Exception e) {
             if (!kept || input.data.len() > 0) {
                 throw
             }
             connection = open(target)
             Incoming fresh
-            res = talk(ref connection, ref fresh, single, target, method, headers, body)
+            res = talk(ref connection, ref fresh, single, target, method, headers, body, bodyLimit)
         }
         if (!single && !res.closes) {
             keep(key, move connection)
@@ -825,7 +834,7 @@ net.Connection open(Url target) {
 }
 
 Response talk(ref net.Connection connection, ref Incoming input, bool single, Url target, string method, Headers headers,
-    list<u8> body) {
+    list<u8> body, i64 limit) {
     connection.timeout(30000)
     string head = format("{} {} HTTP/1.1\r\nHost: {}\r\n", method, target.path, target.authority())
     if (!headers.has("user-agent")) {
@@ -856,13 +865,13 @@ Response talk(ref net.Connection connection, ref Incoming input, bool single, Ur
     connection.write(out)
     try {
         for {
-            Response res = readResponse(ref connection, ref input, method)
+            Response res = readResponse(ref connection, ref input, method, limit)
             if (res.status < 200) {
                 continue
             }
             res.closes = res.closes || input.available() > 0
             if (compressed && sameName(res.headers.get("content-encoding"), "gzip")) {
-                res.body = gzip.decompressUpTo(res.body, maxBody())
+                res.body = gzip.decompressUpTo(res.body, limit)
                 res.headers.remove("content-encoding")
                 res.headers.set("Content-Length", format("{}", res.body.len()))
             }
@@ -873,7 +882,7 @@ Response talk(ref net.Connection connection, ref Incoming input, bool single, Ur
     }
 }
 
-Response readResponse(ref net.Connection connection, ref Incoming input, string method) {
+Response readResponse(ref net.Connection connection, ref Incoming input, string method, i64 limit) {
     i64 end = input.find("\r\n\r\n")
     for (end < 0) {
         if (input.available() > maxHead()) {
@@ -905,7 +914,7 @@ Response readResponse(ref net.Connection connection, ref Incoming input, string 
     if (res.status >= 200 && res.status != 204 && res.status != 304 && method != "HEAD") {
         bool known = res.headers.has("content-length") || sameName(res.headers.get("transfer-encoding"), "chunked")
         res.closes = res.closes || !known
-        res.body = readBody(ref connection, ref input, res.headers, true)
+        res.body = readBody(ref connection, ref input, res.headers, true, limit)
     }
     ret res
 }

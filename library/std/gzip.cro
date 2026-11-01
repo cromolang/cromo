@@ -1,7 +1,8 @@
 // The module std.gzip (D367, D392): the format of gzip (RFC 1952) with deflate (RFC
 // 1951), in Cromo. compress finds the repeats with chains of hashes in a window of
 // 32 KB and writes them with the fixed codes of deflate, in one block; decompress
-// reads the three kinds of block, and any gzip, also of several members.
+// reads the three kinds of block, and any gzip, also of several members. inflate
+// reads deflate without gzip around it, as in a zip (P20).
 
 public list<u8> compress(list<u8> data) {
     Writer w
@@ -74,7 +75,7 @@ public list<u8> compress(list<u8> data) {
     if (w.count > 0) {
         w.putBits(0, 8 - w.count)
     }
-    w.putWord(crc32(data, 0, size))
+    w.putWord(crcOf(data, 0, size))
     w.putWord(u32(size))
     ret move w.out
 }
@@ -133,7 +134,7 @@ public list<u8> decompressUpTo(list<u8> data, i64 limit) {
         u32 crc = word(data, at)
         u32 length = word(data, at + 4)
         at += 8
-        if (crc != crc32(r.out, start, r.out.len()) || length != u32(r.out.len() - start)) {
+        if (crc != crcOf(r.out, start, r.out.len()) || length != u32(r.out.len() - start)) {
             throw Error("cannot decompress: the data are damaged, their check does not match")
         }
         for (at < size && data[at] == 0) {  // the zeros that some writers add at the end
@@ -144,6 +145,21 @@ public list<u8> decompressUpTo(list<u8> data, i64 limit) {
             ret move r.out
         }
     }
+}
+
+// Deflate without the header and the check of gzip, as a zip holds it (P20); the
+// result must not be larger than `limit`.
+public list<u8> inflate(list<u8> data, i64 limit) {
+    Reader r
+    r.limit = limit
+    r.source = "deflate"
+    r.inflate(data)
+    ret move r.out
+}
+
+// The CRC-32 of the data, the check of gzip and of zip (P20).
+public u32 crc32(list<u8> data) {
+    ret crcOf(data, 0, data.len())
 }
 
 Error damaged() {
@@ -169,7 +185,7 @@ u32 word(list<u8> data, i64 at) {
     ret u32(data[at]) | u32(data[at + 1]) << 8 | u32(data[at + 2]) << 16 | u32(data[at + 3]) << 24
 }
 
-u32 crc32(list<u8> data, i64 from, i64 to) {
+u32 crcOf(list<u8> data, i64 from, i64 to) {
     u32[256] table
     for (i64 n = 0; n < 256; n++) {
         u32 c = u32(n)
@@ -240,6 +256,7 @@ struct Reader {
     u32 bits
     i32 count
     i64 limit
+    string source = "gzip"
     list<u8> out
     Tables tables
 
@@ -254,7 +271,7 @@ struct Reader {
             } else if (kind == 2) {
                 dynamic(data)
             } else {
-                throw damaged()
+                throw broken()
             }
             if (last) {
                 ret
@@ -265,7 +282,7 @@ struct Reader {
     u32 readBits(list<u8> data, i32 n) {
         for (count < n) {
             if (at >= data.len()) {
-                throw damaged()
+                throw broken()
             }
             bits |= u32(data[at]) << count
             at++
@@ -285,7 +302,7 @@ struct Reader {
         for (i32 length = 1; length < 16; length++) {
             if (count == 0) {
                 if (at >= data.len()) {
-                    throw damaged()
+                    throw broken()
                 }
                 bits = u32(data[at])
                 at++
@@ -302,7 +319,7 @@ struct Reader {
             first = (first + counted) << 1
             value <<= 1
         }
-        throw damaged()
+        throw broken()
     }
 
     // From the next byte: its length, the complement, and the bytes as they are.
@@ -310,13 +327,13 @@ struct Reader {
         bits = 0
         count = 0
         if (at + 4 > data.len()) {
-            throw damaged()
+            throw broken()
         }
         i64 length = i64(data[at]) | i64(data[at + 1]) << 8
         i64 complement = i64(data[at + 2]) | i64(data[at + 3]) << 8
         at += 4
         if (length != (complement ^ 0xFFFF) || at + length > data.len()) {
-            throw damaged()
+            throw broken()
         }
         room(length)
         for (i64 i = 0; i < length; i++) {
@@ -353,7 +370,7 @@ struct Reader {
         i32 distanceCount = i32(readBits(data, 5)) + 1
         i32 codeCount = i32(readBits(data, 4)) + 4
         if (literalCount > 286 || distanceCount > 30) {
-            throw damaged()
+            throw broken()
         }
         list<i32> order = [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15]
         u8[320] lengths
@@ -378,7 +395,7 @@ struct Reader {
             i32 times = 0
             if (symbol == 16) {
                 if (index == 0) {
-                    throw damaged()
+                    throw broken()
                 }
                 repeated = lengths[index - 1]
                 times = 3 + i32(readBits(data, 2))
@@ -388,7 +405,7 @@ struct Reader {
                 times = 11 + i32(readBits(data, 7))
             }
             if (index + times > total) {
-                throw damaged()
+                throw broken()
             }
             for (i32 i = 0; i < times; i++) {
                 lengths[index] = repeated
@@ -396,7 +413,7 @@ struct Reader {
             }
         }
         if (lengths[256] == 0) {  // no end of the block
-            throw damaged()
+            throw broken()
         }
         Huffman literals
         Huffman distances
@@ -420,16 +437,16 @@ struct Reader {
             }
             i32 place = symbol - 257
             if (place >= 29) {
-                throw damaged()
+                throw broken()
             }
             i64 length = i64(tables.lengthBase[place]) + i64(readBits(data, tables.lengthExtra[place]))
             i32 code = decode(data, distances)
             if (code >= 30) {
-                throw damaged()
+                throw broken()
             }
             i64 distance = i64(tables.distanceBase[code]) + i64(readBits(data, tables.distanceExtra[code]))
             if (distance > out.len()) {
-                throw damaged()
+                throw broken()
             }
             room(length)
             for (i64 i = 0; i < length; i++) {  // the copy can overlap what it writes
@@ -437,6 +454,10 @@ struct Reader {
                 out.add(b)
             }
         }
+    }
+
+    Error broken() const {
+        ret Error(format("cannot decompress: the data of {} are damaged or cut", source))
     }
 
     // Room for `extra` more bytes, within the limit.

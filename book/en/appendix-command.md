@@ -17,6 +17,7 @@ Without a file, the commands use `main.cro` of the current folder.
 | `cromo test [file.cro] [names]` | runs the `[[test]]` functions of the program and of its modules; the names choose the tests that contain them |
 | `cromo fmt [--check] [files and folders \| -]` | formats the code, by default of the current folder and its subfolders; `--check` only lists the files to format; `-` formats the standard input |
 | `cromo lsp` | the language server, for editors, on the standard input and output |
+| `cromo update [version]` | installs the latest version of Cromo, or the one named, also an older one, and makes it the active one; the others stay in `~/.cromo/versions` |
 | `cromo version` | prints the version of `cromo` and of LLVM |
 | `cromo help` | prints the commands |
 

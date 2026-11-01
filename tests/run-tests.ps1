@@ -21,7 +21,8 @@
 #   // target: windows              the test is only for that system (windows or linux)
 #   // program-arg: text           an argument of the program (repeatable, exact)
 #   // program-env: NAME=value     a variable of the environment of the program
-#                                  (repeatable); {dir} is the folder of the test
+#                                  (repeatable); {dir} is the folder of the test,
+#                                  {cromo} the cromo of the tests, {port} a free port
 #   // cromo-command: run          compiles and runs with cromo run, instead of build;
 #                                  test runs cromo test, the program arguments being
 #                                  the names of the tests
@@ -187,7 +188,17 @@ foreach ($test in Get-ChildItem $PSScriptRoot -Recurse -Filter *.cro | Sort-Obje
     }
     $folder = $test.DirectoryName
     if ($target -eq 'linux') { $folder = ConvertTo-LinuxPath $folder }
-    foreach ($key in @($programEnv.Keys)) { $programEnv[$key] = $programEnv[$key].Replace('{dir}', $folder) }
+    $port = ''
+    if (@($programEnv.Values | Where-Object { $_.Contains('{port}') }).Count -gt 0) {
+        # A port free now, for a server of the test that the programs it starts reach.
+        $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
+        $listener.Start()
+        $port = [string]$listener.LocalEndpoint.Port
+        $listener.Stop()
+    }
+    foreach ($key in @($programEnv.Keys)) {
+        $programEnv[$key] = $programEnv[$key].Replace('{dir}', $folder).Replace('{cromo}', $Cromo).Replace('{port}', $port)
+    }
 
     $exe = Join-Path $out ($test.BaseName + $(if ($target -eq 'linux') { '' } else { '.exe' }))
     if ($command -eq 'run') {

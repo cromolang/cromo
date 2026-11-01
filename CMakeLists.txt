@@ -156,14 +156,18 @@ add_custom_command(
 # an archive, inside its folder in a build. Here they change at the next build.
 set(CROMO_LIB_DIR "${CMAKE_BINARY_DIR}/lib")
 file(GLOB CROMO_STD_MODULES CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/library/std/*.cro")
+# The programs of cromo written in Cromo, as cromo update (D403).
+file(GLOB CROMO_TOOLS CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/library/tools/*.cro")
 add_custom_command(
   OUTPUT "${CROMO_RT_DIR}/library.stamp"
-  COMMAND "${CMAKE_COMMAND}" -E rm -rf "${CROMO_LIB_DIR}/std"
-  COMMAND "${CMAKE_COMMAND}" -E make_directory "${CROMO_LIB_DIR}/std" "${CROMO_LIB_DIR}/windows" "${CROMO_LIB_DIR}/linux"
+  COMMAND "${CMAKE_COMMAND}" -E rm -rf "${CROMO_LIB_DIR}/std" "${CROMO_LIB_DIR}/tools"
+  COMMAND "${CMAKE_COMMAND}" -E make_directory "${CROMO_LIB_DIR}/std" "${CROMO_LIB_DIR}/tools" "${CROMO_LIB_DIR}/windows"
+          "${CROMO_LIB_DIR}/linux"
   COMMAND "${CMAKE_COMMAND}" -E copy "${CMAKE_SOURCE_DIR}/library/core.cro" "${CROMO_LIB_DIR}"
   COMMAND "${CMAKE_COMMAND}" -E copy ${CROMO_STD_MODULES} "${CROMO_LIB_DIR}/std"
+  COMMAND "${CMAKE_COMMAND}" -E copy ${CROMO_TOOLS} "${CROMO_LIB_DIR}/tools"
   COMMAND "${CMAKE_COMMAND}" -E touch "${CROMO_RT_DIR}/library.stamp"
-  DEPENDS library/core.cro ${CROMO_STD_MODULES}
+  DEPENDS library/core.cro ${CROMO_STD_MODULES} ${CROMO_TOOLS}
   COMMENT "Placing the library in lib/")
 add_custom_target(cromo_library ALL DEPENDS "${CROMO_RT_DIR}/library.stamp")
 

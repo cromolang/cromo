@@ -1873,6 +1873,12 @@ lines.close()
 ### D402. What the verification checks
 *2026-10-31.* The algorithm comes from the key, never from the header: `none`, and a token in HS256 checked with a public key of RSA, are always rejected, as a header with `crit`, whose extensions the library does not know (RFC 7515). `exp` and `nbf` are checked when they are there, with a tolerance in seconds that is 0 unless the program sets it; `iss` and `aud` only when the program asks for them. As `jsonwebtoken` of Rust and `golang-jwt` of Go.
 
+### D403. `cromo update` is a program in Cromo
+*2026-11-01.* It details D153 and D289. `cromo update` is `lib/tools/update.cro`, which `cromo` compiles with the library of its version, as `cromo run` does, and runs with the version asked: about a second more, for a command that downloads tens of MB. It uses `std.http`, `std.crypto`, `std.json` and `std.gzip`, which exist and are tested, instead of HTTPS, Ed25519 and inflate written again in C++, with WinHTTP on Windows and mbedTLS for the host on Linux, which the compiler written in Cromo would throw away (D147). `lib/tools/` is the folder of the programs of `cromo` written in Cromo, in the archive next to `std/` (D237).
+
+### D404. `std.zip` and `std.tar`
+*2026-11-01.* Two modules of the library, in Cromo, read the archives: `std.zip` those of Windows, of macOS and of the forges, stored or with deflate, also Zip64; `std.tar` the ustar of POSIX with the long names of GNU and of pax, and with `std.gzip` the `.tar.gz`. They read and extract, they do not write. `cromo update` opens with them the archives of the versions (D287), the packages will open with `std.tar` those of the forges (D379), and a backend can use them for the archives it receives. Being public, they are tested as the other modules.
+
 ---
 
 ## Proposed
@@ -1904,6 +1910,27 @@ A secret of HMAC shorter than its hash, 32 bytes for HS256 (RFC 7518 §3.2), a k
 
 ### P17. `time.unix()`
 The seconds from 1970-01-01 UTC, as an `i64`, for `exp` and `iat`; `std.time` already reads them from the system.
+
+### P18. Links and permissions in `std.fs`
+`fs.createLink(target, path)` makes `path` a link to `target`, as `ln -s target path`: a symbolic link on Linux, and on Windows a junction, only to a folder, which needs no administrator (D288) and keeps the absolute path. `fs.readLink(path)` gives where a link points, without the `\??\` of Windows. `fs.makeExecutable(path)` adds the x of chmod for those who can read the file on Linux, and does nothing on Windows, which runs a file by its extension. `fs.remove` already removes a link without what it points to.
+
+### P19. `http.Client.bodyLimit`
+The largest body of a response, also once decompressed: 16 MB, as before, unless the program sets another, as `client.bodyLimit = 1073741824` for the archive of a version. A field of the client, set before its requests; the server keeps its 16 MB for the requests.
+
+### P20. `gzip.inflate` and `gzip.crc32`
+`gzip.inflate(data, limit)` reads deflate without gzip around it, as a zip holds it, and refuses a result larger than `limit`; `gzip.crc32(data)` is the check of gzip and of zip. `std.zip` needs them, and they were already in `std.gzip`.
+
+### P21. The interface of `std.zip` and `std.tar`
+- `zip.read(bytes)` and `tar.read(bytes)` give a list of `Entry`, with `name`, with `/` and without one at the end, `folder`, `link`, the target of a symbolic link, `executable` and `data`. A hard link of tar is a copy of its file; the devices and the pipes are left out. A file of a zip whose CRC-32 does not match, and a header of tar whose check does not, are errors.
+- `zip.extract(bytes, folder)` and `tar.extract(bytes, folder)` write the files and the folders, with the permission to run that the archive gives, and leave out the links, which could point outside the folder; a name that would leave it, as `../x`, `/x` or `C:x`, stops the extraction.
+- All in memory: the archives of a version are tens of MB.
+
+### P22. What `cromo update` does
+- `~/.cromo` is `%USERPROFILE%\.cromo` on Windows and `$HOME/.cromo` on Linux, as for the installation (D238); `CROMO_SITE` names another site, as for its scripts.
+- `cromo update` refuses a `latest` older than the active version, since a site that is attacked can give an old manifest, signed when it was the latest one: going back is only for the version named, as `cromo update 0.26.0`. The manifest of `cromo update 0.28.0` must say 0.28.0.
+- A version already in `~/.cromo/versions` only becomes the active one, without the network (D289). A new one is unpacked in `<version>.partial`, which becomes `<version>` only when it is complete.
+- The link `current` changes in one step on Linux, renaming a new link over it; on Windows the old junction is removed first, since a junction cannot be renamed over another.
+- As the installation, it installs the extension for VS Code of the version when the command `code` is there, also the one that VS Code gives to WSL.
 
 ---
 

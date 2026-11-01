@@ -1,0 +1,194 @@
+// The module std.zip (D404): reads the archives of zip (APPNOTE.TXT of PKWARE), as
+// Windows, macOS and the forges make them, from their central directory: the files
+// stored or compressed with deflate (std.gzip), also with Zip64 for the archives
+// above 4 GB. It does not write them, and it refuses the encrypted ones.
+import std.fs
+import std.gzip
+
+// A file, a folder or a symbolic link of an archive (P21).
+public struct Entry {
+    public string name  // with '/', as in the archive, without one at the end: "bin/cromo.exe"
+    public bool folder
+    public string link      // the target of a symbolic link, "" for the others
+    public bool executable  // by the permissions of Unix, when the archive has them
+    public list<u8> data
+}
+
+// The entries of an archive, in its order. Throws when the data are not a zip, or
+// are damaged: the CRC-32 of each file is checked.
+public list<Entry> read(list<u8> archive) {
+    i64 end = endRecord(archive)
+    if (end < 0) {
+        throw Error("cannot read the zip: the data are not a zip")
+    }
+    i64 count = half(archive, end + 10)
+    i64 at = word(archive, end + 16)
+    if ((count == 0xFFFF || at == 0xFFFFFFFF) && end >= 20 && word(archive, end - 20) == 0x07064B50) {
+        i64 record = long(archive, end - 12)  // the locator of Zip64 gives its record
+        need(archive, record, 56)
+        if (word(archive, record) != 0x06064B50) {
+            throw damaged()
+        }
+        count = long(archive, record + 32)
+        at = long(archive, record + 48)
+    }
+    list<Entry> entries
+    for (i64 i = 0; i < count; i++) {
+        need(archive, at, 46)
+        if (word(archive, at) != 0x02014B50) {
+            throw damaged()
+        }
+        i64 system = half(archive, at + 4) >> 8  // 3: Unix, with its permissions
+        i64 flags = half(archive, at + 8)
+        i64 method = half(archive, at + 10)
+        u32 crc = u32(word(archive, at + 16))
+        i64 packed = word(archive, at + 20)
+        i64 size = word(archive, at + 24)
+        i64 nameSize = half(archive, at + 28)
+        i64 extraSize = half(archive, at + 30)
+        i64 commentSize = half(archive, at + 32)
+        i64 mode = word(archive, at + 38) >> 16
+        i64 local = word(archive, at + 42)
+        need(archive, at + 46, nameSize + extraSize + commentSize)
+        Entry entry
+        entry.name = text(archive, at + 46, nameSize)
+        // Zip64: the sizes and the place that do not fit in 32 bits, in this order.
+        i64 extra = at + 46 + nameSize
+        i64 extraEnd = extra + extraSize
+        for (extra + 4 <= extraEnd) {
+            i64 id = half(archive, extra)
+            i64 length = half(archive, extra + 2)
+            i64 value = extra + 4
+            if (id == 1) {
+                if (size == 0xFFFFFFFF && value + 8 <= extraEnd) {
+                    size = long(archive, value)
+                    value += 8
+                }
+                if (packed == 0xFFFFFFFF && value + 8 <= extraEnd) {
+                    packed = long(archive, value)
+                    value += 8
+                }
+                if (local == 0xFFFFFFFF && value + 8 <= extraEnd) {
+                    local = long(archive, value)
+                }
+            }
+            extra += 4 + length
+        }
+        at += 46 + nameSize + extraSize + commentSize
+        if ((flags & 1) != 0) {
+            throw Error(format("cannot read the zip: {} is encrypted", entry.name))
+        }
+        // The data follow the local header, whose name and extra field can differ.
+        need(archive, local, 30)
+        if (word(archive, local) != 0x04034B50) {
+            throw damaged()
+        }
+        i64 start = local + 30 + half(archive, local + 26) + half(archive, local + 28)
+        need(archive, start, packed)
+        if (size == 0) {  // an empty file, or a folder
+        } else if (method == 0) {
+            entry.data = part(archive, start, start + packed)
+        } else if (method == 8) {
+            entry.data = gzip.inflate(part(archive, start, start + packed), size)
+        } else {
+            throw Error(format("cannot read the zip: {} is compressed with the method {}, not with deflate", entry.name, method))
+        }
+        if (entry.data.len() != size || gzip.crc32(entry.data) != crc) {
+            throw Error(format("cannot read the zip: {} is damaged, its check does not match", entry.name))
+        }
+        if (entry.name.endsWith("/")) {
+            entry.name = entry.name.slice(0, entry.name.len() - 1)
+            entry.folder = true
+        }
+        if (system == 3) {
+            entry.folder = entry.folder || (mode & 0xF000) == 0x4000
+            entry.executable = !entry.folder && (mode & 0x49) != 0  // 0111
+            if ((mode & 0xF000) == 0xA000) {
+                entry.link = string(entry.data)
+                entry.data.clear()
+            }
+        }
+        entries.add(move entry)
+    }
+    ret entries
+}
+
+// Writes the files and the folders of the archive in `folder`, created if it is
+// missing (P21). The links are left out, as they could point outside the folder,
+// and a name that would leave it, as "../x" or "/x", stops the extraction.
+public void extract(list<u8> archive, string folder) {
+    list<Entry> entries = read(archive)
+    fs.createFolders(folder)
+    for (Entry entry in entries) {
+        string path = place(folder, entry.name)
+        if (entry.folder) {
+            fs.createFolders(path)
+        } else if (entry.link.len() == 0) {
+            fs.createFolders(fs.parent(path))
+            fs.writeBytes(path, entry.data)
+            if (entry.executable) {
+                fs.makeExecutable(path)
+            }
+        }
+    }
+}
+
+// The path of an entry in the folder, refused when it would leave the folder.
+string place(string folder, string name) {
+    bool outside = name.len() == 0 || name[0] == '/' || name.contains("\\") || name.contains(":")
+    for (string piece in name.split("/")) {
+        outside = outside || piece == ".."
+    }
+    if (outside) {
+        throw Error(format("cannot extract the zip: the name '{}' would leave the folder", name))
+    }
+    ret fs.joinPath(folder, name)
+}
+
+// The end of central directory record, in the last 64 KB after its comment, or -1.
+i64 endRecord(list<u8> archive) {
+    i64 last = archive.len() - 22
+    for (i64 at = last; at >= 0 && at >= last - 65535; at--) {
+        if (word(archive, at) == 0x06054B50 && at + 22 + half(archive, at + 20) <= archive.len()) {
+            ret at
+        }
+    }
+    ret -1
+}
+
+Error damaged() {
+    ret Error("cannot read the zip: the archive is damaged or cut")
+}
+
+// `count` bytes from `at` are in the archive.
+void need(list<u8> archive, i64 at, i64 count) {
+    if (at < 0 || count < 0 || at + count > archive.len()) {
+        throw damaged()
+    }
+}
+
+// The numbers of zip, the lowest byte first.
+i64 half(list<u8> data, i64 at) {
+    ret i64(data[at]) | i64(data[at + 1]) << 8
+}
+
+i64 word(list<u8> data, i64 at) {
+    ret half(data, at) | half(data, at + 2) << 16
+}
+
+i64 long(list<u8> data, i64 at) {
+    ret word(data, at) | word(data, at + 4) << 32
+}
+
+list<u8> part(list<u8> data, i64 from, i64 to) {
+    list<u8> bytes
+    bytes.reserve(to - from)
+    for (i64 i = from; i < to; i++) {
+        bytes.add(data[i])
+    }
+    ret bytes
+}
+
+string text(list<u8> data, i64 at, i64 count) {
+    ret string(part(data, at, at + count))
+}

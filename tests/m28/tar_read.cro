@@ -1,0 +1,112 @@
+// std.tar (D404, P21): archives made by the tarfile of Python, compressed with gzip
+// as a .tar.gz: in the format of GNU with "./", a folder, a file with the
+// permissions 0755, a hard link, a symbolic link and a pipe, which is left out;
+// the long names of GNU, of pax and of the prefix of ustar; a size in base 256;
+// and the archives that are refused.
+// program-env: OUT={dir}/../out/tar_test
+// expect-output: bin: folder
+// expect-output: bin/run.sh: 19 bytes, executable
+// expect-output: hello.txt: 12 bytes, hello, tar!
+// expect-output: hard: 12 bytes, hello, tar!
+// expect-output: soft: link to hello.txt
+// expect-output: extracted: hello.txt true, bin/run.sh true, hard true, soft false
+// expect-output: gnu: 126 characters, long
+// expect-output: pax: 126 characters, long
+// expect-output: ustar: 185 characters, prefix
+// expect-output: base 256: b256.txt, base 256
+// expect-output: cannot extract the tar: the name '../evil.txt' would leave the folder
+// expect-output: cannot read the tar: the archive is damaged or cut
+// expect-output: cannot read the tar: the data are not a tar
+// expect-output: empty: 0 entries
+import std.crypto
+import std.fs
+import std.gzip
+import std.os
+import std.tar
+
+list<u8> unpack(string text) {
+    ret gzip.decompress(crypto.fromHex(text))
+}
+
+void show(tar.Entry entry) {
+    if (entry.folder) {
+        println("{}: folder", entry.name)
+    } else if (entry.link.len() > 0) {
+        println("{}: link to {}", entry.name, entry.link)
+    } else if (entry.executable) {
+        println("{}: {} bytes, executable", entry.name, entry.data.len())
+    } else {
+        println("{}: {} bytes, {}", entry.name, entry.data.len(), string(entry.data.copy()).trim())
+    }
+}
+
+// The only entry of an archive.
+void only(string label, list<u8> archive) {
+    list<tar.Entry> entries = tar.read(archive)
+    println("{}: {} characters, {}", label, entries[0].name.len(), string(entries[0].data.copy()))
+}
+
+void tryRead(list<u8> archive) {
+    try {
+        tar.read(archive)
+        println("read")
+    } catch (Error e) {
+        println("{}", e.message())
+    }
+}
+
+i32 main() {
+    string out = os.env("OUT")
+    fs.removeAll(out)
+    for (tar.Entry entry in tar.read(unpack(tarMain()))) {
+        show(entry)
+    }
+    tar.extract(unpack(tarMain()), out)
+    println("extracted: hello.txt {}, bin/run.sh {}, hard {}, soft {}", fs.readText(fs.joinPath(out, "hello.txt")) == "hello, tar!\n",
+        fs.isFile(fs.joinPath(out, "bin/run.sh")), fs.readText(fs.joinPath(out, "hard")) == "hello, tar!\n",
+        fs.exists(fs.joinPath(out, "soft")))
+    only("gnu", unpack(tarGnu()))
+    only("pax", unpack(tarPax()))
+    only("ustar", unpack(tarPrefix()))
+    list<tar.Entry> big = tar.read(unpack(tarBase256()))
+    println("base 256: {}, {}", big[0].name, string(big[0].data.copy()))
+    try {
+        tar.extract(unpack(tarEvil()), fs.joinPath(out, "inner"))
+    } catch (Error e) {
+        println("{}", e.message())
+    }
+    tryRead(unpack(tarDamaged()))
+    tryRead("this is not a tar".bytes())
+    list<u8> nothing
+    println("empty: {} entries", tar.read(nothing).len())
+    fs.removeAll(out)
+    ret 0
+}
+
+string tarMain() {
+    ret "1f8b080000000000020aed964b0e83201400597b0a4cb70d3c2c9ff3d8568389910430f1f8252eed670735e1cd06d60c038f71921d4818a5f635715c3fec35c88e50450ab086d87b4a49a5307e9f167e3aff5aa0ff82fefdbab060ffe6bfbb1dfc1ba3805040ffd9b9b4fb0508b6191ed651df2f0d416aeadf0ef3ec58dc62d6f75f4bf9bd7f21dffa0781fd9760b77fa5e90c5a0cbfcefe7bffcc3ffffdecffb817a04dea5f94789caa9fff821be3e9fc2b93e6ff2ebf7df4cfc7697427f39ff20749a8c6ff1f4110241b2fb8227e9e00160000"
+}
+
+string tarGnu() {
+    ret "1f8b080000000000020ad3d3d7d377f0c9cf4bf7c9cccb66a00d3080005cb481a1b9399c0d11373737336250f061a003282d2e492c52506018a120513f0718f90381f54a2a4a1846c108887f50a6363331c199ff0d0c4c50f3bfb19199a9098382c168fea73900c5d0682e1805a360148c82910700f067ded4000c0000"
+}
+
+string tarPax() {
+    ret "1f8b080000000000020ad3d3d7d3770848acf0484d4c492d62a0093080005cb4819121820d1637343032306350a860a003282d2e492c025acf303281a1b19942416249866da27e4e7e5efa4060bd928a122e86513020801ed10ecad466262638f3bf8181096afe373632373461503018cdff3407a0181acd05a360148c825130f20000d23cc979000c0000"
+}
+
+string tarPrefix() {
+    ret "1f8b080000000000020a2b2ca415d02ba928610003032030333101d340804e836491d840715333234363060503063a80d2e292c422a0f5d436b7806680bace2c4a4dcbac601805a360148c825130c200008a547ec300080000"
+}
+
+string tarBase256() {
+    ret "1f8b080000000000020a4b323235d32ba92861a021300002331313300d0470ba01a184c3000180f266c606460c0a060c7400a5c52589450a0a0c2314242516a72a00d300c3281805a360148c821105006646bc7500080000"
+}
+
+string tarEvil() {
+    ret "1f8b080000000000020ad3d3d34f2dcbccd12ba92861a015300002331313300d04e834101823b141e2e66686860c0a060c7400a5c52589450a0a0c2314e49796308c8251300a46c12818790000f208ac5d00080000"
+}
+
+string tarDamaged() {
+    ret "1f8b080000000000020aed964b0ac3201040679d5318ba2d3aa67ece93b60906420463a1c7af64997e76da80f336baf6f974b880ec60c26abdad89fdfa616f5075c03414e0b1c63e300695c2c5755ac4e1fc1b49fe0bfa0f8f8507f737ffdd65e7df5a8dc090fc67e7d46e176075cd70739e857e6980a8a97f37ccb3e7f119b3beff46a9effd4bf5d63f4aeabf049bfd334b67d052f875f6df877bfef9ef67fffbbd446353ffb2c4e354fdfcb7fa311ecebfb669feeff2db27ff629c467f30ff297f54c00cfdff044110d97801919ff99b00160000"
+}
