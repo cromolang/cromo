@@ -1,0 +1,66 @@
+// The errors of a source (D417), as src/diagnostics.cpp: file:line:column, then
+// the line of the source and a mark under the position.
+
+public struct Diagnostics {
+    public string path
+    public string text  // the source, without the BOM
+    public bool silent  // the errors are counted, not printed: cromo fmt checks its result so
+    i32 count
+
+    public Diagnostics(string file, string source) {
+        path = file.copy()
+        text = source.copy()
+    }
+
+    public bool hasErrors() const {
+        ret count > 0
+    }
+
+    public void error(i32 line, i32 column, string message) {
+        count++
+        if (silent) {
+            ret
+        }
+        eprint("{}:{}:{}: error: {}\n", path, line, column, message)
+        string source = lineAt(line)
+        if (source.len() == 0) {
+            ret
+        }
+        // The mark is aligned by counting the characters of UTF-8 and keeping the tabs.
+        string mark = "    "
+        i32 at = 1
+        for (i64 i = 0; i < source.len() && at < column; i++) {
+            u8 c = source[i]
+            if ((c & 0xC0) == 0x80) {
+                continue
+            }
+            if (c == '\t') {
+                mark += "\t"
+            } else {
+                mark += " "
+            }
+            at++
+        }
+        eprint("    {}\n{}^\n", source, mark)
+    }
+
+    // The line `line`, from 1, without its end.
+    string lineAt(i32 line) const {
+        i64 start = 0
+        for (i32 i = 1; i < line; i++) {
+            i64 newline = text.findFrom("\n", start)
+            if (newline < 0) {
+                ret ""
+            }
+            start = newline + 1
+        }
+        i64 end = text.findFrom("\n", start)
+        if (end < 0) {
+            end = text.len()
+        }
+        if (end > start && text[end - 1] == '\r') {
+            end--
+        }
+        ret text.slice(start, end)
+    }
+}

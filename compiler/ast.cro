@@ -1,0 +1,332 @@
+// The tree of a program (D418): the nodes are in the lists of a Tree, one for each
+// kind, and name their children with their index, -1 when there is none. The same
+// information as src/ast.h, without what the analysis adds.
+
+// type := 'void' | [module '.'] name ['<' type {',' type} '>'] {'[' size ']'}, or a
+// function type, func(...) result (D185).
+public struct TypeNode {
+    public string module
+    public string name
+    public i32 line
+    public i32 column
+    public list<i32> args  // the type arguments, or the parameters of a function type
+    public list<i64> dimensions
+    public bool isFunction
+    public list<ParamMode> modes  // of the parameters of a function type
+    public i32 result = -1        // of a function type
+}
+
+public struct TypeParam {
+    public string name
+    public i32 line
+    public i32 column
+    public list<i32> constraints
+}
+
+public enum ExprKind {
+    IntLiteral
+    FloatLiteral
+    BoolLiteral
+    StringLiteral
+    Name
+    Unary
+    Binary
+    Call
+    MethodCall
+    Field
+    Index
+    CallValue
+    TypeRef
+    Ref
+    Move
+    Lambda
+    ListLiteral
+}
+
+public enum UnaryOp {
+    Negate
+    Not
+}
+
+public enum BinaryOp {
+    Add
+    Sub
+    Mul
+    Div
+    Rem
+    Eq
+    Ne
+    Lt
+    Le
+    Gt
+    Ge
+    And
+    Or
+    BitAnd
+    BitOr
+    BitXor
+    Shl
+    Shr
+}
+
+public enum ParamMode {
+    Read
+    Ref
+    Move
+}
+
+public struct Capture {
+    public ParamMode mode
+    public string name
+    public i32 line
+    public i32 column
+}
+
+// An expression: its fields are used as its kind needs.
+public struct Expr {
+    public ExprKind kind
+    public i32 line
+    public i32 column
+    public string text    // a name, a function called, a field, a method, a string, the digits of a float
+    public string module  // of a generic function of a module, `json.decode<User>(text)`
+    public u64 value      // of an integer or a character
+    public bool flag      // an integer that is a character, the value of a bool
+    public UnaryOp unary
+    public BinaryOp binary
+    public i32 left = -1    // the operand, the object, the left side, the function value called
+    public i32 right = -1   // the right side, the index
+    public list<i32> items  // the arguments, the elements of a list
+    public list<i32> typeArgs
+    public i32 type = -1      // of a TypeRef
+    public i32 function = -1  // of a lambda
+    public list<Capture> captures
+    public i64 opBegin  // the operator of a comparison, for assert (D351)
+    public i64 opEnd
+    public i64 textBegin  // the condition of assert, as written (D351)
+    public i64 textEnd
+}
+
+public enum StmtKind {
+    VarDecl
+    Assign
+    IncDec
+    Expression
+    If
+    For
+    Break
+    Continue
+    Return
+    Switch
+    Throw
+    Try
+}
+
+public enum AssignOp {
+    Assign
+    Add
+    Sub
+    Mul
+    Div
+    Rem
+    BitAnd
+    BitOr
+    BitXor
+    Shl
+    Shr
+}
+
+public enum ForForm {
+    Infinite
+    Condition
+    Classic
+    Each
+}
+
+// A statement: its fields are used as its kind needs.
+public struct Stmt {
+    public StmtKind kind
+    public i32 line
+    public i32 column
+    public bool isConst   // of a declaration
+    public i32 type = -1  // of a declaration, of the element of a for
+    public string name    // of a declaration, of the element of a for
+    public i32 nameLine
+    public i32 nameColumn
+    public i32 value = -1   // the initial value, the value assigned, the expression, the condition, the
+                            // value returned or thrown, the list of a for, the value of a switch
+    public i32 target = -1  // of an assignment, ++ and --
+    public AssignOp op
+    public bool increment
+    public i32 body = -1      // the block of an if, a for, a try
+    public i32 elseBody = -1  // the else of an if, the finally of a try
+    public ForForm form
+    public bool isRef     // the element of a for
+    public bool hasValue  // the value of a map in a for (D197)
+    public bool valueIsRef
+    public i32 valueType = -1
+    public string valueName
+    public i32 valueLine
+    public i32 valueColumn
+    public i32 init = -1  // the parts of a classic for
+    public i32 step = -1
+    public list<i32> parts       // the branches of a switch, the catches of a try
+    public i32 defaultBody = -1  // of a switch
+}
+
+public struct Block {
+    public list<i32> statements
+    public i32 openLine
+    public i32 openColumn
+    public i32 closeLine
+    public i32 closeColumn
+}
+
+public struct Binding {
+    public bool isRef
+    public i32 type = -1
+    public string name
+    public i32 line
+    public i32 column
+}
+
+public struct Pattern {
+    public string name
+    public i32 line
+    public i32 column
+    public bool hasBindings
+    public list<Binding> bindings
+    public i32 literal = -1
+}
+
+public struct Branch {
+    public list<Pattern> patterns
+    public i32 body = -1
+}
+
+public struct Catch {
+    public i32 type = -1
+    public string name
+    public i32 nameLine
+    public i32 nameColumn
+    public i32 body = -1
+}
+
+public struct Param {
+    public ParamMode mode
+    public bool isConst
+    public i32 type = -1
+    public string name
+    public i32 line
+    public i32 column
+}
+
+public enum FunctionKind {
+    Free
+    Method
+    Constructor
+    Destructor
+}
+
+public struct AttributeArg {
+    public bool isText
+    public string text
+    public i32 line
+    public i32 column
+}
+
+public struct Attribute {
+    public string name
+    public i32 line
+    public i32 column
+    public list<AttributeArg> args
+}
+
+public struct Function {
+    public string name
+    public i32 line
+    public i32 column
+    public FunctionKind kind
+    public i32 returnType = -1
+    public list<TypeParam> typeParams
+    public list<Param> params
+    public bool isConst
+    public bool isPublic
+    public bool isExtern
+    public bool isLambda
+    public string library  // of a C function (D128)
+    public list<Attribute> attributes
+    public i32 body = -1
+}
+
+public struct Field {
+    public i32 type = -1
+    public string name
+    public i32 line
+    public i32 column
+    public i32 init = -1
+    public bool isPublic
+    public list<Attribute> attributes
+}
+
+public struct Case {
+    public string name
+    public i32 line
+    public i32 column
+    public list<Attribute> attributes
+    public list<Field> fields
+    public i32 value = -1  // `Red = 1` (D135)
+}
+
+// A struct, or an enum.
+public struct Record {
+    public string name
+    public i32 line
+    public i32 column
+    public bool isEnum
+    public bool isPublic
+    public list<TypeParam> typeParams
+    public list<i32> interfaces
+    public list<Field> fields
+    public list<i32> members  // the functions: constructor, destructor, methods
+    public list<Case> cases
+}
+
+public struct Interface {
+    public string name
+    public i32 line
+    public i32 column
+    public bool isPublic
+    public list<i32> methods
+}
+
+// A variable or a constant of the module (D394, D414).
+public struct Global {
+    public i32 type = -1
+    public string name
+    public i32 line
+    public i32 column
+    public i32 init = -1
+    public bool isConst
+}
+
+public struct Import {
+    public list<string> path
+    public i32 line
+    public i32 column
+}
+
+public struct Tree {
+    public list<TypeNode> types
+    public list<Expr> exprs
+    public list<Stmt> stmts
+    public list<Block> blocks
+    public list<Branch> branches
+    public list<Catch> catches
+    public list<Function> functions  // all of them, also the methods and the lambdas
+    public list<i32> topFunctions    // the functions of the module, also those of C, in order
+    public list<Record> records
+    public list<Interface> interfaces
+    public list<Global> globals
+    public list<Import> imports
+    public bool isUnsafe
+}

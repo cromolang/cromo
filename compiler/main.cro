@@ -1,0 +1,151 @@
+// The pilot of the compiler in Cromo (D417): `cromo-fmt [--check] [files and
+// folders]`, with the results of `cromo fmt` (D161-D169): the files of a folder and
+// of its subfolders, except those whose name starts with a dot; the names of the
+// files changed; with --check nothing is written, and the exit code is 1 when a
+// file is not formatted.
+import std.fs
+import diagnostics
+import format
+
+i32 main(list<string> args) {
+    bool check = false
+    list<string> paths
+    for (i64 i = 1; i < args.len(); i++) {
+        if (args[i] == "--check") {
+            check = true
+        } else if (args[i] == "-") {
+            // The library cannot read the standard input yet: the pilot shows it.
+            eprintln("cromo: the pilot of cromo fmt does not read the standard input (D417)")
+            ret 2
+        } else if (args[i].len() > 0 && args[i][0] == '-') {
+            eprintln("cromo: unknown option of cromo fmt: {}", args[i])
+            ret 2
+        } else {
+            paths.add(args[i].copy())
+        }
+    }
+
+    list<string> files
+    if (paths.len() == 0) {
+        collectSources(".", ref files)
+    }
+    for (string path in paths) {
+        if (fs.isFolder(path)) {
+            collectSources(normal(path), ref files)
+        } else if (fs.isFile(path)) {
+            files.add(normal(path))
+        } else {
+            eprintln("cromo: cannot find {}", path)
+            ret 2
+        }
+    }
+
+    i32 result = 0
+    for (string file in files) {
+        string text
+        try {
+            text = fs.readText(file)
+        } catch (Exception e) {
+            eprintln("cromo: cannot read {}", file)
+            result = 1
+            continue
+        }
+        bool bom = text.startsWith("\u{FEFF}")
+        if (bom) {
+            text = text.slice(3, text.len())
+        }
+        Diagnostics diag = Diagnostics(file, text)
+        Formatted formatted = formatSource(file, text, ref diag)
+        if (!formatted.ok) {
+            if (formatted.error.len() > 0) {
+                eprintln("cromo: {}: internal error of cromo fmt: {} (D169)", file, formatted.error)
+            }
+            result = 1
+            continue
+        }
+        if (formatted.out == text) {
+            continue
+        }
+        println("{}", file)
+        if (check) {  // D165: the files still to format
+            result = 1
+            continue
+        }
+        string written = formatted.out.copy()
+        if (bom) {
+            written = "\u{FEFF}" + formatted.out
+        }
+        try {
+            fs.writeText(file, written)
+        } catch (Exception e) {
+            eprintln("cromo: cannot write {}", file)
+            result = 1
+        }
+    }
+    ret result
+}
+
+// The .cro files of a folder and of its subfolders, in the order of their names; the
+// folders whose name starts with a dot are left out.
+void collectSources(string folder, ref list<string> files) {
+    list<string> names
+    try {
+        names = fs.listFolder(folder)
+    } catch (Exception e) {
+        ret
+    }
+    sortNames(ref names)
+    for (string name in names) {
+        string path = name.copy()
+        if (folder != ".") {
+            path = fs.joinPath(folder, name)
+        }
+        if (fs.isFolder(path)) {
+            if (!name.startsWith(".")) {
+                collectSources(path, ref files)
+            }
+        } else if (fs.extension(name) == ".cro") {
+            files.add(move path)
+        }
+    }
+}
+
+// The path with the separators of the system, as std::filesystem writes it.
+string normal(string path) {
+    string separator = fs.separator()
+    string result = path.replace("/", separator).replace("\\", separator)
+    for (result.len() > 1 && result.endsWith(separator)) {
+        result = result.slice(0, result.len() - 1)
+    }
+    for (result.startsWith("." + separator)) {
+        result = result.slice(2, result.len())
+    }
+    ret result
+}
+
+// The library has no sort yet: the pilot shows it.
+void sortNames(ref list<string> names) {
+    list<string> sorted
+    for (string name in names) {
+        i64 at = sorted.len()
+        for (at > 0 && before(name, sorted[at - 1])) {
+            at--
+        }
+        sorted.insert(at, name.copy())
+    }
+    names = move sorted
+}
+
+// The order of the bytes, as the names of the files are compared.
+bool before(string a, string b) {
+    i64 n = a.len()
+    if (b.len() < n) {
+        n = b.len()
+    }
+    for (i64 i = 0; i < n; i++) {
+        if (a[i] != b[i]) {
+            ret a[i] < b[i]
+        }
+    }
+    ret a.len() < b.len()
+}

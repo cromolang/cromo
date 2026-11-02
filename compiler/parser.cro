@@ -1,0 +1,2185 @@
+// The parser of Cromo (D417), as src/parser.cpp: the tree of a module (D418), its
+// errors, and the positions of the '<' and '>' of the generics, for cromo fmt.
+import ast
+import diagnostics
+import lexer
+
+// The tree of the tokens of a file. The errors go to `diag`; `angles` gets the
+// positions of the '<' and '>' around type arguments and parameters.
+public Tree parse(ref list<Token> tokens, ref Diagnostics diag, ref map<i64, bool> angles) {
+    Parser parser
+    parser.tokens = move tokens
+    parser.diag = move diag
+    parser.angles = move angles
+    parser.parseModule()
+    tokens = move parser.tokens
+    diag = move parser.diag
+    angles = move parser.angles
+    ret move parser.tree
+}
+
+struct Parser {
+    list<Token> tokens
+    Diagnostics diag
+    map<i64, bool> angles
+    Tree tree
+    i64 pos
+
+    void parseModule() {
+        skipNewlines()
+        for (check(Kind.KwImport)) {  // the imports come first (D131)
+            parseImport()
+            skipNewlines()
+        }
+        for (!check(Kind.EndOfFile)) {
+            if (check(Kind.KwImport)) {
+                errorAt(at(0), "the imports come before the declarations of the module (D131)")
+                skipToNextDeclaration()
+            } else if (check(Kind.KwExtern)) {
+                parseExtern()
+            } else {
+                parseDeclaration()
+            }
+            skipNewlines()
+        }
+    }
+
+    // declaration := attributes ['public'] (struct | enum | interface | function)   (D50, D349)
+    void parseDeclaration() {
+        list<Attribute> attributes
+        if (!parseAttributes(ref attributes)) {
+            skipToNextDeclaration()
+            ret
+        }
+        bool isPublic = false
+        if (check(Kind.KwPublic)) {
+            i64 token = advance()
+            if (check(Kind.KwExtern) || check(Kind.KwImport)) {
+                if (check(Kind.KwExtern)) {
+                    errorAt(token, "an extern block is not public: the module offers safe functions instead (D42, D133)")
+                } else {
+                    errorAt(token, "an import is not public: each module writes its own (D131)")
+                }
+                advance()
+                skipToNextDeclaration()
+                ret
+            }
+            isPublic = true
+        }
+        if (attributes.len() > 0 && (check(Kind.KwStruct) || check(Kind.KwEnum) || check(Kind.KwInterface) ||
+            check(Kind.KwExtern))) {
+            diag.error(attributes[0].line, attributes[0].column,
+                "an attribute is written before a field, or [[test]] before a function (D256, D349)")
+            skipToNextDeclaration()
+            ret
+        }
+        if (check(Kind.KwStruct) || check(Kind.KwEnum)) {
+            Record decl
+            bool ok = false
+            if (check(Kind.KwStruct)) {
+                ok = parseStruct(ref decl)
+            } else {
+                ok = parseEnum(ref decl)
+            }
+            if (!ok) {
+                skipToNextDeclaration()
+                ret
+            }
+            decl.isPublic = isPublic
+            tree.records.add(move decl)
+        } else if (check(Kind.KwInterface)) {
+            Interface decl
+            if (!parseInterface(ref decl)) {
+                skipToNextDeclaration()
+                ret
+            }
+            decl.isPublic = isPublic
+            tree.interfaces.add(move decl)
+        } else if (check(Kind.KwConst) || startsModuleVariable()) {
+            if (isPublic || attributes.len() > 0) {
+                string message = "a module variable has no attributes and is not public: only its module sees it (D394)"
+                if (check(Kind.KwConst)) {
+                    message = "a constant of a module has no attributes and is not public: only its module sees it (D414)"
+                }
+                if (isPublic) {
+                    errorAt(at(0), message)
+                } else {
+                    diag.error(attributes[0].line, attributes[0].column, message)
+                }
+            }
+            i32 declaration = parseVarDecl()
+            if (declaration < 0) {
+                skipToNextDeclaration()
+                ret
+            }
+            Global global
+            global.isConst = tree.stmts[declaration].isConst
+            global.type = tree.stmts[declaration].type
+            global.name = tree.stmts[declaration].name.copy()
+            global.line = tree.stmts[declaration].nameLine
+            global.column = tree.stmts[declaration].nameColumn
+            global.init = tree.stmts[declaration].value
+            bool isConst = global.isConst
+            tree.globals.add(move global)
+            if (!check(Kind.Newline) && !check(Kind.EndOfFile)) {
+                if (isConst) {
+                    errorAtCurrent("a newline after the constant")
+                } else {
+                    errorAtCurrent("a newline after the module variable")
+                }
+                skipToNextDeclaration()
+            }
+        } else {
+            Function function
+            if (parseFunction(false, ref function)) {
+                function.isPublic = isPublic
+                function.attributes = move attributes
+                tree.topFunctions.add(addFunction(move function))
+            } else {
+                skipToNextDeclaration()
+            }
+        }
+    }
+
+    // `i64 count = 0` or `u8[4096] buffer` outside the functions (D394): a type and a
+    // name, followed by `=` or by the end of the line, where a function has `(`.
+    bool startsModuleVariable() const {
+        i64 afterType = 0
+        if (check(Kind.Identifier) || check(Kind.KwFunc)) {
+            afterType = skipType(0, true)
+        }
+        if (afterType == 0 || kind(afterType) != Kind.Identifier) {
+            ret false
+        }
+        Kind next = kind(afterType + 1)
+        ret next == Kind.Assign || next == Kind.Newline || next == Kind.EndOfFile
+    }
+
+    // import := 'import' (name {'.' name} | 'unsafe')   (D50, D127)
+    void parseImport() {
+        advance()  // 'import'
+        if (match(Kind.KwUnsafe)) {
+            tree.isUnsafe = true
+        } else {
+            Import item
+            item.line = tokens[at(0)].line
+            item.column = tokens[at(0)].column
+            for (;;) {
+                if (!check(Kind.Identifier)) {
+                    errorAtCurrent("the name of a module")
+                    skipToNextDeclaration()
+                    ret
+                }
+                item.path.add(tokens[advance()].text.copy())
+                if (!match(Kind.Dot)) {
+                    break
+                }
+            }
+            tree.imports.add(move item)
+        }
+        if (!check(Kind.Newline) && !check(Kind.EndOfFile)) {
+            errorAtCurrent("a newline after the import")
+            skipToNextDeclaration()
+        }
+    }
+
+    // extern := 'extern' string '{' { signature } '}'   (D128)
+    void parseExtern() {
+        i64 keyword = advance()  // 'extern'
+        if (!tree.isUnsafe) {
+            errorAt(keyword, "an extern block needs 'import unsafe' at the top of the module (D127)")
+        }
+        if (!check(Kind.StringLiteral)) {
+            errorAtCurrent("the name of the library in quotes, as \"kernel32\" (D128)")
+            skipToNextDeclaration()
+            ret
+        }
+        i64 libraryToken = advance()
+        string library = tokens[libraryToken].text.copy()
+        bool separators = library.contains("/") || library.contains("\\") || library.contains(":")
+        if (library.len() == 0 || separators) {
+            errorAt(libraryToken, "the library is a name, as \"kernel32\": cromo looks for it (D133)")
+        } else if (library.endsWith(".lib") || library.endsWith(".dll")) {
+            errorAt(libraryToken, "write the library without extension, as \"kernel32\" (D133)")
+        }
+        skipNewlines()
+        if (!expect(Kind.LBrace, "to open the extern block")) {
+            skipToNextDeclaration()
+            ret
+        }
+        skipNewlines()
+        for (!check(Kind.RBrace) && !check(Kind.EndOfFile)) {
+            if (check(Kind.KwPublic)) {
+                errorAt(at(0), "the C functions are private to the module: it offers safe functions instead (D42, D133)")
+                advance()
+            }
+            Function function
+            function.isExtern = true
+            function.library = library.copy()
+            if (!parseSignature(ref function, false)) {
+                skipToNextStatement()  // it also takes the newline
+                skipNewlines()
+                continue
+            }
+            if (check(Kind.LBrace)) {
+                errorAt(at(0), "a C function has no body: it is in the library (D128)")
+                parseBlock()
+            }
+            if (function.typeParams.len() > 0) {
+                diag.error(function.typeParams[0].line, function.typeParams[0].column, "a C function cannot be generic (D129)")
+                function.typeParams.clear()
+            }
+            tree.topFunctions.add(addFunction(move function))
+            if (!match(Kind.Newline) && !check(Kind.RBrace)) {
+                errorAtCurrent("a newline after the function")
+                skipToNextStatement()
+            }
+            skipNewlines()
+        }
+        expect(Kind.RBrace, "to close the extern block")
+    }
+
+    // ---- The tokens ----
+
+    // The index of the token `ahead` after the current one, or of the last one.
+    i64 at(i64 ahead) const {
+        i64 index = pos + ahead
+        if (index < tokens.len()) {
+            ret index
+        }
+        ret tokens.len() - 1
+    }
+
+    Kind kind(i64 ahead) const {
+        ret tokens[at(ahead)].kind
+    }
+
+    bool check(Kind expected) const {
+        ret tokens[at(0)].kind == expected
+    }
+
+    i64 advance() {
+        i64 index = at(0)
+        if (pos < tokens.len() - 1) {
+            pos++
+        }
+        ret index
+    }
+
+    bool match(Kind expected) {
+        if (!check(expected)) {
+            ret false
+        }
+        advance()
+        ret true
+    }
+
+    void errorAt(i64 index, string message) {
+        diag.error(tokens[index].line, tokens[index].column, message)
+    }
+
+    void errorAtCurrent(string expected) {
+        errorAt(at(0), "expected " + expected + ", found " + describe(kind(0)))
+    }
+
+    bool expect(Kind expected, string context) {
+        if (match(expected)) {
+            ret true
+        }
+        errorAtCurrent(describe(expected) + " " + context)
+        ret false
+    }
+
+    void skipNewlines() {
+        for (match(Kind.Newline)) {
+        }
+    }
+
+    // After an error in a declaration: to the end of the block or of the line, at the
+    // outermost level.
+    void skipToNextDeclaration() {
+        i32 depth = 0
+        for (!check(Kind.EndOfFile)) {
+            Kind next = tokens[advance()].kind
+            if (next == Kind.LBrace) {
+                depth++
+            }
+            if (next == Kind.RBrace) {
+                depth--
+                if (depth <= 0) {
+                    ret
+                }
+            }
+            if (next == Kind.Newline && depth == 0) {
+                ret
+            }
+        }
+    }
+
+    // After an error in a statement: to the end of the line or of the block.
+    void skipToNextStatement() {
+        i32 depth = 0
+        for (!check(Kind.EndOfFile)) {
+            if (check(Kind.RBrace) && depth == 0) {
+                ret
+            }
+            Kind next = tokens[advance()].kind
+            if (next == Kind.LBrace) {
+                depth++
+            }
+            if (next == Kind.RBrace) {
+                depth--
+            }
+            if (next == Kind.Newline && depth == 0) {
+                ret
+            }
+        }
+    }
+
+    // ---- The tables of the tree ----
+
+    i32 addType(move TypeNode node) {
+        tree.types.add(move node)
+        ret i32(tree.types.len() - 1)
+    }
+
+    i32 addExpr(move Expr node) {
+        tree.exprs.add(move node)
+        ret i32(tree.exprs.len() - 1)
+    }
+
+    i32 addStmt(move Stmt node) {
+        tree.stmts.add(move node)
+        ret i32(tree.stmts.len() - 1)
+    }
+
+    i32 addFunction(move Function node) {
+        tree.functions.add(move node)
+        ret i32(tree.functions.len() - 1)
+    }
+
+    // An expression of `kind` at the token `token`.
+    Expr exprAt(ExprKind exprKind, i64 token) const {
+        Expr node
+        node.kind = exprKind
+        node.line = tokens[token].line
+        node.column = tokens[token].column
+        ret node
+    }
+
+    Stmt stmtAt(StmtKind stmtKind, i64 token) const {
+        Stmt node
+        node.kind = stmtKind
+        node.line = tokens[token].line
+        node.column = tokens[token].column
+        ret node
+    }
+
+    // ---- The declarations ----
+
+    // type := 'void' | [module '.'] name ['<' type {',' type} '>']
+    // `nameFollows`: a name comes after the type, as in a declaration; it decides
+    // whether `func(i32) f` returns f or names f (D185).
+    i32 parseType(bool nameFollows) {
+        i64 token = at(0)
+        if (tokens[token].kind == Kind.KwFunc) {
+            ret parseFunctionType(nameFollows)
+        }
+        TypeNode node
+        node.line = tokens[token].line
+        node.column = tokens[token].column
+        if (tokens[token].kind == Kind.KwVoid) {
+            node.name = "void"
+            advance()
+            ret addType(move node)
+        }
+        if (tokens[token].kind != Kind.Identifier) {
+            errorAtCurrent("a type")
+            ret -1
+        }
+        node.name = tokens[token].text.copy()
+        advance()
+        if (check(Kind.Dot) && kind(1) == Kind.Identifier) {  // `geometry.Circle` (D126)
+            node.module = move node.name
+            advance()
+            i64 name = advance()
+            node.name = tokens[name].text.copy()
+            node.line = tokens[name].line
+            node.column = tokens[name].column
+        }
+        if (check(Kind.Less)) {
+            markAngle()
+            advance()
+            for (;;) {
+                i32 arg = parseType(false)
+                if (arg < 0) {
+                    ret -1
+                }
+                node.args.add(arg)
+                if (!match(Kind.Comma)) {
+                    break
+                }
+            }
+            markAngle()
+            if (!expect(Kind.Greater, "to close the type arguments")) {
+                ret -1
+            }
+        }
+        // `i32[4]` (D196): the size is an integer literal.
+        for (check(Kind.LBracket) && kind(1) == Kind.IntegerLiteral && kind(2) == Kind.RBracket) {
+            advance()
+            u64 size = tokens[advance()].value
+            if (size > 0x7FFFFFFFFFFFFFFF) {
+                size = 0x7FFFFFFFFFFFFFFF
+            }
+            node.dimensions.add(i64(size))
+            advance()
+        }
+        ret addType(move node)
+    }
+
+    // functionType := 'func' '(' [['ref' | 'move'] type {',' ...}] ')' [type]   (D185)
+    i32 parseFunctionType(bool nameFollows) {
+        TypeNode node
+        i64 keyword = advance()
+        node.name = "func"
+        node.line = tokens[keyword].line
+        node.column = tokens[keyword].column
+        node.isFunction = true
+        if (!expect(Kind.LParen, "after 'func'")) {
+            ret -1
+        }
+        if (!check(Kind.RParen)) {
+            for (;;) {
+                ParamMode mode = ParamMode.Read
+                if (match(Kind.KwRef)) {
+                    mode = ParamMode.Ref
+                } else if (match(Kind.KwMove)) {
+                    mode = ParamMode.Move
+                }
+                i32 param = parseType(false)
+                if (param < 0) {
+                    ret -1
+                }
+                node.args.add(param)
+                node.modes.add(mode)
+                if (!match(Kind.Comma)) {
+                    break
+                }
+            }
+        }
+        if (!expect(Kind.RParen, "to close the parameters of the function type")) {
+            ret -1
+        }
+        if (hasResultType(0, nameFollows)) {
+            i32 result = parseType(nameFollows)
+            if (result < 0) {
+                ret -1
+            }
+            node.result = result
+        }
+        ret addType(move node)
+    }
+
+    bool startsType(i64 i) const {
+        Kind next = kind(i)
+        ret next == Kind.Identifier || next == Kind.KwVoid || next == Kind.KwFunc
+    }
+
+    // After the ')' of a function type: a type returned, unless what follows is the
+    // name of a declaration (D185).
+    bool hasResultType(i64 i, bool nameFollows) const {
+        if (!startsType(i)) {
+            ret false
+        }
+        if (!nameFollows) {
+            ret true
+        }
+        i64 after = skipType(i, nameFollows)
+        ret after != 0 && kind(after) == Kind.Identifier
+    }
+
+    // A '<' or '>' around type arguments or parameters, for cromo fmt.
+    void markAngle() {
+        if (check(Kind.Less) || check(Kind.Greater)) {
+            angles[tokens[at(0)].begin] = true
+        }
+    }
+
+    // Looks ahead without moving: the position after the type that starts at `i`, or
+    // 0 when there is no type there.
+    i64 skipType(i64 start, bool nameFollows) const {
+        i64 i = start
+        if (kind(i) == Kind.KwFunc) {  // `func(i32, ref T) bool` (D185)
+            if (kind(i + 1) != Kind.LParen) {
+                ret 0
+            }
+            i64 j = i + 2
+            if (kind(j) != Kind.RParen) {
+                for (;;) {
+                    if (kind(j) == Kind.KwRef || kind(j) == Kind.KwMove) {
+                        j++
+                    }
+                    j = skipType(j, false)
+                    if (j == 0) {
+                        ret 0
+                    }
+                    if (kind(j) != Kind.Comma) {
+                        break
+                    }
+                    j++
+                }
+            }
+            if (kind(j) != Kind.RParen) {
+                ret 0
+            }
+            j++
+            if (hasResultType(j, nameFollows)) {
+                ret skipType(j, nameFollows)
+            }
+            ret j
+        }
+        if (kind(i) == Kind.KwVoid) {
+            ret i + 1
+        }
+        if (kind(i) != Kind.Identifier) {
+            ret 0
+        }
+        if (kind(i + 1) == Kind.Dot && kind(i + 2) == Kind.Identifier) {  // `geometry.Circle`
+            i += 2
+        }
+        i64 end = i + 1
+        if (kind(i + 1) == Kind.Less) {
+            end = skipTypeArgs(i + 1)
+        }
+        for (end != 0 && kind(end) == Kind.LBracket && kind(end + 1) == Kind.IntegerLiteral &&
+            kind(end + 2) == Kind.RBracket) {
+            end += 3  // `i32[4]` (D196)
+        }
+        ret end
+    }
+
+    // The position after the type arguments that start with the '<' at `i`, or 0.
+    i64 skipTypeArgs(i64 start) const {
+        i64 i = start + 1
+        for (;;) {
+            i = skipType(i, false)
+            if (i == 0) {
+                ret 0
+            }
+            if (kind(i) == Kind.Greater) {
+                ret i + 1
+            }
+            if (kind(i) != Kind.Comma) {
+                ret 0
+            }
+            i++
+        }
+    }
+
+    // A generic type before a `.`: `Result<i32, string>.Ok(5)`.
+    bool isGenericType() const {
+        if (!check(Kind.Identifier) || kind(1) != Kind.Less) {
+            ret false
+        }
+        i64 after = skipTypeArgs(1)
+        ret after != 0 && kind(after) == Kind.Dot
+    }
+
+    // A call with type arguments: `max<Money>(a, b)`.
+    bool isGenericCall() const {
+        if (!check(Kind.Identifier) || kind(1) != Kind.Less) {
+            ret false
+        }
+        i64 after = skipTypeArgs(1)
+        ret after != 0 && kind(after) == Kind.LParen
+    }
+
+    // typeParams := '<' name [':' type {'+' type}] {',' ...} '>'   (D52, D88)
+    bool parseTypeParams(ref list<TypeParam> out) {
+        markAngle()
+        advance()  // '<'
+        for (;;) {
+            if (!check(Kind.Identifier)) {
+                errorAtCurrent("the name of a type parameter")
+                ret false
+            }
+            TypeParam param
+            i64 name = advance()
+            param.name = tokens[name].text.copy()
+            param.line = tokens[name].line
+            param.column = tokens[name].column
+            if (match(Kind.Colon)) {
+                for (;;) {
+                    i32 constraint = parseType(false)
+                    if (constraint < 0) {
+                        ret false
+                    }
+                    param.constraints.add(constraint)
+                    if (!match(Kind.Plus)) {
+                        break
+                    }
+                }
+            }
+            out.add(move param)
+            if (!match(Kind.Comma)) {
+                break
+            }
+        }
+        markAngle()
+        ret expect(Kind.Greater, "to close the type parameters")
+    }
+
+    // params := '(' [param {',' param}] ')'
+    // param  := ['ref' | 'move' ['const'] | 'const'] type name   (D22, D253)
+    bool parseParams(ref Function function) {
+        if (!expect(Kind.LParen, "after the function name")) {
+            ret false
+        }
+        if (!check(Kind.RParen)) {
+            for (;;) {
+                Param param
+                if (match(Kind.KwRef)) {
+                    param.mode = ParamMode.Ref
+                } else if (match(Kind.KwMove)) {
+                    param.mode = ParamMode.Move
+                    param.isConst = match(Kind.KwConst)
+                } else if (check(Kind.KwConst) && kind(1) == Kind.KwFunc) {
+                    advance()  // `const func(...)`: a function that does not modify what it captures (D253)
+                    param.isConst = true
+                }
+                if (check(Kind.KwConst)) {
+                    if (param.mode == ParamMode.Ref) {
+                        errorAt(at(0), "'ref const' does not exist: a read parameter is already read-only (D22)")
+                    } else {
+                        errorAt(at(0), "only a 'move' parameter can be const, written 'move const' (D22), and a " +
+                            "function, written 'const func' (D253)")
+                    }
+                    ret false
+                }
+                param.type = parseType(true)
+                if (param.type < 0) {
+                    ret false
+                }
+                if (!check(Kind.Identifier)) {
+                    errorAtCurrent("the parameter name")
+                    ret false
+                }
+                i64 name = advance()
+                param.name = tokens[name].text.copy()
+                param.line = tokens[name].line
+                param.column = tokens[name].column
+                function.params.add(move param)
+                if (!match(Kind.Comma)) {
+                    break
+                }
+            }
+        }
+        ret expect(Kind.RParen, "to close the parameter list")
+    }
+
+    bool parseFunctionBody(ref Function function) {
+        skipNewlines()  // the '{' may also be on the next line (D32)
+        if (!check(Kind.LBrace)) {
+            errorAtCurrent("'{' to open the function body")
+            ret false
+        }
+        function.body = parseBlock()
+        ret true
+    }
+
+    // signature := type name [typeParams] params ['const']
+    bool parseSignature(ref Function function, bool inStruct) {
+        function.returnType = parseType(true)
+        if (function.returnType < 0) {
+            ret false
+        }
+        if (!check(Kind.Identifier)) {
+            if (inStruct) {
+                errorAtCurrent("the name of the field or method")
+            } else {
+                errorAtCurrent("the function name")
+            }
+            ret false
+        }
+        i64 name = advance()
+        function.name = tokens[name].text.copy()
+        function.line = tokens[name].line
+        function.column = tokens[name].column
+        if (check(Kind.Less) && !parseTypeParams(ref function.typeParams)) {
+            ret false
+        }
+        if (!parseParams(ref function)) {
+            ret false
+        }
+        if (check(Kind.KwConst)) {
+            if (!inStruct) {
+                errorAt(at(0), "only methods can be const (D24)")
+                ret false
+            }
+            function.isConst = true
+            advance()
+        }
+        ret true
+    }
+
+    // function := signature block
+    bool parseFunction(bool inStruct, ref Function function) {
+        ret parseSignature(ref function, inStruct) && parseFunctionBody(ref function)
+    }
+
+    // enum := 'enum' name [typeParams] [':' interfaces] '{' { case | method } '}'
+    // case := name ['(' type name {',' type name} ')']   (D104)
+    bool parseEnum(ref Record decl) {
+        decl.isEnum = true
+        advance()  // 'enum'
+        if (!check(Kind.Identifier)) {
+            errorAtCurrent("the name of the enum")
+            ret false
+        }
+        i64 name = advance()
+        decl.name = tokens[name].text.copy()
+        decl.line = tokens[name].line
+        decl.column = tokens[name].column
+        if (check(Kind.Less) && !parseTypeParams(ref decl.typeParams)) {
+            ret false
+        }
+        if (match(Kind.Colon)) {
+            for (;;) {
+                i32 interfaceType = parseType(false)
+                if (interfaceType < 0) {
+                    ret false
+                }
+                decl.interfaces.add(interfaceType)
+                if (!match(Kind.Comma)) {
+                    break
+                }
+            }
+        }
+        skipNewlines()
+        if (!expect(Kind.LBrace, "to open the enum")) {
+            ret false
+        }
+        skipNewlines()
+        for (!check(Kind.RBrace) && !check(Kind.EndOfFile)) {
+            if (!parseEnumMember(ref decl)) {
+                skipToNextStatement()  // it also takes the newline
+                skipNewlines()
+                continue
+            }
+            if (!match(Kind.Newline) && !check(Kind.RBrace)) {
+                errorAtCurrent("a newline after the case")
+                skipToNextStatement()
+            }
+            skipNewlines()
+        }
+        ret expect(Kind.RBrace, "to close the enum")
+    }
+
+    bool parseEnumMember(ref Record decl) {
+        list<Attribute> attributes  // of a case (D365)
+        if (!parseAttributes(ref attributes)) {
+            ret false
+        }
+        i64 publicToken = -1
+        if (check(Kind.KwPublic)) {
+            publicToken = advance()
+        }
+        if (check(Kind.Tilde) || (check(Kind.Identifier) && tokens[at(0)].text == decl.name && kind(1) == Kind.LParen)) {
+            errorAt(at(0), "an enum has no constructor or destructor (D110)")
+            ret false
+        }
+        i64 afterType = skipType(0, true)
+        if (afterType != 0 && kind(afterType) == Kind.Identifier) {  // a method
+            if (attributes.len() > 0) {
+                diag.error(attributes[0].line, attributes[0].column, "in an enum an attribute is written only before a case (D365)")
+                ret false
+            }
+            Function method
+            if (!parseFunction(true, ref method)) {
+                ret false
+            }
+            method.kind = FunctionKind.Method
+            method.isPublic = publicToken >= 0
+            decl.members.add(addFunction(move method))
+            ret true
+        }
+        if (!check(Kind.Identifier)) {
+            errorAtCurrent("a case or a method")
+            ret false
+        }
+        if (publicToken >= 0) {
+            errorAt(publicToken, "the cases of an enum are public with it (D132)")
+            ret false
+        }
+        Case item
+        i64 name = advance()
+        item.name = tokens[name].text.copy()
+        item.line = tokens[name].line
+        item.column = tokens[name].column
+        item.attributes = move attributes
+        if (check(Kind.LParen)) {
+            Function data  // the data are written like parameters (D104)
+            if (!parseParams(ref data)) {
+                ret false
+            }
+            for (Param param in data.params) {
+                if (param.mode != ParamMode.Read) {
+                    diag.error(param.line, param.column, "the data of a case have no 'ref' or 'move' (D104)")
+                    ret false
+                }
+                Field field
+                field.type = param.type
+                field.name = param.name.copy()
+                field.line = param.line
+                field.column = param.column
+                item.fields.add(move field)
+            }
+        }
+        if (match(Kind.Assign)) {  // `Red = 1` (D135)
+            item.value = parseExpression()
+            if (item.value < 0) {
+                ret false
+            }
+        }
+        decl.cases.add(move item)
+        ret true
+    }
+
+    // interface := 'interface' name '{' { signature } '}'   (D49, D90)
+    bool parseInterface(ref Interface decl) {
+        advance()  // 'interface'
+        if (!check(Kind.Identifier)) {
+            errorAtCurrent("the name of the interface")
+            ret false
+        }
+        i64 name = advance()
+        decl.name = tokens[name].text.copy()
+        decl.line = tokens[name].line
+        decl.column = tokens[name].column
+        if (check(Kind.Less)) {
+            errorAt(at(0), "an interface has no type parameters: its methods use Self (D84)")
+            ret false
+        }
+        if (check(Kind.Colon)) {
+            errorAt(at(0), "an interface cannot extend another interface (D90)")
+            ret false
+        }
+        skipNewlines()
+        if (!expect(Kind.LBrace, "to open the interface")) {
+            ret false
+        }
+        skipNewlines()
+        for (!check(Kind.RBrace) && !check(Kind.EndOfFile)) {
+            if (check(Kind.KwPublic)) {
+                errorAt(at(0), "the methods of an interface are public with it (D132)")
+                advance()
+            }
+            Function method
+            method.kind = FunctionKind.Method
+            i64 afterType = skipType(0, true)
+            bool ok = false
+            if (afterType != 0 && kind(afterType) == Kind.Identifier && kind(afterType + 1) != Kind.LParen) {
+                errorAt(at(afterType), "an interface contains only methods (D90)")
+            } else if (parseSignature(ref method, true)) {
+                if (check(Kind.LBrace)) {
+                    errorAt(at(0), "the methods of an interface have no body (D90)")
+                    parseBlock()  // skipped, to go on with the next method
+                }
+                decl.methods.add(addFunction(move method))
+                ok = true
+            }
+            if (!ok) {
+                skipToNextStatement()  // it also takes the newline
+                skipNewlines()
+                continue
+            }
+            if (!match(Kind.Newline) && !check(Kind.RBrace)) {
+                errorAtCurrent("a newline after the method")
+                skipToNextStatement()
+            }
+            skipNewlines()
+        }
+        ret expect(Kind.RBrace, "to close the interface")
+    }
+
+    // struct := 'struct' name '{' { member } '}'
+    // member := field | constructor | destructor | method
+    bool parseStruct(ref Record decl) {
+        advance()  // 'struct'
+        if (!check(Kind.Identifier)) {
+            errorAtCurrent("the name of the struct")
+            ret false
+        }
+        i64 name = advance()
+        decl.name = tokens[name].text.copy()
+        decl.line = tokens[name].line
+        decl.column = tokens[name].column
+        if (check(Kind.Less) && !parseTypeParams(ref decl.typeParams)) {
+            ret false
+        }
+        if (match(Kind.Colon)) {  // the interfaces it implements (D49, D88)
+            for (;;) {
+                i32 interfaceType = parseType(false)
+                if (interfaceType < 0) {
+                    ret false
+                }
+                decl.interfaces.add(interfaceType)
+                if (!match(Kind.Comma)) {
+                    break
+                }
+            }
+        }
+        skipNewlines()
+        if (!expect(Kind.LBrace, "to open the struct")) {
+            ret false
+        }
+        skipNewlines()
+        for (!check(Kind.RBrace) && !check(Kind.EndOfFile)) {
+            if (!parseMember(ref decl)) {
+                skipToNextStatement()  // it also takes the newline
+                skipNewlines()
+                continue
+            }
+            if (!match(Kind.Newline) && !check(Kind.RBrace)) {
+                errorAtCurrent("a newline after the member")
+                skipToNextStatement()
+            }
+            skipNewlines()
+        }
+        ret expect(Kind.RBrace, "to close the struct")
+    }
+
+    // attributes := { '[' '[' name ['(' arg {',' arg} ')'] ']' ']' }   (D256)
+    // arg := text | name
+    bool parseAttributes(ref list<Attribute> out) {
+        for (check(Kind.LBracket) && kind(1) == Kind.LBracket) {
+            advance()
+            advance()
+            Attribute attribute
+            if (!check(Kind.Identifier)) {
+                errorAtCurrent("the name of the attribute")
+                ret false
+            }
+            i64 name = advance()
+            attribute.name = tokens[name].text.copy()
+            attribute.line = tokens[name].line
+            attribute.column = tokens[name].column
+            if (match(Kind.LParen)) {
+                for (;;) {
+                    AttributeArg arg
+                    arg.line = tokens[at(0)].line
+                    arg.column = tokens[at(0)].column
+                    if (check(Kind.StringLiteral) || check(Kind.Identifier)) {
+                        arg.isText = check(Kind.StringLiteral)
+                        arg.text = tokens[advance()].text.copy()
+                    } else {
+                        errorAtCurrent("a text or a name as the argument of the attribute")
+                        ret false
+                    }
+                    attribute.args.add(move arg)
+                    if (!match(Kind.Comma)) {
+                        break
+                    }
+                }
+                if (!expect(Kind.RParen, "to close the arguments of the attribute")) {
+                    ret false
+                }
+            }
+            if (!expect(Kind.RBracket, "to close the attribute with ']]'") ||
+                !expect(Kind.RBracket, "to close the attribute with ']]'")) {
+                ret false
+            }
+            out.add(move attribute)
+            skipNewlines()  // the field may follow on the next line
+        }
+        ret true
+    }
+
+    // member := attributes ['public'] (field | constructor | method) | destructor   (D50, D132, D256)
+    bool parseMember(ref Record decl) {
+        list<Attribute> attributes
+        if (!parseAttributes(ref attributes)) {
+            ret false
+        }
+        bool isPublic = false
+        if (check(Kind.KwPublic)) {
+            i64 token = advance()
+            if (check(Kind.Tilde)) {
+                errorAt(token, "a destructor has no 'public': it runs wherever its object ends (D132)")
+                ret false
+            }
+            isPublic = true
+        }
+        i64 members = decl.members.len()
+        i64 fields = decl.fields.len()
+        if (!parseMemberDecl(ref decl)) {
+            ret false
+        }
+        if (decl.members.len() > members) {
+            tree.functions[decl.members[decl.members.len() - 1]].isPublic = isPublic
+        }
+        if (decl.fields.len() > fields) {
+            decl.fields[decl.fields.len() - 1].isPublic = isPublic
+            decl.fields[decl.fields.len() - 1].attributes = move attributes
+        } else if (attributes.len() > 0) {
+            diag.error(attributes[0].line, attributes[0].column, "an attribute is written only before a field, for now (D256)")
+            ret false
+        }
+        ret true
+    }
+
+    bool parseMemberDecl(ref Record decl) {
+        // ~Name() { ... }
+        if (check(Kind.Tilde)) {
+            Function destructor
+            destructor.kind = FunctionKind.Destructor
+            i64 tilde = advance()
+            destructor.line = tokens[tilde].line
+            destructor.column = tokens[tilde].column
+            if (!check(Kind.Identifier) || tokens[at(0)].text != decl.name) {
+                errorAtCurrent("'" + decl.name + "' after '~'")
+                ret false
+            }
+            advance()
+            destructor.name = "~" + decl.name
+            TypeNode none
+            none.name = "void"
+            none.line = destructor.line
+            none.column = destructor.column
+            destructor.returnType = addType(move none)
+            if (!parseParams(ref destructor) || !parseFunctionBody(ref destructor)) {
+                ret false
+            }
+            decl.members.add(addFunction(move destructor))
+            ret true
+        }
+        // Name(params) { ... }
+        if (check(Kind.Identifier) && tokens[at(0)].text == decl.name && kind(1) == Kind.LParen) {
+            Function constructor
+            constructor.kind = FunctionKind.Constructor
+            constructor.name = decl.name.copy()
+            i64 name = advance()
+            constructor.line = tokens[name].line
+            constructor.column = tokens[name].column
+            TypeNode none
+            none.name = "void"
+            none.line = constructor.line
+            none.column = constructor.column
+            constructor.returnType = addType(move none)
+            if (!parseParams(ref constructor) || !parseFunctionBody(ref constructor)) {
+                ret false
+            }
+            decl.members.add(addFunction(move constructor))
+            ret true
+        }
+        // type name ['=' literal]   or   type name params ['const'] block
+        i64 afterType = skipType(0, true)
+        if (afterType != 0 && kind(afterType) == Kind.Identifier &&
+            (kind(afterType + 1) == Kind.LParen || kind(afterType + 1) == Kind.Less)) {
+            Function method
+            if (!parseFunction(true, ref method)) {
+                ret false
+            }
+            method.kind = FunctionKind.Method
+            decl.members.add(addFunction(move method))
+            ret true
+        }
+        Field field
+        field.type = parseType(true)
+        if (field.type < 0) {
+            ret false
+        }
+        if (!check(Kind.Identifier)) {
+            errorAtCurrent("the name of the field")
+            ret false
+        }
+        i64 name = advance()
+        field.name = tokens[name].text.copy()
+        field.line = tokens[name].line
+        field.column = tokens[name].column
+        if (match(Kind.Assign)) {
+            field.init = parseExpression()
+            if (field.init < 0) {
+                ret false
+            }
+        }
+        decl.fields.add(move field)
+        ret true
+    }
+
+    // ---- The statements ----
+
+    // block := '{' { statement } '}'
+    i32 parseBlock() {
+        Block block
+        i64 open = advance()  // '{'
+        block.openLine = tokens[open].line
+        block.openColumn = tokens[open].column
+        skipNewlines()
+        for (!check(Kind.RBrace) && !check(Kind.EndOfFile)) {
+            i32 statement = parseStatement()
+            if (statement >= 0) {
+                block.statements.add(statement)
+                endOfStatement()
+            } else {
+                skipToNextStatement()
+            }
+            skipNewlines()
+        }
+        block.closeLine = tokens[at(0)].line
+        block.closeColumn = tokens[at(0)].column
+        if (!match(Kind.RBrace)) {
+            diag.error(block.openLine, block.openColumn, "unclosed block: missing '}'")
+        }
+        tree.blocks.add(move block)
+        ret i32(tree.blocks.len() - 1)
+    }
+
+    // A block that must follow `if`, `else` or `for`: the braces are mandatory (D32).
+    bool parseBody(ref i32 out, string owner) {
+        skipNewlines()
+        if (!check(Kind.LBrace)) {
+            errorAtCurrent("'{' after " + owner + " (braces are mandatory)")
+            ret false
+        }
+        out = parseBlock()
+        ret true
+    }
+
+    // A statement is followed by a newline, unless the block closes right away.
+    void endOfStatement() {
+        if (match(Kind.Newline) || check(Kind.RBrace) || check(Kind.EndOfFile)) {
+            ret
+        }
+        errorAtCurrent("a newline at the end of the statement (one statement per line)")
+        skipToNextStatement()
+    }
+
+    bool startsDeclaration() const {
+        if (check(Kind.KwConst)) {
+            ret true
+        }
+        i64 afterType = 0
+        if (check(Kind.Identifier) || check(Kind.KwFunc)) {
+            afterType = skipType(0, true)
+        }
+        ret afterType != 0 && kind(afterType) == Kind.Identifier
+    }
+
+    i32 parseStatement() {
+        switch (kind(0)) {
+            case KwRet, KwThrow {
+                StmtKind stmtKind = StmtKind.Return
+                if (check(Kind.KwThrow)) {
+                    stmtKind = StmtKind.Throw
+                }
+                Stmt node = stmtAt(stmtKind, advance())
+                if (!check(Kind.Newline) && !check(Kind.RBrace) && !check(Kind.EndOfFile)) {
+                    node.value = parseExpression()
+                    if (node.value < 0) {
+                        ret -1
+                    }
+                }
+                ret addStmt(move node)
+            }
+            case KwIf {
+                ret parseIf()
+            }
+            case KwFor {
+                ret parseFor()
+            }
+            case KwSwitch {
+                ret parseSwitch()
+            }
+            case KwTry {
+                ret parseTry()
+            }
+            case KwBreak {
+                ret addStmt(stmtAt(StmtKind.Break, advance()))
+            }
+            case KwContinue {
+                ret addStmt(stmtAt(StmtKind.Continue, advance()))
+            }
+            default {
+                if (startsDeclaration()) {
+                    ret parseVarDecl()
+                }
+                ret parseSimpleStatement()
+            }
+        }
+    }
+
+    // declaration := ['const'] type name ['=' expression]
+    i32 parseVarDecl() {
+        Stmt node = stmtAt(StmtKind.VarDecl, at(0))
+        node.isConst = match(Kind.KwConst)
+        node.type = parseType(true)
+        if (node.type < 0) {
+            ret -1
+        }
+        if (!check(Kind.Identifier)) {
+            errorAtCurrent("the variable name")
+            ret -1
+        }
+        i64 name = advance()
+        node.name = tokens[name].text.copy()
+        node.nameLine = tokens[name].line
+        node.nameColumn = tokens[name].column
+        if (match(Kind.Assign)) {
+            node.value = parseExpression()
+            if (node.value < 0) {
+                ret -1
+            }
+        }
+        ret addStmt(move node)
+    }
+
+    // An assignment, ++ and --, or an expression (a call). The target of an assignment
+    // is an expression too: sema checks that it is a variable or a field.
+    i32 parseSimpleStatement() {
+        i64 first = at(0)
+        i32 expr = parseExpression()
+        if (expr < 0) {
+            ret -1
+        }
+        bool assigns = true
+        AssignOp op = AssignOp.Assign
+        switch (kind(0)) {
+            case Assign {
+                op = AssignOp.Assign
+            }
+            case PlusAssign {
+                op = AssignOp.Add
+            }
+            case MinusAssign {
+                op = AssignOp.Sub
+            }
+            case StarAssign {
+                op = AssignOp.Mul
+            }
+            case SlashAssign {
+                op = AssignOp.Div
+            }
+            case PercentAssign {
+                op = AssignOp.Rem
+            }
+            case AmpAssign {
+                op = AssignOp.BitAnd
+            }
+            case PipeAssign {
+                op = AssignOp.BitOr
+            }
+            case CaretAssign {
+                op = AssignOp.BitXor
+            }
+            case ShiftLeftAssign {
+                op = AssignOp.Shl
+            }
+            default {
+                assigns = false
+            }
+        }
+        if (!assigns && atShiftRight(Kind.GreaterEqual)) {  // `>>=`
+            advance()
+            op = AssignOp.Shr
+            assigns = true
+        }
+        if (assigns) {
+            advance()
+            Stmt node = stmtAt(StmtKind.Assign, first)
+            node.target = expr
+            node.op = op
+            node.value = parseExpression()
+            if (node.value < 0) {
+                ret -1
+            }
+            ret addStmt(move node)
+        }
+        if (check(Kind.PlusPlus) || check(Kind.MinusMinus)) {
+            Stmt node = stmtAt(StmtKind.IncDec, first)
+            node.target = expr
+            node.increment = tokens[advance()].kind == Kind.PlusPlus
+            ret addStmt(move node)
+        }
+        Stmt node = stmtAt(StmtKind.Expression, first)
+        node.value = expr
+        ret addStmt(move node)
+    }
+
+    // switch := 'switch' ['(' expression ')'] '{' { branch } '}'
+    // branch := 'case' pattern {',' pattern} block | 'default' block   (D106, D108)
+    i32 parseSwitch() {
+        Stmt node = stmtAt(StmtKind.Switch, advance())
+        if (match(Kind.LParen)) {
+            node.value = parseExpression()
+            if (node.value < 0) {
+                ret -1
+            }
+            if (!expect(Kind.RParen, "to close the value of 'switch'")) {
+                ret -1
+            }
+        }
+        skipNewlines()
+        if (!expect(Kind.LBrace, "to open the 'switch'")) {
+            ret -1
+        }
+        skipNewlines()
+        for (!check(Kind.RBrace) && !check(Kind.EndOfFile)) {
+            if (check(Kind.KwDefault)) {
+                i64 token = advance()
+                if (node.defaultBody >= 0) {
+                    errorAt(token, "'switch' has only one 'default'")
+                    ret -1
+                }
+                i32 body = -1
+                if (!parseBody(ref body, "'default'")) {
+                    ret -1
+                }
+                node.defaultBody = body
+            } else if (match(Kind.KwCase)) {
+                Branch branch
+                for (;;) {
+                    Pattern pattern
+                    if (!parsePattern(ref pattern)) {
+                        ret -1
+                    }
+                    branch.patterns.add(move pattern)
+                    if (!match(Kind.Comma)) {
+                        break
+                    }
+                }
+                i32 body = -1
+                if (!parseBody(ref body, "the case")) {
+                    ret -1
+                }
+                branch.body = body
+                tree.branches.add(move branch)
+                node.parts.add(i32(tree.branches.len() - 1))
+            } else {
+                errorAtCurrent("'case' or 'default'")
+                ret -1
+            }
+            skipNewlines()
+        }
+        if (!expect(Kind.RBrace, "to close the 'switch'")) {
+            ret -1
+        }
+        ret addStmt(move node)
+    }
+
+    // pattern := name ['(' ['ref'] type name {',' ...} ')'] | literal | '-' literal
+    bool parsePattern(ref Pattern pattern) {
+        pattern.line = tokens[at(0)].line
+        pattern.column = tokens[at(0)].column
+        if (check(Kind.Identifier)) {
+            pattern.name = tokens[advance()].text.copy()
+            if (match(Kind.LParen)) {
+                pattern.hasBindings = true
+                if (!check(Kind.RParen)) {
+                    for (;;) {
+                        Binding binding
+                        binding.isRef = match(Kind.KwRef)
+                        binding.type = parseType(true)
+                        if (binding.type < 0) {
+                            ret false
+                        }
+                        if (!check(Kind.Identifier)) {
+                            errorAtCurrent("the name of the data")
+                            ret false
+                        }
+                        i64 name = advance()
+                        binding.name = tokens[name].text.copy()
+                        binding.line = tokens[name].line
+                        binding.column = tokens[name].column
+                        pattern.bindings.add(move binding)
+                        if (!match(Kind.Comma)) {
+                            break
+                        }
+                    }
+                }
+                if (!expect(Kind.RParen, "to close the data of the case")) {
+                    ret false
+                }
+            }
+            ret true
+        }
+        bool literal = check(Kind.IntegerLiteral) || check(Kind.CharLiteral) || check(Kind.StringLiteral) ||
+            (check(Kind.Minus) && kind(1) == Kind.IntegerLiteral)
+        if (!literal) {
+            errorAtCurrent("a case of the enum or a literal")
+            ret false
+        }
+        pattern.literal = parseUnary()
+        ret pattern.literal >= 0
+    }
+
+    // try := 'try' block {'catch' '(' type name ')' block} ['finally' block]   (D16)
+    i32 parseTry() {
+        Stmt node = stmtAt(StmtKind.Try, advance())
+        i32 body = -1
+        if (!parseBody(ref body, "'try'")) {
+            ret -1
+        }
+        node.body = body
+        for (;;) {
+            // `catch` and `finally` may also start on the next line, like `else` (D32).
+            i64 ahead = 0
+            for (kind(ahead) == Kind.Newline) {
+                ahead++
+            }
+            Kind next = kind(ahead)
+            if (next != Kind.KwCatch && next != Kind.KwFinally) {
+                break
+            }
+            pos += ahead
+            if (match(Kind.KwFinally)) {
+                i32 finallyBody = -1
+                if (!parseBody(ref finallyBody, "'finally'")) {
+                    ret -1
+                }
+                node.elseBody = finallyBody
+                break
+            }
+            advance()  // 'catch'
+            Catch clause
+            if (!expect(Kind.LParen, "after 'catch'")) {
+                ret -1
+            }
+            clause.type = parseType(true)
+            if (clause.type < 0) {
+                ret -1
+            }
+            if (!check(Kind.Identifier)) {
+                errorAtCurrent("the name of the exception")
+                ret -1
+            }
+            i64 name = advance()
+            clause.name = tokens[name].text.copy()
+            clause.nameLine = tokens[name].line
+            clause.nameColumn = tokens[name].column
+            if (!expect(Kind.RParen, "to close the 'catch'")) {
+                ret -1
+            }
+            i32 catchBody = -1
+            if (!parseBody(ref catchBody, "the 'catch'")) {
+                ret -1
+            }
+            clause.body = catchBody
+            tree.catches.add(move clause)
+            node.parts.add(i32(tree.catches.len() - 1))
+        }
+        if (node.parts.len() == 0 && node.elseBody < 0) {
+            diag.error(node.line, node.column, "'try' needs at least one 'catch' or a 'finally'")
+            ret -1
+        }
+        ret addStmt(move node)
+    }
+
+    // if := 'if' '(' expression ')' block ['else' (if | block)]
+    i32 parseIf() {
+        Stmt node = stmtAt(StmtKind.If, advance())
+        if (!expect(Kind.LParen, "after 'if'")) {
+            ret -1
+        }
+        node.value = parseExpression()
+        if (node.value < 0) {
+            ret -1
+        }
+        if (!expect(Kind.RParen, "to close the condition")) {
+            ret -1
+        }
+        i32 thenBody = -1
+        if (!parseBody(ref thenBody, "the condition of 'if'")) {
+            ret -1
+        }
+        node.body = thenBody
+
+        // `else` may also start on the next line (D32): look past the newlines without
+        // taking them unless an `else` is really there.
+        i64 ahead = 0
+        for (kind(ahead) == Kind.Newline) {
+            ahead++
+        }
+        if (kind(ahead) != Kind.KwElse) {
+            ret addStmt(move node)
+        }
+        pos += ahead
+        i64 elseToken = advance()
+
+        Block elseBlock
+        elseBlock.openLine = tokens[elseToken].line
+        elseBlock.openColumn = tokens[elseToken].column
+        if (check(Kind.KwIf)) {
+            i32 nested = parseIf()
+            if (nested < 0) {
+                ret -1
+            }
+            elseBlock.closeLine = tree.stmts[nested].line
+            elseBlock.closeColumn = tree.stmts[nested].column
+            elseBlock.statements.add(nested)
+            tree.blocks.add(move elseBlock)
+            node.elseBody = i32(tree.blocks.len() - 1)
+        } else {
+            i32 elseBody = -1
+            if (!parseBody(ref elseBody, "'else'")) {
+                ret -1
+            }
+            node.elseBody = elseBody
+        }
+        ret addStmt(move node)
+    }
+
+    // for := 'for' block
+    //      | 'for' '(' expression ')' block
+    //      | 'for' '(' [init] ';' [expression] ';' [step] ')' block
+    i32 parseFor() {
+        Stmt node = stmtAt(StmtKind.For, advance())
+        skipNewlines()
+        if (check(Kind.LBrace)) {
+            node.form = ForForm.Infinite
+            node.body = parseBlock()
+            ret addStmt(move node)
+        }
+        if (!expect(Kind.LParen, "or '{' after 'for'")) {
+            ret -1
+        }
+
+        if (isForEach()) {  // '(' ['ref'] type name 'in' expression ')' (D25)
+            node.form = ForForm.Each
+            node.isRef = match(Kind.KwRef)
+            if (check(Kind.Identifier) && kind(1) == Kind.KwIn) {
+                errorAt(at(0), "write the type of the element: for (T " + tokens[at(0)].text + " in ...) (D54)")
+                ret -1
+            }
+            node.type = parseType(true)
+            if (node.type < 0) {
+                ret -1
+            }
+            if (!check(Kind.Identifier)) {
+                errorAtCurrent("the name of the element")
+                ret -1
+            }
+            i64 name = advance()
+            node.name = tokens[name].text.copy()
+            node.nameLine = tokens[name].line
+            node.nameColumn = tokens[name].column
+            if (match(Kind.Comma)) {  // the key and the value of a map (D197)
+                node.hasValue = true
+                node.valueIsRef = match(Kind.KwRef)
+                node.valueType = parseType(true)
+                if (node.valueType < 0) {
+                    ret -1
+                }
+                if (!check(Kind.Identifier)) {
+                    errorAtCurrent("the name of the value")
+                    ret -1
+                }
+                i64 valueName = advance()
+                node.valueName = tokens[valueName].text.copy()
+                node.valueLine = tokens[valueName].line
+                node.valueColumn = tokens[valueName].column
+            }
+            if (!expect(Kind.KwIn, "after the name of the element")) {
+                ret -1
+            }
+            node.value = parseExpression()
+            if (node.value < 0) {
+                ret -1
+            }
+            if (!expect(Kind.RParen, "to close the 'for' header")) {
+                ret -1
+            }
+            i32 body = -1
+            if (!parseBody(ref body, "the 'for' header")) {
+                ret -1
+            }
+            node.body = body
+            ret addStmt(move node)
+        }
+
+        if (hasSemicolonBeforeClose()) {
+            node.form = ForForm.Classic
+            if (!check(Kind.Semicolon)) {
+                if (startsDeclaration()) {
+                    node.init = parseVarDecl()
+                } else {
+                    node.init = parseSimpleStatement()
+                }
+                if (node.init < 0) {
+                    ret -1
+                }
+            }
+            if (!expect(Kind.Semicolon, "after the first part of 'for'")) {
+                ret -1
+            }
+            if (!check(Kind.Semicolon)) {
+                node.value = parseExpression()
+                if (node.value < 0) {
+                    ret -1
+                }
+            }
+            if (!expect(Kind.Semicolon, "after the condition of 'for'")) {
+                ret -1
+            }
+            if (!check(Kind.RParen)) {
+                if (startsDeclaration()) {
+                    errorAt(at(0), "the last part of 'for' cannot declare a variable")
+                    ret -1
+                }
+                node.step = parseSimpleStatement()
+                if (node.step < 0) {
+                    ret -1
+                }
+            }
+        } else {
+            node.form = ForForm.Condition
+            node.value = parseExpression()
+            if (node.value < 0) {
+                ret -1
+            }
+        }
+        if (!expect(Kind.RParen, "to close the 'for' header")) {
+            ret -1
+        }
+        i32 body = -1
+        if (!parseBody(ref body, "the 'for' header")) {
+            ret -1
+        }
+        node.body = body
+        ret addStmt(move node)
+    }
+
+    bool isForEach() const {
+        i64 i = 0
+        if (kind(0) == Kind.KwRef) {
+            i = 1
+        }
+        if (kind(i) == Kind.Identifier && kind(i + 1) == Kind.KwIn) {  // no type: an error
+            ret true
+        }
+        i64 afterType = skipType(i, true)
+        Kind next = kind(afterType + 1)
+        ret afterType != 0 && kind(afterType) == Kind.Identifier && (next == Kind.KwIn || next == Kind.Comma)
+    }
+
+    // Whether the header of the 'for' has a ';' before its closing parenthesis.
+    bool hasSemicolonBeforeClose() const {
+        i32 depth = 0
+        for (i64 i = 0;; i++) {
+            Kind next = kind(i)
+            if (next == Kind.EndOfFile || next == Kind.LBrace) {
+                ret false
+            }
+            if (next == Kind.LParen) {
+                depth++
+            }
+            if (next == Kind.RParen) {
+                if (depth == 0) {
+                    ret false
+                }
+                depth--
+            }
+            if (next == Kind.Semicolon && depth == 0) {
+                ret true
+            }
+        }
+    }
+
+    // ---- The expressions, from the lowest precedence ----
+
+    i32 parseExpression() {
+        ret parseOr()
+    }
+
+    i32 binary(BinaryOp op, i64 token, i32 lhs, i32 rhs) {
+        if (lhs < 0 || rhs < 0) {
+            ret -1
+        }
+        Expr node = exprAt(ExprKind.Binary, token)
+        node.binary = op
+        node.left = lhs
+        node.right = rhs
+        ret addExpr(move node)
+    }
+
+    // A comparison knows where its operator is, so that assert can show its sides (D351).
+    i32 comparison(BinaryOp op, i64 token, i32 lhs, i32 rhs) {
+        i32 result = binary(op, token, lhs, rhs)
+        if (result >= 0) {
+            tree.exprs[result].opBegin = tokens[token].begin
+            tree.exprs[result].opEnd = tokens[token].end
+        }
+        ret result
+    }
+
+    i32 parseOr() {
+        i32 lhs = parseAnd()
+        for (lhs >= 0 && check(Kind.OrOr)) {
+            i64 token = advance()
+            lhs = binary(BinaryOp.Or, token, lhs, parseAnd())
+        }
+        ret lhs
+    }
+
+    i32 parseAnd() {
+        i32 lhs = parseEquality()
+        for (lhs >= 0 && check(Kind.AndAnd)) {
+            i64 token = advance()
+            lhs = binary(BinaryOp.And, token, lhs, parseEquality())
+        }
+        ret lhs
+    }
+
+    i32 parseEquality() {
+        i32 lhs = parseRelational()
+        for (lhs >= 0 && (check(Kind.Equal) || check(Kind.NotEqual))) {
+            BinaryOp op = BinaryOp.Ne
+            if (check(Kind.Equal)) {
+                op = BinaryOp.Eq
+            }
+            i64 token = advance()
+            lhs = comparison(op, token, lhs, parseRelational())
+        }
+        ret lhs
+    }
+
+    i32 parseRelational() {
+        i32 lhs = parseBitOr()
+        for (;;) {
+            BinaryOp op = BinaryOp.Lt
+            bool found = true
+            switch (kind(0)) {
+                case Less {
+                    op = BinaryOp.Lt
+                }
+                case LessEqual {
+                    op = BinaryOp.Le
+                }
+                case Greater {
+                    op = BinaryOp.Gt
+                }
+                case GreaterEqual {
+                    op = BinaryOp.Ge
+                }
+                default {
+                    found = false
+                }
+            }
+            if (lhs < 0 || !found || atShiftRight(Kind.GreaterEqual)) {  // `>>=` is an assignment
+                ret lhs
+            }
+            i64 token = advance()
+            lhs = comparison(op, token, lhs, parseBitOr())
+        }
+    }
+
+    // D193: the bitwise operators bind more than the comparisons, less than `+`.
+    i32 parseBitOr() {
+        i32 lhs = parseBitXor()
+        for (lhs >= 0 && check(Kind.Pipe)) {
+            i64 token = advance()
+            lhs = binary(BinaryOp.BitOr, token, lhs, parseBitXor())
+        }
+        ret lhs
+    }
+
+    i32 parseBitXor() {
+        i32 lhs = parseBitAnd()
+        for (lhs >= 0 && check(Kind.Caret)) {
+            i64 token = advance()
+            lhs = binary(BinaryOp.BitXor, token, lhs, parseBitAnd())
+        }
+        ret lhs
+    }
+
+    i32 parseBitAnd() {
+        i32 lhs = parseShift()
+        for (lhs >= 0 && check(Kind.Amp)) {
+            i64 token = advance()
+            lhs = binary(BinaryOp.BitAnd, token, lhs, parseShift())
+        }
+        ret lhs
+    }
+
+    // `>>` is two `>` next to each other: one alone closes the type arguments of
+    // `list<list<i32>>`.
+    bool atShiftRight(Kind second) const {
+        ret check(Kind.Greater) && kind(1) == second && tokens[at(0)].end == tokens[at(1)].begin
+    }
+
+    i32 parseShift() {
+        i32 lhs = parseAdditive()
+        for (lhs >= 0 && (check(Kind.ShiftLeft) || atShiftRight(Kind.Greater))) {
+            BinaryOp op = BinaryOp.Shr
+            if (check(Kind.ShiftLeft)) {
+                op = BinaryOp.Shl
+            }
+            i64 token = advance()
+            if (op == BinaryOp.Shr) {
+                advance()
+            }
+            lhs = binary(op, token, lhs, parseAdditive())
+        }
+        ret lhs
+    }
+
+    i32 parseAdditive() {
+        i32 lhs = parseMultiplicative()
+        for (lhs >= 0 && (check(Kind.Plus) || check(Kind.Minus))) {
+            BinaryOp op = BinaryOp.Sub
+            if (check(Kind.Plus)) {
+                op = BinaryOp.Add
+            }
+            i64 token = advance()
+            lhs = binary(op, token, lhs, parseMultiplicative())
+        }
+        ret lhs
+    }
+
+    i32 parseMultiplicative() {
+        i32 lhs = parseUnary()
+        for (;;) {
+            BinaryOp op = BinaryOp.Mul
+            bool found = true
+            switch (kind(0)) {
+                case Star {
+                    op = BinaryOp.Mul
+                }
+                case Slash {
+                    op = BinaryOp.Div
+                }
+                case Percent {
+                    op = BinaryOp.Rem
+                }
+                default {
+                    found = false
+                }
+            }
+            if (lhs < 0 || !found) {
+                ret lhs
+            }
+            i64 token = advance()
+            lhs = binary(op, token, lhs, parseUnary())
+        }
+    }
+
+    i32 parseUnary() {
+        // `ref x` and `move x`: sema checks where they can be written (D22, D23).
+        if (check(Kind.KwRef) || check(Kind.KwMove)) {
+            ExprKind exprKind = ExprKind.Move
+            if (check(Kind.KwRef)) {
+                exprKind = ExprKind.Ref
+            }
+            Expr node = exprAt(exprKind, advance())
+            node.left = parsePostfix()
+            if (node.left < 0) {
+                ret -1
+            }
+            ret addExpr(move node)
+        }
+        if (check(Kind.Minus) || check(Kind.Not)) {
+            Expr node = exprAt(ExprKind.Unary, at(0))
+            node.unary = UnaryOp.Not
+            if (check(Kind.Minus)) {
+                node.unary = UnaryOp.Negate
+            }
+            advance()
+            node.left = parseUnary()
+            if (node.left < 0) {
+                ret -1
+            }
+            ret addExpr(move node)
+        }
+        ret parsePostfix()
+    }
+
+    bool parseArgs(ref list<i32> args) {
+        advance()  // '('
+        if (!check(Kind.RParen)) {
+            for (;;) {
+                i32 arg = parseExpression()
+                if (arg < 0) {
+                    ret false
+                }
+                args.add(arg)
+                if (!match(Kind.Comma)) {
+                    break
+                }
+            }
+        }
+        ret expect(Kind.RParen, "to close the arguments")
+    }
+
+    // The type arguments of a call, from its '<' (D86, D92).
+    bool parseTypeArgs(ref list<i32> out) {
+        markAngle()
+        advance()
+        for (;;) {
+            i32 arg = parseType(false)
+            if (arg < 0) {
+                ret false
+            }
+            out.add(arg)
+            if (!match(Kind.Comma)) {
+                break
+            }
+        }
+        markAngle()
+        ret expect(Kind.Greater, "to close the type arguments")
+    }
+
+    // A name followed by '(' is a call: of a function, of a constructor, or a
+    // conversion when the name is a type (D20). Then any number of `.field` and
+    // `.method(args)`.
+    i32 parsePostfix() {
+        i32 expr = -1
+        if (isGenericType()) {  // `Result<i32, string>.Ok(5)` (D105)
+            Expr node = exprAt(ExprKind.TypeRef, at(0))
+            node.type = parseType(false)
+            if (node.type < 0) {
+                ret -1
+            }
+            expr = addExpr(move node)
+        } else if (check(Kind.Identifier) && (kind(1) == Kind.LParen || isGenericCall())) {
+            i64 name = advance()
+            Expr call = exprAt(ExprKind.Call, name)
+            call.text = tokens[name].text.copy()
+            if (check(Kind.Less) && !parseTypeArgs(ref call.typeArgs)) {  // `max<Money>(a, b)`, `Pair<i32>()`
+                ret -1
+            }
+            i64 open = pos
+            if (!parseArgs(ref call.items)) {
+                ret -1
+            }
+            if (call.text == "assert") {  // the condition as written (D351)
+                call.textBegin = tokens[open].end
+                call.textEnd = tokens[pos - 1].begin
+            }
+            expr = addExpr(move call)
+        } else {
+            expr = parsePrimary()
+        }
+        for (expr >= 0 && (check(Kind.Dot) || check(Kind.LBracket) || check(Kind.LParen))) {
+            if (check(Kind.LParen)) {  // `handlers[i](x)`, `make()(x)`: a function value (D186)
+                Expr call = exprAt(ExprKind.CallValue, at(0))
+                call.left = expr
+                if (!parseArgs(ref call.items)) {
+                    ret -1
+                }
+                expr = addExpr(move call)
+                continue
+            }
+            if (check(Kind.LBracket)) {  // `v[i]` (D35)
+                Expr index = exprAt(ExprKind.Index, advance())
+                index.left = expr
+                index.right = parseExpression()
+                if (index.right < 0) {
+                    ret -1
+                }
+                if (!expect(Kind.RBracket, "to close the index")) {
+                    ret -1
+                }
+                expr = addExpr(move index)
+                continue
+            }
+            advance()
+            if (!check(Kind.Identifier)) {
+                errorAtCurrent("the name of a field or method after '.'")
+                ret -1
+            }
+            i64 name = advance()
+            if (tree.exprs[expr].kind == ExprKind.Name && check(Kind.Less) && skipTypeArgs(0) != 0 &&
+                kind(skipTypeArgs(0)) == Kind.LParen) {
+                // `json.decode<User>(text)`: a generic function of a module (D86, D126)
+                Expr call = exprAt(ExprKind.Call, name)
+                call.text = tokens[name].text.copy()
+                call.module = tree.exprs[expr].text.copy()
+                if (!parseTypeArgs(ref call.typeArgs)) {
+                    ret -1
+                }
+                if (!parseArgs(ref call.items)) {
+                    ret -1
+                }
+                expr = addExpr(move call)
+                continue
+            }
+            if (check(Kind.LParen) || (check(Kind.Less) && skipTypeArgs(0) != 0 && kind(skipTypeArgs(0)) == Kind.LParen)) {
+                Expr call = exprAt(ExprKind.MethodCall, name)
+                call.left = expr
+                call.text = tokens[name].text.copy()
+                if (check(Kind.Less) && !parseTypeArgs(ref call.typeArgs)) {  // `pairs[0].map<string>(f)` (D92)
+                    ret -1
+                }
+                if (!parseArgs(ref call.items)) {
+                    ret -1
+                }
+                expr = addExpr(move call)
+            } else {
+                Expr field = exprAt(ExprKind.Field, name)
+                field.left = expr
+                field.text = tokens[name].text.copy()
+                expr = addExpr(move field)
+            }
+        }
+        ret expr
+    }
+
+    // lambda  := '[' [capture {',' capture}] ']' params [type] block   (D183)
+    // capture := ['ref' | 'move'] name
+    i32 parseLambda() {
+        Expr lambda = exprAt(ExprKind.Lambda, advance())
+        if (!check(Kind.RBracket)) {
+            for (;;) {
+                Capture capture
+                if (match(Kind.KwRef)) {
+                    capture.mode = ParamMode.Ref
+                } else if (match(Kind.KwMove)) {
+                    capture.mode = ParamMode.Move
+                }
+                if (!check(Kind.Identifier)) {
+                    errorAtCurrent("the name of a variable to capture")
+                    ret -1
+                }
+                i64 name = advance()
+                capture.name = tokens[name].text.copy()
+                capture.line = tokens[name].line
+                capture.column = tokens[name].column
+                lambda.captures.add(move capture)
+                if (!match(Kind.Comma)) {
+                    break
+                }
+            }
+        }
+        if (!expect(Kind.RBracket, "to close the captures")) {
+            ret -1
+        }
+        Function function
+        function.name = "lambda"
+        function.line = lambda.line
+        function.column = lambda.column
+        function.isLambda = true
+        if (!check(Kind.LParen)) {
+            errorAtCurrent("'(' with the parameters of the lambda")
+            ret -1
+        }
+        if (!parseParams(ref function)) {
+            ret -1
+        }
+        if (check(Kind.LBrace)) {
+            TypeNode none  // without a type it returns nothing
+            none.name = "void"
+            none.line = tokens[at(0)].line
+            none.column = tokens[at(0)].column
+            function.returnType = addType(move none)
+        } else {
+            function.returnType = parseType(false)
+            if (function.returnType < 0) {
+                ret -1
+            }
+        }
+        if (!parseFunctionBody(ref function)) {
+            ret -1
+        }
+        lambda.function = addFunction(move function)
+        ret addExpr(move lambda)
+    }
+
+    // At '[': a lambda when the matching ']' is followed by '(' (D183), a list literal
+    // otherwise (D308).
+    bool lambdaAhead() const {
+        i32 depth = 0
+        for (i64 ahead = 0;; ahead++) {
+            Kind next = kind(ahead)
+            if (next == Kind.EndOfFile) {
+                ret false
+            }
+            if (next == Kind.LBracket) {
+                depth++
+            }
+            if (next == Kind.RBracket) {
+                depth--
+                if (depth == 0) {
+                    ret kind(ahead + 1) == Kind.LParen
+                }
+            }
+        }
+    }
+
+    // list := '[' [expr {',' expr} [',']] ']'   (D308)
+    i32 parseListLiteral() {
+        Expr literal = exprAt(ExprKind.ListLiteral, advance())
+        for (!check(Kind.RBracket)) {
+            i32 element = parseExpression()
+            if (element < 0) {
+                ret -1
+            }
+            literal.items.add(element)
+            if (!match(Kind.Comma)) {
+                break
+            }
+        }
+        if (!expect(Kind.RBracket, "to close the list")) {
+            ret -1
+        }
+        ret addExpr(move literal)
+    }
+
+    i32 parsePrimary() {
+        i64 token = at(0)
+        switch (tokens[token].kind) {
+            case LBracket {
+                if (lambdaAhead()) {
+                    ret parseLambda()
+                }
+                ret parseListLiteral()
+            }
+            case IntegerLiteral, CharLiteral {
+                advance()
+                Expr node = exprAt(ExprKind.IntLiteral, token)
+                node.value = tokens[token].value
+                node.flag = tokens[token].kind == Kind.CharLiteral
+                ret addExpr(move node)
+            }
+            case FloatLiteral {
+                advance()
+                Expr node = exprAt(ExprKind.FloatLiteral, token)
+                node.text = tokens[token].text.replace("_", "")
+                ret addExpr(move node)
+            }
+            case KwTrue, KwFalse {
+                advance()
+                Expr node = exprAt(ExprKind.BoolLiteral, token)
+                node.flag = tokens[token].kind == Kind.KwTrue
+                ret addExpr(move node)
+            }
+            case StringLiteral {
+                advance()
+                Expr node = exprAt(ExprKind.StringLiteral, token)
+                node.text = tokens[token].text.copy()
+                ret addExpr(move node)
+            }
+            case Identifier {
+                advance()
+                Expr node = exprAt(ExprKind.Name, token)
+                node.text = tokens[token].text.copy()
+                ret addExpr(move node)
+            }
+            case LParen {
+                advance()
+                i32 inner = parseExpression()
+                if (inner < 0) {
+                    ret -1
+                }
+                if (!expect(Kind.RParen, "to close the parenthesis")) {
+                    ret -1
+                }
+                ret inner
+            }
+            default {
+                errorAtCurrent("an expression")
+                ret -1
+            }
+        }
+    }
+}

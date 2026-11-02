@@ -1923,6 +1923,15 @@ i32 main(list<string> args) {
 ### D416. The errors of the command line
 *2026-11-02.* `parse` handles them as the commands of the system do. With `-h` or `--help` it prints the help on the standard output and ends the program with 0. With an error, as an unknown option, a missing value, a number that is not valid, a value outside the choices or a required option that is missing, it prints the error and the help on the standard error and ends the program with 2, the code of the errors of use, as `cromo`, Go and Python do.
 
+### D417. The pilot of the compiler in Cromo: `cromo fmt`
+*2026-11-02.* It details D147. Before the compiler, its first part is written in Cromo: the lexer, the parser of the whole language, with the same messages of error, and the formatter. It is a program of its own, which gives the same result as `cromo fmt` in C++ on every file of the repository, also when the file has errors; `cromo fmt` stays the one in C++ until the pilot is proven. It shows how the tree of a program is written without pointers, how fast Cromo is on a compiler, and what the language lacks, on 3000 lines instead of 20000.
+
+### D418. The tree of a program in tables, with indices
+*2026-11-02.* Cromo has no pointers, so the nodes of the tree are in the lists of a `Tree`, one for each kind of node, as the expressions, the statements and the types, and a node names its children with their index, an `i32`, `-1` when there is none. The references of the analysis, as from a call to its function and from a name to its variable, will be indices too. It is the way of the compiler of Zig: no recursive types, and a node changes in place.
+
+### D419. The folder `compiler/`
+*2026-11-02.* The compiler written in Cromo is in `compiler/`, at the root of the repository, with a module for each part: `lexer`, `parser`, `format`. `build.ps1` compiles the pilot into `build\cromo-fmt.exe`, which is not in the archives.
+
 ---
 
 ## Proposed

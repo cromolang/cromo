@@ -99,6 +99,14 @@ build-linux/cromo version
 
 `cromo` for Linux links statically the C++ runtime, zlib and zstd, and depends only on the C library of the system: built on Ubuntu 20.04, it runs with glibc 2.29 or later. A build entirely on Linux, runtime included, is not supported yet.
 
+## The pilot of the compiler in Cromo
+
+`compiler/` holds the first part of the compiler written in Cromo (D417): the lexer, the parser and `cromo fmt`. `build.ps1` compiles it with the `cromo` just built into `build\cromo-fmt.exe`, which takes the same options as `cromo fmt`, except `-`; it is not in the archives. `tests\run-pilot.ps1` formats a copy of every `.cro` file of the repository with both and checks that the results are the same:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tests\run-pilot.ps1
+```
+
 ## The extension for Visual Studio Code
 
 ```powershell

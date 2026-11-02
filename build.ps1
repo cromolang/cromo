@@ -38,4 +38,9 @@ cmake -S $root -B $build -G Ninja `
     '-DVCPKG_APPLOCAL_DEPS=OFF'
 if ($LASTEXITCODE) { exit $LASTEXITCODE }
 cmake --build $build
+if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+# The pilot of the compiler in Cromo (D417, D419): cromo fmt, compiled by the cromo
+# just built; it is not in the archives.
+& (Join-Path $build 'cromo.exe') build --release (Join-Path $root 'compiler\main.cro') -o (Join-Path $build 'cromo-fmt.exe')
 exit $LASTEXITCODE

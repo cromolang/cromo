@@ -1,0 +1,422 @@
+// cromo fmt (D161-D169, D417), as src/format.cpp: the spaces and the lines of a
+// source, with one style. The parser says which '<' and '>' are around type
+// arguments; the result is checked to be the same program.
+import ast
+import diagnostics
+import lexer
+import parser
+
+public struct Formatted {
+    public bool ok
+    public string out
+    public string error  // an internal error of cromo fmt (D169), "" when there is none
+}
+
+// The source formatted, or its errors in `diag`.
+public Formatted formatSource(string path, string text, ref Diagnostics diag) {
+    Formatted result
+    list<Token> tokens = tokenize(text, ref diag, false)
+    map<i64, bool> angles
+    if (!diag.hasErrors()) {
+        parse(ref tokens, ref diag, ref angles)
+    }
+    if (diag.hasErrors()) {
+        ret result
+    }
+    list<Token> all = tokenize(text, ref diag, true)
+    result.out = layout(text, all, angles)
+
+    // D169: the result is the same program, without syntax errors, and formatting it
+    // again changes nothing.
+    Diagnostics quiet = Diagnostics(path, result.out)
+    quiet.silent = true
+    list<Token> resultTokens = tokenize(result.out, ref quiet, false)
+    map<i64, bool> resultAngles
+    if (!quiet.hasErrors()) {
+        parse(ref resultTokens, ref quiet, ref resultAngles)
+    }
+    list<Token> resultAll = tokenize(result.out, ref quiet, true)
+    if (quiet.hasErrors()) {
+        result.error = "the formatted text has syntax errors"
+    } else if (!sameStrings(programTokens(text, tokens), programTokens(result.out, resultTokens))) {
+        result.error = "the formatted text would be a different program"
+    } else if (!sameStrings(commentTexts(all), commentTexts(resultAll))) {
+        result.error = "the formatted text has different comments"
+    } else if (layout(result.out, resultAll, resultAngles) != result.out) {
+        result.error = "formatting the result again changes it"
+    }
+    result.ok = result.error.len() == 0
+    ret result
+}
+
+// A line of the source: its tokens, the comments too, and whether a blank line came
+// before it.
+struct Line {
+    list<i64> tokens
+    bool blankBefore
+}
+
+// A line of the result. A comment at the end of a line of code stays apart, to be
+// aligned with the ones of the lines around it (D168).
+struct OutputLine {
+    string code
+    string comment
+    bool blankBefore
+    bool opens         // it ends with `{`
+    bool continuation  // only a comment, under the comment at the end of the line before
+}
+
+// An open brace, parenthesis or bracket, with the level of the lines inside it minus
+// one: a parenthesis takes the level of its line, a brace the level of its
+// statement, or of its line inside parentheses, as a lambda (D183).
+struct Open {
+    Kind kind
+    i32 base
+}
+
+bool isLineComment(Token token) {
+    ret token.kind == Kind.Comment && token.text.startsWith("//")
+}
+
+bool hasComment(Line line, list<Token> tokens) {
+    for (i64 index in line.tokens) {
+        if (tokens[index].kind == Kind.Comment) {
+            ret true
+        }
+    }
+    ret false
+}
+
+// The last token of code of a line, or -1 if it only has comments.
+i64 lastCode(Line line, list<Token> tokens) {
+    for (i64 i = line.tokens.len() - 1; i >= 0; i--) {
+        if (tokens[line.tokens[i]].kind != Kind.Comment) {
+            ret line.tokens[i]
+        }
+    }
+    ret -1
+}
+
+// A token after which a `-` or a `+` is binary.
+bool endsOperand(Kind kind) {
+    switch (kind) {
+        case Identifier, IntegerLiteral, FloatLiteral, StringLiteral, CharLiteral, RParen, RBracket, KwTrue, KwFalse {
+            ret true
+        }
+        default {
+            ret false
+        }
+    }
+}
+
+list<Line> splitLines(string source, list<Token> tokens) {
+    list<Line> lines
+    i64 previousEnd = 0
+    for (i64 i = 0; i < tokens.len(); i++) {
+        Kind kind = tokens[i].kind
+        if (kind == Kind.Newline || kind == Kind.EndOfFile) {
+            continue
+        }
+        i64 breaks = 0
+        for (i64 k = previousEnd; k < tokens[i].begin; k++) {
+            if (source[k] == '\n') {
+                breaks++
+            }
+        }
+        if (lines.len() == 0 || breaks > 0) {
+            Line line
+            line.blankBefore = breaks > 1
+            lines.add(move line)
+        }
+        lines[lines.len() - 1].tokens.add(i)
+        previousEnd = tokens[i].end
+    }
+    ret lines
+}
+
+// D162: `{`, and `else`, `catch` and `finally` after a `}`, go to the end of the line
+// of code before. A comment at the end of that line stays at the end; if both lines
+// have comments, or the line before has only comments, nothing moves (D168).
+list<Line> joinBraces(list<Line> lines, list<Token> tokens) {
+    list<Line> joined
+    for (Line line in lines) {
+        if (joined.len() > 0) {
+            i64 previous = joined.len() - 1
+            Kind first = tokens[line.tokens[0]].kind
+            i64 last = lastCode(joined[previous], tokens)
+            bool follows = first == Kind.LBrace ||
+                ((first == Kind.KwElse || first == Kind.KwCatch || first == Kind.KwFinally) && last >= 0 &&
+                    tokens[last].kind == Kind.RBrace)
+            i64 previousLast = joined[previous].tokens[joined[previous].tokens.len() - 1]
+            bool previousComment = tokens[previousLast].kind == Kind.Comment
+            if (last >= 0 && follows && !(previousComment && hasComment(line, tokens))) {
+                list<i64> merged
+                i64 keep = joined[previous].tokens.len()
+                if (previousComment) {
+                    keep--
+                }
+                for (i64 k = 0; k < keep; k++) {
+                    merged.add(joined[previous].tokens[k])
+                }
+                for (i64 index in line.tokens) {
+                    merged.add(index)
+                }
+                if (previousComment) {
+                    merged.add(previousLast)
+                }
+                joined[previous].tokens = move merged
+                continue
+            }
+        }
+        joined.add(line.copy())
+    }
+    ret joined
+}
+
+// Whether a space goes between two tokens of the same line (D166).
+bool spaceBetween(Token a, Token b, bool aUnary, map<i64, bool> angles) {
+    Kind x = a.kind
+    Kind y = b.kind
+    if (x == Kind.Comment || y == Kind.Comment) {
+        ret true
+    }
+    if (y == Kind.Comma || y == Kind.Semicolon) {
+        ret false
+    }
+    if (x == Kind.Semicolon) {  // `for (;;)`
+        ret y != Kind.RParen && y != Kind.Semicolon
+    }
+    if (x == Kind.Comma) {
+        ret true
+    }
+    if (y == Kind.RParen || y == Kind.RBracket || x == Kind.LParen || x == Kind.LBracket) {
+        ret false
+    }
+    if (x == Kind.Dot || y == Kind.Dot) {
+        ret false
+    }
+    bool xAngle = angles.contains(a.begin)
+    if (angles.contains(b.begin)) {  // `list<`, `string>`
+        ret false
+    }
+    // `>>` and `>>=` are two tokens next to each other (D193).
+    if (x == Kind.Greater && (y == Kind.Greater || y == Kind.GreaterEqual) && a.end == b.begin) {
+        ret false
+    }
+    if (xAngle && x == Kind.Less) {  // `<string`
+        ret false
+    }
+    if (xAngle) {  // `list<string> args`, `max<Money>(a, b)`
+        ret y != Kind.LParen && y != Kind.LBracket
+    }
+    if (y == Kind.PlusPlus || y == Kind.MinusMinus) {
+        ret false
+    }
+    if (x == Kind.Not || x == Kind.Tilde || aUnary) {
+        // `- -x`: without the space it would be `--`.
+        ret (x == Kind.Minus && (y == Kind.Minus || y == Kind.MinusMinus)) ||
+            (x == Kind.Plus && (y == Kind.Plus || y == Kind.PlusPlus))
+    }
+    if (y == Kind.LParen || y == Kind.LBracket) {  // a call, an index, `func(i32)`, `[x](i32 a)`
+        ret !(x == Kind.Identifier || x == Kind.RParen || x == Kind.RBracket || x == Kind.KwFunc)
+    }
+    ret true
+}
+
+// The characters of the last line of a text, not its bytes: for the comments in a column.
+i64 width(string text) {
+    i64 start = text.findLast("\n") + 1
+    i64 count = 0
+    for (i64 i = start; i < text.len(); i++) {
+        if ((text[i] & 0xC0) != 0x80) {
+            count++
+        }
+    }
+    ret count
+}
+
+string layout(string source, list<Token> tokens, map<i64, bool> angles) {
+    list<Line> lines = joinBraces(splitLines(source, tokens), tokens)
+
+    list<OutputLine> output
+    list<Open> open
+    i32 statementLevel = 0  // of the first line of the statement
+    bool continues = false  // the line before asks to continue the statement (D32)
+    i64 previousCode = -1
+    i32 commentColumn = 0  // in the source, of the comment at the end of the line before
+    for (Line line in lines) {
+        // D168: a comment alone on its line, right under the comment at the end of the
+        // line before, goes on in the same column.
+        i64 first = line.tokens[0]
+        if (line.tokens.len() == 1 && isLineComment(tokens[first]) && !line.blankBefore && commentColumn > 0 &&
+            tokens[first].column == commentColumn) {
+            OutputLine out
+            out.comment = tokens[first].text.copy()
+            out.continuation = true
+            output.add(move out)
+            continue
+        }
+        commentColumn = 0
+
+        // D167: one level more than what is open, and one more for a statement that
+        // goes on after an operator; a line that starts by closing has the level of
+        // the line that opened.
+        bool inBlock = open.len() == 0 || open[open.len() - 1].kind == Kind.LBrace
+        i32 level = 0
+        if (open.len() > 0) {
+            level = open[open.len() - 1].base + 1
+        }
+        if (continues && inBlock) {
+            level++
+        }
+        Kind firstKind = tokens[first].kind
+        bool closes = firstKind == Kind.RBrace || firstKind == Kind.RParen || firstKind == Kind.RBracket
+        if (closes && open.len() > 0) {
+            level = open[open.len() - 1].base
+        }
+        bool continuation = continues || !inBlock
+        if (!continuation && tokens[first].kind != Kind.Comment) {
+            statementLevel = level
+        }
+        OutputLine out
+        if (level > 0) {
+            out.code = " ".repeat(i64(level) * 4)
+        }
+        i64 previous = -1
+        bool previousUnary = false
+        i64 last = lastCode(line, tokens)
+        for (i64 i = 0; i < line.tokens.len(); i++) {
+            i64 token = line.tokens[i]
+            bool trailing = i + 1 == line.tokens.len() && isLineComment(tokens[token]) && last >= 0
+            if (trailing) {
+                out.comment = tokens[token].text.copy()
+                commentColumn = tokens[token].column
+                break
+            }
+            if (previous >= 0 && spaceBetween(tokens[previous], tokens[token], previousUnary, angles)) {
+                out.code += " "
+            }
+            Kind kind = tokens[token].kind
+            if (kind == Kind.Comment) {
+                out.code += tokens[token].text
+            } else {
+                out.code += source.slice(tokens[token].begin, tokens[token].end)
+            }
+            bool unary = false
+            if (kind != Kind.Comment) {
+                if (kind == Kind.Minus || kind == Kind.Plus) {
+                    unary = previousCode < 0 ||
+                        (!endsOperand(tokens[previousCode].kind) && !angles.contains(tokens[previousCode].begin))
+                }
+                if (kind == Kind.LBrace) {
+                    bool inParens = open.len() > 0 && open[open.len() - 1].kind != Kind.LBrace
+                    Open brace
+                    brace.kind = kind
+                    brace.base = statementLevel
+                    if (inParens) {
+                        brace.base = level
+                    }
+                    open.add(brace)
+                }
+                if (kind == Kind.LParen || kind == Kind.LBracket) {
+                    Open paren
+                    paren.kind = kind
+                    paren.base = level
+                    open.add(paren)
+                }
+                if ((kind == Kind.RBrace || kind == Kind.RParen || kind == Kind.RBracket) && open.len() > 0) {
+                    open.remove(open.len() - 1)
+                }
+                previousCode = token
+            }
+            previous = token
+            previousUnary = unary
+        }
+        if (last >= 0) {
+            continues = continuesOnNextLine(tokens[last].kind)
+            out.opens = tokens[last].kind == Kind.LBrace
+        }
+
+        // D167: at most one blank line, none at the start or at the end of a block.
+        out.blankBefore = line.blankBefore && output.len() > 0 && !output[output.len() - 1].opens &&
+            firstKind != Kind.RBrace
+        output.add(move out)
+    }
+
+    // D168: the comments at the end of consecutive lines of code in a column.
+    i64 i = 0
+    for (i < output.len()) {
+        if (output[i].comment.len() == 0) {
+            i++
+            continue
+        }
+        i64 end = i
+        i64 column = 0
+        for (end < output.len() && output[end].comment.len() > 0 && (end == i || !output[end].blankBefore)) {
+            if (!output[end].continuation) {
+                i64 size = width(output[end].code)
+                if (size > column) {
+                    column = size
+                }
+            }
+            end++
+        }
+        for (i64 k = i; k < end; k++) {
+            output[k].code += " ".repeat(column + 2 - width(output[k].code))
+            output[k].code += output[k].comment
+        }
+        i = end
+    }
+
+    string newline = "\n"
+    if (source.contains("\r\n")) {
+        newline = "\r\n"
+    }
+    string text
+    for (OutputLine line in output) {
+        if (line.blankBefore) {
+            text += newline
+        }
+        text += line.code
+        text += newline
+    }
+    ret text
+}
+
+// The tokens that make the program, without the line breaks that cromo fmt can
+// remove: the ones before `{`, `else`, `catch` and `finally` (D162, D169).
+list<string> programTokens(string source, list<Token> tokens) {
+    list<string> out
+    for (i64 i = 0; i < tokens.len(); i++) {
+        if (tokens[i].kind == Kind.Newline && i + 1 < tokens.len()) {
+            Kind next = tokens[i + 1].kind
+            if (next == Kind.LBrace || next == Kind.KwElse || next == Kind.KwCatch || next == Kind.KwFinally) {
+                continue
+            }
+        }
+        out.add(format("{} {}", i32(tokens[i].kind), source.slice(tokens[i].begin, tokens[i].end)))
+    }
+    ret out
+}
+
+list<string> commentTexts(list<Token> tokens) {
+    list<string> out
+    for (Token token in tokens) {
+        if (token.kind == Kind.Comment) {
+            out.add(token.text.copy())
+        }
+    }
+    ret out
+}
+
+bool sameStrings(list<string> a, list<string> b) {
+    if (a.len() != b.len()) {
+        ret false
+    }
+    for (i64 i = 0; i < a.len(); i++) {
+        if (a[i] != b[i]) {
+            ret false
+        }
+    }
+    ret true
+}

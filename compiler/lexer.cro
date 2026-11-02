@@ -1,0 +1,1063 @@
+// The lexer of Cromo (D417), as src/lexer.cpp: the tokens of a source. A newline
+// becomes a token Newline, unless the statement goes on in the next line (D32);
+// with keepComments the comments are tokens too, for cromo fmt (D161).
+import diagnostics
+
+public enum Kind {
+    EndOfFile
+    Newline  // the end of a statement (D17, D32)
+    Comment
+    Identifier
+    IntegerLiteral
+    FloatLiteral
+    StringLiteral
+    CharLiteral
+
+    KwBreak
+    KwCase
+    KwCatch
+    KwConst
+    KwContinue
+    KwDefault
+    KwElse
+    KwEnum
+    KwExtern
+    KwFalse
+    KwFinally
+    KwFor
+    KwFunc
+    KwIf
+    KwImport
+    KwIn
+    KwInterface
+    KwMove
+    KwPublic
+    KwRef
+    KwRet
+    KwStruct
+    KwSwitch
+    KwThrow
+    KwTrue
+    KwTry
+    KwUnsafe
+    KwVoid
+
+    LParen
+    RParen
+    LBrace
+    RBrace
+    LBracket
+    RBracket
+    Comma
+    Dot
+    Colon
+    Semicolon
+    Tilde
+    Plus
+    Minus
+    Star
+    Slash
+    Percent
+    PlusPlus
+    MinusMinus
+    Assign
+    PlusAssign
+    MinusAssign
+    StarAssign
+    SlashAssign
+    PercentAssign
+    Equal
+    NotEqual
+    Less
+    LessEqual
+    Greater
+    GreaterEqual
+    AndAnd
+    OrOr
+    Not
+    Amp
+    Pipe
+    Caret
+    ShiftLeft  // `>>` is two `>` next to each other (D193)
+    AmpAssign
+    PipeAssign
+    CaretAssign
+    ShiftLeftAssign
+}
+
+public struct Token {
+    public Kind kind
+    public string text  // of a name, a number and a comment; the content of a string, decoded
+    public i32 line = 1
+    public i32 column = 1  // in characters, not bytes
+    public u64 value       // of an integer or a character
+    public i64 begin       // the bytes of the source, the end excluded
+    public i64 end
+}
+
+// The tokens of a source; the errors go to `diag`.
+public list<Token> tokenize(string source, ref Diagnostics diag, bool keepComments) {
+    Lexer lexer
+    lexer.src = source.copy()
+    lexer.keepComments = keepComments
+    lexer.run(ref diag)
+    ret move lexer.tokens
+}
+
+// The tokens after which the statement goes on in the next line (D32).
+public bool continuesOnNextLine(Kind kind) {
+    switch (kind) {
+        case LParen, LBracket, Comma, Dot, Plus, Minus, Star, Slash, Percent, Assign, PlusAssign, MinusAssign,
+            StarAssign, SlashAssign, PercentAssign, Equal, NotEqual, Less, LessEqual, Greater, GreaterEqual, AndAnd,
+            OrOr, Not, Amp, Pipe, Caret, ShiftLeft, AmpAssign, PipeAssign, CaretAssign, ShiftLeftAssign {
+            ret true
+        }
+        default {
+            ret false
+        }
+    }
+}
+
+bool isDigit(u8 c) {
+    ret c >= '0' && c <= '9'
+}
+
+bool isIdentStart(u8 c) {
+    ret (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_'
+}
+
+bool isIdentChar(u8 c) {
+    ret isIdentStart(c) || isDigit(c)
+}
+
+i32 hexValue(u8 c) {
+    if (c >= '0' && c <= '9') {
+        ret i32(c - '0')
+    }
+    if (c >= 'a' && c <= 'f') {
+        ret i32(c - 'a') + 10
+    }
+    if (c >= 'A' && c <= 'F') {
+        ret i32(c - 'A') + 10
+    }
+    ret -1
+}
+
+// A code point in UTF-8, at the end of `out`.
+void appendUtf8(ref list<u8> out, i64 point) {
+    if (point < 0x80) {
+        out.add(u8(point))
+    } else if (point < 0x800) {
+        out.add(u8(0xC0 | point >> 6))
+        out.add(u8(0x80 | point & 0x3F))
+    } else if (point < 0x10000) {
+        out.add(u8(0xE0 | point >> 12))
+        out.add(u8(0x80 | point >> 6 & 0x3F))
+        out.add(u8(0x80 | point & 0x3F))
+    } else {
+        out.add(u8(0xF0 | point >> 18))
+        out.add(u8(0x80 | point >> 12 & 0x3F))
+        out.add(u8(0x80 | point >> 6 & 0x3F))
+        out.add(u8(0x80 | point & 0x3F))
+    }
+}
+
+Kind keyword(string word) {
+    switch (word) {
+        case "break" {
+            ret Kind.KwBreak
+        }
+        case "case" {
+            ret Kind.KwCase
+        }
+        case "catch" {
+            ret Kind.KwCatch
+        }
+        case "const" {
+            ret Kind.KwConst
+        }
+        case "continue" {
+            ret Kind.KwContinue
+        }
+        case "default" {
+            ret Kind.KwDefault
+        }
+        case "else" {
+            ret Kind.KwElse
+        }
+        case "enum" {
+            ret Kind.KwEnum
+        }
+        case "extern" {
+            ret Kind.KwExtern
+        }
+        case "false" {
+            ret Kind.KwFalse
+        }
+        case "finally" {
+            ret Kind.KwFinally
+        }
+        case "for" {
+            ret Kind.KwFor
+        }
+        case "func" {
+            ret Kind.KwFunc
+        }
+        case "if" {
+            ret Kind.KwIf
+        }
+        case "import" {
+            ret Kind.KwImport
+        }
+        case "in" {
+            ret Kind.KwIn
+        }
+        case "interface" {
+            ret Kind.KwInterface
+        }
+        case "move" {
+            ret Kind.KwMove
+        }
+        case "public" {
+            ret Kind.KwPublic
+        }
+        case "ref" {
+            ret Kind.KwRef
+        }
+        case "ret" {
+            ret Kind.KwRet
+        }
+        case "struct" {
+            ret Kind.KwStruct
+        }
+        case "switch" {
+            ret Kind.KwSwitch
+        }
+        case "throw" {
+            ret Kind.KwThrow
+        }
+        case "true" {
+            ret Kind.KwTrue
+        }
+        case "try" {
+            ret Kind.KwTry
+        }
+        case "unsafe" {
+            ret Kind.KwUnsafe
+        }
+        case "void" {
+            ret Kind.KwVoid
+        }
+        default {
+            ret Kind.Identifier
+        }
+    }
+}
+
+// A readable name of a kind of token, for the errors.
+public string describe(Kind kind) {
+    switch (kind) {
+        case EndOfFile {
+            ret "end of file"
+        }
+        case Newline {
+            ret "a newline"
+        }
+        case Comment {
+            ret "a comment"
+        }
+        case Identifier {
+            ret "a name"
+        }
+        case IntegerLiteral {
+            ret "an integer"
+        }
+        case FloatLiteral {
+            ret "a decimal number"
+        }
+        case StringLiteral {
+            ret "a string"
+        }
+        case CharLiteral {
+            ret "a character"
+        }
+        case LParen {
+            ret "'('"
+        }
+        case RParen {
+            ret "')'"
+        }
+        case LBrace {
+            ret "'{'"
+        }
+        case RBrace {
+            ret "'}'"
+        }
+        case LBracket {
+            ret "'['"
+        }
+        case RBracket {
+            ret "']'"
+        }
+        case Comma {
+            ret "','"
+        }
+        case Dot {
+            ret "'.'"
+        }
+        case Colon {
+            ret "':'"
+        }
+        case Semicolon {
+            ret "';'"
+        }
+        case Tilde {
+            ret "'~'"
+        }
+        case Plus {
+            ret "'+'"
+        }
+        case Minus {
+            ret "'-'"
+        }
+        case Star {
+            ret "'*'"
+        }
+        case Slash {
+            ret "'/'"
+        }
+        case Percent {
+            ret "'%'"
+        }
+        case PlusPlus {
+            ret "'++'"
+        }
+        case MinusMinus {
+            ret "'--'"
+        }
+        case Assign {
+            ret "'='"
+        }
+        case PlusAssign {
+            ret "'+='"
+        }
+        case MinusAssign {
+            ret "'-='"
+        }
+        case StarAssign {
+            ret "'*='"
+        }
+        case SlashAssign {
+            ret "'/='"
+        }
+        case PercentAssign {
+            ret "'%='"
+        }
+        case Equal {
+            ret "'=='"
+        }
+        case NotEqual {
+            ret "'!='"
+        }
+        case Less {
+            ret "'<'"
+        }
+        case LessEqual {
+            ret "'<='"
+        }
+        case Greater {
+            ret "'>'"
+        }
+        case GreaterEqual {
+            ret "'>='"
+        }
+        case AndAnd {
+            ret "'&&'"
+        }
+        case OrOr {
+            ret "'||'"
+        }
+        case Not {
+            ret "'!'"
+        }
+        case Amp {
+            ret "'&'"
+        }
+        case Pipe {
+            ret "'|'"
+        }
+        case Caret {
+            ret "'^'"
+        }
+        case ShiftLeft {
+            ret "'<<'"
+        }
+        case AmpAssign {
+            ret "'&='"
+        }
+        case PipeAssign {
+            ret "'|='"
+        }
+        case CaretAssign {
+            ret "'^='"
+        }
+        case ShiftLeftAssign {
+            ret "'<<='"
+        }
+        default {
+            ret "'" + keywordText(kind) + "'"
+        }
+    }
+}
+
+string keywordText(Kind kind) {
+    switch (kind) {
+        case KwBreak {
+            ret "break"
+        }
+        case KwCase {
+            ret "case"
+        }
+        case KwCatch {
+            ret "catch"
+        }
+        case KwConst {
+            ret "const"
+        }
+        case KwContinue {
+            ret "continue"
+        }
+        case KwDefault {
+            ret "default"
+        }
+        case KwElse {
+            ret "else"
+        }
+        case KwEnum {
+            ret "enum"
+        }
+        case KwExtern {
+            ret "extern"
+        }
+        case KwFalse {
+            ret "false"
+        }
+        case KwFinally {
+            ret "finally"
+        }
+        case KwFor {
+            ret "for"
+        }
+        case KwFunc {
+            ret "func"
+        }
+        case KwIf {
+            ret "if"
+        }
+        case KwImport {
+            ret "import"
+        }
+        case KwIn {
+            ret "in"
+        }
+        case KwInterface {
+            ret "interface"
+        }
+        case KwMove {
+            ret "move"
+        }
+        case KwPublic {
+            ret "public"
+        }
+        case KwRef {
+            ret "ref"
+        }
+        case KwRet {
+            ret "ret"
+        }
+        case KwStruct {
+            ret "struct"
+        }
+        case KwSwitch {
+            ret "switch"
+        }
+        case KwThrow {
+            ret "throw"
+        }
+        case KwTrue {
+            ret "true"
+        }
+        case KwTry {
+            ret "try"
+        }
+        case KwUnsafe {
+            ret "unsafe"
+        }
+        default {
+            ret "void"
+        }
+    }
+}
+
+struct Lexer {
+    string src
+    bool keepComments
+    list<Token> tokens
+    i64 pos
+    i64 start  // where the token being read starts
+    i32 line = 1
+    i32 column = 1
+    i32 depth              // the parentheses and brackets open
+    list<i32> outerDepths  // the depth outside each brace open
+
+    void run(ref Diagnostics diag) {
+        for (pos < src.len()) {
+            u8 c = src[pos]
+            start = pos
+            if (c == ' ' || c == '\t' || c == '\r') {
+                advance()
+            } else if (c == '\n') {
+                i32 atLine = line
+                i32 atColumn = column
+                advance()
+                newline(atLine, atColumn)
+            } else if (c == '/' && peek(1) == '/') {
+                i32 atLine = line
+                i32 atColumn = column
+                for (pos < src.len() && src[pos] != '\n') {
+                    advance()
+                }
+                if (keepComments) {
+                    comment(atLine, atColumn)
+                }
+            } else if (c == '/' && peek(1) == '*') {
+                blockComment(ref diag)
+            } else if (isIdentStart(c)) {
+                identifier()
+            } else if (isDigit(c)) {
+                number(ref diag)
+            } else if (c == '"') {
+                text(ref diag)
+            } else if (c == '\'') {
+                character(ref diag)
+            } else {
+                punctuation(ref diag)
+            }
+        }
+        i32 endLine = line
+        i32 endColumn = column
+        start = pos
+        newline(endLine, endColumn)
+        Token end
+        end.line = endLine
+        end.column = endColumn
+        end.begin = pos
+        end.end = pos
+        tokens.add(move end)
+    }
+
+    u8 peek(i64 ahead) const {
+        if (pos + ahead < src.len()) {
+            ret src[pos + ahead]
+        }
+        ret 0
+    }
+
+    void advance() {
+        u8 c = src[pos]
+        pos++
+        if (c == '\n') {
+            line++
+            column = 1
+        } else if ((c & 0xC0) != 0x80) {
+            column++  // the bytes that continue a character of UTF-8 are not columns
+        }
+    }
+
+    void push(Kind kind, i32 atLine, i32 atColumn, string text, u64 value) {
+        Token token
+        token.kind = kind
+        token.text = text.copy()
+        token.line = atLine
+        token.column = atColumn
+        token.value = value
+        token.begin = start
+        token.end = pos
+        tokens.add(move token)
+        if (kind == Kind.LParen || kind == Kind.LBracket) {
+            depth++
+        }
+        if ((kind == Kind.RParen || kind == Kind.RBracket) && depth > 0) {
+            depth--
+        }
+        // The body of a lambda inside parentheses ends its statements at the newline (D183).
+        if (kind == Kind.LBrace) {
+            outerDepths.add(depth)
+            depth = 0
+        }
+        if (kind == Kind.RBrace && outerDepths.len() > 0) {
+            depth = outerDepths[outerDepths.len() - 1]
+            outerDepths.remove(outerDepths.len() - 1)
+        }
+    }
+
+    // A newline ends the statement, except inside parentheses or brackets, after a
+    // token that asks to go on, or when there is nothing to end.
+    void newline(i32 atLine, i32 atColumn) {
+        if (depth > 0 || tokens.len() == 0) {
+            ret
+        }
+        Kind last = tokens[tokens.len() - 1].kind
+        if (last == Kind.Newline || last == Kind.Comment || continuesOnNextLine(last)) {
+            ret
+        }
+        Token token
+        token.kind = Kind.Newline
+        token.line = atLine
+        token.column = atColumn
+        token.begin = pos
+        token.end = pos
+        tokens.add(move token)
+    }
+
+    // The text of a comment, without the spaces at its end.
+    void comment(i32 atLine, i32 atColumn) {
+        i64 end = pos
+        for (end > start && (src[end - 1] == ' ' || src[end - 1] == '\t' || src[end - 1] == '\r')) {
+            end--
+        }
+        Token token
+        token.kind = Kind.Comment
+        token.text = src.slice(start, end)
+        token.line = atLine
+        token.column = atColumn
+        token.begin = start
+        token.end = end
+        tokens.add(move token)
+    }
+
+    void blockComment(ref Diagnostics diag) {
+        i32 atLine = line
+        i32 atColumn = column
+        advance()
+        advance()
+        bool sawNewline = false
+        for (pos < src.len() && !(src[pos] == '*' && peek(1) == '/')) {
+            if (src[pos] == '\n') {
+                sawNewline = true
+            }
+            advance()
+        }
+        if (pos >= src.len()) {
+            diag.error(atLine, atColumn, "unterminated /* comment")
+            ret
+        }
+        advance()
+        advance()
+        if (keepComments) {
+            comment(atLine, atColumn)
+        }
+        if (sawNewline) {
+            newline(line, column)  // a comment over several lines counts as a newline
+        }
+    }
+
+    void identifier() {
+        i32 atLine = line
+        i32 atColumn = column
+        i64 from = pos
+        for (pos < src.len() && isIdentChar(src[pos])) {
+            advance()
+        }
+        string word = src.slice(from, pos)
+        push(keyword(word), atLine, atColumn, word, 0)
+    }
+
+    void number(ref Diagnostics diag) {
+        i32 atLine = line
+        i32 atColumn = column
+        i64 from = pos
+        u64 base = 10
+        if (src[pos] == '0' && (peek(1) == 'x' || peek(1) == 'X')) {
+            base = 16
+        }
+        if (src[pos] == '0' && (peek(1) == 'b' || peek(1) == 'B')) {
+            base = 2
+        }
+        if (base != 10) {
+            advance()
+            advance()
+        }
+
+        u64 value = 0
+        bool overflow = false
+        bool anyDigit = false
+        bool isFloat = false
+        for (;;) {
+            u8 c = peek(0)
+            if (c == '_') {
+                advance()
+                continue
+            }
+            i32 digit = -1
+            if (base == 16) {
+                digit = hexValue(c)
+            } else if (isDigit(c)) {
+                digit = i32(c - '0')
+            }
+            if (digit < 0 || u64(digit) >= base) {
+                break
+            }
+            if (value > (0xFFFFFFFFFFFFFFFF - u64(digit)) / base) {
+                overflow = true
+            }
+            value = wrapAdd(wrapMul(value, base), u64(digit))
+            anyDigit = true
+            advance()
+        }
+
+        if (base == 10 && peek(0) == '.' && isDigit(peek(1))) {
+            isFloat = true
+            advance()
+            for (isDigit(peek(0)) || peek(0) == '_') {
+                advance()
+            }
+        }
+        if (base == 10 && (peek(0) == 'e' || peek(0) == 'E') &&
+            (isDigit(peek(1)) || ((peek(1) == '+' || peek(1) == '-') && isDigit(peek(2))))) {
+            isFloat = true
+            advance()
+            if (peek(0) == '+' || peek(0) == '-') {
+                advance()
+            }
+            for (isDigit(peek(0))) {
+                advance()
+            }
+        }
+
+        string text = src.slice(from, pos)
+        if (!anyDigit) {
+            diag.error(atLine, atColumn, "numeric literal without digits: '" + text + "'")
+        } else if (isIdentChar(peek(0))) {
+            diag.error(line, column, "invalid character after the number '" + text + "'")
+            for (isIdentChar(peek(0))) {
+                advance()
+            }
+        } else if (overflow && !isFloat) {
+            diag.error(atLine, atColumn, "integer literal too large: '" + text + "' does not fit in 64 bits")
+        }
+        Kind kind = Kind.IntegerLiteral
+        if (isFloat) {
+            kind = Kind.FloatLiteral
+        }
+        push(kind, atLine, atColumn, text, value)
+    }
+
+    // An escape sequence after the backslash: its code point, or -1 if it is not valid
+    // (the error is already reported).
+    i64 escape(bool allowUnicode, ref Diagnostics diag) {
+        i32 atLine = line
+        i32 atColumn = column
+        advance()  // the backslash
+        u8 c = peek(0)
+        if (pos < src.len()) {
+            advance()
+        }
+        switch (c) {
+            case 'n' {
+                ret 10
+            }
+            case 't' {
+                ret 9
+            }
+            case 'r' {
+                ret 13
+            }
+            case '0' {
+                ret 0
+            }
+            case '\\' {
+                ret 92
+            }
+            case '\'' {
+                ret 39
+            }
+            case '"' {
+                ret 34
+            }
+            case 'x' {
+                i32 high = hexValue(peek(0))
+                i32 low = hexValue(peek(1))
+                if (high < 0 || low < 0) {
+                    diag.error(atLine, atColumn, "invalid \\x escape: two hexadecimal digits are required")
+                    ret -1
+                }
+                advance()
+                advance()
+                ret i64(high * 16 + low)
+            }
+            case 'u' {
+                if (!allowUnicode) {
+                    diag.error(atLine, atColumn, "\\u{...} is not allowed in a character literal, which is one byte")
+                    ret -1
+                }
+                if (peek(0) != '{') {
+                    diag.error(atLine, atColumn, "invalid \\u escape: write \\u{code}")
+                    ret -1
+                }
+                advance()
+                i64 value = 0
+                i32 digits = 0
+                for (hexValue(peek(0)) >= 0 && digits < 6) {
+                    value = value * 16 + i64(hexValue(peek(0)))
+                    advance()
+                    digits++
+                }
+                if (digits == 0 || peek(0) != '}' || value > 0x10FFFF || (value >= 0xD800 && value <= 0xDFFF)) {
+                    diag.error(atLine, atColumn, "invalid \\u{...} escape")
+                    ret -1
+                }
+                advance()
+                ret value
+            }
+            default {
+                diag.error(atLine, atColumn, "unknown escape sequence: \\" + charText(c))
+                ret -1
+            }
+        }
+    }
+
+    void text(ref Diagnostics diag) {
+        i32 atLine = line
+        i32 atColumn = column
+        advance()
+        list<u8> value
+        for (pos < src.len() && src[pos] != '"' && src[pos] != '\n') {
+            if (src[pos] == '\\') {
+                i64 point = escape(true, ref diag)
+                if (point >= 0) {
+                    appendUtf8(ref value, point)
+                }
+            } else {
+                value.add(src[pos])
+                advance()
+            }
+        }
+        if (peek(0) != '"') {
+            diag.error(atLine, atColumn, "unterminated string")
+        } else {
+            advance()
+        }
+        push(Kind.StringLiteral, atLine, atColumn, string(value), 0)
+    }
+
+    // D46: a character literal is one byte, so only the characters of ASCII.
+    void character(ref Diagnostics diag) {
+        i32 atLine = line
+        i32 atColumn = column
+        advance()
+        i64 value = -1
+        u8 c = peek(0)
+        if (c == '\'' || c == '\n' || pos >= src.len()) {
+            diag.error(atLine, atColumn, "empty character literal")
+        } else if (c == '\\') {
+            value = escape(false, ref diag)
+        } else if (c >= 0x80) {
+            i64 from = pos
+            i32 extra = 1
+            if (c >= 0xF0) {
+                extra = 3
+            } else if (c >= 0xE0) {
+                extra = 2
+            }
+            u32 point = u32(c) & (0x3F >> u32(extra))
+            advance()
+            for (i32 i = 0; i < extra && (peek(0) & 0xC0) == 0x80; i++) {
+                point = point << 6 | u32(peek(0) & 0x3F)
+                advance()
+            }
+            string glyph = src.slice(from, pos)
+            diag.error(atLine, atColumn, "the character '" + glyph + "' does not fit in one byte: use the string \"" +
+                glyph + "\" or the code point " + "0x" + format("{:X}", point))
+        } else {
+            value = i64(c)
+            advance()
+        }
+        if (peek(0) != '\'') {
+            diag.error(atLine, atColumn, "unterminated character literal, or more than one character")
+            for (pos < src.len() && src[pos] != '\'' && src[pos] != '\n') {
+                advance()
+            }
+        }
+        if (peek(0) == '\'') {
+            advance()
+        }
+        u64 byte = 0
+        if (value >= 0) {
+            byte = u64(value)
+        }
+        push(Kind.CharLiteral, atLine, atColumn, "", byte)
+    }
+
+    void punctuation(ref Diagnostics diag) {
+        i32 atLine = line
+        i32 atColumn = column
+        u8 c = src[pos]
+        u8 next = peek(1)
+        Kind kind = Kind.EndOfFile
+        i32 size = 1
+        switch (c) {
+            case '(' {
+                kind = Kind.LParen
+            }
+            case ')' {
+                kind = Kind.RParen
+            }
+            case '{' {
+                kind = Kind.LBrace
+            }
+            case '}' {
+                kind = Kind.RBrace
+            }
+            case '[' {
+                kind = Kind.LBracket
+            }
+            case ']' {
+                kind = Kind.RBracket
+            }
+            case ',' {
+                kind = Kind.Comma
+            }
+            case '.' {
+                kind = Kind.Dot
+            }
+            case ':' {
+                kind = Kind.Colon
+            }
+            case ';' {
+                kind = Kind.Semicolon
+            }
+            case '~' {
+                kind = Kind.Tilde
+            }
+            case '+' {
+                kind = Kind.Plus
+                if (next == '+') {
+                    kind = Kind.PlusPlus
+                    size = 2
+                } else if (next == '=') {
+                    kind = Kind.PlusAssign
+                    size = 2
+                }
+            }
+            case '-' {
+                kind = Kind.Minus
+                if (next == '-') {
+                    kind = Kind.MinusMinus
+                    size = 2
+                } else if (next == '=') {
+                    kind = Kind.MinusAssign
+                    size = 2
+                }
+            }
+            case '*' {
+                kind = withEqual(next, Kind.Star, Kind.StarAssign)
+            }
+            case '/' {
+                kind = withEqual(next, Kind.Slash, Kind.SlashAssign)
+            }
+            case '%' {
+                kind = withEqual(next, Kind.Percent, Kind.PercentAssign)
+            }
+            case '=' {
+                kind = withEqual(next, Kind.Assign, Kind.Equal)
+            }
+            case '!' {
+                kind = withEqual(next, Kind.Not, Kind.NotEqual)
+            }
+            case '^' {
+                kind = withEqual(next, Kind.Caret, Kind.CaretAssign)
+            }
+            case '>' {
+                kind = withEqual(next, Kind.Greater, Kind.GreaterEqual)
+            }
+            case '<' {
+                if (next == '<' && peek(2) == '=') {
+                    kind = Kind.ShiftLeftAssign
+                    size = 3
+                } else if (next == '<') {
+                    kind = Kind.ShiftLeft
+                    size = 2
+                } else {
+                    kind = withEqual(next, Kind.Less, Kind.LessEqual)
+                }
+            }
+            case '&' {
+                kind = Kind.Amp
+                if (next == '&') {
+                    kind = Kind.AndAnd
+                    size = 2
+                } else if (next == '=') {
+                    kind = Kind.AmpAssign
+                    size = 2
+                }
+            }
+            case '|' {
+                kind = Kind.Pipe
+                if (next == '|') {
+                    kind = Kind.OrOr
+                    size = 2
+                } else if (next == '=') {
+                    kind = Kind.PipeAssign
+                    size = 2
+                }
+            }
+            default {
+                // A character not recognized: all of it is skipped, also of UTF-8.
+                i64 from = pos
+                advance()
+                for ((peek(0) & 0xC0) == 0x80) {
+                    advance()
+                }
+                diag.error(atLine, atColumn, "invalid character: '" + src.slice(from, pos) + "'")
+                ret
+            }
+        }
+        if (size == 1 && next == '=' && isAssignVariant(kind)) {
+            size = 2
+        }
+        for (i32 i = 0; i < size; i++) {
+            advance()
+        }
+        push(kind, atLine, atColumn, "", 0)
+    }
+}
+
+// The kind with '=' after the character, when the next one is '='.
+Kind withEqual(u8 next, Kind alone, Kind equal) {
+    if (next == '=') {
+        ret equal
+    }
+    ret alone
+}
+
+// The kinds that withEqual gives with '=', two characters long.
+bool isAssignVariant(Kind kind) {
+    switch (kind) {
+        case StarAssign, SlashAssign, PercentAssign, Equal, NotEqual, CaretAssign, GreaterEqual, LessEqual {
+            ret true
+        }
+        default {
+            ret false
+        }
+    }
+}
+
+// One byte as a string: an escape that is not known shows it.
+string charText(u8 c) {
+    list<u8> bytes = [c]
+    if (c >= 0x80) {
+        ret "?"
+    }
+    ret string(bytes)
+}
