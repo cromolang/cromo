@@ -1,0 +1,82 @@
+// The copies are implicit (D424): a string, a list and a struct are copied where
+// they are given without move, with their copy(), generated or written by hand;
+// move gives the value without a copy.
+// expect-output: hello hello
+// expect-output: 2 [hello, hello!]
+// expect-output: a b
+// expect-output: [1, 2, 3] [1, 2, 3, 4]
+// expect-output: copied by hand: Ada 1
+// expect-output: field x, local y, param p
+// expect-output: kept 3
+// expect-output: ["x", "y"] ["x"]
+struct Person {
+    string name
+    i64 copies
+
+    Person copy() const {
+        Person other
+        other.name = name.copy()
+        other.copies = copies + 1
+        ret other
+    }
+}
+
+struct Box {
+    string label = "field x"
+
+    string give() const {
+        ret label  // a copy of a field
+    }
+}
+
+string pass(string text) {
+    ret text  // a copy of a read parameter
+}
+
+list<string> keep(list<string> items) {
+    ret items
+}
+
+i32 main() {
+    string a = "hello"
+    string b = a
+    println("{} {}", a, b)
+
+    list<string> names
+    names.add(a)
+    b += "!"
+    names.add(move b)
+    println("{} [{}]", names.len(), join(names, ", "))
+
+    string first = "a"
+    string second = "b"
+    second = first
+    first = "a"
+    second = "b"
+    println("{} {}", first, second)
+
+    list<i64> numbers = [1, 2, 3]
+    list<i64> more = numbers
+    more.add(4)
+    println("{:?} {:?}", numbers, more)
+
+    Person ada
+    ada.name = "Ada"
+    Person twin = ada
+    println("copied by hand: {} {}", twin.name, twin.copies)
+
+    Box box
+    string y = "local y"
+    string z = y
+    println("{}, {}, {}", box.give(), z, pass("param p"))
+
+    list<string> source = ["x", "y", "z"]
+    list<string> copy = keep(source)
+    println("kept {}", copy.len())
+
+    list<string> two = ["x", "y"]
+    list<string> one = two
+    one.remove(1)
+    println("{:?} {:?}", two, one)
+    ret 0
+}

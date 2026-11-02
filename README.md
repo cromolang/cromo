@@ -83,7 +83,7 @@ i32 main() {
 ## Features
 
 - **Memory safety without a garbage collector.** No pointers, no `null`, no uninitialized values. Bounds are checked, integer overflow stops the program in debug builds, and two `ref` arguments of a call can never be the same object.
-- **Visible costs.** A parameter is read, modified with `ref` or taken with `move`, and the call says which. Values that own memory are never copied implicitly.
+- **Visible costs.** A parameter is read, modified with `ref` or taken with `move`, and the call says which. Values that own memory are copied by `=`, as in C++, with their `copy()`, and handed over for free with `move`.
 - **Types.** Structs with constructors and destructors, enums with data and an exhaustive `switch`, interfaces, and generics constrained by interfaces and checked once, at their definition.
 - **Errors.** Exceptions with `try`, `catch` and `finally`. A panic, an uncaught exception and a stack overflow print a stack trace, also in release builds.
 - **Concurrency.** Threads, lightweight tasks, channels, atomics, and a mutex whose data are reached only while it is locked. The compiler checks what threads and tasks share.

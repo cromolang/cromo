@@ -2076,19 +2076,26 @@ private:
         return decl.methods["copy"];
     }
 
-    // D23: a type that needs destruction is not copied implicitly. Returns false
-    // after reporting the error.
-    bool checkNotCopied(const Expr& value, Type type) {
+    // D424: a value that owns resources is copied where it is given without `move`,
+    // with its copy(), generated (D35) or written by hand (D83). Returns false after
+    // reporting the error, for a type that cannot be copied.
+    bool copyIfNeeded(ExprPtr& value, Type type) {
         if (type.isParam()) return true;  // D85: checked in each instance
-        if (!needsDestruction(type) || isTemporary(value) || value.kind == ExprKind::Move) return true;
-        std::string text = placeText(value);
-        std::vector<std::string> fixes;
-        if (isPlace(value) && canMove(value)) fixes.push_back("'move " + text + "'");
-        if (canCopy(type)) fixes.push_back("'" + text + ".copy()'");
-        std::string advice = fixes.empty()    ? "it can be neither moved nor copied here"
-                             : fixes.size() == 1 ? "write " + fixes[0]
-                                                 : "write " + fixes[0] + " or " + fixes[1];
-        diag_->error(value.loc, "values of type " + type.name() + " are not copied implicitly (D23): " + advice);
+        if (!needsDestruction(type) || isTemporary(*value) || value->kind == ExprKind::Move) return true;
+        if (type.isStruct() && canCopy(type)) {
+            if (FunctionDecl* method = copyFunction(*type.structDecl, value->loc)) {
+                SourceLocation loc = value->loc;
+                auto copy = std::make_unique<MethodCallExpr>(loc, std::move(value), "copy");
+                copy->function = method;
+                copy->type = type;
+                noteCall(method, loc);
+                value = std::move(copy);
+                return true;
+            }
+        }
+        std::string advice = isPlace(*value) && canMove(*value) ? "write 'move " + placeText(*value) + "'"
+                                                                 : "it can be neither moved nor copied here";
+        diag_->error(value->loc, "values of type " + type.name() + " cannot be copied (D424): " + advice);
         return false;
     }
 
@@ -2228,7 +2235,7 @@ private:
         }
         if (decl.init && !type.isError()) {
             threadInit_ = decl.init.get();
-            if (coerceValue(decl.init, type)) checkNotCopied(*decl.init, type);
+            if (coerceValue(decl.init, type)) copyIfNeeded(decl.init, type);
             threadInit_ = nullptr;
         }
         decl.variable = declare(decl.name, type, decl.nameLoc, decl.isConst);
@@ -2272,7 +2279,7 @@ private:
                 return;
             }
         }
-        if (coerceValue(assign.value, type)) checkNotCopied(*assign.value, type);
+        if (coerceValue(assign.value, type)) copyIfNeeded(assign.value, type);
     }
 
     // D95: `s += t` appends `t` to `s`, with the method of the library.
@@ -2549,7 +2556,7 @@ private:
                                                    " (D36)");
             return Flow::Returns;
         }
-        checkNotCopied(*statement.value, type);
+        copyIfNeeded(statement.value, type);
         useMethodsFor(type, *exceptionDecl_, statement.loc);
         noteThrow(type.structDecl, statement.loc);
         return Flow::Returns;
@@ -2888,7 +2895,7 @@ private:
         const Variable* variable = value.kind == ExprKind::Name ? static_cast<const NameExpr&>(value).variable : nullptr;
         if (variable && !checkNotBlockThread(*variable, value.loc)) return;
         if (variable && (variable->kind == VariableKind::Local || variable->kind == VariableKind::MoveParam)) return;
-        checkNotCopied(value, type);
+        copyIfNeeded(ret.value, type);
     }
 
     // ---- Expressions ----
@@ -2905,7 +2912,7 @@ private:
                 if (borrow) return true;  // passed with its method table (D49)
                 // D357: a new value of the interface, with the struct on the heap, copied
                 // or moved as into a variable of its own type.
-                if (!checkNotCopied(*expr, type)) return false;
+                if (!copyIfNeeded(expr, type)) return false;
                 SourceLocation loc = expr->loc;
                 ExprPtr inner = std::move(expr);
                 expr = std::make_unique<ConversionExpr>(loc, std::move(inner), target, false);
@@ -3237,14 +3244,10 @@ private:
                 return false;
             }
             if (!coerceValue(arg, type)) return false;
-            // A variable or a field gives its value only with `move`; new values do not need it (D22, D23).
-            const Expr* value = arg.get();
-            if (value->kind == ExprKind::Conversion) value = static_cast<const ConversionExpr&>(*value).operand.get();
-            if (isPlace(*value) && needsDestruction(value->type)) {  // D94: not for simple types
-                diag_->error(value->loc, name + " is 'move': write 'move " + placeText(*value) + "' (D22)");
-                return false;
-            }
-            return true;
+            // A variable or a field without `move` gives a copy (D424); a value of an
+            // interface was already copied when it was made (D357).
+            if (arg->kind == ExprKind::Conversion) return true;
+            return copyIfNeeded(arg, type);
         }
         }
         return false;
@@ -4716,7 +4719,7 @@ private:
             diag_->error(node.loc, "a '?' with values of " + type.name() + " is not possible yet: write an if (P28)");
             return Type::error();
         }
-        if (!checkNotCopied(*node.whenTrue, type) || !checkNotCopied(*node.whenFalse, type)) return Type::error();
+        if (!copyIfNeeded(node.whenTrue, type) || !copyIfNeeded(node.whenFalse, type)) return Type::error();
         return type;
     }
 

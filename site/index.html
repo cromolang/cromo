@@ -185,7 +185,7 @@ sum: 120 µs</pre></div>
       <div>
         <div class="kicker">Ownership</div>
         <h2>The compiler explains the rules</h2>
-        <p class="section-lead" style="margin-bottom:0">Strings, lists and maps own memory, so Cromo never copies them behind your back. When a value would be duplicated or used after a move, the error says how to fix it — and names the design decision behind the rule.</p>
+        <p class="section-lead" style="margin-bottom:0">Strings, lists and maps own memory: <code>=</code> copies them, as in C++, and <code>move</code> hands them over for free. When a value is used after a move, or cannot be copied, the error says how to fix it — and names the design decision behind the rule.</p>
         <ul class="modes">
           <li><b>read</b><span>The default for parameters: borrowed and read-only, never copied.</span></li>
           <li><b>ref</b><span>The function can modify the caller's value. Two <code>ref</code> to the same place are an error.</span></li>
@@ -200,15 +200,12 @@ sum: 120 µs</pre></div>
 
 i32 main() {
     string name = "Ada"
-    string other = name
+    string other = name  // a copy
     keep(move name)
     println("{}", name)
     ret 0
 }</code></pre>
         <div class="term"><pre><span class="prompt">$ </span><span class="cmd">cromo build own.cro</span>
-<span class="out-dim">own.cro:7:20:</span> <span class="out-err">error:</span> values of type string are not copied implicitly (D23): write 'move name' or 'name.copy()'
-    string other = name
-                   <span class="out-err">^</span>
 <span class="out-dim">own.cro:9:19:</span> <span class="out-err">error:</span> 'name' has been moved and can no longer be used (D23)
     println("{}", name)
                   <span class="out-err">^</span></pre></div>

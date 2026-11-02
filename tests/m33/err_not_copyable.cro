@@ -1,0 +1,15 @@
+// A struct with its own destructor and without copy() cannot be copied (D424, D35).
+// expect-error: values of type Handle cannot be copied (D424): write 'move h'
+struct Handle {
+    i64 fd = 3
+
+    ~Handle() {
+        fd = -1
+    }
+}
+
+i32 main() {
+    Handle h
+    Handle other = h
+    ret 0
+}

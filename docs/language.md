@@ -205,21 +205,21 @@ The shape of the struct (fields, constructor `Name(...)`, destructor `~Name()`, 
 
 A constructor that fails, for example because the file does not open, throws an exception (D16). The fields already constructed are destroyed and the object does not exist.
 
-## 7. Moving and copying (D23)
+## 7. Moving and copying (D23, D424)
 
 ```cromo
 string s = "hello"
 string t = move s       // move: t is now the owner
 println("{}", s)        // compile ERROR: 's' has been moved
-string u = t.copy()     // explicit copy
-string v = t            // ERROR: a string needs move or copy()
+string u = t.copy()     // an explicit copy
+string v = t            // a copy too, made by copy() (D424)
 
 i32 a = 5
 i32 b = a               // simple types are always copied
 ```
 
 - **Simple types** (numbers, `bool`, structs made only of simple types and without their own destructor): they are copied implicitly.
-- **Resource-owning types** (`string`, `list`, structs that contain them or that have their own destructor): no implicit copy. You write `move x` or `x.copy()`, both in calls and in assignments.
+- **Resource-owning types** (`string`, `list`, structs that contain them or that have their own destructor): they are copied with their `copy()` where they are given without `move`, as `b = a` and `list.add(s)` (D424); `move x` gives the value without a copy. A type without `copy()`, as a struct with its own destructor that does not write it, can only be moved.
 - **Temporaries:** they are moved without `move`.
 - **`ret x`** of a local variable moves it without `move`.
 - **After a `move`**, using the variable is a compile error, even when it was moved only on some paths.

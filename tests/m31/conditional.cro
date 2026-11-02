@@ -10,6 +10,7 @@
 // expect-output: [a, b] []
 // expect-output: chosen 6
 // expect-output: loop 200000 50000
+// expect-output: copied hello hello
 struct Point {
     i64 x
     i64 y
@@ -61,5 +62,7 @@ i32 main() {
         long += (i % 2 == 0 ? word("xyz") : word("q")).len() == 3 ? 1 : 0
     }
     println("loop {} {}", bytes, long)
+    string chosen = gap > 1 ? text : word("no")  // a copy of the variable (D424)
+    println("copied {} {}", chosen, text)
     ret 0
 }

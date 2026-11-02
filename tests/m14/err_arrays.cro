@@ -3,7 +3,7 @@
 // expect-error: an array has at least one element (D196)
 // expect-error: an array has only len() and copy(), not 'add' (D196)
 // expect-error: string[2] cannot be copied: its elements are not simple values, move it instead (D196)
-// expect-error: values of type string[2] are not copied implicitly (D23): write 'move names'
+// expect-error: values of type string[2] cannot be copied (D424): write 'move names'
 // expect-error: '==' does not work on values of type i32[4]
 // expect-error: the elements of this array are i32: write for (i32 x in ...) (D101)
 i32 main() {

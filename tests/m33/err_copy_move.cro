@@ -1,0 +1,10 @@
+// After a move the variable cannot be used; a copy leaves it valid (D424, D23).
+// expect-error: 'b' has been moved and can no longer be used (D23)
+i32 main() {
+    string a = "x"
+    string b = a
+    list<string> names
+    names.add(move b)
+    println("{} {}", a, b)
+    ret 0
+}

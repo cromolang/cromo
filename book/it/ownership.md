@@ -73,23 +73,25 @@ i32 main() {
 1.5 9
 ```
 
-## I valori che possiedono risorse si spostano
+## I valori che possiedono risorse: copiati o spostati
 
-Una `string`, una `list`, una `map` e le struct che le contengono, o che hanno un distruttore, possiedono qualcosa che una copia dovrebbe duplicare. Cromo non lo duplica mai senza che tu lo chieda. Assegnarne una a un'altra variabile non compila:
+Una `string`, una `list`, una `map` e le struct che le contengono, o che hanno un distruttore, possiedono qualcosa sullo heap. Come in C++, assegnarne una a un'altra variabile la copia, ed entrambe le variabili restano utilizzabili:
 
-```cromo error
+```cromo
 i32 main() {
     string first = "hello"
     string second = first
+    second += "!"
+    println("{} {}", first, second)
     ret 0
 }
 ```
 
 ```output
-error: values of type string are not copied implicitly
+hello hello!
 ```
 
-Ci sono due modi per dire che cosa intendi. Con `move` il valore passa al nuovo proprietario, senza copiare nulla, e la vecchia variabile non si può più usare:
+Lo stesso vale dove un valore viene conservato: `names.add(word)` mette nella lista una copia di `word`. Una copia duplica quello che il valore possiede, quindi costa; quando la vecchia variabile non serve più, `move` dà il valore al nuovo proprietario senza copiare nulla, e la vecchia variabile non si può più usare:
 
 ```cromo error
 i32 main() {
@@ -104,23 +106,7 @@ i32 main() {
 error: 'first' has been moved and can no longer be used
 ```
 
-Con `copy()` il valore viene duplicato ed entrambe le variabili restano utilizzabili:
-
-```cromo
-i32 main() {
-    string first = "hello"
-    string second = first.copy()
-    second += "!"
-    println("{} {}", first, second)
-    ret 0
-}
-```
-
-```output
-hello hello!
-```
-
-Per una struct il compilatore genera `copy()` da sé, quando tutti i suoi campi si possono copiare e la struct non ha un distruttore proprio.
+La copia la fa il metodo `copy()`, che si può anche scrivere, `first.copy()`, per renderla visibile. Per una struct il compilatore genera `copy()` da sé, quando tutti i suoi campi si possono copiare e la struct non ha un distruttore proprio; una struct con un distruttore, come un file, scrive il suo `copy()`, oppure non si può copiare e si sposta soltanto.
 
 Il compilatore segue ogni percorso della funzione: anche una variabile spostata in un solo ramo di un `if` non si può più usare dopo l'`if`.
 
@@ -335,7 +321,7 @@ Una variabile `const` non si può modificare, e `const` è profondo: anche le st
 ## Riepilogo
 
 - Ogni valore ha un solo proprietario e finisce con lui: i distruttori rilasciano le risorse.
-- I valori semplici si copiano; gli altri si spostano con `move` o si duplicano con `copy()`.
+- Assegnare un valore lo copia, con `copy()` per i valori che possiedono risorse; `move` lo dà a un altro proprietario senza copiarlo.
 - Un parametro viene letto, modificato con `ref` o preso con `move`, e la chiamata dice quale dei tre.
 - I riferimenti esistono solo durante una chiamata: nessun lifetime da scrivere, nessun puntatore pendente.
 - Due argomenti di una chiamata che li modifica non sono mai lo stesso oggetto.

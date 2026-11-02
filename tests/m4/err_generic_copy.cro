@@ -1,4 +1,4 @@
-// expect-error: values of type File are not copied implicitly (D23)
+// expect-error: values of type File cannot be copied (D424)
 // expect-error: (in pick<File>, used at line 23)
 // A generic that copies a T can be used only with types that are copied (D85).
 struct File {

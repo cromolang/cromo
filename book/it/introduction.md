@@ -44,13 +44,14 @@ Un blocco con il bordo rosso è un programma che **non** compila, mostrato di pr
 ```cromo error
 i32 main() {
     string name = "Cromo"
-    string other = name
+    string other = move name
+    println("{}", name)
     ret 0
 }
 ```
 
 ```output
-error: values of type string are not copied implicitly
+error: 'name' has been moved and can no longer be used
 ```
 
 La guida è disponibile anche in PDF, in inglese e in italiano: usa il pulsante **PDF** in cima alla pagina.

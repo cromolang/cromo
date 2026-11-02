@@ -7,7 +7,6 @@
 // expect-error: a 'catch' takes a struct that implements Exception, or Exception itself, found Point (D118)
 // expect-error: this 'catch' is never reached: a previous one already catches every exception (D118)
 // expect-error: 'e' is the exception of a 'catch', which is read-only (D114)
-// expect-error: values of type IoError are not copied implicitly (D23): write 'move err'
 // expect-error: message() cannot let an exception out: catch it inside (D122)
 // expect-error: copy() cannot let an exception out: catch it inside (D122)
 struct Point {

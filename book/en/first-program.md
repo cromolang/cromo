@@ -161,7 +161,7 @@ Three words of the program deserve attention, because they are the heart of Crom
 
 - `sort(ref counts)`: the function **modifies** the list, and the call says so with `ref`, as the declaration `void sort(ref list<Count> counts)` does.
 - `counts.add(move c)`: the struct **moves** into the list. After the `move`, `c` can no longer be used: its content now belongs to the list.
-- `c.word = word.copy()`: a string is never copied without saying so. `word` belongs to the map, so the program asks for a copy.
+- `c.word = word.copy()`: the string is copied, as `word` still belongs to the map. `c.word = word` would copy it too: `copy()` only makes the copy visible.
 
 Without `ref`, a parameter is read-only, as `text` in `words(string text)`: the function can read the string, but not change it, and the string is not copied. Chapter 4 explains these rules, which are the core of the language.
 

@@ -161,7 +161,7 @@ Tre parole del programma meritano attenzione, perché sono il cuore di Cromo:
 
 - `sort(ref counts)`: la funzione **modifica** la lista, e la chiamata lo dice con `ref`, come fa la dichiarazione `void sort(ref list<Count> counts)`.
 - `counts.add(move c)`: la struct si **sposta** nella lista. Dopo il `move`, `c` non si può più usare: il suo contenuto ora appartiene alla lista.
-- `c.word = word.copy()`: una stringa non viene mai copiata senza dirlo. `word` appartiene alla mappa, quindi il programma ne chiede una copia.
+- `c.word = word.copy()`: la stringa viene copiata, perché `word` appartiene ancora alla mappa. Anche `c.word = word` la copierebbe: `copy()` rende solo visibile la copia.
 
 Senza `ref`, un parametro è in sola lettura, come `text` in `words(string text)`: la funzione può leggere la stringa ma non cambiarla, e la stringa non viene copiata. Il capitolo 4 spiega queste regole, che sono il nucleo del linguaggio.
 

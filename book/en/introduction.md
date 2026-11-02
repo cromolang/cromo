@@ -44,13 +44,14 @@ A block with a red border is a program that does **not** compile, shown on purpo
 ```cromo error
 i32 main() {
     string name = "Cromo"
-    string other = name
+    string other = move name
+    println("{}", name)
     ret 0
 }
 ```
 
 ```output
-error: values of type string are not copied implicitly
+error: 'name' has been moved and can no longer be used
 ```
 
 The guide is also available as a PDF, in English and in Italian: use the **PDF** button at the top of the page.

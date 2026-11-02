@@ -6,7 +6,7 @@
 // expect-error: 'addr' belongs to the unsafe dialect: the module must write 'import unsafe' (D127)
 // expect-error: 'alloc' belongs to the unsafe dialect: the module must write 'import unsafe' (D127)
 // expect-error: field 'length' of string is private to its module: it is not marked public (D50)
-// expect-error: parameter 'value' is 'move': write 'move f' (D22)
+// expect-error: values of type File cannot be copied (D424): write 'move f'
 // expect-error: 'v[0]' overlaps 'v[0]' in the same call, and the call can modify both (D22)
 // expect-error: 'panic' is a built-in name
 struct File {

@@ -14,7 +14,7 @@ Cromo prende qualcosa da ciascuno di questi linguaggi. Questa appendice elenca, 
 | `;` alla fine delle istruzioni | la fine della riga |
 | puntatori, `nullptr`, `new`, `delete` | niente puntatori e niente `null`; l'heap solo attraverso i contenitori |
 | `T&`, `const T&` | un parametro è in lettura per default; `ref` modifica; nessun riferimento al di fuori dei parametri |
-| costruttori di copia, copie implicite | `copy()`, sempre esplicito per i tipi che possiedono risorse |
+| costruttori di copia, copie implicite | copie implicite anche qui, fatte da `copy()`, generato o scritto a mano |
 | `std::move` | `move`, controllato: una variabile spostata non può più essere usata |
 | `class`, ereditarietà, `virtual` | `struct` e interfacce |
 | template con qualsiasi tipo | generici vincolati da interfacce, controllati una volta sola |
@@ -54,7 +54,7 @@ Cromo prende qualcosa da ciascuno di questi linguaggi. Questa appendice elenca, 
 |---|---|
 | riferimenti con lifetime, il borrow checker | `ref` solo per i parametri: un riferimento non sopravvive mai a una chiamata, e non ci sono lifetime |
 | `&T`, `&mut T` | un parametro in lettura, un parametro `ref` |
-| `Clone`, `.clone()` | `copy()` |
+| `Clone`, `.clone()` | `copy()`, chiamato da solo dove un valore viene dato senza `move` |
 | tipi `Copy` | tipi semplici: numeri, `bool`, struct composte solo da questi |
 | `Result<T, E>` e `?` | eccezioni; enum con dati per i risultati che sono valori |
 | `Option<T>` | un valore convenzionale, un `bool` con un parametro `ref`, oppure un enum |

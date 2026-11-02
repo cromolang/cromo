@@ -170,7 +170,7 @@ Elements and fields as references: D35.
 ### D23. Moving and copying
 *2026-10-28.*
 - **Simple types** (numbers, `bool`, structs made only of simple types and without their own destructor): they are always copied, implicitly.
-- **Resource-owning types** (`string`, `list`, structs that contain them or that have their own destructor): no implicit copy. Every time a variable gives up ownership you write `move`, both in calls and in assignments: `string t = move s`. To copy you write `s.copy()`.
+- **Resource-owning types** (`string`, `list`, structs that contain them or that have their own destructor): no implicit copy. Every time a variable gives up ownership you write `move`, both in calls and in assignments: `string t = move s`. To copy you write `s.copy()`. *From D424 they are copied implicitly too, with their `copy()`.*
 - **After a `move`**, using the variable is a compile error.
 - **`ret`** of a local variable moves it without needing `move`, because it is its last use.
 - **Temporaries** are moved without `move`.
@@ -1955,6 +1955,17 @@ string word = value ? "true" : "false"
 ### D423. The analysis of the compiler in Cromo, in parts
 *2026-11-02.* It follows D417. After the pilot comes sema in Cromo, on the tree of the pilot (D418), a part at a time, each checked against the C++ on the errors of the tests: first the names and the declarations of the modules, then the types of the expressions, then the moves. Its references, as from a name to its variable, are indices.
 
+### D424. The copies are implicit
+*2026-11-02.* It changes D23. A value that owns resources, as a `string`, a `list` or a struct that contains them, is copied where it is given without `move`: `string b = a`, `b = a`, `list.add(s)`, `ret name` of a field, the argument of a `move` parameter. The copy is that of `copy()`, generated (D35) or written by hand (D83); `move` stays explicit and gives the value without a copy, `list.add(move s)`, and `ret` of a local variable still moves it. A type that cannot be copied, as a struct with its own destructor and without `copy()`, needs `move`, as before. The read parameters are still borrowed, without a copy (D22). As in C and C++, `=` copies; what is written is only a change of owner, with `ref` and `move`. A copy whose source is never used again could become a move: that is a later optimization, which does not change the meaning.
+
+```cromo
+string a = "hello"
+string b = a          // a copy: a and b are both valid
+list<string> names
+names.add(a)          // a copy
+names.add(move b)     // b is given to the list: using it is an error
+```
+
 ---
 
 ## Proposed
@@ -2038,7 +2049,7 @@ options:
 ```
 
 ### P28. The branches of `?:` with values that own resources (D422)
-A branch whose type is not simple, as a `string`, gives a new value: a literal, a call, `x.copy()`. `move` in a branch is an error for now: the analysis of the moves (D77) follows the paths of the statements, not those inside an expression. The temporaries of a branch end with the branch.
+A branch whose type is not simple, as a `string`, gives a new value, also a copy of a variable (D424). `move` in a branch is an error for now: the analysis of the moves (D77) follows the paths of the statements, not those inside an expression. The temporaries of a branch end with the branch.
 
 ---
 

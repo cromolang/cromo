@@ -14,7 +14,7 @@ Cromo borrows from each of these languages. This appendix lists, for each, what 
 | `;` at the end of statements | the end of the line |
 | pointers, `nullptr`, `new`, `delete` | no pointers and no `null`; the heap only through containers |
 | `T&`, `const T&` | a parameter is read by default; `ref` modifies; no references outside parameters |
-| copy constructors, implicit copies | `copy()`, always explicit for types that own resources |
+| copy constructors, implicit copies | implicit copies too, made by `copy()`, generated or written by hand |
 | `std::move` | `move`, checked: a moved variable cannot be used |
 | `class`, inheritance, `virtual` | `struct` and interfaces |
 | templates with any type | generics constrained by interfaces, checked once |
@@ -54,7 +54,7 @@ Cromo borrows from each of these languages. This appendix lists, for each, what 
 |---|---|
 | references with lifetimes, the borrow checker | `ref` only for parameters: a reference never outlives a call, and there are no lifetimes |
 | `&T`, `&mut T` | a read parameter, a `ref` parameter |
-| `Clone`, `.clone()` | `copy()` |
+| `Clone`, `.clone()` | `copy()`, called by itself where a value is given without `move` |
 | `Copy` types | simple types: numbers, `bool`, structs made only of them |
 | `Result<T, E>` and `?` | exceptions; enums with data for results that are values |
 | `Option<T>` | a conventional value, a `bool` with a `ref` parameter, or an enum |

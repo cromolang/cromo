@@ -1,8 +1,7 @@
 // expect-error: parameter 'p' is read-only: it belongs to the caller and cannot be moved (D82)
 // expect-error: cannot move 'h.f': parameter 'h' cannot be modified
 // expect-error: 'move' is not needed before a new object: it is moved anyway (D23)
-// expect-error: parameter 'f' is 'move': write 'move d' (D22)
-// expect-error: values of type File are not copied implicitly (D23): write 'move d'
+// expect-error: values of type File cannot be copied (D424): write 'move d'
 // expect-error: 'move' is written only in an initialization, an assignment, the argument of a 'move' parameter or after 'ret' (D82)
 // expect-error: parameter 'n' is 'ref': write 'ref' before the argument (D22)
 // expect-error: parameter 'n' is read-only: remove 'ref' (D22)
