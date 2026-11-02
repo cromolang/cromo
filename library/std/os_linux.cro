@@ -1,4 +1,5 @@
-// std.os on Linux (D202): system calls, and the environment on the initial stack.
+// std.os on Linux (D202): system calls, whose numbers are in os_linux_x86_64.cro
+// and os_linux_arm64.cro (D408, P23), and the environment on the initial stack.
 import unsafe
 
 public string name() {
@@ -6,7 +7,7 @@ public string name() {
 }
 
 public i64 processId() {
-    ret systemCall(39, 0, 0, 0, 0, 0, 0)  // getpid
+    ret systemCall(i64(Call.GetPid), 0, 0, 0, 0, 0, 0)
 }
 
 public bool hasEnv(string name) {
@@ -29,7 +30,7 @@ public string env(string name) {
 
 public string currentFolder() {
     addr buffer = alloc(4096)
-    i64 length = systemCall(79, buffer, 4096, 0, 0, 0, 0)  // getcwd, with its zero
+    i64 length = systemCall(i64(Call.GetCwd), buffer, 4096, 0, 0, 0, 0)  // with its zero
     string folder
     if (length > 0) {
         folder = string(buffer, length - 1)

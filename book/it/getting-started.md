@@ -94,6 +94,8 @@ cromo build --target linux hello.cro     # su Windows: un eseguibile per Linux
 cromo build --target windows hello.cro   # su Linux: hello.exe per Windows
 ```
 
+`--target linux-arm64` lo produce per Linux su ARM64, come un Raspberry Pi o un server con Graviton.
+
 ## Un progetto
 
 Un progetto è una cartella con un file `main.cro`. Se non indichi un nome di file, `cromo build`, `cromo run` e `cromo test` usano il `main.cro` della cartella corrente, e l'eseguibile prende il nome della cartella:

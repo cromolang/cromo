@@ -1,0 +1,28 @@
+// std.fs on Linux ARM64 (D408, P23): the numbers of its system calls, and what
+// changes from x86-64.
+import unsafe
+
+enum Call {
+    MkdirAt = 34
+    UnlinkAt = 35
+    SymlinkAt = 36
+    FchmodAt = 53
+    OpenAt = 56
+    Close = 57
+    GetDents64 = 61
+    Read = 63
+    Write = 64
+    ReadlinkAt = 78
+    NewFstatAt = 79
+    RenameAt2 = 276
+}
+
+// st_mode of struct stat.
+i64 modeOf(addr info) {
+    ret i64(copyAt<u32>(offset(info, 16)))
+}
+
+// O_DIRECTORY.
+i64 directoryFlag() {
+    ret 0x4000
+}

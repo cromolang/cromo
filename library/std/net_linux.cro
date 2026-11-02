@@ -1,4 +1,5 @@
-// std.net on Linux (D202): the system calls of the sockets, and a resolver of
+// std.net on Linux (D202): the system calls of the sockets, whose numbers are in
+// net_linux_x86_64.cro and net_linux_arm64.cro (D408, P23), and a resolver of
 // names without the C library: /etc/hosts, then the servers of /etc/resolv.conf
 // asked with UDP (D226).
 import unsafe
@@ -22,7 +23,7 @@ i64 openSocket(i32 version, bool stream) {
     if (stream) {
         kind = 1  // SOCK_STREAM
     }
-    i64 handle = systemCall(41, family, kind | 0x80800, 0, 0, 0, 0)  // socket, SOCK_CLOEXEC|SOCK_NONBLOCK
+    i64 handle = systemCall(i64(Call.Socket), family, kind | 0x80800, 0, 0, 0, 0)  // SOCK_CLOEXEC|SOCK_NONBLOCK
     if (handle < 0) {
         throw failure("open a socket", errorText(-handle))
     }
@@ -33,14 +34,14 @@ i64 openSocket(i32 version, bool stream) {
 void reuseAddress(i64 handle) {
     addr value = alloc(4)
     put<i32>(value, 1)
-    systemCall(54, handle, 1, 2, value, 4, 0)  // setsockopt SOL_SOCKET SO_REUSEADDR
+    systemCall(i64(Call.SetSockOpt), handle, 1, 2, value, 4, 0)  // SOL_SOCKET SO_REUSEADDR
     free(value)
 }
 
 i64 connectTo(i64 handle, Address to) {
     i32 length = 0
     addr raw = socketAddress(to, ref length)
-    i64 result = systemCall(42, handle, raw, i64(length), 0, 0, 0)  // connect
+    i64 result = systemCall(i64(Call.Connect), handle, raw, i64(length), 0, 0, 0)
     free(raw)
     if (result == -115) {  // EINPROGRESS
         ret -1
@@ -56,7 +57,7 @@ i64 connectError(i64 handle) {
     addr length = alloc(4)
     put<i32>(value, 0)
     put<i32>(length, 4)
-    systemCall(55, handle, 1, 4, value, length, 0)  // getsockopt SOL_SOCKET SO_ERROR
+    systemCall(i64(Call.GetSockOpt), handle, 1, 4, value, length, 0)  // SOL_SOCKET SO_ERROR
     i64 code = i64(copyAt<i32>(value))
     free(length)
     free(value)
@@ -66,7 +67,7 @@ i64 connectError(i64 handle) {
 void bindTo(i64 handle, Address to) {
     i32 length = 0
     addr raw = socketAddress(to, ref length)
-    i64 result = systemCall(49, handle, raw, i64(length), 0, 0, 0)  // bind
+    i64 result = systemCall(i64(Call.Bind), handle, raw, i64(length), 0, 0, 0)
     free(raw)
     if (result < 0) {
         throw failure(format("use {} port {}", text(to), to.port), errorText(-result))
@@ -74,7 +75,7 @@ void bindTo(i64 handle, Address to) {
 }
 
 void listenOn(i64 handle) {
-    i64 result = systemCall(50, handle, 128, 0, 0, 0, 0)  // listen
+    i64 result = systemCall(i64(Call.Listen), handle, 128, 0, 0, 0, 0)
     if (result < 0) {
         throw failure("listen", errorText(-result))
     }
@@ -83,7 +84,7 @@ void listenOn(i64 handle) {
 // -1 when there is no connection yet (EAGAIN).
 i64 acceptOn(i64 handle) {
     for {
-        i64 client = systemCall(288, handle, 0, 0, 0x80800, 0, 0)  // accept4, SOCK_CLOEXEC|SOCK_NONBLOCK
+        i64 client = systemCall(i64(Call.Accept4), handle, 0, 0, 0x80800, 0, 0)  // SOCK_CLOEXEC|SOCK_NONBLOCK
         if (client >= 0) {
             ret client
         }
@@ -99,7 +100,7 @@ i64 acceptOn(i64 handle) {
 // -1 when there are no bytes yet.
 i64 receiveSome(i64 handle, addr data, i64 most) {
     for {
-        i64 count = systemCall(45, handle, data, most, 0, 0, 0)  // recvfrom
+        i64 count = systemCall(i64(Call.RecvFrom), handle, data, most, 0, 0, 0)
         if (count >= 0) {
             ret count
         }
@@ -116,7 +117,7 @@ i64 receiveSome(i64 handle, addr data, i64 most) {
 // the signal SIGPIPE that would end the program. -1 when there is no room yet.
 i64 sendSome(i64 handle, addr data, i64 size) {
     for {
-        i64 count = systemCall(44, handle, data, size, 0x4000, 0, 0)  // sendto
+        i64 count = systemCall(i64(Call.SendTo), handle, data, size, 0x4000, 0, 0)
         if (count >= 0) {
             ret count
         }
@@ -133,7 +134,7 @@ i64 sendSome(i64 handle, addr data, i64 size) {
 bool sendTo(i64 handle, addr data, i64 size, Address to) {
     i32 length = 0
     addr raw = socketAddress(to, ref length)
-    i64 count = systemCall(44, handle, data, size, 0x4000, raw, i64(length))
+    i64 count = systemCall(i64(Call.SendTo), handle, data, size, 0x4000, raw, i64(length))
     free(raw)
     if (count == -11) {
         ret false
@@ -149,7 +150,7 @@ i64 receiveFrom(i64 handle, addr data, i64 most, ref Address from) {
     addr raw = alloc(28)
     addr length = alloc(4)
     put<i32>(length, 28)
-    i64 count = systemCall(45, handle, data, most, 0, raw, length)
+    i64 count = systemCall(i64(Call.RecvFrom), handle, data, most, 0, raw, length)
     free(length)
     if (count == -11) {
         free(raw)
@@ -164,7 +165,8 @@ i64 receiveFrom(i64 handle, addr data, i64 most, ref Address from) {
     ret count
 }
 
-// pollfd: the descriptor, the events wanted, the events found.
+// ppoll with a pollfd: the descriptor, the events wanted, the events found; and a
+// timespec, none to wait without a limit.
 bool waitFor(i64 handle, bool reading, i64 milliseconds) {
     addr entry = alloc(8)
     put<i32>(entry, i32(handle))
@@ -174,10 +176,18 @@ bool waitFor(i64 handle, bool reading, i64 milliseconds) {
         put<i16>(offset(entry, 4), 4)  // POLLOUT
     }
     put<i16>(offset(entry, 6), 0)
+    addr limit = alloc(16)
+    put<i64>(limit, milliseconds / 1000)
+    put<i64>(offset(limit, 8), milliseconds % 1000 * 1000000)
+    i64 spec = 0
+    if (milliseconds >= 0) {
+        spec = i64(limit)
+    }
     i64 result = -4
     for (result == -4) {
-        result = systemCall(7, entry, 1, milliseconds, 0, 0, 0)  // poll
+        result = systemCall(i64(Call.PPoll), entry, 1, spec, 0, 8, 0)  // the time left, after EINTR
     }
+    free(limit)
     free(entry)
     if (result < 0) {
         throw failure("wait for the network", errorText(-result))
@@ -189,7 +199,7 @@ i32 localPort(i64 handle) {
     addr raw = alloc(28)
     addr length = alloc(4)
     put<i32>(length, 28)
-    systemCall(51, handle, raw, length, 0, 0, 0)  // getsockname
+    systemCall(i64(Call.GetSockName), handle, raw, length, 0, 0, 0)
     i32 port = fromSocketAddress(raw).port
     free(length)
     free(raw)
@@ -198,7 +208,7 @@ i32 localPort(i64 handle) {
 
 void closeSocket(i64 handle) {
     cromo_socket_closed(handle)  // the waits of the tasks forget it (D269)
-    systemCall(3, handle, 0, 0, 0, 0, 0)
+    systemCall(i64(Call.Close), handle, 0, 0, 0, 0, 0)
 }
 
 string errorText(i64 code) {

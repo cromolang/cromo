@@ -1,4 +1,5 @@
-// std.time on Linux (D202): clock_gettime and nanosleep, and the zone of the
+// std.time on Linux (D202): clock_gettime and nanosleep, whose numbers are in
+// time_linux_x86_64.cro and time_linux_arm64.cro (D408, P23), and the zone of the
 // system from /etc/localtime (TZif, RFC 8536), with the rule of POSIX at its end
 // for the times after its last transition (D203).
 import unsafe
@@ -10,7 +11,7 @@ extern "cromo" {
 
 i64 clock(i64 id) {
     addr spec = alloc(16)
-    systemCall(228, id, spec, 0, 0, 0, 0)  // clock_gettime
+    systemCall(i64(Call.ClockGetTime), id, spec, 0, 0, 0, 0)
     i64 result = copyAt<i64>(spec) * 1000000000 + copyAt<i64>(offset(spec, 8))
     free(spec)
     ret result
@@ -32,7 +33,7 @@ void pause(i64 nanoseconds) {
     addr spec = alloc(16)
     put<i64>(spec, nanoseconds / 1000000000)
     put<i64>(offset(spec, 8), nanoseconds % 1000000000)
-    for (systemCall(35, spec, spec, 0, 0, 0, 0) == -4) {  // nanosleep: after a signal, what is left
+    for (systemCall(i64(Call.NanoSleep), spec, spec, 0, 0, 0, 0) == -4) {  // after a signal, what is left
     }
     free(spec)
 }

@@ -1,10 +1,12 @@
-// std.fs on Linux (D202): the system calls open, read, write, close, stat, lstat,
-// unlink, rmdir, mkdir, rename and getdents64.
+// std.fs on Linux (D202): the system calls openat, read, write, close, newfstatat,
+// unlinkat, mkdirat, renameat2, getdents64, symlinkat, readlinkat and fchmodat,
+// whose numbers are in fs_linux_x86_64.cro and fs_linux_arm64.cro (D408, P23).
+// -100 is AT_FDCWD: a path from the current folder.
 import unsafe
 
 // The bytes of a file, in memory to be freed, and how many they are.
 addr loadFile(string path, ref i64 size) {
-    i64 file = systemCall(2, path.cstring(), 0x80000, 0, 0, 0, 0)  // O_RDONLY | O_CLOEXEC
+    i64 file = systemCall(i64(Call.OpenAt), -100, path.cstring(), 0x80000, 0, 0, 0)  // O_RDONLY | O_CLOEXEC
     if (file < 0) {
         throw failure("read", path, file)
     }
@@ -16,12 +18,12 @@ addr loadFile(string path, ref i64 size) {
             capacity *= 2
             data = resize(data, capacity)
         }
-        i64 count = systemCall(0, file, offset(data, total), capacity - total, 0, 0, 0)
+        i64 count = systemCall(i64(Call.Read), file, offset(data, total), capacity - total, 0, 0, 0)
         if (count == -4) {  // EINTR
             continue
         }
         if (count < 0) {
-            systemCall(3, file, 0, 0, 0, 0, 0)
+            systemCall(i64(Call.Close), file, 0, 0, 0, 0, 0)
             free(data)
             throw failure("read", path, count)
         }
@@ -30,7 +32,7 @@ addr loadFile(string path, ref i64 size) {
         }
         total += count
     }
-    systemCall(3, file, 0, 0, 0, 0, 0)
+    systemCall(i64(Call.Close), file, 0, 0, 0, 0, 0)
     size = total
     ret data
 }
@@ -42,23 +44,23 @@ void storeFile(string path, addr data, i64 size, bool append) {
     } else {
         flags |= 0x200  // O_TRUNC
     }
-    i64 file = systemCall(2, path.cstring(), flags, 420, 0, 0, 0)  // 0644
+    i64 file = systemCall(i64(Call.OpenAt), -100, path.cstring(), flags, 420, 0, 0)  // 0644
     if (file < 0) {
         throw failure("write", path, file)
     }
     i64 done = 0
     for (done < size) {
-        i64 count = systemCall(1, file, offset(data, done), size - done, 0, 0, 0)
+        i64 count = systemCall(i64(Call.Write), file, offset(data, done), size - done, 0, 0, 0)
         if (count == -4) {
             continue
         }
         if (count < 0) {
-            systemCall(3, file, 0, 0, 0, 0, 0)
+            systemCall(i64(Call.Close), file, 0, 0, 0, 0, 0)
             throw failure("write", path, count)
         }
         done += count
     }
-    systemCall(3, file, 0, 0, 0, 0, 0)
+    systemCall(i64(Call.Close), file, 0, 0, 0, 0, 0)
 }
 
 public bool exists(string path) {
@@ -77,8 +79,8 @@ public bool isFile(string path) {
 
 public bool isLink(string path) {
     addr info = alloc(144)
-    i64 status = systemCall(6, path.cstring(), info, 0, 0, 0, 0)  // lstat
-    i64 bits = i64(copyAt<u32>(offset(info, 24)))
+    i64 status = systemCall(i64(Call.NewFstatAt), -100, path.cstring(), info, 0x100, 0, 0)  // AT_SYMLINK_NOFOLLOW
+    i64 bits = modeOf(info)
     free(info)
     ret status >= 0 && bits & 0xF000 == 0xA000  // S_IFLNK
 }
@@ -92,7 +94,7 @@ public i64 modified(string path) {
 }
 
 public void rename(string from, string to) {
-    i64 status = systemCall(82, from.cstring(), to.cstring(), 0, 0, 0, 0)
+    i64 status = systemCall(i64(Call.RenameAt2), -100, from.cstring(), -100, to.cstring(), 0, 0)
     if (status < 0) {
         throw failure("rename", from, status)
     }
@@ -100,19 +102,20 @@ public void rename(string from, string to) {
 
 // The bytes, 64 KB at a time; the new file has the permissions 0644.
 public void copy(string from, string to) {
-    i64 source = systemCall(2, from.cstring(), 0x80000, 0, 0, 0, 0)  // O_RDONLY | O_CLOEXEC
+    i64 source = systemCall(i64(Call.OpenAt), -100, from.cstring(), 0x80000, 0, 0, 0)  // O_RDONLY | O_CLOEXEC
     if (source < 0) {
         throw failure("copy", from, source)
     }
-    i64 target = systemCall(2, to.cstring(), 0x80000 | 0x40 | 0x200 | 1, 420, 0, 0, 0)  // O_CREAT|O_TRUNC|O_WRONLY
+    i64 flags = 0x80000 | 0x40 | 0x200 | 1  // O_CREAT|O_TRUNC|O_WRONLY
+    i64 target = systemCall(i64(Call.OpenAt), -100, to.cstring(), flags, 420, 0, 0)
     if (target < 0) {
-        systemCall(3, source, 0, 0, 0, 0, 0)
+        systemCall(i64(Call.Close), source, 0, 0, 0, 0, 0)
         throw failure("copy to", to, target)
     }
     addr buffer = alloc(65536)
     try {
         for {
-            i64 count = systemCall(0, source, buffer, 65536, 0, 0, 0)
+            i64 count = systemCall(i64(Call.Read), source, buffer, 65536, 0, 0, 0)
             if (count == -4) {
                 continue
             }
@@ -124,7 +127,7 @@ public void copy(string from, string to) {
             }
             i64 done = 0
             for (done < count) {
-                i64 written = systemCall(1, target, offset(buffer, done), count - done, 0, 0, 0)
+                i64 written = systemCall(i64(Call.Write), target, offset(buffer, done), count - done, 0, 0, 0)
                 if (written == -4) {
                     continue
                 }
@@ -136,8 +139,8 @@ public void copy(string from, string to) {
         }
     } finally {
         free(buffer)
-        systemCall(3, source, 0, 0, 0, 0, 0)
-        systemCall(3, target, 0, 0, 0, 0, 0)
+        systemCall(i64(Call.Close), source, 0, 0, 0, 0, 0)
+        systemCall(i64(Call.Close), target, 0, 0, 0, 0, 0)
     }
 }
 
@@ -149,10 +152,11 @@ public string separator() {
     ret "/"
 }
 
-// A field of 8 bytes of struct stat.
+// A field of 8 bytes of struct stat, which has st_size and st_mtime in the same
+// places on x86-64 and on ARM64.
 i64 statField(string path, i64 at, string action) {
     addr info = alloc(144)
-    i64 status = systemCall(4, path.cstring(), info, 0, 0, 0, 0)  // stat
+    i64 status = systemCall(i64(Call.NewFstatAt), -100, path.cstring(), info, 0, 0, 0)
     i64 value = copyAt<i64>(offset(info, at))
     free(info)
     if (status < 0) {
@@ -162,9 +166,9 @@ i64 statField(string path, i64 at, string action) {
 }
 
 public void remove(string path) {
-    i64 status = systemCall(87, path.cstring(), 0, 0, 0, 0, 0)  // unlink
-    if (status == -21) {                                        // EISDIR
-        status = systemCall(84, path.cstring(), 0, 0, 0, 0, 0)  // rmdir
+    i64 status = systemCall(i64(Call.UnlinkAt), -100, path.cstring(), 0, 0, 0, 0)
+    if (status == -21) {                                                               // EISDIR
+        status = systemCall(i64(Call.UnlinkAt), -100, path.cstring(), 0x200, 0, 0, 0)  // AT_REMOVEDIR
     }
     if (status < 0) {
         throw failure("remove", path, status)
@@ -172,21 +176,21 @@ public void remove(string path) {
 }
 
 public void createFolder(string path) {
-    i64 status = systemCall(83, path.cstring(), 493, 0, 0, 0, 0)  // mkdir, 0755
+    i64 status = systemCall(i64(Call.MkdirAt), -100, path.cstring(), 493, 0, 0, 0)  // 0755
     if (status < 0) {
         throw failure("create", path, status)
     }
 }
 
 public list<string> listFolder(string path) {
-    i64 folder = systemCall(2, path.cstring(), 0x80000 | 0x10000, 0, 0, 0, 0)  // O_DIRECTORY
+    i64 folder = systemCall(i64(Call.OpenAt), -100, path.cstring(), 0x80000 | directoryFlag(), 0, 0, 0)
     if (folder < 0) {
         throw failure("list", path, folder)
     }
     list<string> names
     addr buffer = alloc(4096)
     for {
-        i64 count = systemCall(217, folder, buffer, 4096, 0, 0, 0)  // getdents64
+        i64 count = systemCall(i64(Call.GetDents64), folder, buffer, 4096, 0, 0, 0)
         if (count <= 0) {
             break
         }
@@ -206,12 +210,12 @@ public list<string> listFolder(string path) {
         }
     }
     free(buffer)
-    systemCall(3, folder, 0, 0, 0, 0, 0)
+    systemCall(i64(Call.Close), folder, 0, 0, 0, 0, 0)
     ret names
 }
 
 public void createLink(string target, string path) {
-    i64 status = systemCall(88, target.cstring(), path.cstring(), 0, 0, 0, 0)  // symlink
+    i64 status = systemCall(i64(Call.SymlinkAt), target.cstring(), -100, path.cstring(), 0, 0, 0)
     if (status < 0) {
         throw failure("link", path, status)
     }
@@ -219,7 +223,7 @@ public void createLink(string target, string path) {
 
 public string readLink(string path) {
     addr buffer = alloc(4096)
-    i64 length = systemCall(89, path.cstring(), buffer, 4096, 0, 0, 0)  // readlink
+    i64 length = systemCall(i64(Call.ReadlinkAt), -100, path.cstring(), buffer, 4096, 0, 0)
     if (length < 0) {
         free(buffer)
         if (length == -22) {  // EINVAL
@@ -238,7 +242,7 @@ public void makeExecutable(string path) {
     if (bits < 0) {
         throw failure("make executable", path, bits)
     }
-    i64 status = systemCall(90, path.cstring(), bits & 0xFFF | (bits & 0x124) >> 2, 0, 0, 0, 0)  // chmod, 0444 >> 2
+    i64 status = systemCall(i64(Call.FchmodAt), -100, path.cstring(), bits & 0xFFF | (bits & 0x124) >> 2, 0, 0, 0)  // 0444 >> 2
     if (status < 0) {
         throw failure("make executable", path, status)
     }
@@ -247,8 +251,8 @@ public void makeExecutable(string path) {
 // The st_mode of the file, or -errno.
 i64 mode(string path) {
     addr info = alloc(144)
-    i64 status = systemCall(4, path.cstring(), info, 0, 0, 0, 0)  // stat
-    i64 bits = i64(copyAt<u32>(offset(info, 24)))
+    i64 status = systemCall(i64(Call.NewFstatAt), -100, path.cstring(), info, 0, 0, 0)
+    i64 bits = modeOf(info)
     free(info)
     if (status < 0) {
         ret status

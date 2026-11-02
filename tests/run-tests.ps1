@@ -18,7 +18,8 @@
 #   // expect-stderr: text          text that must appear in the standard error
 #   // expect-error: text           text that must appear among the compiler errors
 #   // expect-warning: text         text that must appear among the compiler warnings
-#   // target: windows              the test is only for that system (windows or linux)
+#   // target: windows              the test is only for that system: windows, linux, which
+#                                  is also linux-arm64, or only linux-arm64 (D406)
 #   // program-arg: text           an argument of the program (repeatable, exact)
 #   // program-env: NAME=value     a variable of the environment of the program
 #                                  (repeatable); {dir} is the folder of the test,
@@ -29,7 +30,9 @@
 # Usage: powershell -ExecutionPolicy Bypass -File tests\run-tests.ps1 [-Cromo <path>] [-Filter <text>] [-Flags <options>]
 #   -Flags passes extra options to every compilation, for example -Flags -O0
 #   -Flags '--target linux' compiles for Linux and runs the programs in WSL (D142),
-#   with -Distro to choose the distribution instead of the default one
+#   with -Distro to choose the distribution instead of the default one; with
+#   '--target linux-arm64' they run there with qemu-aarch64-static, of the package
+#   qemu-user-static (D405)
 # The C libraries in m8\native are built first with the clang of LLVM (D136).
 param(
     [string]$Cromo = (Join-Path $PSScriptRoot '..\build\cromo.exe'),
@@ -66,11 +69,6 @@ Invoke-Tool 'clang.exe' ($cflags + @('--target=i686-pc-windows-msvc', "$native\a
 Invoke-Tool 'lld-link.exe' @('/nologo', '/dll', '/noentry', '/noimplib', '/nodefaultlib', '/machine:x86', "/out:$modules\old32.dll", "$out\adder32.obj")
 Invoke-Tool 'clang.exe' ($cflags + @('--target=x86_64-pc-windows-msvc', "$native\scale.c", '-o', "$out\scale.obj"))
 Invoke-Tool 'llvm-lib.exe' @('/nologo', "/out:$modules\scale.lib", "$out\scale.obj")
-# The same static library for Linux (D143).
-Invoke-Tool 'clang.exe' ($cflags + @('--target=x86_64-unknown-linux-gnu', '-fno-pic', "$native\scale.c", '-o', "$out\scale.o"))
-Remove-Item -Force -ErrorAction SilentlyContinue "$modules\libscale.a"
-Invoke-Tool 'llvm-ar.exe' @('rcs', "$modules\libscale.a", "$out\scale.o")
-
 # The system of an executable: the last --target among the options of cromo.
 function Get-Target([string[]]$Options) {
     $target = 'windows'
@@ -80,21 +78,31 @@ function Get-Target([string[]]$Options) {
     $target
 }
 
+# The same static library for Linux (D143), for the architecture of the tests.
+$triple = if ((Get-Target ($Flags -split '\s+')) -eq 'linux-arm64') { 'aarch64-unknown-linux-gnu' } else { 'x86_64-unknown-linux-gnu' }
+Invoke-Tool 'clang.exe' ($cflags + @("--target=$triple", '-fno-pic', "$native\scale.c", '-o', "$out\scale.o"))
+Remove-Item -Force -ErrorAction SilentlyContinue "$modules\libscale.a"
+Invoke-Tool 'llvm-ar.exe' @('rcs', "$modules\libscale.a", "$out\scale.o")
+
 # A path of Windows as WSL sees it: /mnt/c/...
 function ConvertTo-LinuxPath([string]$Path) {
     '/mnt/' + $Path.Substring(0, 1).ToLower() + ($Path.Substring(2) -replace '\\', '/')
 }
 
 # A program for Linux runs in WSL, from the same folder; its variables go
-# through env, because WSL does not pass those of Windows.
-function Invoke-Linux([string]$Path, [string[]]$Arguments, [hashtable]$Environment = @{}) {
+# through env, because WSL does not pass those of Windows. A program for ARM64
+# runs with qemu, called directly: the registration of qemu in the kernel
+# (binfmt_misc) does not last after WSL starts again.
+function Invoke-Linux([string]$Path, [string[]]$Arguments, [hashtable]$Environment = @{}, [switch]$Arm64) {
     $options = @()
     if ($Distro) { $options += @('-d', $Distro) }
     $variables = @()
     if ($Environment.Count -gt 0) {
         $variables = @('env') + ($Environment.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" })
     }
-    Invoke-Program 'wsl.exe' ($options + @('-e') + $variables + @((ConvertTo-LinuxPath $Path)) + $Arguments)
+    $emulator = @()
+    if ($Arm64) { $emulator = @('qemu-aarch64-static') }
+    Invoke-Program 'wsl.exe' ($options + @('-e') + $variables + $emulator + @((ConvertTo-LinuxPath $Path)) + $Arguments)
 }
 
 # Writes an argument in a command line so that the program reads it back as it
@@ -176,18 +184,19 @@ foreach ($test in Get-ChildItem $PSScriptRoot -Recurse -Filter *.cro | Sort-Obje
         elseif ($line -match '^\s*//\s*expect-stderr:\s*(.+?)\s*$') { $expectStderr += $matches[1] }
         elseif ($line -match '^\s*//\s*expect-error:\s*(.+?)\s*$') { $expectError += $matches[1] }
         elseif ($line -match '^\s*//\s*expect-warning:\s*(.+?)\s*$') { $expectWarning += $matches[1] }
-        elseif ($line -match '^\s*//\s*target:\s*(\w+)\s*$') { $only = $matches[1] }
+        elseif ($line -match '^\s*//\s*target:\s*([\w-]+)\s*$') { $only = $matches[1] }
         elseif ($line -match '^\s*//\s*program-arg:\s?(.*)$') { $programArgs += $matches[1] }
         elseif ($line -match '^\s*//\s*program-env:\s*([^=\s]+)=(.*?)\s*$') { $programEnv[$matches[1]] = $matches[2] }
         elseif ($line -match '^\s*//\s*cromo-command:\s*(\w+)\s*$') { $command = $matches[1] }
     }
     $target = Get-Target $compileFlags
-    if ($only -and $only -ne $target) {
+    $linux = $target -like 'linux*'
+    if ($only -and $only -ne $target -and -not ($only -eq 'linux' -and $linux)) {
         $skipped++
         continue
     }
     $folder = $test.DirectoryName
-    if ($target -eq 'linux') { $folder = ConvertTo-LinuxPath $folder }
+    if ($linux) { $folder = ConvertTo-LinuxPath $folder }
     $port = ''
     if (@($programEnv.Values | Where-Object { $_.Contains('{port}') }).Count -gt 0) {
         # A port free now, for a server of the test that the programs it starts reach.
@@ -200,7 +209,7 @@ foreach ($test in Get-ChildItem $PSScriptRoot -Recurse -Filter *.cro | Sort-Obje
         $programEnv[$key] = $programEnv[$key].Replace('{dir}', $folder).Replace('{cromo}', $Cromo).Replace('{port}', $port)
     }
 
-    $exe = Join-Path $out ($test.BaseName + $(if ($target -eq 'linux') { '' } else { '.exe' }))
+    $exe = Join-Path $out ($test.BaseName + $(if ($linux) { '' } else { '.exe' }))
     if ($command -eq 'run') {
         # cromo run compiles and runs: its result is the one of the program (D156).
         $compile = Invoke-Program $Cromo (@('run') + $compileFlags + @($test.FullName, '--') + $programArgs)
@@ -226,8 +235,8 @@ foreach ($test in Get-ChildItem $PSScriptRoot -Recurse -Filter *.cro | Sort-Obje
     } else {
         if ($command -ne 'build') {
             $run = $compile
-        } elseif ($target -eq 'linux') {
-            $run = Invoke-Linux $exe $programArgs $programEnv
+        } elseif ($linux) {
+            $run = Invoke-Linux $exe $programArgs $programEnv -Arm64:($target -eq 'linux-arm64')
             # Linux keeps only the lowest byte of the exit code (D145).
             if ($null -ne $expectExit) { $expectExit = $expectExit -band 0xFF }
         } else {

@@ -1,0 +1,4 @@
+// machine on Linux ARM64 (D408).
+i32 systemAndArchitecture() {
+    ret 1
+}

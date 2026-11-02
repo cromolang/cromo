@@ -1,0 +1,8 @@
+// std.runtime on Linux x86-64 (D408, P23): the numbers of its system calls.
+
+enum Call {
+    Mmap = 9
+    Munmap = 11
+    Mremap = 25
+    Futex = 202
+}

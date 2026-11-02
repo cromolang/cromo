@@ -269,7 +269,7 @@ Poi compilalo per il server, che può essere Linux anche se lavori su Windows:
 cromo build --release --target linux todo.cro
 ```
 
-Il risultato è un unico eseguibile, senza dipendenze, che gira su qualsiasi Linux x64.
+Il risultato è un unico eseguibile, senza dipendenze, che gira su qualsiasi Linux x64; con `--target linux-arm64`, su qualsiasi Linux su ARM64.
 
 Da qui, il servizio potrebbe salvare i suoi dati in un file con `std.fs`, servire HTTPS con `http.listenTls`, o controllare un token negli header di ogni richiesta. La libreria ha quanto serve per ciascuna di queste cose, e il compilatore controlla che le richieste, che girano contemporaneamente, non tocchino mai l'archivio senza il lock.
 

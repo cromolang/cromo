@@ -1,0 +1,6 @@
+// std.os on Linux x86-64 (D408, P23): the numbers of its system calls.
+
+enum Call {
+    GetPid = 39
+    GetCwd = 79
+}

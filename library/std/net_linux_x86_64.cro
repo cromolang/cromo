@@ -1,0 +1,16 @@
+// std.net on Linux x86-64 (D408, P23): the numbers of its system calls.
+
+enum Call {
+    Close = 3
+    Socket = 41
+    Connect = 42
+    SendTo = 44
+    RecvFrom = 45
+    Bind = 49
+    Listen = 50
+    GetSockName = 51
+    SetSockOpt = 54
+    GetSockOpt = 55
+    PPoll = 271
+    Accept4 = 288
+}

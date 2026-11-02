@@ -1086,8 +1086,8 @@ private:
             const FunctionDecl& arguments = *programArguments_;
             std::string type = llvmType(arguments.resolvedReturn);
             out << "  %args = alloca " << type << "\n";
-            out << "  call void " << symbolOf(arguments) << "(ptr %args" << (tracksCaller(arguments) ? ", ptr null" : "")
-                << ")" << dbg << "\n";
+            out << "  call void " << symbolOf(arguments) << "(ptr sret(" << type << ") %args"
+                << (tracksCaller(arguments) ? ", ptr null" : "") << ")" << dbg << "\n";
             args.push_back("ptr %args");
         }
         if (mainFunction.canThrow) {
@@ -1117,7 +1117,7 @@ private:
             out << "  %table = load ptr, ptr %tableAddress\n";
             out << "  %method = load ptr, ptr %table\n";
             out << "  %text = alloca " << structName(text) << "\n";
-            out << "  call void %method(ptr %text, ptr %object)" << dbg << "\n";
+            out << "  call void %method(ptr sret(" << structName(text) << ") %text, ptr %object)" << dbg << "\n";
             out << "  %dataAddress = getelementptr inbounds " << structName(text) << ", ptr %text, i32 0, i32 "
                 << fieldIndexOf(text, "data") << "\n";
             out << "  %data = load ptr, ptr %dataAddress\n";
@@ -1180,7 +1180,7 @@ private:
             out << "  %table = load ptr, ptr %tableAddress\n";
             out << "  %method = load ptr, ptr %table\n";
             out << "  %text = alloca " << structName(text) << "\n";
-            out << "  call void %method(ptr %text, ptr %object)" << dbg << "\n";
+            out << "  call void %method(ptr sret(" << structName(text) << ") %text, ptr %object)" << dbg << "\n";
             out << "  %dataAddress = getelementptr inbounds " << structName(text) << ", ptr %text, i32 0, i32 "
                 << fieldIndexOf(text, "data") << "\n";
             out << "  %data = load ptr, ptr %dataAddress\n";
@@ -2211,7 +2211,10 @@ private:
                    const std::string& callee = "") {
         Type ret = function.resolvedReturn;
         std::vector<std::string> list;
-        if (byPointer(ret)) list.push_back("ptr " + dest);
+        // sret at the call too: through a pointer, as for a method of an interface or
+        // a function value, LLVM knows it only from here, and on ARM64 the result goes
+        // in x8, not in the first register of the arguments (D405).
+        if (byPointer(ret)) list.push_back("ptr sret(" + llvmType(ret) + ") " + dest);
         if (!self.empty()) list.push_back("ptr " + self);
         bool checks = overlaps && !overlaps->empty();
         std::vector<std::string> addresses(args.size());
@@ -2549,6 +2552,11 @@ private:
                 std::string fn = intrinsic("declare i64 @cromo_system_call(i64, i64, i64, i64, i64, i64, i64) nounwind",
                                            "@cromo_system_call");
                 inst(result + " = call i64 " + fn + "(" + args + ")");
+                return {result, i64};
+            }
+            if (options_.target == Target::LinuxArm64) {  // the number in x8, the result in x0 (D405)
+                inst(result + " = call i64 asm sideeffect \"svc #0\", \"={x0},{x8},{x0},{x1},{x2},{x3},{x4},{x5},~{memory}\"(" +
+                     args + ")");
                 return {result, i64};
             }
             inst(result + " = call i64 asm sideeffect \"syscall\", \"={rax},{rax},{rdi},{rsi},{rdx},{r10},{r8},{r9},"

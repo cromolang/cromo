@@ -137,6 +137,8 @@ After `import std.fs`, the functions of the module are written with its last nam
 
 A module can have parts written for one system: next to `files.cro`, the files `files_windows.cro` and `files_linux.cro`. Only the file of the system the program is compiled for is used, and it is part of the module, with access to its private names. The standard library uses this to call the system of Windows and the one of Linux behind the same functions.
 
+In the same way a part can be for one architecture, `files_arm64.cro` or `files_x86_64.cro`, or for a system and an architecture, `files_linux_arm64.cro`.
+
 ## Packages
 
 The libraries of other people will be **packages**: Git repositories, named by their URL, with versions given by their tags, listed in a file `cromo.mod` and downloaded by `cromo`. The design is decided, and it is described in `docs/language.md`; it is not available yet.

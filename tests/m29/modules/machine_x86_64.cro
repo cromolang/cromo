@@ -1,0 +1,4 @@
+// machine on x86-64 (D408).
+i32 wordBits() {
+    ret 64
+}

@@ -1,0 +1,6 @@
+// std.time on Linux x86-64 (D408, P23): the numbers of its system calls.
+
+enum Call {
+    NanoSleep = 35
+    ClockGetTime = 228
+}

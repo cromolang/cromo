@@ -94,6 +94,8 @@ cromo build --target linux hello.cro     # on Windows: an executable for Linux
 cromo build --target windows hello.cro   # on Linux: hello.exe for Windows
 ```
 
+`--target linux-arm64` writes it for Linux on ARM64, as a Raspberry Pi or a server with Graviton.
+
 ## A project
 
 A project is a folder with a file `main.cro`. Without a file name, `cromo build`, `cromo run` and `cromo test` use the `main.cro` of the current folder, and the executable is named after the folder:

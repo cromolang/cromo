@@ -41,21 +41,51 @@ namespace {
 // of the runtime (D393).
 const char* const kInternalModules[] = {"std.winsock", "std.runtime"};
 
-// The suffix of the files of a system (D202): `fs_windows.cro`.
-const char* systemSuffix(Target target) { return target == Target::Linux ? "_linux" : "_windows"; }
+// The suffixes of the files of a system and of an architecture (D202, D408):
+// `fs_windows.cro`, `fs_arm64.cro`, `fs_linux_arm64.cro`.
+const char* const kSystemSuffixes[] = {"_windows", "_linux"};
+const char* const kArchSuffixes[] = {"_x86_64", "_arm64"};  // P23
 
-// The name without the suffix of a system, and whether it has the one of `target`.
-// `other` is set for a file of another system, which is left out.
+std::string systemSuffix(Target target) { return isLinux(target) ? "_linux" : "_windows"; }
+std::string archSuffix(Target target) { return target == Target::LinuxArm64 ? "_arm64" : "_x86_64"; }
+
+// The suffixes of the files that join a module for `target`, in the order they
+// are read.
+std::vector<std::string> ownSuffixes(Target target) {
+    return {systemSuffix(target), archSuffix(target), systemSuffix(target) + archSuffix(target)};
+}
+
+// `name` without the suffix `suffix` at its end, if it has it.
+bool removeSuffix(std::string& name, const std::string& suffix) {
+    if (name.size() <= suffix.size() || name.compare(name.size() - suffix.size(), suffix.size(), suffix) != 0) return false;
+    name.resize(name.size() - suffix.size());
+    return true;
+}
+
+// The name without the suffixes of a system and of an architecture, and whether
+// they are those of `target`. `other` is set for a file of another system or
+// architecture, which is left out.
 std::string withoutSuffix(const std::string& stem, Target target, bool& own, bool& other) {
     own = other = false;
-    for (Target system : {Target::Windows, Target::Linux}) {
-        std::string suffix = systemSuffix(system);
-        if (stem.size() > suffix.size() && stem.compare(stem.size() - suffix.size(), suffix.size(), suffix) == 0) {
-            (system == target ? own : other) = true;
-            return stem.substr(0, stem.size() - suffix.size());
+    std::string name = stem;
+    bool mine = true;
+    bool found = false;
+    for (const char* arch : kArchSuffixes) {
+        if (removeSuffix(name, arch)) {
+            mine = arch == archSuffix(target);
+            found = true;
+            break;
         }
     }
-    return stem;
+    for (const char* system : kSystemSuffixes) {
+        if (removeSuffix(name, system)) {
+            mine = mine && system == systemSuffix(target);
+            found = true;
+            break;
+        }
+    }
+    if (found) (mine ? own : other) = true;
+    return name;
 }
 
 // Reads the main file, the standard library and every module they import (D50).
@@ -119,15 +149,18 @@ private:
         }
         if (isFile) {
             int index = loadFile(file, dotted, import.loc);
-            fs::path own = root_ / relative;
-            own += std::string(systemSuffix(target_)) + ".cro";
-            if (fs::is_regular_file(own, ec)) loadFile(own, dotted, import.loc, index);
+            for (const std::string& suffix : ownSuffixes(target_)) {
+                fs::path own = root_ / relative;
+                own += suffix + ".cro";
+                if (fs::is_regular_file(own, ec)) loadFile(own, dotted, import.loc, index);
+            }
             loadTests(file, dotted, index);
             return {index};
         }
         if (isFolder) {
-            // A file with the suffix of a system joins the file without it, or is a
-            // module of its own; the files of the other system are left out (D202).
+            // A file with the suffix of a system or of an architecture joins the file
+            // without it, or is a module of its own; the files of the others are left
+            // out (D202, D408).
             std::map<std::string, std::vector<fs::path>> modules;
             for (const fs::directory_entry& entry : fs::directory_iterator(folder, ec)) {
                 if (!entry.is_regular_file() || entry.path().extension() != ".cro") continue;
@@ -196,8 +229,10 @@ private:
             return {};
         }
         int first = loadFile(path, dotted, import.loc);
-        fs::path own = libraryFile(base + systemSuffix(target_) + ".cro");
-        if (fs::is_regular_file(own, ec)) loadFile(own, dotted, import.loc, first);
+        for (const std::string& suffix : ownSuffixes(target_)) {
+            fs::path own = libraryFile(base + suffix + ".cro");
+            if (fs::is_regular_file(own, ec)) loadFile(own, dotted, import.loc, first);
+        }
         return {first};
     }
 

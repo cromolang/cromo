@@ -223,14 +223,21 @@ static int windowsTrusts(const Session* session) {
 
 #else
 
+#ifdef __aarch64__
+#define SYS_openat 56
+#define SYS_read 63
+#define SYS_close 57
+#else
+#define SYS_openat 257
 #define SYS_read 0
-#define SYS_open 2
 #define SYS_close 3
+#endif
+#define AT_FDCWD -100
 #define O_CLOEXEC 0x80000
 #define EINTR 4
 
 static uint8_t* readFile(const char* path, int64_t* size) {
-    int64_t file = cromo_system_call(SYS_open, (int64_t)path, O_CLOEXEC, 0, 0, 0, 0);
+    int64_t file = cromo_system_call(SYS_openat, AT_FDCWD, (int64_t)path, O_CLOEXEC, 0, 0, 0);
     if (file < 0) return NULL;
     int64_t capacity = 1 << 16;
     int64_t done = 0;

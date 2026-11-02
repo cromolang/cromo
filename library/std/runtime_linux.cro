@@ -1,4 +1,5 @@
-// std.runtime on Linux (D202, D393): the system calls, through systemCall.
+// std.runtime on Linux (D202, D393): the system calls, through systemCall, whose
+// numbers are in runtime_linux_x86_64.cro and runtime_linux_arm64.cro (D408, P23).
 import unsafe
 
 extern "cromo" {
@@ -74,7 +75,7 @@ void heapFree(addr memory) {
         put<addr>(block, freeBlocks[index])
         freeBlocks[index] = block
     } else {
-        systemCall(11, block, i64(total), 0, 0, 0, 0)  // munmap
+        systemCall(i64(Call.Munmap), block, i64(total), 0, 0, 0, 0)
     }
 }
 
@@ -86,7 +87,7 @@ addr heapResize(addr memory, u64 size) {
     }
     if (capacity + 16 > smallLimit()) {  // a large block grows with its mapping
         u64 total = pagesFor(size + 16)
-        addr moved = mapped(systemCall(25, block, i64(capacity + 16), i64(total), 1, 0, 0))  // mremap, MREMAP_MAYMOVE
+        addr moved = mapped(systemCall(i64(Call.Mremap), block, i64(capacity + 16), i64(total), 1, 0, 0))  // MREMAP_MAYMOVE
         if (moved == addr(0)) {
             ret moved
         }
@@ -125,7 +126,7 @@ u64 pagesFor(u64 size) {
 
 // Pages of a mapping of their own, readable and writable, or addr(0).
 addr mapPages(u64 size) {
-    ret mapped(systemCall(9, 0, i64(size), 3, 0x22, -1, 0))  // mmap: PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS
+    ret mapped(systemCall(i64(Call.Mmap), 0, i64(size), 3, 0x22, -1, 0))  // PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS
 }
 
 // The address that mmap and mremap give, or addr(0) for an error, from -4095 to -1.
@@ -161,7 +162,7 @@ void lockHeap() {
         seen = atomicExchange<u32>(state, 2)
     }
     for (seen != 0) {
-        systemCall(202, state, 128, 2, 0, 0, 0)  // futex: FUTEX_WAIT | FUTEX_PRIVATE, while it is 2
+        systemCall(i64(Call.Futex), state, 128, 2, 0, 0, 0)  // FUTEX_WAIT | FUTEX_PRIVATE, while it is 2
         seen = atomicExchange<u32>(state, 2)
     }
 }
@@ -172,6 +173,6 @@ void unlockHeap() {
     }
     addr state = variableAddress(heapLock)
     if (atomicExchange<u32>(state, 0) == 2) {
-        systemCall(202, state, 129, 1, 0, 0, 0)  // futex: FUTEX_WAKE | FUTEX_PRIVATE, one thread
+        systemCall(i64(Call.Futex), state, 129, 1, 0, 0, 0)  // FUTEX_WAKE | FUTEX_PRIVATE, one thread
     }
 }

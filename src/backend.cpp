@@ -45,12 +45,21 @@ namespace cromo {
 
 namespace {
 
+// The targets of cromo, whatever the system it runs on: x86-64 and AArch64 (D405).
+// The parsers of their assembly read the instructions written inline.
 void initializeLlvm() {
     static bool initialized = false;
     if (initialized) return;
-    llvm::InitializeNativeTarget();
-    llvm::InitializeNativeTargetAsmPrinter();
-    llvm::InitializeNativeTargetAsmParser();
+    LLVMInitializeX86TargetInfo();
+    LLVMInitializeX86Target();
+    LLVMInitializeX86TargetMC();
+    LLVMInitializeX86AsmPrinter();
+    LLVMInitializeX86AsmParser();
+    LLVMInitializeAArch64TargetInfo();
+    LLVMInitializeAArch64Target();
+    LLVMInitializeAArch64TargetMC();
+    LLVMInitializeAArch64AsmPrinter();
+    LLVMInitializeAArch64AsmParser();
     initialized = true;
 }
 
@@ -468,8 +477,12 @@ bool buildExecutable(const std::string& irText, const std::string& moduleName, c
                                          : options.optLevel == 1 ? llvm::CodeGenOptLevel::Less
                                          : options.optLevel == 3 ? llvm::CodeGenOptLevel::Aggressive
                                                                  : llvm::CodeGenOptLevel::Default;
-    std::unique_ptr<llvm::TargetMachine> machine(target->createTargetMachine(
-        triple, "x86-64", "", targetOptions, std::nullopt, std::nullopt, codegenLevel));
+    // ARM64: ARMv8.0, whose atomics call the functions of mem_arm64.S, which use
+    // LSE when the processor has it (D407).
+    bool arm64 = options.target == Target::LinuxArm64;
+    std::unique_ptr<llvm::TargetMachine> machine(target->createTargetMachine(triple, arm64 ? "generic" : "x86-64",
+                                                                             arm64 ? "+outline-atomics" : "", targetOptions,
+                                                                             std::nullopt, std::nullopt, codegenLevel));
     if (!machine) {
         error = "cannot create the target machine for " + triple.str();
         return false;
@@ -493,7 +506,7 @@ bool buildExecutable(const std::string& irText, const std::string& moduleName, c
         if (!function.isDeclaration()) function.setSection(".text");
     }
 
-    bool linux = options.target == Target::Linux;
+    bool linux = isLinux(options.target);
     if (options.objectOnly) return emitObject(*module, *machine, options.outputPath, error);
     std::string objectPath = options.outputPath + (linux ? ".o" : ".obj");
     std::string runtimePath = runtimeLibraryPath(options.target).string();  // in lib/ (D237)

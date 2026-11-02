@@ -1,0 +1,13 @@
+// The files of an architecture next to a module (D408): one of them, never the
+// file of another architecture, else bits() would be missing or twice; combo()
+// comes from the file of the system and of the architecture.
+// expect-output: 64 1
+// expect-output: 12
+import modules.machine
+import modules.gears
+
+i32 main() {
+    println("{} {}", machine.bits(), machine.combo())
+    println("{}", gears.teeth())
+    ret 0
+}

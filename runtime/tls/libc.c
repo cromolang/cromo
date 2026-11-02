@@ -282,9 +282,15 @@ int32_t cromo_crypto_random(uint8_t* out, int64_t size) {
 
 #else
 
+#ifdef __aarch64__
+#define SYS_getpid 172
+#define SYS_clock_gettime 113
+#define SYS_getrandom 278
+#else
 #define SYS_getpid 39
 #define SYS_clock_gettime 228
 #define SYS_getrandom 318
+#endif
 #define CLOCK_REALTIME 0
 #define CLOCK_MONOTONIC 1
 #define EINTR 4

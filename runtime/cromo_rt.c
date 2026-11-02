@@ -1,7 +1,7 @@
 // Bootstrap runtime of Cromo (D58, D93): printing, panics, threads, tasks and program exit.
 // Freestanding C without the C library (D19): it talks to Windows through
 // kernel32.dll, and to Linux with system calls (D142). CMake compiles it once for
-// each system. It will be rewritten in Cromo `unsafe` when extern (M7), the
+// each system and architecture (D405). It will be rewritten in Cromo `unsafe` when extern (M7), the
 // bitwise operators and fixed-size arrays exist (D37, D93).
 
 typedef unsigned char u8;
@@ -13,7 +13,7 @@ typedef long long i64;
 
 #define NORETURN __attribute__((noreturn))
 
-void* memcpy(void* dest, const void* src, u64 count);  // in mem_x64.S
+void* memcpy(void* dest, const void* src, u64 count);  // in mem_x64.S and mem_arm64.S
 
 #ifdef _WIN32
 
@@ -72,31 +72,61 @@ int _fltused = 0;
 #else
 
 // ---- Linux system calls ----
+//
+// Their numbers are those of each architecture; ARM64 has only the newer calls,
+// which x86-64 has too, and both use them (P23).
 
+#ifdef __aarch64__
+#define SYS_read 63
+#define SYS_write 64
+#define SYS_mmap 222
+#define SYS_mprotect 226
+#define SYS_munmap 215
+#define SYS_madvise 233
+#define SYS_rt_sigaction 134
+#define SYS_sched_yield 124
+#define SYS_nanosleep 101
+#define SYS_clone 220
+#define SYS_exit 93
+#define SYS_sigaltstack 132
+#define SYS_futex 98
+#define SYS_sched_getaffinity 123
+#define SYS_clock_gettime 113
+#define SYS_exit_group 94
+#define SYS_epoll_pwait 22
+#define SYS_epoll_ctl 21
+#define SYS_eventfd2 19
+#define SYS_epoll_create1 20
+#else
 #define SYS_read 0
 #define SYS_write 1
 #define SYS_mmap 9
 #define SYS_mprotect 10
 #define SYS_munmap 11
+#define SYS_madvise 28
 #define SYS_rt_sigaction 13
 #define SYS_sched_yield 24
 #define SYS_nanosleep 35
 #define SYS_clone 56
 #define SYS_exit 60
 #define SYS_sigaltstack 131
-#define SYS_arch_prctl 158
 #define SYS_futex 202
 #define SYS_sched_getaffinity 204
 #define SYS_clock_gettime 228
 #define SYS_exit_group 231
-#define SYS_epoll_wait 232
+#define SYS_epoll_pwait 281
 #define SYS_epoll_ctl 233
 #define SYS_eventfd2 290
 #define SYS_epoll_create1 291
+#endif
 #define EINTR 4
 #define FUTEX_WAIT 0
 #define FUTEX_WAKE 1
 #define FUTEX_PRIVATE 128
+
+// The size of a page: 4 KB on x86-64, and 4, 16 or 64 KB on ARM64, as the kernel
+// says at the start (readSystem). The guard pages of the stacks are one page.
+static u64 pageSize = 4096;
 
 static i64 systemCall(i64 number, i64 a, i64 b, i64 c, i64 d, i64 e, i64 f);
 
@@ -106,6 +136,22 @@ static i64 systemCall(i64 number, i64 a, i64 b, i64 c, i64 d, i64 e, i64 f);
 i64 cromo_system_call(i64 number, i64 a, i64 b, i64 c, i64 d, i64 e, i64 f) {
     return systemCall(number, a, b, c, d, e, f);
 }
+
+#ifdef __aarch64__
+
+static i64 systemCall(i64 number, i64 a, i64 b, i64 c, i64 d, i64 e, i64 f) {
+    register i64 x8 __asm__("x8") = number;
+    register i64 x0 __asm__("x0") = a;
+    register i64 x1 __asm__("x1") = b;
+    register i64 x2 __asm__("x2") = c;
+    register i64 x3 __asm__("x3") = d;
+    register i64 x4 __asm__("x4") = e;
+    register i64 x5 __asm__("x5") = f;
+    __asm__ volatile("svc #0" : "+r"(x0) : "r"(x8), "r"(x1), "r"(x2), "r"(x3), "r"(x4), "r"(x5) : "memory");
+    return x0;  // from -4095 to -1 it is an error, -errno
+}
+
+#else
 
 static i64 systemCall(i64 number, i64 a, i64 b, i64 c, i64 d, i64 e, i64 f) {
     register i64 r10 __asm__("r10") = d;
@@ -119,6 +165,15 @@ static i64 systemCall(i64 number, i64 a, i64 b, i64 c, i64 d, i64 e, i64 f) {
     return result;  // from -4095 to -1 it is an error, -errno
 }
 
+#endif
+
+#endif
+
+// The hint of a loop that waits for another thread.
+#ifdef __aarch64__
+#define SPIN_HINT() __asm__ volatile("yield")
+#else
+#define SPIN_HINT() __asm__ volatile("pause")
 #endif
 
 // ---- Locks, for the threads (D214, D216) ----
@@ -145,7 +200,7 @@ static void lockAcquire(Lock* lock) {
     // The locks of the runtime are held briefly: a short spin before sleeping, as
     // the SRWLOCK of Windows does, avoids a sleep and a wake for each of them.
     for (u32 spins = 0; spins < 100 && seen != 2; ++spins) {
-        __asm__ volatile("pause");
+        SPIN_HINT();
         seen = __atomic_load_n(state, __ATOMIC_RELAXED);
         if (seen == 0 && __atomic_compare_exchange_n(state, &seen, 1, 0, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED)) return;
     }
@@ -939,26 +994,40 @@ static u32 traceCapture(void** frames, u32 most) { return RtlCaptureStackBackTra
 // D375: the unwind tables that LLVM writes for every function, .eh_frame, found
 // through .eh_frame_hdr (ld.lld --eh-frame-hdr), in the program headers that
 // __ehdr_start shows. For the address of a frame, the rules of DWARF say where
-// the frame of the caller starts (the CFA) and where the return address and rbp
-// were saved. The stack ends where an address has no rules: in _start and in
-// cromo_task_entry, which are in assembly, and after the first call of a thread.
+// the frame of the caller starts (the CFA) and where the return address and the
+// frame pointer were saved. The stack ends where an address has no rules: in
+// _start and in cromo_task_entry, which are in assembly, and after the first call
+// of a thread. On ARM64 the return address is in x30 until a function saves it
+// (D405).
 
 extern const u8 __ehdr_start[] __attribute__((weak));
 extern const u8 cromo_thread_bottom[];  // in cloneThread
 
+// The numbers of the registers in DWARF.
+#ifdef __aarch64__
+#define REG_SP 31
+#define REG_FP 29  // x29
+#define REG_RA 30  // x30
+#else
+#define REG_SP 7   // rsp
+#define REG_FP 6   // rbp
+#define REG_RA 16  // the return address
+#endif
+
 typedef struct {
-    u64 rip;
-    u64 rsp;
-    u64 rbp;
+    u64 pc;
+    u64 sp;
+    u64 fp;
+    u64 lr;  // ARM64: x30, for the first frame only; 0 when it is not known
 } Registers;
 
 typedef struct {
-    i64 cfaRegister;  // 7 rsp, 6 rbp
+    i64 cfaRegister;  // REG_SP or REG_FP
     i64 cfaOffset;
     i64 raOffset;     // from the CFA
-    i64 rbpOffset;
+    i64 fpOffset;
     int raSaved;
-    int rbpSaved;
+    int fpSaved;
 } Rules;
 
 static u64 readUnsigned(const u8* p, int size) {
@@ -1091,7 +1160,7 @@ static int findRules(u64 pc, Rules* rules) {
         }
         q = dataEnd;
     }
-    if (raRegister != 16) return 0;
+    if (raRegister != REG_RA) return 0;
 
     u64 start = readEncoded(&p, fdeEncoding, 0);
     u64 range = readEncoded(&p, fdeEncoding & 0x0F, 0);
@@ -1101,7 +1170,11 @@ static int findRules(u64 pc, Rules* rules) {
         p += dataLength;
     }
 
-    Rules initial = {7, 8, -8, 0, 1, 0};
+#ifdef __aarch64__
+    Rules initial = {REG_SP, 0, 0, 0, 0, 0};  // the return address in x30
+#else
+    Rules initial = {REG_SP, 8, -8, 0, 1, 0};  // pushed by the call
+#endif
     Rules saved[4];
     int depth = 0;
     for (int pass = 0; pass < 2; ++pass) {  // the CIE, then the FDE
@@ -1139,41 +1212,41 @@ static int findRules(u64 pc, Rules* rules) {
                 case 0x07:  // undefined: the return address has none at the end of the stack
                 case 0x08:  // same value
                     reg = readUleb(&code);
-                    if (reg == 16) r->raSaved = 0;
-                    if (reg == 6) r->rbpSaved = 0;
+                    if (reg == REG_RA) r->raSaved = 0;
+                    if (reg == REG_FP) r->fpSaved = 0;
                     continue;
-                case 0x09: reg = readUleb(&code); readUleb(&code); if (reg == 6 || reg == 16) return 0; continue;
+                case 0x09: reg = readUleb(&code); readUleb(&code); if (reg == REG_FP || reg == REG_RA) return 0; continue;
                 case 0x0A: if (depth == 4) return 0; saved[depth++] = *r; continue;
                 case 0x0B: if (depth == 0) return 0; *r = saved[--depth]; continue;
                 case 0x0C: r->cfaRegister = (i64)readUleb(&code); r->cfaOffset = (i64)readUleb(&code); continue;
                 case 0x0D: r->cfaRegister = (i64)readUleb(&code); continue;
                 case 0x0E: r->cfaOffset = (i64)readUleb(&code); continue;
-                case 0x10: reg = readUleb(&code); code += readUleb(&code); if (reg == 6 || reg == 16) return 0; continue;
+                case 0x10: reg = readUleb(&code); code += readUleb(&code); if (reg == REG_FP || reg == REG_RA) return 0; continue;
                 case 0x11: reg = readUleb(&code); offset = readSleb(&code) * dataAlign; goto setOffset;
                 case 0x12: r->cfaRegister = (i64)readUleb(&code); r->cfaOffset = readSleb(&code) * dataAlign; continue;
                 case 0x13: r->cfaOffset = readSleb(&code) * dataAlign; continue;
-                case 0x14: case 0x15: reg = readUleb(&code); readUleb(&code); if (reg == 6 || reg == 16) return 0; continue;
-                case 0x16: reg = readUleb(&code); code += readUleb(&code); if (reg == 6 || reg == 16) return 0; continue;
+                case 0x14: case 0x15: reg = readUleb(&code); readUleb(&code); if (reg == REG_FP || reg == REG_RA) return 0; continue;
+                case 0x16: reg = readUleb(&code); code += readUleb(&code); if (reg == REG_FP || reg == REG_RA) return 0; continue;
                 case 0x2E: readUleb(&code); continue;  // GNU_args_size
                 case 0x2F: reg = readUleb(&code); offset = -(i64)readUleb(&code) * dataAlign; goto setOffset;
                 default: return 0;  // def_cfa_expression and the rest: not in the code of LLVM
             }
         setOffset:
-            if (reg == 16) {
+            if (reg == REG_RA) {
                 r->raOffset = offset;
                 r->raSaved = 1;
-            } else if (reg == 6) {
-                r->rbpOffset = offset;
-                r->rbpSaved = 1;
+            } else if (reg == REG_FP) {
+                r->fpOffset = offset;
+                r->fpSaved = 1;
             }
             continue;
         restore:
-            if (reg == 16) {
+            if (reg == REG_RA) {
                 r->raOffset = initial.raOffset;
                 r->raSaved = initial.raSaved;
-            } else if (reg == 6) {
-                r->rbpOffset = initial.rbpOffset;
-                r->rbpSaved = initial.rbpSaved;
+            } else if (reg == REG_FP) {
+                r->fpOffset = initial.fpOffset;
+                r->fpSaved = initial.fpSaved;
             }
             continue;
         }
@@ -1186,21 +1259,24 @@ static int findRules(u64 pc, Rules* rules) {
 // first frame is at its exact address, the others at their return address.
 static int unwindStep(Registers* r, int returned) {
     Rules rules;
-    if (!findRules(returned ? r->rip - 1 : r->rip, &rules) || !rules.raSaved) return 0;
-    u64 base = rules.cfaRegister == 7 ? r->rsp : rules.cfaRegister == 6 ? r->rbp : 0;
+    if (!findRules(returned ? r->pc - 1 : r->pc, &rules) || (!rules.raSaved && !r->lr)) return 0;
+    u64 base = rules.cfaRegister == REG_SP ? r->sp : rules.cfaRegister == REG_FP ? r->fp : 0;
     if (!base) return 0;
     u64 cfa = base + (u64)rules.cfaOffset;
-    if (cfa <= r->rsp || cfa - r->rsp > ((u64)16 << 20)) return 0;  // a frame larger than 16 MB is a mistake
-    u64 ra = readUnsigned((const u8*)(cfa + (u64)rules.raOffset), 8);
-    if (rules.rbpSaved) r->rbp = readUnsigned((const u8*)(cfa + (u64)rules.rbpOffset), 8);
-    r->rsp = cfa;
-    r->rip = ra;
+    // The frame of the caller is above, unless the return address is still in x30;
+    // a frame larger than 16 MB is a mistake.
+    if (cfa < r->sp || (cfa == r->sp && rules.raSaved) || cfa - r->sp > ((u64)16 << 20)) return 0;
+    u64 ra = rules.raSaved ? readUnsigned((const u8*)(cfa + (u64)rules.raOffset), 8) : r->lr;
+    if (rules.fpSaved) r->fp = readUnsigned((const u8*)(cfa + (u64)rules.fpOffset), 8);
+    r->sp = cfa;
+    r->pc = ra;
+    r->lr = 0;
     return ra != 0 && ra != (u64)cromo_thread_bottom;
 }
 
 static u32 traceFrom(Registers* r, int returned, void** frames, u32 count, u32 most) {
     while (count < most && unwindStep(r, returned)) {
-        frames[count++] = (void*)r->rip;
+        frames[count++] = (void*)r->pc;
         returned = 1;
     }
     return count;
@@ -1209,7 +1285,13 @@ static u32 traceFrom(Registers* r, int returned, void** frames, u32 count, u32 m
 // The first address is in the caller of this function, as on Windows.
 static __attribute__((noinline)) u32 traceCapture(void** frames, u32 most) {
     Registers r;
-    __asm__ volatile("lea 0(%%rip), %0\n\tmov %%rsp, %1\n\tmov %%rbp, %2" : "=r"(r.rip), "=r"(r.rsp), "=r"(r.rbp));
+#ifdef __aarch64__
+    __asm__ volatile("adr %0, .\n\tmov %1, sp\n\tmov %2, x29\n\tmov %3, x30"
+                     : "=r"(r.pc), "=r"(r.sp), "=r"(r.fp), "=r"(r.lr));
+#else
+    __asm__ volatile("lea 0(%%rip), %0\n\tmov %%rsp, %1\n\tmov %%rbp, %2" : "=r"(r.pc), "=r"(r.sp), "=r"(r.fp));
+    r.lr = 0;
+#endif
     return traceFrom(&r, 0, frames, 0, most);
 }
 
@@ -1383,14 +1465,15 @@ typedef struct {
 typedef struct Worker Worker;
 
 #ifndef _WIN32
-// What the register fs points to in every thread, so that a thread knows whether
-// it is a worker of the tasks: the first word is its own address.
+// What the register of the thread points to in every thread, fs on x86-64 and
+// tpidr_el0 on ARM64, so that a thread knows whether it is a worker of the tasks:
+// the first word is its own address, which x86-64 reads.
 typedef struct ThreadBlock {
     struct ThreadBlock* self;
     Worker* worker;
 } ThreadBlock;
 
-// The main thread: _start (mem_x64.S) points fs here.
+// The main thread: _start (mem_x64.S, mem_arm64.S) points the register here.
 ThreadBlock cromo_main_block = {&cromo_main_block, 0};
 #endif
 
@@ -1419,7 +1502,7 @@ static NORETURN void threadFailure(void) {
 
 static void relax(u32 spins) {
     if (spins < 64) {
-        __asm__ volatile("pause");
+        SPIN_HINT();
         return;
     }
 #ifdef _WIN32
@@ -1454,7 +1537,39 @@ static void threadEntry(void* argument) { runThread(argument); }
 
 // clone() without the C library: the new thread starts on its own stack, takes the
 // function and its argument from there, and ends with exit(), never returning here.
-// Its fs points to the block of its record.
+// Its register of the thread points to the block of its record.
+#ifdef __aarch64__
+
+static __attribute__((noinline)) i64 cloneThread(ThreadRecord* thread, u8* top) {
+    u64* sp = (u64*)top - 2;
+    sp[0] = (u64)threadEntry;
+    sp[1] = (u64)thread;
+    register i64 x8 __asm__("x8") = SYS_clone;
+    register i64 x0 __asm__("x0") = CLONE_FLAGS;
+    register i64 x1 __asm__("x1") = (i64)sp;
+    register i64 x2 __asm__("x2") = (i64)&thread->tid;    // parent_tid
+    register i64 x3 __asm__("x3") = (i64)&thread->block;  // tls
+    register i64 x4 __asm__("x4") = (i64)&thread->tid;    // child_tid
+    __asm__ volatile("svc #0\n\t"
+                     "cbnz x0, 1f\n\t"
+                     "mov x29, #0\n\t"
+                     "ldp x9, x0, [sp], #16\n\t"
+                     "blr x9\n"
+                     ".globl cromo_thread_bottom\n"  // the stack of the thread ends here (D375)
+                     "cromo_thread_bottom:\n\t"
+                     "mov x8, #93\n\t"
+                     "mov x0, #0\n\t"
+                     "svc #0\n\t"
+                     "brk #0\n"
+                     "1:"
+                     : "+r"(x0)
+                     : "r"(x8), "r"(x1), "r"(x2), "r"(x3), "r"(x4)
+                     : "x9", "memory");
+    return x0;
+}
+
+#else
+
 static __attribute__((noinline)) i64 cloneThread(ThreadRecord* thread, u8* top) {
     u64* sp = (u64*)top;
     *--sp = (u64)thread;
@@ -1482,14 +1597,16 @@ static __attribute__((noinline)) i64 cloneThread(ThreadRecord* thread, u8* top) 
     return result;
 }
 
+#endif
+
 static void startSystemThread(ThreadRecord* thread) {
     i64 stack = systemCall(SYS_mmap, 0, (i64)THREAD_STACK, 3, 0x22 | 0x20000, -1, 0);  // MAP_PRIVATE|ANONYMOUS|STACK
     if (stack < 0 && stack > -4096) threadFailure();
     thread->stack = (u8*)stack;
     // At the bottom a guard page, the stack of SIGSEGV, and a guard page under the
     // stack of the thread (crashStack).
-    systemCall(SYS_mprotect, stack, 4096, 0, 0, 0, 0);
-    systemCall(SYS_mprotect, stack + 4096 + CRASH_STACK, 4096, 0, 0, 0, 0);
+    systemCall(SYS_mprotect, stack, (i64)pageSize, 0, 0, 0, 0);
+    systemCall(SYS_mprotect, stack + (i64)pageSize + CRASH_STACK, (i64)pageSize, 0, 0, 0, 0);
     thread->block.self = &thread->block;
     if (cloneThread(thread, thread->stack + THREAD_STACK) < 0) threadFailure();
 }
@@ -1591,17 +1708,30 @@ typedef struct {
     u64 size;
 } SignalStack;
 
-void cromo_sigreturn(void);  // mem_x64.S
+void cromo_sigreturn(void);  // mem_x64.S, mem_arm64.S
 
 static u8 mainCrashStack[CRASH_STACK];
+
+// The registers in the ucontext of the kernel.
+#ifdef __aarch64__
+#define CONTEXT_REGISTERS 184  // the regs of uc_mcontext: x0 to x30, sp, pc
+#define CONTEXT_FP 29
+#define CONTEXT_SP 31
+#define CONTEXT_PC 32
+#else
+#define CONTEXT_REGISTERS 40   // the gregs of uc_mcontext
+#define CONTEXT_FP 10          // rbp
+#define CONTEXT_SP 15          // rsp
+#define CONTEXT_PC 16          // rip
+#endif
 
 // An address near the stack pointer is the guard page of a stack: other faults,
 // of C code, end the program as usual, faulting again without this handler.
 static void crashHandler(i32 signal, void* info, void* context) {
     (void)signal;
-    u64 address = *(u64*)((u8*)info + 16);        // si_addr
-    u64* registers = (u64*)((u8*)context + 40);   // the gregs of uc_mcontext
-    u64 sp = registers[15];
+    u64 address = *(u64*)((u8*)info + 16);  // si_addr
+    u64* registers = (u64*)((u8*)context + CONTEXT_REGISTERS);
+    u64 sp = registers[CONTEXT_SP];
     u64 distance = address > sp ? address - sp : sp - address;
     if (distance > ((u64)1 << 20)) {
         SignalAction usual = {0, 0, 0, 0};
@@ -1609,13 +1739,17 @@ static void crashHandler(i32 signal, void* info, void* context) {
         return;
     }
     void* frames[TRACE_FRAMES];
-    frames[0] = (void*)(registers[16] + 1);  // where it stopped, as if a call returned there
-    Registers r = {registers[16], registers[15], registers[10]};
+    frames[0] = (void*)(registers[CONTEXT_PC] + 1);  // where it stopped, as if a call returned there
+#ifdef __aarch64__
+    Registers r = {registers[CONTEXT_PC], sp, registers[CONTEXT_FP], registers[30]};  // x30 too
+#else
+    Registers r = {registers[CONTEXT_PC], sp, registers[CONTEXT_FP], 0};
+#endif
     stackOverflow(frames, traceFrom(&r, 0, frames, 1, TRACE_FRAMES));
 }
 
 static void crashStack(ThreadRecord* thread) {
-    SignalStack stack = {thread ? thread->stack + 4096 : mainCrashStack, 0, 0, CRASH_STACK};
+    SignalStack stack = {thread ? thread->stack + pageSize : mainCrashStack, 0, 0, CRASH_STACK};
     systemCall(SYS_sigaltstack, (i64)&stack, 0, 0, 0, 0, 0);
 }
 
@@ -1628,8 +1762,40 @@ static void crashStart(void) {
 
 #endif
 
+#ifndef _WIN32
+
+extern u64* cromo_initial_stack;
+
+#ifdef __aarch64__
+// Whether the processor has the atomics of ARMv8.1, which the functions of the
+// atomics in mem_arm64.S use (D407). Until it is known they use the loops of
+// ARMv8.0.
+u8 cromo_lse_atomics;
+#endif
+
+// What the kernel says of the system, in the pairs that follow the environment on
+// the initial stack: the size of a page, AT_PAGESZ, and on ARM64 HWCAP_ATOMICS in
+// AT_HWCAP.
+static void readSystem(void) {
+    u64* entry = cromo_initial_stack + 2 + cromo_initial_stack[0];
+    while (*entry) ++entry;
+    for (++entry; entry[0]; entry += 2) {
+        if (entry[0] == 6) pageSize = entry[1];
+#ifdef __aarch64__
+        if (entry[0] == 16) cromo_lse_atomics = (entry[1] >> 8) & 1;
+#endif
+    }
+}
+
+#endif
+
 // Called first by cromo_start (codegen.cpp).
-void cromo_runtime_start(void) { crashStart(); }
+void cromo_runtime_start(void) {
+#ifndef _WIN32
+    readSystem();
+#endif
+    crashStart();
+}
 
 i64 cromo_arg_count(void);
 i64 cromo_arg_length(i64 index);
@@ -1685,7 +1851,7 @@ static void conditionSignal(Condition* condition) {
 // Many tasks run on a few threads of the system, the workers, one for each
 // processor (D269). A task runs on a stack of its own, 1 MB reserved and taken
 // page by page (D272): a fiber on Windows; on Linux a mapping, entered and left
-// with cromo_switch (mem_x64.S). The stacks are kept for the next tasks.
+// with cromo_switch (mem_x64.S, mem_arm64.S). The stacks are kept for the next tasks.
 //
 // A task that waits leaves its worker, which takes the next task of the queue;
 // whoever wakes it puts it back in the queue, once its worker has left its stack
@@ -1812,7 +1978,11 @@ static Worker* currentWorker(void) {
 
 static Worker* currentWorker(void) {
     ThreadBlock* block;
+#ifdef __aarch64__
+    __asm__ volatile("mrs %0, tpidr_el0" : "=r"(block));
+#else
     __asm__ volatile("mov %%fs:0, %0" : "=r"(block));
+#endif
     return block->worker;
 }
 
@@ -1902,8 +2072,8 @@ static void switchToWorker(Worker* worker, Stack* stack) {
 
 #else
 
-void cromo_switch(void** save, void* next);  // mem_x64.S
-void cromo_task_entry(void);                 // mem_x64.S: cromo_task_run(rbx)
+void cromo_switch(void** save, void* next);  // mem_x64.S, mem_arm64.S
+void cromo_task_entry(void);                 // cromo_task_run(rbx), cromo_task_run(x19)
 
 NORETURN void cromo_task_run(Stack* stack) { stackMain(stack); }
 
@@ -1916,6 +2086,23 @@ NORETURN void cromo_task_run(Stack* stack) { stackMain(stack); }
 static u8* regionNext;
 static u8* regionEnd;
 static Stack* emptyStacks;  // without memory: they start again from the top
+
+#ifdef __aarch64__
+
+// What cromo_switch takes back the first time: x19 to x30, with the stack in x19
+// and where it returns in x30, d8 to d15, and the control register of the
+// floating point at its default value.
+#define SWITCH_WORDS 22
+
+static void startFrame(Stack* stack) {
+    u64* top = (u64*)(stack->base + TASK_STACK) - SWITCH_WORDS;
+    for (i32 i = 0; i < SWITCH_WORDS; ++i) top[i] = 0;
+    top[0] = (u64)stack;              // x19
+    top[11] = (u64)cromo_task_entry;  // x30
+    stack->context = top;
+}
+
+#else
 
 // What cromo_switch takes back the first time: the control words of SSE and x87,
 // six registers with the stack in rbx, and where it returns.
@@ -1931,6 +2118,8 @@ static void startFrame(Stack* stack) {
     *--top = 0x037F00001F80ull;  // MXCSR, then the control word of x87
     stack->context = top;
 }
+
+#endif
 
 // With the lock of the stacks taken.
 static Stack* newStack(void) {
@@ -1948,7 +2137,7 @@ static Stack* newStack(void) {
         u8* base = regionNext;
         regionNext += TASK_STACK;
         // PROT_READ|PROT_WRITE above the guard page: the pages are taken when they are used
-        if (systemCall(SYS_mprotect, (i64)(base + 4096), (i64)(TASK_STACK - 4096), 3, 0, 0, 0) < 0) taskFailure();
+        if (systemCall(SYS_mprotect, (i64)(base + pageSize), (i64)(TASK_STACK - pageSize), 3, 0, 0, 0) < 0) taskFailure();
         stack = cromo_alloc(sizeof(Stack));
         stack->base = base;
     }
@@ -1960,7 +2149,7 @@ static Stack* newStack(void) {
 
 // Its memory goes back to the system (MADV_DONTNEED), its addresses to the next.
 static void dropStack(Stack* stack) {
-    systemCall(28, (i64)(stack->base + 4096), (i64)(TASK_STACK - 4096), 4, 0, 0, 0);  // madvise
+    systemCall(SYS_madvise, (i64)(stack->base + pageSize), (i64)(TASK_STACK - pageSize), 4, 0, 0, 0);
     lockAcquire(&stackLock);
     stack->next = emptyStacks;
     emptyStacks = stack;
@@ -2122,7 +2311,7 @@ static Task* nextTask(Worker* worker) {
             ++scheduler.spinning;
             lockRelease(&scheduler.lock);
             for (u32 i = 0; i < SPIN_ROUNDS && __atomic_load_n(&scheduler.queued, __ATOMIC_ACQUIRE) == 0; ++i) {
-                __asm__ volatile("pause");
+                SPIN_HINT();
             }
             lockAcquire(&scheduler.lock);
             if (scheduler.claimed > 0) --scheduler.claimed;
@@ -2432,7 +2621,7 @@ void cromo_mutex_lock(void* state) {
         u32 seen = 0;
         if (__atomic_compare_exchange_n(word, &seen, 1, 0, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED)) return;
         if (seen == 2) break;
-        __asm__ volatile("pause");
+        SPIN_HINT();
     }
     while (__atomic_exchange_n(word, 2, __ATOMIC_ACQUIRE) != 0) parkOn(word, 2);
 }
@@ -2644,9 +2833,10 @@ NORETURN void cromo_thread_uncaught(Runnable* record) {
     void* object = record->raised[0];
     void** descriptor = (void**)record->raised[1];
     void** table = (void**)descriptor[1];
-    void (*message)(Text*, void*) = (void (*)(Text*, void*))table[0];
-    Text text;
-    message(&text, object);
+    // The string comes back as a struct of C: through x8 on ARM64, as the method
+    // expects its sret, and as the first argument on x86-64.
+    Text (*message)(void*) = (Text (*)(void*))table[0];
+    Text text = message(object);
     if (record->kind == KIND_THREAD) uncaught("uncaught exception in a thread: ", 32, text.data, (u64)text.length, object);
     uncaught("uncaught exception in a task: ", 30, text.data, (u64)text.length, object);
 }
@@ -2872,7 +3062,12 @@ static void* baseSocket(i64 handle) {
 #define EPOLLET 0x80000000u
 #define WAKE_MARK 0xFFFFFFFFFFFFFFFFull
 
+// Packed on x86-64 only, as in the headers of the kernel.
+#ifdef __aarch64__
+typedef struct {
+#else
 typedef struct __attribute__((packed)) {
+#endif
     u32 events;
     u64 data;
 } EpollEvent;
@@ -2939,7 +3134,7 @@ static void wakeWaiters(Task** list, Batch* woken) {
 
 static void pollEvents(i64 milliseconds) {
     EpollEvent events[64];
-    i64 count = systemCall(SYS_epoll_wait, poller.epoll, (i64)events, 64, milliseconds, 0, 0);
+    i64 count = systemCall(SYS_epoll_pwait, poller.epoll, (i64)events, 64, milliseconds, 0, 8);
     Batch woken = {0, 0, 0};
     for (i64 i = 0; i < count; ++i) {
         u64 data = events[i].data;
@@ -3200,7 +3395,8 @@ const u8* cromo_arg_data(i64 index) {
 
 #else
 
-// Where _start found the stack: the number of arguments, then their addresses (mem_x64.S).
+// Where _start found the stack: the number of arguments, then their addresses
+// (mem_x64.S, mem_arm64.S).
 u64* cromo_initial_stack;
 
 i64 cromo_arg_count(void) { return (i64)cromo_initial_stack[0]; }

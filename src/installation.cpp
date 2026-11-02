@@ -54,8 +54,11 @@ const fs::path& libraryFolder() {
 fs::path libraryFile(const std::string& name) { return libraryFolder() / fs::path(name); }
 
 fs::path runtimeLibraryPath(Target target) {
-    return target == Target::Linux ? libraryFolder() / "linux" / "libcromo_rt.a"
-                                   : libraryFolder() / "windows" / "cromo_rt.lib";
+    switch (target) {
+        case Target::Linux: return libraryFolder() / "linux" / "libcromo_rt.a";
+        case Target::LinuxArm64: return libraryFolder() / "linux_arm64" / "libcromo_rt.a";  // P24
+        default: return libraryFolder() / "windows" / "cromo_rt.lib";
+    }
 }
 
 bool isLibraryFile(const std::string& path) {

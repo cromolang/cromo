@@ -269,7 +269,7 @@ Then build it for the server, which can be Linux even when you work on Windows:
 cromo build --release --target linux todo.cro
 ```
 
-The result is one executable, without dependencies, that runs on any Linux x64.
+The result is one executable, without dependencies, that runs on any Linux x64; with `--target linux-arm64`, on any Linux on ARM64.
 
 From here, the service could keep its data in a file with `std.fs`, serve HTTPS with `http.listenTls`, or check a token in the headers of each request. The library has what is needed for each, and the compiler checks that the requests, running at the same time, never touch the store without the lock.
 

@@ -1,0 +1,16 @@
+// std.process on Linux ARM64 (D408, P23): the numbers of its system calls.
+
+enum Call {
+    Dup3 = 24
+    FaccessAt = 48
+    Close = 57
+    Pipe2 = 59
+    Read = 63
+    Write = 64
+    Exit = 93
+    Kill = 129
+    RtSigAction = 134
+    Clone = 220
+    Execve = 221
+    Wait4 = 260
+}

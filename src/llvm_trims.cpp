@@ -1,9 +1,10 @@
 // What cromo leaves out of the libraries of LLVM, to be smaller.
 //
 // lld initializes every target of LLVM, for the LTO that cromo does not use, so it
-// would bring them all into cromo, which makes code only for x86-64 (D142). These
-// empty initializers take the place of those of the other targets: the linker
-// finds them first, and the code of the targets stays in their archives.
+// would bring them all into cromo, which makes code only for x86-64 and AArch64
+// (D142, D405). These empty initializers take the place of those of the other
+// targets: the linker finds them first, and the code of the targets stays in their
+// archives.
 
 #define CROMO_NO_TARGET(name)                                 \
     extern "C" void LLVMInitialize##name##TargetInfo() {}     \
@@ -13,7 +14,6 @@
     extern "C" void LLVMInitialize##name##AsmParser() {}      \
     extern "C" void LLVMInitialize##name##Disassembler() {}
 
-CROMO_NO_TARGET(AArch64)
 CROMO_NO_TARGET(AMDGPU)
 CROMO_NO_TARGET(ARM)
 CROMO_NO_TARGET(AVR)

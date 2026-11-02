@@ -1,6 +1,7 @@
 // std.process on Linux (D202): fork and execve with pipes. Everything the child
 // needs is made before fork; the child only makes system calls, as a program
-// with threads must, until execve.
+// with threads must, until execve. The numbers of the calls are in
+// process_linux_x86_64.cro and process_linux_arm64.cro (D408, P23).
 import std.os
 import unsafe
 
@@ -55,24 +56,24 @@ void launch(ref Process p, string program, list<string> args, bool errors) {
         put<u8>(offset(defaultAction, i), 0)
     }
 
-    i64 pid = systemCall(57, 0, 0, 0, 0, 0, 0)  // fork
+    i64 pid = systemCall(i64(Call.Clone), 17, 0, 0, 0, 0, 0)  // fork: SIGCHLD, the same stack
     if (pid == 0) {
         // The child: its standard descriptors, SIGPIPE as by default, the program.
-        systemCall(33, childInput, 0, 0, 0, 0, 0)  // dup2
-        systemCall(33, childOutput, 1, 0, 0, 0, 0)
+        systemCall(i64(Call.Dup3), childInput, 0, 0, 0, 0, 0)
+        systemCall(i64(Call.Dup3), childOutput, 1, 0, 0, 0, 0)
         if (childErrors >= 0) {
-            systemCall(33, childErrors, 2, 0, 0, 0, 0)
+            systemCall(i64(Call.Dup3), childErrors, 2, 0, 0, 0, 0)
         }
-        systemCall(13, 13, defaultAction, none, 8, 0, 0)                      // rt_sigaction(SIGPIPE)
-        i64 result = systemCall(59, copyAt<addr>(argv), argv, envp, 0, 0, 0)  // execve
+        systemCall(i64(Call.RtSigAction), 13, defaultAction, none, 8, 0, 0)  // SIGPIPE
+        i64 result = systemCall(i64(Call.Execve), copyAt<addr>(argv), argv, envp, 0, 0, 0)
         put<i32>(failure, i32(-result))
-        systemCall(1, failureWrite, failure, 4, 0, 0, 0)
-        systemCall(60, 127, 0, 0, 0, 0, 0)  // exit
+        systemCall(i64(Call.Write), failureWrite, failure, 4, 0, 0, 0)
+        systemCall(i64(Call.Exit), 127, 0, 0, 0, 0, 0)
     }
 
     for (i64 fd in [childInput, childOutput, childErrors, failureWrite]) {
         if (fd >= 0) {
-            systemCall(3, fd, 0, 0, 0, 0, 0)
+            systemCall(i64(Call.Close), fd, 0, 0, 0, 0, 0)
         }
     }
     for (i64 i = 0; i < all.len(); i++) {
@@ -89,7 +90,7 @@ void launch(ref Process p, string program, list<string> args, bool errors) {
     }
     // Nothing on the pipe of the failure, closed by execve: the program runs.
     i64 got = readSome(failureRead, failure, 4)
-    systemCall(3, failureRead, 0, 0, 0, 0, 0)
+    systemCall(i64(Call.Close), failureRead, 0, 0, 0, 0, 0)
     i32 code = copyAt<i32>(failure)
     free(failure)
     if (got == 4) {
@@ -118,7 +119,7 @@ string findProgram(string program) {
         if (folder.len() > 0) {
             candidate = folder + "/" + program
         }
-        if (systemCall(21, candidate.cstring(), 1, 0, 0, 0, 0) == 0) {  // access(X_OK)
+        if (systemCall(i64(Call.FaccessAt), -100, candidate.cstring(), 1, 0, 0, 0) == 0) {  // AT_FDCWD, X_OK
             ret candidate
         }
     }
@@ -134,12 +135,12 @@ void ignoreBrokenPipes() {
     }
     put<i64>(action, 1)
     addr none
-    systemCall(13, 13, action, none, 8, 0, 0)  // rt_sigaction
+    systemCall(i64(Call.RtSigAction), 13, action, none, 8, 0, 0)
     free(action)
 }
 
 void makePipe(addr fds, i64 at) {
-    i64 status = systemCall(293, offset(fds, at), 0x80000, 0, 0, 0, 0)  // pipe2, O_CLOEXEC
+    i64 status = systemCall(i64(Call.Pipe2), offset(fds, at), 0x80000, 0, 0, 0, 0)  // O_CLOEXEC
     if (status < 0) {
         throw Error(format("cannot make a pipe for a program: error {}", -status))
     }
@@ -155,14 +156,14 @@ addr cText(string text) {
 void closeAll(list<i64> fds) {
     for (i64 fd in fds) {
         if (fd >= 0) {
-            systemCall(3, fd, 0, 0, 0, 0, 0)
+            systemCall(i64(Call.Close), fd, 0, 0, 0, 0, 0)
         }
     }
 }
 
 i64 readSome(i64 pipe, addr data, i64 most) {
     for {
-        i64 count = systemCall(0, pipe, data, most, 0, 0, 0)
+        i64 count = systemCall(i64(Call.Read), pipe, data, most, 0, 0, 0)
         if (count >= 0) {
             ret count
         }
@@ -175,7 +176,7 @@ i64 readSome(i64 pipe, addr data, i64 most) {
 void writeAll(i64 pipe, addr data, i64 size) {
     i64 total = 0
     for (total < size) {
-        i64 count = systemCall(1, pipe, offset(data, total), size - total, 0, 0, 0)
+        i64 count = systemCall(i64(Call.Write), pipe, offset(data, total), size - total, 0, 0, 0)
         if (count == -4) {
             continue
         }
@@ -190,14 +191,14 @@ void writeAll(i64 pipe, addr data, i64 size) {
 }
 
 void closePipe(i64 pipe) {
-    systemCall(3, pipe, 0, 0, 0, 0, 0)
+    systemCall(i64(Call.Close), pipe, 0, 0, 0, 0, 0)
 }
 
 // The exit code, or 128 + the signal that ended it, as the shells say (D298).
 i32 waitProcess(i64 id) {
     addr status = alloc(4)
     addr none
-    for (systemCall(61, id, status, 0, none, 0, 0) == -4) {  // wait4
+    for (systemCall(i64(Call.Wait4), id, status, 0, none, 0, 0) == -4) {
     }
     i32 value = copyAt<i32>(status)
     free(status)
@@ -208,7 +209,7 @@ i32 waitProcess(i64 id) {
 }
 
 void killProcess(i64 id) {
-    systemCall(62, id, 9, 0, 0, 0, 0)  // kill, SIGKILL
+    systemCall(i64(Call.Kill), id, 9, 0, 0, 0, 0)  // SIGKILL
 }
 
 string reason(i64 code) {

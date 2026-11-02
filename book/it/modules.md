@@ -137,6 +137,8 @@ Dopo `import std.fs`, le funzioni del modulo si scrivono precedute dall'ultima p
 
 Un modulo può avere parti scritte per un solo sistema: accanto a `files.cro`, i file `files_windows.cro` e `files_linux.cro`. Viene usato solo il file del sistema per cui il programma è compilato, e fa parte del modulo, con accesso ai suoi nomi privati. La libreria standard sfrutta questo meccanismo per chiamare il sistema di Windows e quello di Linux dietro le stesse funzioni.
 
+Allo stesso modo una parte può essere per una sola architettura, `files_arm64.cro` o `files_x86_64.cro`, o per un sistema e un'architettura, `files_linux_arm64.cro`.
+
 ## Pacchetti
 
 Le librerie scritte da altri saranno **pacchetti**: repository Git, identificati dal loro URL, con le versioni date dai loro tag, elencati in un file `cromo.mod` e scaricati da `cromo`. Il loro design è deciso ed è descritto in `docs/language.md`, ma non sono ancora disponibili.

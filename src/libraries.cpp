@@ -91,7 +91,7 @@ Libraries findLibraries(const Module& module, const std::deque<SourceFile>& sour
     }
 
     Libraries libraries;
-    if (target == Target::Linux) {  // the linker checks the names (D146)
+    if (isLinux(target)) {  // the linker checks the names (D146)
         for (const Use& use : uses) {
             std::string file = "lib" + use.name + ".a";
             auto folder = std::find_if(use.folders.begin(), use.folders.end(),

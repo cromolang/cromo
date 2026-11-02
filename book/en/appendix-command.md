@@ -27,7 +27,7 @@ Without a file, the commands use `main.cro` of the current folder.
 |---|---|
 | `-o <file>` | the name of the executable; by default the name of the source, or of the folder without a file, with `.exe` for Windows |
 | `--release` | integers wrap around on overflow, instead of stopping the program |
-| `--target windows`, `--target linux` | the system of the executable; by default the one `cromo` runs on |
+| `--target windows`, `--target linux`, `--target linux-arm64` | the system of the executable, also Linux on ARM64; by default the one `cromo` runs on |
 | `-O0` … `-O3` | the level of optimization; the default is `-O2` |
 | `--emit-ir` | prints the LLVM IR of the program instead of writing the executable |
 

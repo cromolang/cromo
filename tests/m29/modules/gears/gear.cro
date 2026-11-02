@@ -1,0 +1,4 @@
+// A module of a folder, with its files for each architecture (D408).
+public i32 teeth() {
+    ret 10 + extraTeeth()
+}

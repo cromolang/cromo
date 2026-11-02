@@ -642,6 +642,7 @@ i32 main() {
 - `std.fs` has also `isFile`, `isLink`, `size`, `modified` (the seconds from 1970), `rename`, `copy`, `createFolders` with the folders above, `removeAll`, which never follows a link, and the parts of a path: `joinPath`, `parent`, `fileName` and `extension`.
 - `fs.createLink(target, path)` makes a link to a folder, a symbolic link on Linux and a junction on Windows, which needs no administrator; `fs.readLink(path)` gives where it points, and `fs.makeExecutable(path)` lets a file run on Linux (P18).
 - Next to `fs.cro` a module can have `fs_windows.cro` and `fs_linux.cro`: only the file of the system the program is compiled for is used, and it shares the names of the module, also the private ones (D202). It holds for the library and for the programs.
+- In the same way a file can be for an architecture, `fs_arm64.cro` or `fs_x86_64.cro`, or for a system and an architecture, `fs_linux_arm64.cro` (D408, P23).
 - In the modules with `import unsafe`, `s.cstring()` gives the address of a copy of the string ending with a zero, for the C functions, until the end of the statement (D204).
 
 ```cromo

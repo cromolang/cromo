@@ -1,0 +1,4 @@
+// Only on ARM64: elsewhere this module does not exist (D408).
+public i32 arm64Only() {
+    ret 1
+}

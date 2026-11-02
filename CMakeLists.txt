@@ -54,7 +54,8 @@ if(CROMO_BUILD_LIBRARY)
 
 # ---- Temporary runtime in freestanding C (D58) ----
 # Compiled with the clang of the LLVM archive, without the C library, once for
-# Windows and once for Linux (D142), and placed in lib/ (D237).
+# Windows, once for Linux and once for Linux on ARM64 (D142, D405), and placed in
+# lib/ (D237).
 set(CROMO_CLANG "${CROMO_LLVM_ROOT}/bin/clang.exe")
 set(CROMO_LLVM_LIB "${CROMO_LLVM_ROOT}/bin/llvm-lib.exe")
 set(CROMO_LLVM_AR "${CROMO_LLVM_ROOT}/bin/llvm-ar.exe")
@@ -63,10 +64,14 @@ set(CROMO_RT_BASE_FLAGS --target=x86_64-pc-windows-msvc -ffreestanding -fno-buil
     -fno-stack-protector -mno-stack-arg-probe)
 set(CROMO_RT_LINUX_BASE_FLAGS --target=x86_64-unknown-linux-gnu -ffreestanding -fno-builtin -nostdlib -O2
     -fno-stack-protector -fno-pic)
+# ARMv8.0, whose atomics call the functions of mem_arm64.S (D407).
+set(CROMO_RT_ARM64_BASE_FLAGS --target=aarch64-unknown-linux-gnu -ffreestanding -fno-builtin -nostdlib -O2
+    -fno-stack-protector -fno-pic -moutline-atomics)
 # The unwind tables lead the stack traces of Windows through the runtime (D341).
 set(CROMO_RT_FLAGS ${CROMO_RT_BASE_FLAGS} -funwind-tables -Wall -Wextra)
 # The unwind tables lead the stack traces through the runtime too (D375).
 set(CROMO_RT_LINUX_FLAGS ${CROMO_RT_LINUX_BASE_FLAGS} -fasynchronous-unwind-tables -Wall -Wextra)
+set(CROMO_RT_ARM64_FLAGS ${CROMO_RT_ARM64_BASE_FLAGS} -fasynchronous-unwind-tables -Wall -Wextra)
 file(MAKE_DIRECTORY "${CROMO_RT_DIR}")
 
 # ---- TLS and cryptography (D233, D236) ----
@@ -113,6 +118,7 @@ function(cromo_tls_objects folder flags objects)
 endfunction()
 cromo_tls_objects(tls_windows "${CROMO_TLS_WINDOWS_FLAGS}" CROMO_TLS_WINDOWS_OBJECTS)
 cromo_tls_objects(tls_linux "${CROMO_RT_LINUX_BASE_FLAGS}" CROMO_TLS_LINUX_OBJECTS)
+cromo_tls_objects(tls_linux_arm64 "${CROMO_RT_ARM64_BASE_FLAGS}" CROMO_TLS_ARM64_OBJECTS)
 
 add_custom_command(
   OUTPUT "${CROMO_RT_DIR}/cromo_rt.obj"
@@ -151,6 +157,25 @@ add_custom_command(
   DEPENDS "${CROMO_RT_DIR}/cromo_rt_linux.o" "${CROMO_RT_DIR}/mem_x64_linux.o" "${CROMO_RT_DIR}/runtime_cromo_linux.o"
           ${CROMO_TLS_LINUX_OBJECTS} "${CROMO_RT_DIR}/tls_linux.rsp"
   COMMENT "Archiving the Cromo runtime for Linux")
+
+add_custom_command(
+  OUTPUT "${CROMO_RT_DIR}/cromo_rt_linux_arm64.o"
+  COMMAND "${CROMO_CLANG}" ${CROMO_RT_ARM64_FLAGS} -c "${CMAKE_SOURCE_DIR}/runtime/cromo_rt.c" -o "${CROMO_RT_DIR}/cromo_rt_linux_arm64.o"
+  DEPENDS runtime/cromo_rt.c runtime/ryu.h runtime/ryu_tables.h
+  COMMENT "Compiling the Cromo runtime for Linux on ARM64")
+add_custom_command(
+  OUTPUT "${CROMO_RT_DIR}/mem_arm64_linux.o"
+  COMMAND "${CROMO_CLANG}" --target=aarch64-unknown-linux-gnu -c "${CMAKE_SOURCE_DIR}/runtime/mem_arm64.S" -o "${CROMO_RT_DIR}/mem_arm64_linux.o"
+  DEPENDS runtime/mem_arm64.S
+  COMMENT "Assembling the Cromo runtime for Linux on ARM64")
+add_custom_command(
+  OUTPUT "${CROMO_RT_DIR}/libcromo_rt_arm64.a"
+  COMMAND "${CMAKE_COMMAND}" -E rm -f "${CROMO_RT_DIR}/libcromo_rt_arm64.a"
+  COMMAND "${CROMO_LLVM_AR}" rcs "${CROMO_RT_DIR}/libcromo_rt_arm64.a" "${CROMO_RT_DIR}/cromo_rt_linux_arm64.o"
+          "${CROMO_RT_DIR}/mem_arm64_linux.o" "${CROMO_RT_DIR}/runtime_cromo_linux_arm64.o" "@${CROMO_RT_DIR}/tls_linux_arm64.rsp"
+  DEPENDS "${CROMO_RT_DIR}/cromo_rt_linux_arm64.o" "${CROMO_RT_DIR}/mem_arm64_linux.o"
+          "${CROMO_RT_DIR}/runtime_cromo_linux_arm64.o" ${CROMO_TLS_ARM64_OBJECTS} "${CROMO_RT_DIR}/tls_linux_arm64.rsp"
+  COMMENT "Archiving the Cromo runtime for Linux on ARM64")
 # ---- lib/ of the build, as in the archive (D237) ----
 # cromo reads the library and the runtime from lib/: next to its folder bin/ in
 # an archive, inside its folder in a build. Here they change at the next build.
@@ -162,7 +187,7 @@ add_custom_command(
   OUTPUT "${CROMO_RT_DIR}/library.stamp"
   COMMAND "${CMAKE_COMMAND}" -E rm -rf "${CROMO_LIB_DIR}/std" "${CROMO_LIB_DIR}/tools"
   COMMAND "${CMAKE_COMMAND}" -E make_directory "${CROMO_LIB_DIR}/std" "${CROMO_LIB_DIR}/tools" "${CROMO_LIB_DIR}/windows"
-          "${CROMO_LIB_DIR}/linux"
+          "${CROMO_LIB_DIR}/linux" "${CROMO_LIB_DIR}/linux_arm64"
   COMMAND "${CMAKE_COMMAND}" -E copy "${CMAKE_SOURCE_DIR}/library/core.cro" "${CROMO_LIB_DIR}"
   COMMAND "${CMAKE_COMMAND}" -E copy ${CROMO_STD_MODULES} "${CROMO_LIB_DIR}/std"
   COMMAND "${CMAKE_COMMAND}" -E copy ${CROMO_TOOLS} "${CROMO_LIB_DIR}/tools"
@@ -185,11 +210,18 @@ add_custom_command(
   DEPENDS cromo "${CROMO_RT_DIR}/library.stamp"
   COMMENT "Compiling the runtime written in Cromo for Linux")
 add_custom_command(
+  OUTPUT "${CROMO_RT_DIR}/runtime_cromo_linux_arm64.o"
+  COMMAND cromo build --runtime --target linux-arm64 -o "${CROMO_RT_DIR}/runtime_cromo_linux_arm64.o"
+  DEPENDS cromo "${CROMO_RT_DIR}/library.stamp"
+  COMMENT "Compiling the runtime written in Cromo for Linux on ARM64")
+add_custom_command(
   OUTPUT "${CROMO_RT_DIR}/runtime.stamp"
   COMMAND "${CMAKE_COMMAND}" -E copy "${CROMO_RT_DIR}/cromo_rt.lib" "${CROMO_LIB_DIR}/windows"
   COMMAND "${CMAKE_COMMAND}" -E copy "${CROMO_RT_DIR}/libcromo_rt.a" "${CROMO_LIB_DIR}/linux"
+  COMMAND "${CMAKE_COMMAND}" -E copy "${CROMO_RT_DIR}/libcromo_rt_arm64.a" "${CROMO_LIB_DIR}/linux_arm64/libcromo_rt.a"
   COMMAND "${CMAKE_COMMAND}" -E touch "${CROMO_RT_DIR}/runtime.stamp"
-  DEPENDS "${CROMO_RT_DIR}/cromo_rt.lib" "${CROMO_RT_DIR}/libcromo_rt.a" "${CROMO_RT_DIR}/library.stamp"
+  DEPENDS "${CROMO_RT_DIR}/cromo_rt.lib" "${CROMO_RT_DIR}/libcromo_rt.a" "${CROMO_RT_DIR}/libcromo_rt_arm64.a"
+          "${CROMO_RT_DIR}/library.stamp"
   COMMENT "Placing the runtime in lib/")
 add_custom_target(cromo_runtime ALL DEPENDS "${CROMO_RT_DIR}/runtime.stamp")
 
@@ -239,5 +271,6 @@ endif()
 llvm_map_components_to_libnames(CROMO_LLVM_LIBS
   Core DebugInfoDWARF IRReader Object Passes Support Target TargetParser MC
   X86CodeGen X86AsmParser X86Desc X86Info
+  AArch64CodeGen AArch64AsmParser AArch64Desc AArch64Info
 )
 target_link_libraries(cromo PRIVATE lldCOFF lldELF lldCommon ${CROMO_LLVM_LIBS})

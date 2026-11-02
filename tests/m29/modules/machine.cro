@@ -1,0 +1,9 @@
+// A module with files for each architecture, and for a system and an
+// architecture (D408).
+public i32 bits() {
+    ret wordBits()
+}
+
+public i32 combo() {
+    ret systemAndArchitecture()
+}

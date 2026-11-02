@@ -1,0 +1,16 @@
+// std.net on Linux ARM64 (D408, P23): the numbers of its system calls.
+
+enum Call {
+    Close = 57
+    PPoll = 73
+    Socket = 198
+    Bind = 200
+    Listen = 201
+    Connect = 203
+    GetSockName = 204
+    SendTo = 206
+    RecvFrom = 207
+    SetSockOpt = 208
+    GetSockOpt = 209
+    Accept4 = 242
+}

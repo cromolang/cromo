@@ -1879,6 +1879,18 @@ lines.close()
 ### D404. `std.zip` and `std.tar`
 *2026-11-01.* Two modules of the library, in Cromo, read the archives: `std.zip` those of Windows, of macOS and of the forges, stored or with deflate, also Zip64; `std.tar` the ustar of POSIX with the long names of GNU and of pax, and with `std.gzip` the `.tar.gz`. They read and extract, they do not write. `cromo update` opens with them the archives of the versions (D287), the packages will open with `std.tar` those of the forges (D379), and a backend can use them for the archives it receives. Being public, they are tested as the other modules.
 
+### D405. Linux ARM64
+*2026-11-02.* It extends D27 and D142. `cromo` also compiles for Linux on ARM64, the servers of Graviton and Ampere and the Raspberry Pi, from Windows and from Linux x64, as it does for Linux x64: LLVM has the backend of AArch64 and LLD links its executables. The tests run in WSL with qemu. A `cromo` that runs on ARM64, Windows on ARM64 and macOS come later, each with a decision of its own.
+
+### D406. `--target linux-arm64`
+*2026-11-02.* It extends D144. ARM64 is named in one option, `--target linux-arm64`, and in the directive `// target:` of the tests; `linux` and `windows` stay x86-64, as before. `arm64` is the name of Go, of Windows, of Debian and of Docker; an archive for it would be `linux_arm64`, next to `linux_x86_64` (D287).
+
+### D407. ARMv8.0, with the atomics chosen at the start
+*2026-11-02.* The programs run on every ARM64, also the Raspberry Pi 3 and 4. The atomic operations call small functions of the runtime, which use the instructions of ARMv8.1 (LSE) when the processor has them, as the runtime reads from the kernel at the start, and otherwise the loops of ARMv8.0: as GCC and Rust do on Linux (outline atomics).
+
+### D408. The code of an architecture
+*2026-11-02.* It extends D202, as in Go: next to `fs_linux.cro` there can be `fs_linux_arm64.cro`, used only for Linux on ARM64, and `fs_arm64.cro`, used for ARM64 on every system. It holds for the library and for the modules of the programs.
+
 ---
 
 ## Proposed
@@ -1931,6 +1943,16 @@ The largest body of a response, also once decompressed: 16 MB, as before, unless
 - A version already in `~/.cromo/versions` only becomes the active one, without the network (D289). A new one is unpacked in `<version>.partial`, which becomes `<version>` only when it is complete.
 - The link `current` changes in one step on Linux, renaming a new link over it; on Windows the old junction is removed first, since a junction cannot be renamed over another.
 - As the installation, it installs the extension for VS Code of the version when the command `code` is there, also the one that VS Code gives to WSL.
+
+### P23. The files and the system calls of each architecture (D408)
+- The suffix of x86-64 is `_x86_64`, as in the names of the archives: `fs_linux_x86_64.cro`.
+- A module of the library that makes system calls on Linux has their numbers in `name_linux_x86_64.cro` and `name_linux_arm64.cro`, as a private `enum Call`: `systemCall(i64(Call.OpenAt), ...)`. The code that uses them stays one, in `name_linux.cro`.
+- The library and the runtime use only the calls that ARM64 has too, on both architectures: `openat`, `newfstatat`, `renameat2`, `unlinkat`, `ppoll`, `dup3`, `clone` in place of `fork`, `epoll_pwait`. All of them exist since Linux 3.17, which `getrandom` already needed.
+- What else differs stays in the same files, as functions: the place of `st_mode` in `struct stat` and the value of `O_DIRECTORY`.
+- The runtime asks the kernel the size of a page, which on ARM64 can be 16 or 64 KB, as on the Raspberry Pi 5, for the guard pages of the stacks.
+
+### P24. The runtime of Linux ARM64
+In `lib/linux_arm64/`, next to `lib/linux/` and `lib/windows/` (D237), with `memcpy` and the others, `_start`, the switch of the tasks and the functions of the atomics in `runtime/mem_arm64.S`.
 
 ---
 

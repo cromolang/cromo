@@ -27,7 +27,7 @@ Se non indichi un file, i comandi usano il `main.cro` della cartella corrente.
 |---|---|
 | `-o <file>` | il nome dell'eseguibile; di default il nome del sorgente, o della cartella se non c'è un file, con `.exe` per Windows |
 | `--release` | in caso di overflow gli interi ricominciano dall'estremo opposto, invece di fermare il programma |
-| `--target windows`, `--target linux` | il sistema dell'eseguibile; di default quello su cui gira `cromo` |
+| `--target windows`, `--target linux`, `--target linux-arm64` | il sistema dell'eseguibile, anche Linux su ARM64; di default quello su cui gira `cromo` |
 | `-O0` … `-O3` | il livello di ottimizzazione; il default è `-O2` |
 | `--emit-ir` | stampa l'LLVM IR del programma invece di scrivere l'eseguibile |
 
