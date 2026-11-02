@@ -1,0 +1,65 @@
+// The conditional expression (D422): its type, the branch chosen, strings and
+// structs made in place, temporaries that end with their branch.
+// expect-output: 2 1 -1
+// expect-output: small medium large
+// expect-output: true false
+// expect-output: 7 hello 0
+// expect-output: left
+// expect-output: 3 4
+// expect-output: 11 2.5
+// expect-output: [a, b] []
+// expect-output: chosen 6
+// expect-output: loop 200000 50000
+struct Point {
+    i64 x
+    i64 y
+}
+
+string size(i64 n) {
+    ret n < 10 ? "small" : n < 100 ? "medium" : "large"
+}
+
+string word(string text) {
+    ret text.copy()
+}
+
+i64 loud(string name, i64 value) {
+    println("{}", name)
+    ret value
+}
+
+i32 main() {
+    bool unequal = true
+    i32 gap = unequal ? 2 : 1
+    i64 sign = !unequal ? 1 : -1
+    println("{} {} {}", gap, unequal ? i32(1) : 0, sign)
+    println("{} {} {}", size(3), size(42), size(1000))
+    bool value = true
+    println("{} {}", value ? "true" : "false", !value ? "true" : "false")
+    string text = gap > 1 ? word("hello") : word("bye")
+    println("{} {} {}", text.len() + 2, text, gap > 5 ? word("long").len() : 0)
+    i64 picked = gap > 1 ? loud("left", 1) : loud("right", 2)
+    Point p
+    p.x = 3
+    p.y = 4
+    Point q = gap > 1 ? p : Point()
+    println("{} {}", q.x, q.y)
+    i32 total = gap > 1 ?
+        11 :
+        12
+    f64 ratio = gap == 0 ? 1.0 : 2.5
+    println("{} {}", total, ratio)
+    list<string> letters = gap > 1 ? ["a", "b"] : ["c"]
+    list<string> none = gap > 5 ? ["x"] : list<string>()
+    println("[{}] [{}]", join(letters, ", "), join(none, ", "))
+    println("chosen {}", picked + i64(gap) * 2 + (gap > 1 ? 1 : 0))
+    i64 bytes = 0
+    i64 long = 0
+    for (i64 i = 0; i < 100000; i++) {
+        string made = i % 2 == 0 ? word("ab") + "c" : format("{}", i % 10)
+        bytes += made.len()
+        long += (i % 2 == 0 ? word("xyz") : word("q")).len() == 3 ? 1 : 0
+    }
+    println("loop {} {}", bytes, long)
+    ret 0
+}

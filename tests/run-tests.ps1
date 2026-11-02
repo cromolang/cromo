@@ -22,6 +22,7 @@
 #                                  is also linux-arm64, or only linux-arm64 (D406)
 #   // program-arg: text           an argument of the program (repeatable, exact)
 #   // program-env: NAME=value     a variable of the environment of the program
+#   // program-input: text         a line of the standard input of the program (repeatable)
 #                                  (repeatable); {dir} is the folder of the test,
 #                                  {cromo} the cromo of the tests, {port} a free port
 #   // cromo-command: run          compiles and runs with cromo run, instead of build;
@@ -93,7 +94,7 @@ function ConvertTo-LinuxPath([string]$Path) {
 # through env, because WSL does not pass those of Windows. A program for ARM64
 # runs with qemu, called directly: the registration of qemu in the kernel
 # (binfmt_misc) does not last after WSL starts again.
-function Invoke-Linux([string]$Path, [string[]]$Arguments, [hashtable]$Environment = @{}, [switch]$Arm64) {
+function Invoke-Linux([string]$Path, [string[]]$Arguments, [hashtable]$Environment = @{}, [switch]$Arm64, [byte[]]$StandardInput = $null) {
     $options = @()
     if ($Distro) { $options += @('-d', $Distro) }
     $variables = @()
@@ -102,7 +103,7 @@ function Invoke-Linux([string]$Path, [string[]]$Arguments, [hashtable]$Environme
     }
     $emulator = @()
     if ($Arm64) { $emulator = @('qemu-aarch64-static') }
-    Invoke-Program 'wsl.exe' ($options + @('-e') + $variables + $emulator + @((ConvertTo-LinuxPath $Path)) + $Arguments)
+    Invoke-Program 'wsl.exe' ($options + @('-e') + $variables + $emulator + @((ConvertTo-LinuxPath $Path)) + $Arguments) $StandardInput
 }
 
 # Writes an argument in a command line so that the program reads it back as it
@@ -175,6 +176,7 @@ foreach ($test in Get-ChildItem $PSScriptRoot -Recurse -Filter *.cro | Sort-Obje
     $only = ''
     $programArgs = @()
     $programEnv = @{}
+    $programInput = $null
     $command = 'build'
     foreach ($line in Get-Content $test.FullName -Encoding UTF8) {
         if ($line -match '^\s*//\s*cromo-flags:\s*(.+?)\s*$') { $compileFlags += ($matches[1] -split '\s+') }
@@ -187,6 +189,7 @@ foreach ($test in Get-ChildItem $PSScriptRoot -Recurse -Filter *.cro | Sort-Obje
         elseif ($line -match '^\s*//\s*target:\s*([\w-]+)\s*$') { $only = $matches[1] }
         elseif ($line -match '^\s*//\s*program-arg:\s?(.*)$') { $programArgs += $matches[1] }
         elseif ($line -match '^\s*//\s*program-env:\s*([^=\s]+)=(.*?)\s*$') { $programEnv[$matches[1]] = $matches[2] }
+        elseif ($line -match '^\s*//\s*program-input:\s?(.*)$') { $programInput += [Text.Encoding]::UTF8.GetBytes($matches[1] + "`n") }
         elseif ($line -match '^\s*//\s*cromo-command:\s*(\w+)\s*$') { $command = $matches[1] }
     }
     $target = Get-Target $compileFlags
@@ -236,11 +239,11 @@ foreach ($test in Get-ChildItem $PSScriptRoot -Recurse -Filter *.cro | Sort-Obje
         if ($command -ne 'build') {
             $run = $compile
         } elseif ($linux) {
-            $run = Invoke-Linux $exe $programArgs $programEnv -Arm64:($target -eq 'linux-arm64')
+            $run = Invoke-Linux $exe $programArgs $programEnv -Arm64:($target -eq 'linux-arm64') -StandardInput $programInput
             # Linux keeps only the lowest byte of the exit code (D145).
             if ($null -ne $expectExit) { $expectExit = $expectExit -band 0xFF }
         } else {
-            $run = Invoke-Program $exe $programArgs $null $programEnv
+            $run = Invoke-Program $exe $programArgs $programInput $programEnv
         }
         if ($null -ne $expectExit -and $run.Code -ne $expectExit) {
             $problems += "exit code $($run.Code), expected $expectExit"

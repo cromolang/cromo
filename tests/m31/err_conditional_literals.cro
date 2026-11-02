@@ -1,0 +1,7 @@
+// Two literals without a type around them (D422, D55).
+// expect-error: the type of this expression cannot be deduced
+i32 main() {
+    bool b = true
+    println("{}", b ? 1 : 2)
+    ret 0
+}

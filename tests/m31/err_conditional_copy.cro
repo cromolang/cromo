@@ -1,0 +1,8 @@
+// A branch of a string gives a new value (P28, D23).
+// expect-error: values of type string are not copied implicitly (D23)
+i32 main() {
+    string a = "a"
+    string b = "b"
+    string c = a.len() > 0 ? a : b.copy()
+    ret 0
+}

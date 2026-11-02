@@ -92,6 +92,20 @@ argument 2: beta
 
 `args[0]` is the name of the program, as in C.
 
+`os.readLine(ref line)` reads the standard input a line at a time, and is false at the end; `os.readInput()` reads all of it, as a filter does:
+
+```cromo ignore
+import std.os
+
+i32 main() {
+    string line
+    for (os.readLine(ref line)) {
+        println("> {}", line)
+    }
+    ret 0
+}
+```
+
 ## The command line
 
 `std.cmdline` reads the options of a program from those arguments. Each option has a long name, a short one of one letter (`' '` when it has none) and a description; an option with a value also says whether it is required, and its default:

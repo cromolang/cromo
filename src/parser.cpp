@@ -1195,7 +1195,20 @@ private:
 
     // ---- Expressions, from the lowest precedence ----
 
-    ExprPtr parseExpression() { return parseOr(); }
+    ExprPtr parseExpression() { return parseConditional(); }
+
+    // conditional := or ['?' expression ':' conditional]   (D422)
+    ExprPtr parseConditional() {
+        ExprPtr condition = parseOr();
+        if (!condition || !check(TokenKind::Question)) return condition;
+        SourceLocation loc = advance().loc;
+        ExprPtr whenTrue = parseExpression();
+        if (!whenTrue) return nullptr;
+        if (!expect(TokenKind::Colon, "between the two values of '?'")) return nullptr;
+        ExprPtr whenFalse = parseConditional();
+        if (!whenFalse) return nullptr;
+        return std::make_unique<ConditionalExpr>(loc, std::move(condition), std::move(whenTrue), std::move(whenFalse));
+    }
 
     ExprPtr binary(BinaryOp op, SourceLocation loc, ExprPtr lhs, ExprPtr rhs) {
         if (!lhs || !rhs) return nullptr;

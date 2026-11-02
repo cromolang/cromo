@@ -5,10 +5,76 @@
 //   bool hasEnv(string name)  whether the variable is set
 //   i64 processId()
 //   string currentFolder()
+// and readSome, which reads the standard input for readInput and readLine (D420).
 import unsafe
 
 // Ends the program with `code`, after writing what was printed. The objects still
 // alive are not destroyed, as with exit() of C.
 public void exit(i32 code) {
     exitProcess(code)
+}
+
+// ---- The standard input (D420) ----
+//
+// A buffer that readInput and readLine share, which each system fills with
+// readSome. For one thread at a time.
+
+u8[4096] input
+i64 inputStart
+i64 inputEnd
+bool inputEnded
+
+// Fills the buffer when it is empty; false at the end of the input.
+bool fillInput() {
+    if (inputStart < inputEnd) {
+        ret true
+    }
+    if (inputEnded) {
+        ret false
+    }
+    inputStart = 0
+    inputEnd = readSome(variableAddress(input), 4096)
+    if (inputEnd <= 0) {
+        inputEnd = 0
+        inputEnded = true
+        ret false
+    }
+    ret true
+}
+
+// All the standard input that is left, as a string: an exception if it is not
+// UTF-8.
+public string readInput() {
+    list<u8> bytes
+    for (fillInput()) {
+        for (i64 i = inputStart; i < inputEnd; i++) {
+            bytes.add(input[i])
+        }
+        inputStart = inputEnd
+    }
+    ret string(bytes)
+}
+
+// The next line of the standard input, without its end, \n or \r\n; false at the end,
+// with `line` empty.
+public bool readLine(ref string line) {
+    list<u8> bytes
+    bool any = false
+    for (fillInput()) {
+        any = true
+        for (inputStart < inputEnd) {
+            u8 byte = input[inputStart]
+            inputStart++
+            if (byte == '\n') {
+                if (bytes.len() > 0 && bytes[bytes.len() - 1] == '\r') {
+                    bytes.remove(bytes.len() - 1)
+                }
+                line = string(bytes)
+                ret true
+            }
+            bytes.add(byte)
+        }
+    }
+    line = string(bytes)
+    ret any
 }

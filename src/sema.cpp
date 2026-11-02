@@ -119,6 +119,10 @@ bool isUntypedLiteral(const Expr& expr) {
         if (binary.op == BinaryOp::Shl || binary.op == BinaryOp::Shr) return isUntypedLiteral(*binary.lhs);
         return isArithmetic(binary.op) && isUntypedLiteral(*binary.lhs) && isUntypedLiteral(*binary.rhs);
     }
+    case ExprKind::Conditional: {  // `c ? 1 : 0` takes the type around it, as a literal (D422)
+        const auto& node = static_cast<const ConditionalExpr&>(expr);
+        return isUntypedLiteral(*node.whenTrue) && isUntypedLiteral(*node.whenFalse);
+    }
     default: return false;
     }
 }
@@ -144,7 +148,7 @@ bool isTemporary(const Expr& expr) {
     return expr.kind == ExprKind::Construct || expr.kind == ExprKind::Call || expr.kind == ExprKind::MethodCall ||
            expr.kind == ExprKind::StringLiteral || expr.kind == ExprKind::EnumCase || expr.kind == ExprKind::Lambda ||
            expr.kind == ExprKind::CallValue || expr.kind == ExprKind::Print ||  // format gives a new string
-           expr.kind == ExprKind::ListLiteral ||
+           expr.kind == ExprKind::ListLiteral || expr.kind == ExprKind::Conditional ||  // D422, P28
            (expr.kind == ExprKind::Conversion && expr.type.isInterface());  // a new value of an interface (D357)
 }
 
@@ -287,6 +291,7 @@ public:
         listDecl_ = library.structs.count("list") ? library.structs["list"] : nullptr;
         mapDecl_ = library.structs.count("map") ? library.structs["map"] : nullptr;
         keyInterface_ = library.interfaces.count("Key") ? library.interfaces["Key"] : nullptr;
+        orderedInterface_ = library.interfaces.count("Ordered") ? library.interfaces["Ordered"] : nullptr;
         exceptionDecl_ = library.interfaces.count("Exception") ? library.interfaces["Exception"] : nullptr;
         debugInterface_ = library.interfaces.count("Debug") ? library.interfaces["Debug"] : nullptr;
         for (InterfaceDecl& decl : module_.interfaces) {  // only when the program imports std.json (D251)
@@ -764,6 +769,7 @@ private:
     // Whether a type implements an interface, as a constraint requires (D52, D87).
     bool satisfies(Type type, const InterfaceDecl* iface) {
         if (iface == keyInterface_ && (type.isNumeric() || type.isBool())) return true;  // D198
+        if (iface == orderedInterface_ && type.isNumeric()) return true;                  // D421
         if (iface == dataInterface_ && !type.isParam() && jsonProblem(type).empty()) return true;  // D251
         if (iface == debugInterface_ && !type.isParam() && debugProblem(type).empty()) return true;  // D319
         std::vector<const InterfaceDecl*> list;
@@ -2962,6 +2968,7 @@ private:
         case ExprKind::Name: return checkName(expr);
         case ExprKind::Unary: return checkUnary(expr, expected);
         case ExprKind::Binary: return checkBinary(expr, expected);
+        case ExprKind::Conditional: return checkConditional(static_cast<ConditionalExpr&>(*expr), expected);
         case ExprKind::Call: return checkCall(expr);
         case ExprKind::Field: return checkField(expr);
         case ExprKind::MethodCall: return checkMethodCall(expr);
@@ -3385,6 +3392,7 @@ private:
         if ((object.isNumeric() || object.isBool()) && (call.method == "hash" || call.method == "equals")) {
             return checkKeyMethod(expr, object);
         }
+        if (object.isNumeric() && call.method == "compare") return checkKeyMethod(expr, object);  // D421
         if (isString(object) && call.method == "cstring") return checkCString(expr);
         if (!object.isStruct()) {
             diag_->error(call.loc, "a " + object.name() + " has no methods");
@@ -3573,6 +3581,14 @@ private:
             return Type::intType(64, false);
         }
         if (!coerce(call.args[0], object)) return Type::error();
+        if (call.method == "compare") {  // D421: -1, 0 or 1, made by the compiler
+            auto compare = std::make_unique<CallExpr>(loc, "compare");
+            compare->intrinsic = Intrinsic::CompareNumbers;
+            compare->args.push_back(std::move(call.object));
+            compare->args.push_back(std::move(call.args[0]));
+            expr = std::move(compare);
+            return Type::intType(32, true);
+        }
         auto equal = std::make_unique<BinaryExpr>(loc, BinaryOp::Eq, std::move(call.object), std::move(call.args[0]));
         equal->operandType = object;
         expr = std::move(equal);
@@ -4540,6 +4556,7 @@ private:
             result = Type::intType(64, false);
             break;
         case Intrinsic::HashNumber:
+        case Intrinsic::CompareNumbers:
         case Intrinsic::FloatBits:
         case Intrinsic::FloatFromBits:
         case Intrinsic::VariableAddress: break;
@@ -4648,6 +4665,61 @@ private:
 
     // Finds the common type of the two operands, giving literals the type of the
     // other side (D55) and widening without loss (D33, D56).
+    // `c ? a : b` (D422): a bool, and two branches of the same type, the one of the
+    // context or of the branch that is not a literal. A branch that owns resources
+    // gives a new value, without `move` (P28).
+    Type checkConditional(ConditionalExpr& node, std::optional<Type> expected) {
+        checkCondition(node.condition);
+        for (ExprPtr* branch : {&node.whenTrue, &node.whenFalse}) {
+            if ((*branch)->kind == ExprKind::Move) {
+                diag_->error((*branch)->loc, "'move' is not written in a branch of '?' for now: the moves are followed "
+                                             "along the statements (P28)");
+                return Type::error();
+            }
+        }
+        Type type = Type::error();
+        bool trueLiteral = isUntypedLiteral(*node.whenTrue);
+        bool falseLiteral = isUntypedLiteral(*node.whenFalse);
+        if (expected && !expected->isError()) {
+            bool ok = coerce(node.whenTrue, *expected);
+            ok = coerce(node.whenFalse, *expected) && ok;
+            if (!ok) return Type::error();
+            type = *expected;
+        } else if (trueLiteral && falseLiteral) {
+            diag_->error(node.loc, "the type of this expression cannot be deduced: write the type of one of the values, "
+                                   "for example i32(5) (D55)");
+            return Type::error();
+        } else if (trueLiteral || falseLiteral) {
+            ExprPtr& typed = trueLiteral ? node.whenFalse : node.whenTrue;
+            ExprPtr& literal = trueLiteral ? node.whenTrue : node.whenFalse;
+            type = checkExpr(typed, std::nullopt);
+            if (type.isError() || !coerce(literal, type)) return Type::error();
+        } else {
+            Type first = checkExpr(node.whenTrue, std::nullopt);
+            Type second = checkExpr(node.whenFalse, std::nullopt);
+            if (first.isError() || second.isError()) return Type::error();
+            if (first == second) {
+                type = first;
+            } else if (convertsLosslessly(first, second)) {
+                coerce(node.whenTrue, second);
+                type = second;
+            } else if (convertsLosslessly(second, first)) {
+                coerce(node.whenFalse, first);
+                type = first;
+            } else {
+                diag_->error(node.loc, "the two values of '?' have different types, " + first.name() + " and " +
+                                           second.name() + " (D422)");
+                return Type::error();
+            }
+        }
+        if (type.isInterface() || type.isFunction()) {
+            diag_->error(node.loc, "a '?' with values of " + type.name() + " is not possible yet: write an if (P28)");
+            return Type::error();
+        }
+        if (!checkNotCopied(*node.whenTrue, type) || !checkNotCopied(*node.whenFalse, type)) return Type::error();
+        return type;
+    }
+
     Type unify(BinaryExpr& binary, std::optional<Type> hint) {
         bool leftLiteral = isUntypedLiteral(*binary.lhs);
         bool rightLiteral = isUntypedLiteral(*binary.rhs);
@@ -5636,6 +5708,7 @@ private:
     Module& module_;
     StructDecl* mapDecl_ = nullptr;
     const InterfaceDecl* keyInterface_ = nullptr;
+    const InterfaceDecl* orderedInterface_ = nullptr;
     bool insertTarget_ = false;  // the next Index checked is the target of an assignment
     Diagnostics* diag_;
     bool requireMain_;

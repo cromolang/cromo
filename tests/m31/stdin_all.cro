@@ -1,0 +1,18 @@
+// All the standard input (D420), also after a line read first: one buffer.
+// program-input: header
+// program-input: a b
+// program-input: c
+// expect-output: header
+// expect-output: 2 lines, 6 bytes
+// expect-output: empty after: true
+import std.os
+
+i32 main() {
+    string header
+    os.readLine(ref header)
+    println("{}", header)
+    string rest = os.readInput()
+    println("{} lines, {} bytes", rest.split("\n").len() - 1, rest.len())
+    println("empty after: {}", os.readInput().len() == 0)
+    ret 0
+}

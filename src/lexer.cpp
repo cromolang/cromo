@@ -34,6 +34,7 @@ const std::unordered_map<std::string, TokenKind>& keywords() {
 bool continuesOnNextLine(TokenKind kind) {
     switch (kind) {
     case TokenKind::LParen: case TokenKind::LBracket: case TokenKind::Comma: case TokenKind::Dot:
+    case TokenKind::Question: case TokenKind::Colon:  // D422
     case TokenKind::Plus: case TokenKind::Minus: case TokenKind::Star: case TokenKind::Slash:
     case TokenKind::Percent: case TokenKind::Assign: case TokenKind::PlusAssign:
     case TokenKind::MinusAssign: case TokenKind::StarAssign: case TokenKind::SlashAssign:
@@ -388,6 +389,7 @@ private:
         case ':': one(TokenKind::Colon); return;
         case ';': one(TokenKind::Semicolon); return;
         case '~': one(TokenKind::Tilde); return;
+        case '?': one(TokenKind::Question); return;
         case '+':
             if (next == '+') two(TokenKind::PlusPlus);
             else if (next == '=') two(TokenKind::PlusAssign);
@@ -472,6 +474,7 @@ std::string describe(TokenKind kind) {
     case TokenKind::Colon: return "':'";
     case TokenKind::Semicolon: return "';'";
     case TokenKind::Tilde: return "'~'";
+    case TokenKind::Question: return "'?'";
     case TokenKind::Plus: return "'+'";
     case TokenKind::Minus: return "'-'";
     case TokenKind::Star: return "'*'";

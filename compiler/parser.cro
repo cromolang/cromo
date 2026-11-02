@@ -1689,7 +1689,29 @@ struct Parser {
     // ---- The expressions, from the lowest precedence ----
 
     i32 parseExpression() {
-        ret parseOr()
+        ret parseConditional()
+    }
+
+    // conditional := or ['?' expression ':' conditional]   (D422)
+    i32 parseConditional() {
+        i32 condition = parseOr()
+        if (condition < 0 || !check(Kind.Question)) {
+            ret condition
+        }
+        Expr node = exprAt(ExprKind.Conditional, advance())
+        node.left = condition
+        node.right = parseExpression()
+        if (node.right < 0) {
+            ret -1
+        }
+        if (!expect(Kind.Colon, "between the two values of '?'")) {
+            ret -1
+        }
+        node.other = parseConditional()
+        if (node.other < 0) {
+            ret -1
+        }
+        ret addExpr(move node)
     }
 
     i32 binary(BinaryOp op, i64 token, i32 lhs, i32 rhs) {

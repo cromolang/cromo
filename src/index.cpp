@@ -268,6 +268,13 @@ private:
             expr(binary.rhs.get());
             break;
         }
+        case ExprKind::Conditional: {
+            const auto& conditional = static_cast<const ConditionalExpr&>(*node);
+            expr(conditional.condition.get());
+            expr(conditional.whenTrue.get());
+            expr(conditional.whenFalse.get());
+            break;
+        }
         case ExprKind::Call: {
             const auto& call = static_cast<const CallExpr&>(*node);
             if (call.function) add(call.loc, call.callee, signatureOf(*call.function), call.function->loc);

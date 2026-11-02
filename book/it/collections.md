@@ -53,6 +53,26 @@ i32 main() {
 ["#2", "#4", "#6"]
 ```
 
+### Ordinare
+
+`sort(ref items)` ordina una lista di numeri, di stringhe, o di una struct che implementa `Ordered` con il suo metodo `compare`; `sortBy` prende una funzione che dice se un elemento viene prima di un altro. Entrambe lasciano nel loro ordine gli elementi uguali, come qui `kiwi` e `pear`:
+
+```cromo
+i32 main() {
+    list<string> words = ["pear", "fig", "banana", "kiwi"]
+    sort(ref words)
+    println("{}", join(words, " "))
+    sortBy(ref words, [](string a, string b) bool { ret a.len() < b.len() })
+    println("{}", join(words, " "))
+    ret 0
+}
+```
+
+```output
+banana fig kiwi pear
+fig kiwi pear banana
+```
+
 ## Array di dimensione fissa
 
 Un array ha una dimensione fissata nel suo tipo, e vive dove si trova la sua variabile, senza memoria sullo heap:

@@ -2032,6 +2032,9 @@ private:
             return;
         }
         switch (expr.kind) {
+        case ExprKind::Conditional:
+            conditionalInto(static_cast<const ConditionalExpr&>(expr), dest);
+            return;
         case ExprKind::CallValue:
             callValue(static_cast<const CallValueExpr&>(expr), dest);
             return;
@@ -2638,6 +2641,25 @@ private:
             inst(result + " = call i64 @cromo_hash_bits(i64 " + bits + ")");
             return {result, Type::intType(64, false)};
         }
+        case Intrinsic::CompareNumbers: {  // D421: two comparisons and two selects; NaN gives 0
+            Value first = generateExpr(*call.args[0]);
+            Value second = generateExpr(*call.args[1]);
+            std::string type = llvmType(first.type);
+            std::string less = temp();
+            std::string greater = temp();
+            if (first.type.isFloat()) {
+                inst(less + " = fcmp olt " + type + " " + first.ref + ", " + second.ref);
+                inst(greater + " = fcmp ogt " + type + " " + first.ref + ", " + second.ref);
+            } else {
+                std::string sign = first.type.isSigned ? "s" : "u";
+                inst(less + " = icmp " + sign + "lt " + type + " " + first.ref + ", " + second.ref);
+                inst(greater + " = icmp " + sign + "gt " + type + " " + first.ref + ", " + second.ref);
+            }
+            std::string above = temp();
+            inst(above + " = select i1 " + greater + ", i32 1, i32 0");
+            inst(result + " = select i1 " + less + ", i32 -1, i32 " + above);
+            return {result, Type::intType(32, true)};
+        }
         case Intrinsic::VariableAddress:  // D394: the module variable is a global of the program
             return {addressOf(*call.args[0]), Type::addrType()};
         case Intrinsic::FloatBits: {  // D397
@@ -2802,6 +2824,9 @@ private:
             return generateUnary(static_cast<const UnaryExpr&>(expr));
         case ExprKind::Binary:
             return generateBinary(static_cast<const BinaryExpr&>(expr));
+        case ExprKind::Conditional:
+            if (expr.type.isAggregate()) return load(addressOf(expr), expr.type);  // made in a slot
+            return conditionalValue(static_cast<const ConditionalExpr&>(expr));
         case ExprKind::Call: {
             if (expr.type.isAggregate()) return load(addressOf(expr), expr.type);
             const auto& call = static_cast<const CallExpr&>(expr);
@@ -2914,6 +2939,46 @@ private:
         std::string result = temp();
         inst(result + " = " + predicate + " " + llvmType(type) + " " + lhs.ref + ", " + rhs.ref);
         return {result, Type::boolType()};
+    }
+
+    // `c ? a : b` (D422): only the branch chosen is computed, and its temporaries end
+    // with it, as those of the right side of && and ||.
+    Value conditionalValue(const ConditionalExpr& node) {
+        Value test = generateCondition(*node.condition);
+        std::string yes = label("cond.true");
+        std::string no = label("cond.false");
+        std::string end = label("cond.end");
+        term("br i1 " + test.ref + ", label %" + yes + ", label %" + no);
+        block(yes);
+        Value first = generateCondition(*node.whenTrue);
+        std::string firstBlock = current_;
+        term("br label %" + end);
+        block(no);
+        Value second = generateCondition(*node.whenFalse);
+        std::string secondBlock = current_;
+        term("br label %" + end);
+        block(end);
+        std::string result = temp();
+        inst(result + " = phi " + llvmType(node.type) + " [ " + first.ref + ", %" + firstBlock + " ], [ " + second.ref +
+             ", %" + secondBlock + " ]");
+        return {result, node.type};
+    }
+
+    // A string or a struct of `?:`: each branch makes its value in `dest` (P28).
+    void conditionalInto(const ConditionalExpr& node, const std::string& dest) {
+        Value test = generateCondition(*node.condition);
+        std::string yes = label("cond.true");
+        std::string no = label("cond.false");
+        std::string end = label("cond.end");
+        term("br i1 " + test.ref + ", label %" + yes + ", label %" + no);
+        for (const Expr* branch : {node.whenTrue.get(), node.whenFalse.get()}) {
+            block(branch == node.whenTrue.get() ? yes : no);
+            size_t mark = temporaries_.size();
+            generateStructInto(*branch, dest);
+            dropTemporaries(mark);
+            term("br label %" + end);
+        }
+        block(end);
     }
 
     // && and || evaluate the right side only when needed (D59). The temporaries

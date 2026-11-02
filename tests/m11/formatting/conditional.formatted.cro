@@ -1,0 +1,8 @@
+i32 main() {
+    bool b = true
+    i32 x = b ? 1 : -2
+    i32 y = b ?
+        3 :
+        4
+    ret x + y
+}

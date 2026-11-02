@@ -25,7 +25,7 @@ enum class TokenKind {
 
     // Punctuation and operators
     LParen, RParen, LBrace, RBrace, LBracket, RBracket,
-    Comma, Dot, Colon, Semicolon, Tilde,
+    Comma, Dot, Colon, Semicolon, Tilde, Question,
     Plus, Minus, Star, Slash, Percent,
     PlusPlus, MinusMinus,
     Assign, PlusAssign, MinusAssign, StarAssign, SlashAssign, PercentAssign,

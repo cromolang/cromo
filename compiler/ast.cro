@@ -41,6 +41,7 @@ public enum ExprKind {
     Move
     Lambda
     ListLiteral
+    Conditional
 }
 
 public enum UnaryOp {
@@ -94,7 +95,8 @@ public struct Expr {
     public UnaryOp unary
     public BinaryOp binary
     public i32 left = -1    // the operand, the object, the left side, the function value called
-    public i32 right = -1   // the right side, the index
+    public i32 right = -1   // the right side, the index, the value of ?: when true
+    public i32 other = -1   // the value of ?: when false (D422)
     public list<i32> items  // the arguments, the elements of a list
     public list<i32> typeArgs
     public i32 type = -1      // of a TypeRef

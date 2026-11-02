@@ -199,8 +199,24 @@ Gli operatori sono quelli del C, con una differenza nella precedenza: gli operat
 | `==` `!=` `<` `<=` `>` `>=` | confronti |
 | `&&` | and logico |
 | `\|\|` | or logico |
+| `? :` | condizionale |
 
 `!` nega un `bool` e inverte i bit di un intero. `i++` e `i--` esistono, ma solo come istruzioni a sé stanti, mai dentro un'espressione: `a[i++]` non è Cromo.
+
+`c ? a : b` vale `a` quando `c` è vera, `b` altrimenti, come in C; viene calcolato solo il valore scelto, e i due hanno lo stesso tipo:
+
+```cromo
+i32 main() {
+    i64 n = 7
+    string kind = n % 2 == 0 ? "even" : "odd"
+    println("{} is {}", n, kind)
+    ret 0
+}
+```
+
+```output
+7 is odd
+```
 
 ## Funzioni
 

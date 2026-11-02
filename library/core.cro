@@ -76,6 +76,61 @@ public struct list<T> {
         capacity = grown
     }
 
+    // A merge sort from the bottom (D421): runs of 1, 2, 4... elements merged into a
+    // buffer, which goes back into the list at the end of each pass. Until then the
+    // list keeps all its elements, so an exception of `less` loses none.
+    void sortWith(func(T, T) bool less) {
+        if (length < 2) {
+            ret
+        }
+        i64 size = sizeOf<T>()
+        addr buffer = alloc(length * size)
+        try {
+            for (i64 width = 1; width < length; width *= 2) {
+                for (i64 low = 0; low < length; low += 2 * width) {
+                    i64 middle = low + width
+                    if (middle > length) {
+                        middle = length
+                    }
+                    i64 high = middle + width
+                    if (high > length) {
+                        high = length
+                    }
+                    i64 i = low
+                    i64 j = middle
+                    for (i64 k = low; k < high; k++) {
+                        i64 from = i
+                        if (j < high && (i >= middle || lessAt(less, j, i))) {  // the right one only when before: stable
+                            from = j
+                            j++
+                        } else {
+                            i++
+                        }
+                        copyMemory(offset(buffer, k * size), addressOf(from), size)
+                    }
+                }
+                copyMemory(data, buffer, length * size)
+            }
+        } finally {
+            free(buffer)
+        }
+    }
+
+    // Whether the element at `i` comes before the one at `j`: both are lent to less,
+    // and given back also if it throws.
+    bool lessAt(func(T, T) bool less, i64 i, i64 j) {
+        T first = take<T>(addressOf(i))
+        T second = take<T>(addressOf(j))
+        bool result = false
+        try {
+            result = less(first, second)
+        } finally {
+            put<T>(addressOf(i), move first)
+            put<T>(addressOf(j), move second)
+        }
+        ret result
+    }
+
     public list<T> copy() const {
         list<T> result
         result.reserve(length)
@@ -126,7 +181,7 @@ public struct list<T> {
 // UTF-8 text that owns its bytes (D10). A string literal has capacity 0: its
 // bytes belong to the program, and they are copied the first time the string
 // changes (D100).
-public struct string : Key {
+public struct string : Key, Ordered {
     addr data
     i64 length
     i64 capacity
@@ -528,6 +583,24 @@ struct CString {
 public interface Key {
     u64 hash() const
     bool equals(Self other) const
+}
+
+// The order of two values (D421): negative when this comes first, zero when they are
+// equal, positive when it comes after. The numbers and string have it by themselves.
+public interface Ordered {
+    i32 compare(Self other) const
+}
+
+// Sorts a list in the order of compare() (D421): stable, a merge sort.
+public void sort<T : Ordered>(ref list<T> items) {
+    items.sortWith([](T a, T b) bool { ret a.compare(b) < 0 })
+}
+
+// Sorts a list with `less`, which says whether the first value comes before the
+// second (D421): stable, a merge sort. When less throws, the list keeps all its
+// elements.
+public void sortBy<T>(ref list<T> items, func(T, T) bool less) {
+    items.sortWith(less)
 }
 
 // A hash table (D197, D198) with open addressing. A slot keeps together its

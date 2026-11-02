@@ -291,6 +291,7 @@ if (x > 0) {
 
 - Braces are **mandatory**. The `{` can be on the same line or on the next line.
 - Conditions must be `bool`: `if (n)` is an error, you write `if (n != 0)`.
+- **The conditional expression** `c ? a : b` (D422), as in C: below `||`, grouped from the right; only the branch chosen is computed, and the two have the same type. A branch of a `string` or of another type that owns resources gives a new value, without `move` (P28).
 
 ### Loops
 
@@ -439,7 +440,7 @@ println("{} {:>10} {:?}", p, p, p)   // (1, 2)     (1, 2) Point { x: 1, y: 2 }
 
 There is no inheritance: polymorphism goes through interfaces. The syntax of interfaces (D49) and of generic constraints (D52) is decided. Inside an interface, `Self` is the type that implements it (D84).
 
-A method of a struct can have type parameters of its own, written and deduced as those of a function: `numbers.map<string>(f)`, `counter.pick(a, b)`. A method of an interface cannot, since its table has one entry for each method (D92). `list<T>` has `map<U>(func(T) U f)` and `filter(func(T) bool keep)`.
+A method of a struct can have type parameters of its own, written and deduced as those of a function: `numbers.map<string>(f)`, `counter.pick(a, b)`. A method of an interface cannot, since its table has one entry for each method (D92). `list<T>` has `map<U>(func(T) U f)` and `filter(func(T) bool keep)`. `sort(ref items)` sorts a list whose elements are `Ordered`, with `i32 compare(Self other) const`, as the numbers and `string` are by themselves, and `sortBy(ref items, less)` any list; both are stable (D421).
 
 ```cromo
 interface Shape {
@@ -692,6 +693,7 @@ i32 main(list<string> args) {
 }
 ```
 
+- `os.readLine(ref line)` reads a line of the standard input, without its end, and is false at the end; `os.readInput()` reads all of it (D420).
 - `std.cmdline` reads the options of the program (D415): `flag`, `addInt`, `addFloat` and `addString` with the long name, the short one (`' '` without it), the description and, for a value, whether it is required and its default; `choices` for the values allowed, `footer` for the usage line. After `parse(args)`, `exists`, `getInt`, `getFloat`, `getString` and `rest`. The forms are `--name value`, `--name=value`, `-n value`, `-nvalue` and the flags grouped, `-vq`; `--` ends the options (P26).
 - With `-h` or `--help`, `parse` prints the help (P27) and ends the program with 0; with a wrong command line, it prints the error and the help on the standard error and ends with 2 (D416). A wrong use of the module, as `getInt` of an option of text, is a panic.
 

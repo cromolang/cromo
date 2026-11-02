@@ -1,0 +1,81 @@
+// sort and sortBy (D421): numbers, strings, floats, a struct with compare(), and
+// the stable order of sortBy.
+// expect-output: 1 2 3 5 8 9
+// expect-output: -7 0 3 255
+// expect-output: apple banana cherry città
+// expect-output: -2.5 0.1 1 3.5
+// expect-output: 1 -1 0 0
+// expect-output: ada 1, bob 2, eve 3
+// expect-output: b 1, d 1, a 2, c 2, e 3
+// expect-output: 0 1
+struct Version : Ordered {
+    string name
+    i32 number
+
+    i32 compare(Version other) const {
+        ret number.compare(other.number)
+    }
+}
+
+struct Pair {
+    string key
+    i64 rank
+}
+
+Version version(string name, i32 number) {
+    Version v
+    v.name = name.copy()
+    v.number = number
+    ret v
+}
+
+i32 main() {
+    list<i64> numbers = [5, 3, 9, 1, 8, 2]
+    sort(ref numbers)
+    println("{} {} {} {} {} {}", numbers[0], numbers[1], numbers[2], numbers[3], numbers[4], numbers[5])
+
+    list<i32> small = [255, -7, 3, 0]
+    sort(ref small)
+    println("{} {} {} {}", small[0], small[1], small[2], small[3])
+
+    list<string> words = ["cherry", "città", "apple", "banana"]
+    sort(ref words)
+    println("{}", join(words, " "))
+
+    list<f64> reals = [3.5, -2.5, 1.0, 0.1]
+    sort(ref reals)
+    println("{} {} {} {}", reals[0], reals[1], reals[2], reals[3])
+
+    f64 nan = f64.fromBits(0x7FF8000000000000)
+    println("{} {} {} {}", u8(9).compare(2), i64(-4).compare(4), nan.compare(1.0), f64(2.5).compare(2.5))
+
+    list<Version> versions = [version("eve", 3), version("ada", 1), version("bob", 2)]
+    sort(ref versions)
+    println("{} {}, {} {}, {} {}", versions[0].name, versions[0].number, versions[1].name, versions[1].number,
+            versions[2].name, versions[2].number)
+
+    list<Pair> pairs
+    for (string key in ["a", "b", "c", "d", "e"]) {
+        Pair pair
+        pair.key = key.copy()
+        pairs.add(move pair)
+    }
+    pairs[0].rank = 2
+    pairs[1].rank = 1
+    pairs[2].rank = 2
+    pairs[3].rank = 1
+    pairs[4].rank = 3
+    sortBy(ref pairs, [](Pair a, Pair b) bool { ret a.rank < b.rank })
+    list<string> shown
+    for (Pair pair in pairs) {
+        shown.add(format("{} {}", pair.key, pair.rank))
+    }
+    println("{}", join(shown, ", "))
+
+    list<i64> none
+    sort(ref none)
+    list<i64> one = [1]
+    sort(ref one)
+    println("{} {}", none.len(), one[0])
+    ret 0
+}

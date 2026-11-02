@@ -73,6 +73,7 @@ struct Variable {
 enum class ExprKind {
     IntLiteral, FloatLiteral, BoolLiteral, StringLiteral, Name, Unary, Binary, Call, Conversion, Print,
     Field, MethodCall, Construct, Self, Move, Ref, Copy, Index, EnumCase, TypeRef, Lambda, CallValue, ListLiteral,
+    Conditional,
 };
 
 struct Expr {
@@ -145,6 +146,16 @@ struct BinaryExpr : Expr {
     size_t opEnd = 0;
 };
 
+// `c ? a : b` (D422): only the branch chosen is computed.
+struct ConditionalExpr : Expr {
+    ConditionalExpr(SourceLocation l, ExprPtr c, ExprPtr a, ExprPtr b)
+        : Expr(ExprKind::Conditional, l), condition(std::move(c)), whenTrue(std::move(a)), whenFalse(std::move(b)) {}
+
+    ExprPtr condition;
+    ExprPtr whenTrue;
+    ExprPtr whenFalse;
+};
+
 // Functions built into the compiler: `panic` (D102) and, in the standard library
 // only, the `unsafe` dialect (D37, D98).
 enum class Intrinsic {
@@ -157,6 +168,7 @@ enum class Intrinsic {
     JsonWrite, JsonRead,  // std.json (D251): for a real type, a call of the function that converts it
     DebugWrite,           // the form of debug (D319): for a real type, a call of the function that writes it
     HashNumber,  // `x.hash()` of a number or a bool (D198): made by the compiler, not named
+    CompareNumbers,  // `x.compare(y)` of a number (D421): -1, 0 or 1
     FloatBits,      // `x.bits()` of an f64 or an f32 (D397)
     FloatFromBits,  // `f64.fromBits(b)`, `f32.fromBits(b)` (D397): the type in typeArg
     VariableAddress,  // `variableAddress(x)`: the addr of a module variable, or of a part of it (D394)

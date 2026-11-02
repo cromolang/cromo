@@ -1,0 +1,23 @@
+// The lines of the standard input (D420): without their end, false at the end.
+// program-input: first line
+// program-input:
+// program-input: città, ünïcode
+// program-input: last
+// expect-output: [first line]
+// expect-output: []
+// expect-output: [città, ünïcode]
+// expect-output: [last]
+// expect-output: 4 lines, then false and ''
+import std.os
+
+i32 main() {
+    string line
+    i64 count = 0
+    for (os.readLine(ref line)) {
+        println("[{}]", line)
+        count++
+    }
+    bool more = os.readLine(ref line)
+    println("{} lines, then {} and '{}'", count, more, line)
+    ret 0
+}

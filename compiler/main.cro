@@ -1,28 +1,54 @@
 // The pilot of the compiler in Cromo (D417): `cromo-fmt [--check] [files and
-// folders]`, with the results of `cromo fmt` (D161-D169): the files of a folder and
-// of its subfolders, except those whose name starts with a dot; the names of the
-// files changed; with --check nothing is written, and the exit code is 1 when a
-// file is not formatted.
+// folders | -]`, with the results of `cromo fmt` (D161-D169): the files of a folder
+// and of its subfolders, except those whose name starts with a dot; the names of
+// the files changed; with --check nothing is written, and the exit code is 1 when a
+// file is not formatted; with - the standard input, formatted on the standard
+// output, for the editors (D164).
 import std.fs
+import std.os
 import diagnostics
 import format
 
 i32 main(list<string> args) {
     bool check = false
+    bool standardInput = false
     list<string> paths
     for (i64 i = 1; i < args.len(); i++) {
         if (args[i] == "--check") {
             check = true
         } else if (args[i] == "-") {
-            // The library cannot read the standard input yet: the pilot shows it.
-            eprintln("cromo: the pilot of cromo fmt does not read the standard input (D417)")
-            ret 2
+            standardInput = true
         } else if (args[i].len() > 0 && args[i][0] == '-') {
             eprintln("cromo: unknown option of cromo fmt: {}", args[i])
             ret 2
         } else {
             paths.add(args[i].copy())
         }
+    }
+
+    if (standardInput) {  // for editors (D164)
+        if (check || paths.len() > 0) {
+            eprintln("cromo: cromo fmt - only reads the standard input")
+            ret 2
+        }
+        string text = os.readInput()
+        bool bom = text.startsWith("\u{FEFF}")
+        if (bom) {
+            text = text.slice(3, text.len())
+        }
+        Diagnostics diag = Diagnostics("<stdin>", text)
+        Formatted formatted = formatSource("<stdin>", text, ref diag)
+        if (!formatted.ok) {
+            if (formatted.error.len() > 0) {
+                eprintln("cromo: <stdin>: internal error of cromo fmt: {} (D169)", formatted.error)
+            }
+            ret 1
+        }
+        if (bom) {
+            print("\u{FEFF}")
+        }
+        print("{}", formatted.out)
+        ret 0
     }
 
     list<string> files
@@ -94,7 +120,7 @@ void collectSources(string folder, ref list<string> files) {
     } catch (Exception e) {
         ret
     }
-    sortNames(ref names)
+    sort(ref names)
     for (string name in names) {
         string path = name.copy()
         if (folder != ".") {
@@ -121,31 +147,4 @@ string normal(string path) {
         result = result.slice(2, result.len())
     }
     ret result
-}
-
-// The library has no sort yet: the pilot shows it.
-void sortNames(ref list<string> names) {
-    list<string> sorted
-    for (string name in names) {
-        i64 at = sorted.len()
-        for (at > 0 && before(name, sorted[at - 1])) {
-            at--
-        }
-        sorted.insert(at, name.copy())
-    }
-    names = move sorted
-}
-
-// The order of the bytes, as the names of the files are compared.
-bool before(string a, string b) {
-    i64 n = a.len()
-    if (b.len() < n) {
-        n = b.len()
-    }
-    for (i64 i = 0; i < n; i++) {
-        if (a[i] != b[i]) {
-            ret a[i] < b[i]
-        }
-    }
-    ret a.len() < b.len()
 }

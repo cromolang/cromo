@@ -1,0 +1,9 @@
+// The two values of ?: have the same type (D422).
+// expect-error: the two values of '?' have different types, i64 and string (D422)
+i32 main() {
+    i64 n = 5
+    string s = "x"
+    bool b = n > 2
+    println("{}", b ? n : s)
+    ret 0
+}

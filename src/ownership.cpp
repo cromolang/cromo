@@ -255,6 +255,17 @@ private:
         }
         case ExprKind::Field: visit(*static_cast<const FieldExpr&>(expr).object); break;
         case ExprKind::Unary: visit(*static_cast<const UnaryExpr&>(expr).operand); break;
+        case ExprKind::Conditional: {  // D422: one of the two branches
+            const auto& node = static_cast<const ConditionalExpr&>(expr);
+            visit(*node.condition);
+            State before = state_;
+            visit(*node.whenTrue);
+            State afterTrue = state_;
+            state_ = before;
+            visit(*node.whenFalse);
+            state_ = merge(afterTrue, state_);
+            break;
+        }
         case ExprKind::Binary: {
             const auto& binary = static_cast<const BinaryExpr&>(expr);
             visit(*binary.lhs);

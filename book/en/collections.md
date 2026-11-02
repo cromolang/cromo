@@ -53,6 +53,26 @@ i32 main() {
 ["#2", "#4", "#6"]
 ```
 
+### Sorting
+
+`sort(ref items)` sorts a list of numbers, of strings, or of a struct that implements `Ordered` with its `compare` method; `sortBy` takes a function that says whether one element comes before another. Both keep in their order the elements that are equal, as `kiwi` and `pear` here:
+
+```cromo
+i32 main() {
+    list<string> words = ["pear", "fig", "banana", "kiwi"]
+    sort(ref words)
+    println("{}", join(words, " "))
+    sortBy(ref words, [](string a, string b) bool { ret a.len() < b.len() })
+    println("{}", join(words, " "))
+    ret 0
+}
+```
+
+```output
+banana fig kiwi pear
+fig kiwi pear banana
+```
+
 ## Fixed-size arrays
 
 An array has a size fixed in its type, and lives where its variable is, without memory on the heap:

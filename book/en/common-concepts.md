@@ -199,8 +199,24 @@ The operators are those of C, with one difference in precedence: the bitwise ope
 | `==` `!=` `<` `<=` `>` `>=` | comparisons |
 | `&&` | logical and |
 | `\|\|` | logical or |
+| `? :` | conditional |
 
 `!` negates a `bool` and inverts the bits of an integer. `i++` and `i--` exist, but only as statements on their own, never inside an expression: `a[i++]` is not Cromo.
+
+`c ? a : b` is the value `a` when `c` is true, `b` otherwise, as in C; only the value chosen is computed, and the two have the same type:
+
+```cromo
+i32 main() {
+    i64 n = 7
+    string kind = n % 2 == 0 ? "even" : "odd"
+    println("{} is {}", n, kind)
+    ret 0
+}
+```
+
+```output
+7 is odd
+```
 
 ## Functions
 

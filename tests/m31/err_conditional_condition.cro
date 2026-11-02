@@ -1,0 +1,7 @@
+// The condition of ?: is a bool (D422, D32).
+// expect-error: the condition must be a bool, found i64 (D32)
+i32 main() {
+    i64 n = 1
+    i64 m = n ? 2 : 3
+    ret 0
+}

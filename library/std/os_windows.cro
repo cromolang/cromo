@@ -7,6 +7,10 @@ extern "kernel32" {
     u32 GetCurrentDirectoryW(u32 size, addr buffer)
     i32 MultiByteToWideChar(u32 page, u32 flags, addr text, i32 size, addr wide, i32 wideSize)
     i32 WideCharToMultiByte(u32 page, u32 flags, addr wide, i32 size, addr text, i32 textSize, addr fallback, addr used)
+    i64 GetStdHandle(u32 which)
+    i32 GetConsoleMode(i64 console, ref u32 mode)
+    i32 ReadConsoleW(i64 console, addr buffer, u32 count, ref u32 read, addr control)
+    i32 ReadFile(i64 file, addr data, u32 size, ref u32 done, addr overlapped)
 }
 
 public string name() {
@@ -74,4 +78,29 @@ string narrow(addr text, i32 count) {
     string result = string(buffer, i64(size))
     free(buffer)
     ret result
+}
+
+u16[1024] consoleInput  // what a console gives, in UTF-16
+
+// Up to `size` bytes of the standard input in `buffer`, 0 at the end (D420). A
+// console gives UTF-16, converted to UTF-8, which fits: 1024 units are at most 3072
+// bytes; a Ctrl+Z at the start of a line ends the input.
+i64 readSome(addr buffer, i64 size) {
+    i64 handle = GetStdHandle(0xFFFFFFF6)  // STD_INPUT_HANDLE
+    u32 mode = 0
+    u32 read = 0
+    if (GetConsoleMode(handle, ref mode) != 0) {
+        if (ReadConsoleW(handle, variableAddress(consoleInput), 1024, ref read, addr(0)) == 0 || read == 0) {
+            ret 0
+        }
+        if (consoleInput[0] == 26) {  // Ctrl+Z
+            ret 0
+        }
+        ret i64(WideCharToMultiByte(65001, 0, variableAddress(consoleInput), i32(read), buffer, i32(size), addr(0),
+            addr(0)))
+    }
+    if (ReadFile(handle, buffer, u32(size), ref read, addr(0)) == 0) {  // the end of a pipe
+        ret 0
+    }
+    ret i64(read)
 }

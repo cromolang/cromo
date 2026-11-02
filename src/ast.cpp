@@ -41,6 +41,11 @@ ExprPtr cloneExpr(const Expr& expr) {
         const auto& from = static_cast<const BinaryExpr&>(expr);
         return std::make_unique<BinaryExpr>(from.loc, from.op, clone(*from.lhs), clone(*from.rhs));
     }
+    case ExprKind::Conditional: {
+        const auto& from = static_cast<const ConditionalExpr&>(expr);
+        return std::make_unique<ConditionalExpr>(from.loc, clone(*from.condition), clone(*from.whenTrue),
+                                                 clone(*from.whenFalse));
+    }
     case ExprKind::Call: {
         const auto& from = static_cast<const CallExpr&>(expr);
         auto to = std::make_unique<CallExpr>(from.loc, from.callee);

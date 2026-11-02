@@ -59,3 +59,17 @@ i64 envIndex(string name) {
         i++
     }
 }
+
+// Up to `size` bytes of the standard input in `buffer`, 0 at the end (D420).
+i64 readSome(addr buffer, i64 size) {
+    for (;;) {
+        i64 read = systemCall(i64(Call.Read), 0, buffer, size, 0, 0, 0)
+        if (read == -4) {  // EINTR
+            continue
+        }
+        if (read < 0) {
+            ret 0
+        }
+        ret read
+    }
+}

@@ -48,9 +48,24 @@ foreach ($file in Get-ChildItem (Join-Path $work 'cpp') -Recurse -Filter *.cro) 
         $problems += "differs: $($file.FullName.Substring($work.Length + 5))"
     }
 }
+
+# `cromo fmt -`, for the editors (D164): the same bytes on the standard output, and
+# the same exit code.
+$piped = 0
+foreach ($folder in 'library', 'examples', 'tests\m11') {
+    foreach ($file in Get-ChildItem (Join-Path $root $folder) -Recurse -Filter *.cro) {
+        $piped++
+        $results = @()
+        foreach ($program in "`"$cromo`" fmt -", "`"$pilot`" -") {
+            cmd /c "$program < `"$($file.FullName)`" > `"$work\piped.out`" 2> NUL"
+            $results += "$LASTEXITCODE " + (Get-FileHash "$work\piped.out").Hash
+        }
+        if ($results[0] -ne $results[1]) { $problems += "differs with -: $($file.FullName.Substring($root.Length + 1))" }
+    }
+}
 Remove-Item -Recurse -Force $work
 
-'{0} files, C++ {1:N0} ms, Cromo {2:N0} ms' -f $count, $times['cpp'], $times['cromo']
+'{0} files, C++ {1:N0} ms, Cromo {2:N0} ms; {3} through the standard input' -f $count, $times['cpp'], $times['cromo'], $piped
 if ($problems.Count -gt 0) {
     $problems | Select-Object -First 20
     'pilot: FAILED'

@@ -1,0 +1,11 @@
+// sort needs the order of compare() (D421): a struct without it is not Ordered.
+// expect-error: Point does not implement Ordered
+struct Point {
+    i64 x
+}
+
+i32 main() {
+    list<Point> points
+    sort(ref points)
+    ret 0
+}

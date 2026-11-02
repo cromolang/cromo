@@ -1,0 +1,8 @@
+// No move in a branch of ?: for now (P28).
+// expect-error: 'move' is not written in a branch of '?' for now
+i32 main() {
+    string a = "a"
+    string b = "b"
+    string c = a.len() > 0 ? move a : move b
+    ret 0
+}

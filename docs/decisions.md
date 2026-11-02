@@ -1932,6 +1932,29 @@ i32 main(list<string> args) {
 ### D419. The folder `compiler/`
 *2026-11-02.* The compiler written in Cromo is in `compiler/`, at the root of the repository, with a module for each part: `lexer`, `parser`, `format`. `build.ps1` compiles the pilot into `build\cromo-fmt.exe`, which is not in the archives.
 
+### D420. The standard input
+*2026-11-02.* `std.os` reads the standard input: `os.readInput()` gives all of it as a string, for the filters as `cromo fmt -`; `os.readLine(ref string line)` gives the next line without its end, `\n` or `\r\n`, and is false at the end, with `line` empty. The two share one buffer, so they can be mixed. The text must be UTF-8, or they throw an exception, as `string(bytes)` (D200). On a console of Windows the text is read in UTF-16 and converted, as the output does (P25), and Ctrl+Z ends it. They are for one thread at a time.
+
+### D421. Sorting
+*2026-11-02.* The core has the interface `Ordered`, with `i32 compare(Self other) const`: negative, zero or positive. The numbers and `string` implement it by themselves, as `Key` (D198); between two floats where one is NaN, `compare` gives 0. `sort(ref items)` sorts a `list<T>` whose `T` is `Ordered`, and `sortBy(ref items, less)` any list, with a `func(T, T) bool` that says whether the first comes before the second. Both are stable, a merge sort; when `less` throws, the list keeps all its elements.
+
+```cromo
+list<string> names = ["b", "a", "c"]
+sort(ref names)
+sortBy(ref people, [](Person a, Person b) bool { ret a.age < b.age })
+```
+
+### D422. The conditional expression
+*2026-11-02.* `c ? a : b`, as in C: it binds less than `||` and groups from the right, `a ? b : c ? d : e` is `a ? b : (c ? d : e)`. The condition is a `bool` (D32); the two branches have the same type, and a literal takes the type of the other branch or of the context; only the branch chosen is computed. A line that ends with `?` or `:` goes on in the next one (D32), and `cromo fmt` writes a space around them (D166).
+
+```cromo
+i32 gap = unequal ? 2 : 1
+string word = value ? "true" : "false"
+```
+
+### D423. The analysis of the compiler in Cromo, in parts
+*2026-11-02.* It follows D417. After the pilot comes sema in Cromo, on the tree of the pilot (D418), a part at a time, each checked against the C++ on the errors of the tests: first the names and the declarations of the modules, then the types of the expressions, then the moves. Its references, as from a name to its variable, are indices.
+
 ---
 
 ## Proposed
@@ -2013,6 +2036,9 @@ options:
       --config <string>  configuration file (required)
   -h, --help             print this help
 ```
+
+### P28. The branches of `?:` with values that own resources (D422)
+A branch whose type is not simple, as a `string`, gives a new value: a literal, a call, `x.copy()`. `move` in a branch is an error for now: the analysis of the moves (D77) follows the paths of the statements, not those inside an expression. The temporaries of a branch end with the branch.
 
 ---
 
