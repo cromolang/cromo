@@ -23,7 +23,7 @@ cromo version
 ```
 
 ```output
-cromo 0.29.0 (LLVM 23.1.4)
+cromo 0.33.0 (LLVM 23.1.4)
 ```
 
 That is all. `cromo` contains the compiler and the linker: it needs no C compiler, no Visual Studio and no Windows SDK, and the programs it writes do not depend on the C runtime of the system.

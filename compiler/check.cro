@@ -1,0 +1,31 @@
+// The pilot of sema in Cromo (D423): `cromo-check file.cro` loads the program and
+// checks the names of its modules, with the errors of `cromo build --check-names`
+// (P30).
+import ast
+import diagnostics
+import loader
+import names
+import std.fs
+
+i32 main(list<string> args) {
+    if (args.len() != 2) {
+        eprintln("usage: cromo-check file.cro")
+        ret 2
+    }
+    string path = args[1]
+    string library = libraryFolder(args[0])
+    if (!fs.isFile(path)) {
+        eprintln("cromo: cannot read {}", path)
+        ret 2
+    }
+    string core = library + "\\core.cro"
+    if (library.len() == 0 || !fs.isFile(core)) {
+        eprintln("cromo: cannot read {}", core)
+        ret 2
+    }
+    Program program = load(path, readSource(path), library)
+    if (!program.diag.hasErrors()) {
+        declareNames(ref program.tree, ref program.diag)
+    }
+    ret program.diag.hasErrors() ? 1 : 0
+}

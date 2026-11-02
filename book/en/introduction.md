@@ -58,7 +58,7 @@ The guide is also available as a PDF, in English and in Italian: use the **PDF**
 
 ## The state of Cromo
 
-Cromo is young. The current version is 0.29, and the language can still change before version 1.0. Every design decision is recorded, with its reasons, in the file `docs/decisions.md` of the [repository](https://github.com/cromolang/cromo), next to the draft specification `docs/language.md`.
+Cromo is young. The current version is 0.33, and the language can still change before version 1.0. Every design decision is recorded, with its reasons, in the file `docs/decisions.md` of the [repository](https://github.com/cromolang/cromo), next to the draft specification `docs/language.md`.
 
 Cromo runs on Windows x64 and Linux x64, and each version compiles programs for both systems, and for Linux on ARM64.
 

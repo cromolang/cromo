@@ -1,0 +1,346 @@
+// The loader of the modules (D50, D423), as src/loader.cpp: the main file, the core
+// of the library and every module they import, parsed into one tree (P29). `import
+// a.b` is the file a/b.cro, or every .cro file of the folder a/b, next to the main
+// file (D130); `import std.fs` is a module of the library (D201). A file with the
+// suffix of a system or of an architecture joins the module of the file without it
+// (D202, D408).
+import std.fs
+import std.os
+import ast
+import diagnostics
+import lexer
+import parser
+
+public struct Program {
+    public Tree tree
+    public Diagnostics diag
+}
+
+// The library has no path of the program yet: its folder comes from args[0], and
+// lib/ is next to it or next to the folder above, as for cromo (D237).
+public string libraryFolder(string program) {
+    string bin = parentOf(absolute(program))
+    for (string candidate in [parentOf(bin) + "\\lib", bin + "\\lib"]) {
+        if (fs.isFile(candidate + "\\core.cro")) {
+            ret candidate
+        }
+    }
+    ret ""
+}
+
+// The program of the file `path`, for Windows x64: its tree and its errors.
+public Program load(string path, string text, string library) {
+    Loader loader
+    loader.library = library
+    loader.program.diag = Diagnostics(path, text)
+    string core = library + "\\core.cro"
+    string coreText = readSource(core)
+    loader.program.diag.addFile(core, coreText)
+    string main = absolute(path)
+    loader.root = parentOf(main)
+    loader.loaded[key(main)] = 0
+    loader.loaded[key(core)] = 1
+    loader.names.add(stemOf(main))
+    loader.names.add("std")
+    FileInfo first
+    FileInfo second
+    loader.program.tree.files.add(move first)
+    loader.program.tree.files.add(move second)
+    loader.run()
+    ret move loader.program
+}
+
+// The text of a source, without the BOM; "" when it cannot be read.
+public string readSource(string path) {
+    try {
+        string text = fs.readText(path)
+        ret text.startsWith("\u{FEFF}") ? text.slice(3, text.len()) : text
+    } catch (Exception e) {
+        ret ""
+    }
+}
+
+struct Loader {
+    Program program
+    string library
+    string root
+    map<string, i32> loaded  // the files read, by their normal path
+    list<string> names       // the module of each file
+
+    void run() {
+        parseFile(1, -1)
+        parseFile(0, -1)
+        // The list of files grows while their imports are loaded.
+        for (i32 i = 0; i < program.diag.fileCount(); i++) {
+            bool fromLibrary = isLibraryFile(program.diag.path(i))
+            for (i64 k = 0; k < program.tree.files[i].imports.len(); k++) {
+                list<i32> files = resolve(i, k, fromLibrary)
+                program.tree.files[i].imports[k].files = move files
+            }
+            checkQualifiers(i)
+        }
+    }
+
+    void parseFile(i32 index, i32 part) {
+        for (program.tree.files.len() <= i64(index)) {
+            FileInfo info
+            program.tree.files.add(move info)
+        }
+        program.tree.files[index].name = names[index]
+        program.tree.files[index].part = part
+        program.tree.files[index].isLibrary = isLibraryFile(program.diag.path(index))
+        program.diag.current = index
+        list<Token> tokens = tokenize(program.diag.text(index), ref program.diag, false)
+        map<i64, bool> angles
+        parseInto(ref tokens, ref program.diag, ref angles, ref program.tree, index)
+    }
+
+    // The files of the module of the import `k` of the file `from`.
+    list<i32> resolve(i32 from, i64 k, bool fromLibrary) {
+        list<string> path = program.tree.files[from].imports[k].path
+        i32 line = program.tree.files[from].imports[k].line
+        i32 column = program.tree.files[from].imports[k].column
+        string dotted = join(path, ".")
+        string relative = join(path, "\\")
+        string shown = join(path, "/")
+        list<i32> files
+        if (path[0] == "std") {
+            ret resolveLibrary(from, line, column, path.len(), dotted, fromLibrary)
+        }
+        string file = root + "\\" + relative + ".cro"
+        string folder = root + "\\" + relative
+        bool isFile = fs.isFile(file)
+        bool isFolder = fs.isFolder(folder)
+        if (isFile && isFolder) {
+            program.diag.errorIn(from, line, column, "both " + shown + ".cro and the folder " + shown +
+                " exist: rename one of them (D130)")
+            ret files
+        }
+        if (isFile) {
+            i32 index = loadFile(file, dotted, from, line, column, -1)
+            for (string suffix in ownSuffixes()) {
+                string own = root + "\\" + relative + suffix + ".cro"
+                if (fs.isFile(own)) {
+                    loadFile(own, dotted, from, line, column, index)
+                }
+            }
+            files.add(index)
+            ret files
+        }
+        if (isFolder) {
+            // A file with the suffix of a system or of an architecture joins the file
+            // without it, or is a module of its own; the files of the others are left
+            // out (D202, D408).
+            map<string, i32> groups
+            list<string> modules
+            list<list<string>> members
+            for (string entry in fs.listFolder(folder)) {
+                string full = folder + "\\" + entry
+                if (fs.extension(entry) != ".cro" || !fs.isFile(full)) {
+                    continue
+                }
+                string stem = stemOf(entry)
+                if (stem.len() > 5 && stem.endsWith("_test")) {
+                    continue
+                }
+                Suffixed name = withoutSuffix(stem)
+                if (name.other) {
+                    continue
+                }
+                if (!groups.contains(name.name)) {
+                    groups[name.name] = i32(modules.len())
+                    modules.add(name.name)
+                    list<string> none
+                    members.add(move none)
+                }
+                members[groups[name.name]].add(full)
+            }
+            if (modules.len() == 0) {
+                program.diag.errorIn(from, line, column, "the folder " + shown + " has no .cro files for this system (D130, D202)")
+            }
+            list<string> ordered = modules
+            sort(ref ordered)
+            for (string name in ordered) {
+                list<string> paths = members[groups[name]]
+                // The file without the suffix first.
+                sortBy(ref paths, [](string a, string b) bool { ret stemOf(a).len() < stemOf(b).len() })
+                i32 first = loadFile(paths[0], dotted + "." + name, from, line, column, -1)
+                for (i64 i = 1; i < paths.len(); i++) {
+                    loadFile(paths[i], dotted + "." + name, from, line, column, first)
+                }
+                files.add(first)
+            }
+            ret files
+        }
+        program.diag.errorIn(from, line, column, "cannot find the module " + dotted + ": there is no " + shown + ".cro or folder " +
+            shown + " next to " + fs.fileName(program.diag.path(0)) + " (D130)")
+        ret files
+    }
+
+    i32 loadFile(string path, string name, i32 from, i32 line, i32 column, i32 part) {
+        string normal = key(path)
+        if (loaded.contains(normal)) {
+            ret loaded[normal]
+        }
+        string text
+        bool read = true
+        try {
+            text = fs.readText(path)
+        } catch (Exception e) {
+            read = false
+        }
+        if (text.startsWith("\u{FEFF}")) {
+            text = text.slice(3, text.len())
+        }
+        i32 index = program.diag.addFile(path, text)
+        if (!read) {
+            program.diag.errorIn(from, line, column, "cannot read " + path)
+        }
+        loaded[normal] = index
+        names.add(name)
+        parseFile(index, part)
+        ret index
+    }
+
+    // `import std.fs` (D201): the module in lib/std, with its files for the system (D202).
+    list<i32> resolveLibrary(i32 from, i32 line, i32 column, i64 parts, string dotted, bool fromLibrary) {
+        list<i32> files
+        string base = "std/" + dotted.slice(4, dotted.len())
+        bool hidden = dotted == "std.winsock" || dotted == "std.runtime"
+        string path = library + "\\" + base + ".cro"
+        if (parts != 2 || !fs.isFile(path) || (hidden && !fromLibrary)) {
+            program.diag.errorIn(from, line, column, "the standard library has no module " + dotted + ": it has " +
+                libraryModules() + ", and its core is visible without import (D201)")
+            ret files
+        }
+        i32 first = loadFile(path, dotted, from, line, column, -1)
+        for (string suffix in ownSuffixes()) {
+            string own = library + "\\" + base + suffix + ".cro"
+            if (fs.isFile(own)) {
+                loadFile(own, dotted, from, line, column, first)
+            }
+        }
+        files.add(first)
+        ret files
+    }
+
+    // "std.crypto, std.fs and std.http": the modules of lib/std for the programs.
+    string libraryModules() const {
+        list<string> modules
+        for (string entry in fs.listFolder(library + "\\std")) {
+            if (fs.extension(entry) != ".cro") {
+                continue
+            }
+            Suffixed name = withoutSuffix(stemOf(entry))
+            string module = "std." + name.name
+            if (name.own || name.other || module == "std.winsock" || module == "std.runtime") {
+                continue
+            }
+            modules.add(module)
+        }
+        sort(ref modules)
+        string text
+        for (i64 i = 0; i < modules.len(); i++) {
+            text += (i == 0 ? "" : i + 1 == modules.len() ? " and " : ", ") + modules[i]
+        }
+        ret text
+    }
+
+    // Two imports whose names would be written the same way in front (D126).
+    void checkQualifiers(i32 file) {
+        map<string, bool> seen
+        for (Import item in program.tree.files[file].imports) {
+            string qualifier = item.path[item.path.len() - 1]
+            if (seen.contains(qualifier)) {
+                program.diag.errorIn(file, item.line, item.column, "another import is also called " + qualifier + " (D131)")
+            }
+            seen[qualifier] = true
+        }
+    }
+
+    bool isLibraryFile(string path) const {
+        ret key(path).lower().startsWith(key(library).lower() + "\\")
+    }
+}
+
+// The suffixes of the files that join a module for Windows x64 (D202, D408).
+list<string> ownSuffixes() {
+    ret ["_windows", "_x86_64", "_windows_x86_64"]
+}
+
+struct Suffixed {
+    string name
+    bool own    // with the suffixes of this system and architecture
+    bool other  // of another system or architecture: left out
+}
+
+Suffixed withoutSuffix(string stem) {
+    Suffixed result
+    result.name = stem
+    bool mine = true
+    bool found = false
+    for (string arch in ["_x86_64", "_arm64"]) {
+        if (result.name.len() > arch.len() && result.name.endsWith(arch)) {
+            result.name = result.name.slice(0, result.name.len() - arch.len())
+            mine = arch == "_x86_64"
+            found = true
+            break
+        }
+    }
+    for (string system in ["_windows", "_linux"]) {
+        if (result.name.len() > system.len() && result.name.endsWith(system)) {
+            result.name = result.name.slice(0, result.name.len() - system.len())
+            mine = mine && system == "_windows"
+            found = true
+            break
+        }
+    }
+    if (found) {
+        result.own = mine
+        result.other = !mine
+    }
+    ret result
+}
+
+// The name of a file without its folder and its extension.
+string stemOf(string path) {
+    string name = fs.fileName(path)
+    i64 point = name.findLast(".")
+    ret point > 0 ? name.slice(0, point) : name
+}
+
+// The folder of a path, without the separator at its end.
+string parentOf(string path) {
+    i64 at = path.len() - 1
+    for (at >= 0 && path[at] != '\\' && path[at] != '/') {
+        at--
+    }
+    ret at > 0 ? path.slice(0, at) : path
+}
+
+// The path from the root, with the separators of Windows and without `.` and `..`,
+// as GetFullPathName gives it.
+string absolute(string path) {
+    string full = path
+    bool rooted = (path.len() >= 2 && path[1] == ':') || path.startsWith("\\") || path.startsWith("/")
+    if (!rooted) {
+        full = os.currentFolder() + "\\" + path
+    }
+    list<string> parts
+    for (string part in full.replace("/", "\\").split("\\")) {
+        if (part == "." || (part.len() == 0 && parts.len() > 0)) {
+            continue
+        }
+        if (part == ".." && parts.len() > 1) {
+            parts.remove(parts.len() - 1)
+            continue
+        }
+        parts.add(part)
+    }
+    ret join(parts, "\\")
+}
+
+// The path that identifies a file: two imports of the same file read it once.
+string key(string path) {
+    ret absolute(path)
+}

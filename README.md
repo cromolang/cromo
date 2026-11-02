@@ -120,7 +120,7 @@ The [Cromo Guide](https://cromolang.org/book/) teaches the language step by step
 
 ## Status
 
-Cromo is in development, at version 0.29. The language and the compiler can still change before 1.0: every design choice is recorded, with its reasons, in [docs/decisions.md](docs/decisions.md).
+Cromo is in development, at version 0.33. The language and the compiler can still change before 1.0: every design choice is recorded, with its reasons, in [docs/decisions.md](docs/decisions.md).
 
 The current compiler is written in C++ and uses LLVM 23. A compiler written in Cromo will follow, once the language is mature.
 

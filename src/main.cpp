@@ -80,6 +80,7 @@ struct Compilation {
     cromo::CodegenOptions codegen;
     bool emitIr = false;
     bool runtime = false;  // --runtime: the object of std.runtime, for the archive of the runtime (D393)
+    bool checkNames = false;  // --check-names: only the names of the modules, for the pilot (D423)
     std::vector<std::string> filters;  // cromo test: the names of the tests to run (D352)
     std::vector<std::string> tests;    // cromo test: the names of the tests, by their number
 };
@@ -121,6 +122,10 @@ int build(Compilation& compilation) {
     diag.addFile(sources[1]);
     bool tests = codegen.tests;
     cromo::Module module = cromo::loadProgram(sources, diag, options.target, nullptr, tests);
+    if (compilation.checkNames) {  // D423: what the pilot of sema checks, and nothing more
+        if (!diag.hasErrors()) cromo::checkNames(module, diag);
+        return diag.hasErrors() ? 1 : 0;
+    }
     bool requireMain = !tests && !compilation.runtime;
     if (diag.hasErrors() || !cromo::check(module, diag, requireMain) || !cromo::checkMoves(module, diag)) return 1;
     if (tests) {  // in the order of the entry point of the tests (codegen.cpp)
@@ -197,6 +202,8 @@ bool readOptions(const std::vector<std::string>& args, size_t first, size_t last
             compilation.emitIr = true;
         } else if (arg == "--runtime" && !run && !test) {
             compilation.runtime = true;  // D393: only for the build of cromo, not in the help
+        } else if (arg == "--check-names" && !run && !test) {
+            compilation.checkNames = true;  // D423: the reference of the pilot, not in the help
         } else if (arg.size() == 3 && arg[0] == '-' && arg[1] == 'O' && arg[2] >= '0' && arg[2] <= '3') {
             options.optLevel = arg[2] - '0';
         } else if (arg[0] != '-' && compilation.inputPath.empty() && (!test || fs::path(arg).extension() == ".cro")) {

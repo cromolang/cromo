@@ -2051,6 +2051,12 @@ options:
 ### P28. The branches of `?:` with values that own resources (D422)
 A branch whose type is not simple, as a `string`, gives a new value, also a copy of a variable (D424). `move` in a branch is an error for now: the analysis of the moves (D77) follows the paths of the statements, not those inside an expression. The temporaries of a branch end with the branch.
 
+### P29. The program in one tree (D418, D423)
+The parser adds every file to the same `Tree`, whose `files` keep for each file its module, the file of the module it is a part of, its imports and whether it writes `import unsafe`; the declarations keep the index of their file, as the `SourceLocation` of the C++.
+
+### P30. The check of the first part of sema (D423)
+`cromo build --check-names`, an option not in the help, stops the C++ after the names of the modules; `build\cromo-check.exe` does the same in Cromo, and `testsun-pilot.ps1` compares them on every test. The library is found next to the folder of the executable, from `args[0]`: the library of Cromo cannot give the path of the program yet.
+
 ---
 
 ## Open

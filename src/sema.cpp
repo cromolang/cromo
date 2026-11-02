@@ -284,6 +284,9 @@ public:
     Checker(Module& module, Diagnostics& diag, bool requireMain)
         : module_(module), diag_(&diag), requireMain_(requireMain) {}
 
+    // D423: the first part of the analysis, which the pilot of sema repeats.
+    void runNames() { declareNames(); }
+
     void run() {
         declareNames();
         ModuleScope& library = modules_[kLibraryFile];
@@ -5811,6 +5814,11 @@ private:
 
 bool check(Module& module, Diagnostics& diag, bool requireMain) {
     Checker(module, diag, requireMain).run();
+    return !diag.hasErrors();
+}
+
+bool checkNames(Module& module, Diagnostics& diag) {
+    Checker(module, diag, false).runNames();
     return !diag.hasErrors();
 }
 

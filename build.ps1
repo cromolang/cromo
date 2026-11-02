@@ -40,7 +40,9 @@ if ($LASTEXITCODE) { exit $LASTEXITCODE }
 cmake --build $build
 if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
-# The pilot of the compiler in Cromo (D417, D419): cromo fmt, compiled by the cromo
-# just built; it is not in the archives.
+# The pilot of the compiler in Cromo (D417, D419, D423): cromo fmt and the first part
+# of sema, compiled by the cromo just built; they are not in the archives.
 & (Join-Path $build 'cromo.exe') build --release (Join-Path $root 'compiler\main.cro') -o (Join-Path $build 'cromo-fmt.exe')
+if ($LASTEXITCODE) { exit $LASTEXITCODE }
+& (Join-Path $build 'cromo.exe') build --release (Join-Path $root 'compiler\check.cro') -o (Join-Path $build 'cromo-check.exe')
 exit $LASTEXITCODE

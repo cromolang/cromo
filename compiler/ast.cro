@@ -244,6 +244,7 @@ public struct Attribute {
 }
 
 public struct Function {
+    public i32 file  // the index of its file (P29)
     public string name
     public i32 line
     public i32 column
@@ -281,6 +282,7 @@ public struct Case {
 
 // A struct, or an enum.
 public struct Record {
+    public i32 file
     public string name
     public i32 line
     public i32 column
@@ -294,6 +296,7 @@ public struct Record {
 }
 
 public struct Interface {
+    public i32 file
     public string name
     public i32 line
     public i32 column
@@ -303,6 +306,7 @@ public struct Interface {
 
 // A variable or a constant of the module (D394, D414).
 public struct Global {
+    public i32 file
     public i32 type = -1
     public string name
     public i32 line
@@ -315,6 +319,17 @@ public struct Import {
     public list<string> path
     public i32 line
     public i32 column
+    public list<i32> files  // the files of the module, set by the loader
+}
+
+// A source file of the program (P29): a module, or a part of the module of another
+// file, as fs_windows.cro of fs.cro (D202).
+public struct FileInfo {
+    public string name  // "geometry.shapes": the path of the module
+    public i32 part = -1
+    public bool isLibrary
+    public bool isUnsafe
+    public list<Import> imports
 }
 
 public struct Tree {
@@ -329,6 +344,5 @@ public struct Tree {
     public list<Record> records
     public list<Interface> interfaces
     public list<Global> globals
-    public list<Import> imports
-    public bool isUnsafe
+    public list<FileInfo> files
 }

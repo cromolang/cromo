@@ -1,15 +1,41 @@
-// The errors of a source (D417), as src/diagnostics.cpp: file:line:column, then
-// the line of the source and a mark under the position.
+// The errors of the sources (D417), as src/diagnostics.cpp: file:line:column, then
+// the line of the source and a mark under the position. The lexer and the parser
+// report on the current file; the analysis names the file of each error.
+
+struct Source {
+    string path
+    string text  // without the BOM
+}
 
 public struct Diagnostics {
-    public string path
-    public string text  // the source, without the BOM
     public bool silent  // the errors are counted, not printed: cromo fmt checks its result so
+    public i32 current  // the file of the lexer and of the parser
+    list<Source> files
     i32 count
 
     public Diagnostics(string file, string source) {
-        path = file.copy()
-        text = source.copy()
+        addFile(file, source)
+    }
+
+    // Another source, and its index for errorIn.
+    public i32 addFile(string file, string source) {
+        Source item
+        item.path = file
+        item.text = source
+        files.add(move item)
+        ret i32(files.len() - 1)
+    }
+
+    public string path(i32 file) const {
+        ret files[file].path
+    }
+
+    public string text(i32 file) const {
+        ret files[file].text
+    }
+
+    public i32 fileCount() const {
+        ret i32(files.len())
     }
 
     public bool hasErrors() const {
@@ -17,12 +43,16 @@ public struct Diagnostics {
     }
 
     public void error(i32 line, i32 column, string message) {
+        errorIn(current, line, column, message)
+    }
+
+    public void errorIn(i32 file, i32 line, i32 column, string message) {
         count++
         if (silent) {
             ret
         }
-        eprint("{}:{}:{}: error: {}\n", path, line, column, message)
-        string source = lineAt(line)
+        eprint("{}:{}:{}: error: {}\n", files[file].path, line, column, message)
+        string source = lineAt(file, line)
         if (source.len() == 0) {
             ret
         }
@@ -34,33 +64,29 @@ public struct Diagnostics {
             if ((c & 0xC0) == 0x80) {
                 continue
             }
-            if (c == '\t') {
-                mark += "\t"
-            } else {
-                mark += " "
-            }
+            mark += c == '\t' ? "\t" : " "
             at++
         }
         eprint("    {}\n{}^\n", source, mark)
     }
 
     // The line `line`, from 1, without its end.
-    string lineAt(i32 line) const {
+    string lineAt(i32 file, i32 line) const {
         i64 start = 0
         for (i32 i = 1; i < line; i++) {
-            i64 newline = text.findFrom("\n", start)
+            i64 newline = files[file].text.findFrom("\n", start)
             if (newline < 0) {
                 ret ""
             }
             start = newline + 1
         }
-        i64 end = text.findFrom("\n", start)
+        i64 end = files[file].text.findFrom("\n", start)
         if (end < 0) {
-            end = text.len()
+            end = files[file].text.len()
         }
-        if (end > start && text[end - 1] == '\r') {
+        if (end > start && files[file].text[end - 1] == '\r') {
             end--
         }
-        ret text.slice(start, end)
+        ret files[file].text.slice(start, end)
     }
 }

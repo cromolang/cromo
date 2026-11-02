@@ -10,4 +10,7 @@ namespace cromo {
 // server checks a module without `main` with requireMain false (D172).
 bool check(Module& module, Diagnostics& diag, bool requireMain = true);
 
+// Only the names of the modules (D423): what the first part of sema in Cromo checks.
+bool checkNames(Module& module, Diagnostics& diag);
+
 }  // namespace cromo

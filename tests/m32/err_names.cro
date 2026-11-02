@@ -1,0 +1,65 @@
+// The names of a module (D50), checked by the first part of sema in Cromo too (D423).
+// expect-error: interface 'Shape' is already defined
+// expect-error: 'i32' is a built-in name
+// expect-error: 'Self' is a built-in name
+// expect-error: struct 'Point' is already defined
+// expect-error: 'Shape' is already the name of an interface
+// expect-error: function 'area' is already defined
+// expect-error: 'println' is a built-in name
+// expect-error: 'Point' is already the name of a type
+// expect-error: a variable outside the functions is only for the modules with 'import unsafe' (D394)
+// expect-error: constant 'limit' is already defined
+// expect-error: 'f64' is a built-in name
+// expect-error: 'area' is already the name of a function or a type of the module
+interface Shape {
+    f64 area() const
+}
+
+interface Shape {
+    f64 size() const
+}
+
+interface i32 {
+    void x()
+}
+
+struct Self {
+    i64 a
+}
+
+struct Point {
+    i64 x
+}
+
+struct Point {
+    i64 y
+}
+
+struct Shape {
+    i64 z
+}
+
+f64 area() {
+    ret 1.0
+}
+
+f64 area() {
+    ret 2.0
+}
+
+void println() {
+}
+
+i64 Point() {
+    ret 0
+}
+
+i64 counter = 0
+const i64 limit = 10
+const i64 limit = 20
+const i64 f64 = 1
+const i64 area = 3
+
+i32 main() {
+    ret 0
+}

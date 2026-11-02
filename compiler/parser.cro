@@ -7,15 +7,27 @@ import lexer
 // The tree of the tokens of a file. The errors go to `diag`; `angles` gets the
 // positions of the '<' and '>' around type arguments and parameters.
 public Tree parse(ref list<Token> tokens, ref Diagnostics diag, ref map<i64, bool> angles) {
+    Tree tree
+    FileInfo info
+    tree.files.add(move info)
+    parseInto(ref tokens, ref diag, ref angles, ref tree, 0)
+    ret move tree
+}
+
+// The declarations of the file `file` added to the tree of the program (P29), whose
+// `files` already has its entry.
+public void parseInto(ref list<Token> tokens, ref Diagnostics diag, ref map<i64, bool> angles, ref Tree tree, i32 file) {
     Parser parser
     parser.tokens = move tokens
     parser.diag = move diag
     parser.angles = move angles
+    parser.tree = move tree
+    parser.file = file
     parser.parseModule()
     tokens = move parser.tokens
     diag = move parser.diag
     angles = move parser.angles
-    ret move parser.tree
+    tree = move parser.tree
 }
 
 struct Parser {
@@ -23,6 +35,7 @@ struct Parser {
     Diagnostics diag
     map<i64, bool> angles
     Tree tree
+    i32 file  // the index of the file in the tree (P29)
     i64 pos
 
     void parseModule() {
@@ -86,6 +99,7 @@ struct Parser {
                 ret
             }
             decl.isPublic = isPublic
+            decl.file = file
             tree.records.add(move decl)
         } else if (check(Kind.KwInterface)) {
             Interface decl
@@ -94,6 +108,7 @@ struct Parser {
                 ret
             }
             decl.isPublic = isPublic
+            decl.file = file
             tree.interfaces.add(move decl)
         } else if (check(Kind.KwConst) || startsModuleVariable()) {
             if (isPublic || attributes.len() > 0) {
@@ -113,6 +128,7 @@ struct Parser {
                 ret
             }
             Global global
+            global.file = file
             global.isConst = tree.stmts[declaration].isConst
             global.type = tree.stmts[declaration].type
             global.name = tree.stmts[declaration].name.copy()
@@ -159,7 +175,7 @@ struct Parser {
     void parseImport() {
         advance()  // 'import'
         if (match(Kind.KwUnsafe)) {
-            tree.isUnsafe = true
+            tree.files[file].isUnsafe = true
         } else {
             Import item
             item.line = tokens[at(0)].line
@@ -175,7 +191,7 @@ struct Parser {
                     break
                 }
             }
-            tree.imports.add(move item)
+            tree.files[file].imports.add(move item)
         }
         if (!check(Kind.Newline) && !check(Kind.EndOfFile)) {
             errorAtCurrent("a newline after the import")
@@ -186,7 +202,7 @@ struct Parser {
     // extern := 'extern' string '{' { signature } '}'   (D128)
     void parseExtern() {
         i64 keyword = advance()  // 'extern'
-        if (!tree.isUnsafe) {
+        if (!tree.files[file].isUnsafe) {
             errorAt(keyword, "an extern block needs 'import unsafe' at the top of the module (D127)")
         }
         if (!check(Kind.StringLiteral)) {
@@ -354,6 +370,7 @@ struct Parser {
     }
 
     i32 addFunction(move Function node) {
+        node.file = file
         tree.functions.add(move node)
         ret i32(tree.functions.len() - 1)
     }

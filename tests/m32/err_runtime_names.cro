@@ -1,0 +1,16 @@
+// The functions of C named cromo_ belong to the runtime (D240).
+// expect-error: the library "cromo" is the runtime: only the standard library declares its functions (D240)
+// expect-error: the name 'cromo_alloc' is reserved for the runtime
+import unsafe
+
+extern "cromo" {
+    void cromo_exit(i32 code)
+}
+
+extern "kernel32" {
+    addr cromo_alloc(i64 size)
+}
+
+i32 main() {
+    ret 0
+}

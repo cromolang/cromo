@@ -1,0 +1,136 @@
+// The first part of the analysis (D423), as declareNames of src/sema.cpp: the names
+// of each module (D50), with their errors. A part of a module, as fs_windows.cro,
+// shares the names of its module (D202). The names are indices into the tables of
+// the tree (D418).
+import ast
+import diagnostics
+
+// The names declared in a module.
+public struct Scope {
+    public map<string, i32> structs  // into tree.records
+    public map<string, i32> interfaces
+    public map<string, i32> functions
+    public map<string, i32> globals
+}
+
+// The scopes of the modules, by file: the one of a part is that of its module.
+public list<Scope> declareNames(ref Tree tree, ref Diagnostics diag) {
+    list<Scope> scopes
+    for (i64 i = 0; i < tree.files.len(); i++) {
+        Scope scope
+        scopes.add(move scope)
+    }
+    for (i64 i = 0; i < tree.interfaces.len(); i++) {
+        i32 at = scopeOf(tree, tree.interfaces[i].file)
+        string name = tree.interfaces[i].name
+        if (scopes[at].interfaces.contains(name)) {
+            errorAt(ref diag, tree.interfaces[i].file, tree.interfaces[i].line, tree.interfaces[i].column,
+                "interface '" + name + "' is already defined")
+        } else if (isBuiltinName(name)) {
+            errorAt(ref diag, tree.interfaces[i].file, tree.interfaces[i].line, tree.interfaces[i].column,
+                "'" + name + "' is a built-in name")
+        } else {
+            scopes[at].interfaces[name] = i32(i)
+        }
+    }
+    for (i64 i = 0; i < tree.records.len(); i++) {
+        i32 at = scopeOf(tree, tree.records[i].file)
+        string name = tree.records[i].name
+        i32 file = tree.records[i].file
+        i32 line = tree.records[i].line
+        i32 column = tree.records[i].column
+        if (scopes[at].structs.contains(name)) {
+            errorAt(ref diag, file, line, column, "struct '" + name + "' is already defined")
+        } else if (isBuiltinName(name)) {
+            errorAt(ref diag, file, line, column, "'" + name + "' is a built-in name")
+        } else if (scopes[at].interfaces.contains(name)) {
+            errorAt(ref diag, file, line, column, "'" + name + "' is already the name of an interface")
+        } else {
+            scopes[at].structs[name] = i32(i)
+        }
+    }
+    for (i32 index in tree.topFunctions) {
+        i32 file = tree.functions[index].file
+        i32 at = scopeOf(tree, file)
+        string name = tree.functions[index].name
+        i32 line = tree.functions[index].line
+        i32 column = tree.functions[index].column
+        bool isExtern = tree.functions[index].isExtern
+        string library = tree.functions[index].library
+        if (scopes[at].functions.contains(name)) {
+            errorAt(ref diag, file, line, column, "function '" + name + "' is already defined")
+        } else if (isExtern && library == "cromo" && !tree.files[file].isLibrary) {
+            errorAt(ref diag, file, line, column,
+                "the library \"cromo\" is the runtime: only the standard library declares its functions (D240)")
+        } else if (isExtern && library != "cromo" && name.startsWith("cromo_")) {
+            errorAt(ref diag, file, line, column, "the name '" + name + "' is reserved for the runtime")
+        } else if (isBuiltinFunction(name) || isBuiltinType(name)) {
+            errorAt(ref diag, file, line, column, "'" + name + "' is a built-in name")
+        } else if (scopes[at].structs.contains(name) || scopes[at].interfaces.contains(name)) {
+            errorAt(ref diag, file, line, column, "'" + name + "' is already the name of a type")
+        } else {
+            scopes[at].functions[name] = index
+        }
+    }
+    for (i64 i = 0; i < tree.globals.len(); i++) {
+        i32 file = tree.globals[i].file
+        i32 at = scopeOf(tree, file)
+        string name = tree.globals[i].name
+        i32 line = tree.globals[i].line
+        i32 column = tree.globals[i].column
+        bool isConst = tree.globals[i].isConst
+        if (!tree.files[file].isUnsafe && !isConst) {
+            errorAt(ref diag, file, line, column, "a variable outside the functions is only for the modules with 'import " +
+                "unsafe' (D394); a constant is written 'const' (D414)")
+        } else if (scopes[at].globals.contains(name)) {
+            errorAt(ref diag, file, line, column, (isConst ? "constant '" : "module variable '") + name + "' is already defined")
+        } else if (isBuiltinFunction(name) || isBuiltinType(name)) {
+            errorAt(ref diag, file, line, column, "'" + name + "' is a built-in name")
+        } else if (scopes[at].functions.contains(name) || scopes[at].structs.contains(name) ||
+            scopes[at].interfaces.contains(name)) {
+            errorAt(ref diag, file, line, column, "'" + name + "' is already the name of a function or a type of the module")
+        } else {
+            scopes[at].globals[name] = i32(i)
+        }
+    }
+    ret scopes
+}
+
+void errorAt(ref Diagnostics diag, i32 file, i32 line, i32 column, string message) {
+    diag.errorIn(file, line, column, message)
+}
+
+// The file whose names a file shares: its own, or that of its module (D202).
+i32 scopeOf(Tree tree, i32 file) {
+    i32 part = tree.files[file].part
+    ret part >= 0 ? part : file
+}
+
+// The types of the language (D14): the numbers, bool and char.
+public bool isBuiltinType(string name) {
+    switch (name) {
+        case "bool", "f32", "f64", "char", "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64" {
+            ret true
+        }
+        default {
+            ret false
+        }
+    }
+}
+
+// The functions that every program calls without declaring them (D38, D102, D396).
+public bool isBuiltinFunction(string name) {
+    switch (name) {
+        case "print", "println", "eprint", "eprintln", "format", "panic", "assert", "wrapAdd", "wrapSub", "wrapMul" {
+            ret true
+        }
+        default {
+            ret false
+        }
+    }
+}
+
+// A name that a type cannot have: of the language, or `void` and `Self`.
+bool isBuiltinName(string name) {
+    ret isBuiltinType(name) || isBuiltinFunction(name) || name == "void" || name == "Self"
+}

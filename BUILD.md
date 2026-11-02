@@ -37,7 +37,7 @@ powershell -ExecutionPolicy Bypass -File build.ps1
 build\cromo.exe version
 ```
 
-The last command prints `cromo 0.29.0 (LLVM 23.1.4)`, with the version of the sources.
+The last command prints `cromo 0.33.0 (LLVM 23.1.4)`, with the version of the sources.
 
 `build.ps1` accepts:
 
@@ -101,7 +101,7 @@ build-linux/cromo version
 
 ## The pilot of the compiler in Cromo
 
-`compiler/` holds the first part of the compiler written in Cromo (D417): the lexer, the parser and `cromo fmt`. `build.ps1` compiles it with the `cromo` just built into `build\cromo-fmt.exe`, which takes the same options as `cromo fmt`, except `-`; it is not in the archives. `tests\run-pilot.ps1` formats a copy of every `.cro` file of the repository with both and checks that the results are the same:
+`compiler/` holds the first part of the compiler written in Cromo (D417, D423): the lexer, the parser, `cromo fmt`, the loader of the modules and the names of the modules. `build.ps1` compiles it with the `cromo` just built into `build\cromo-fmt.exe`, which takes the same options as `cromo fmt`, and `build\cromo-check.exe`, which checks the names of a program as `cromo build --check-names`; they are not in the archives. `tests\run-pilot.ps1` checks that both give the same results as the C++, on every `.cro` file and every program of the repository:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File tests\run-pilot.ps1
@@ -123,7 +123,7 @@ npx ovsx publish tools\vscode-cromo\dist\cromo-<version>.vsix -p <token>
 
 ## Making a release
 
-The version is in `CMakeLists.txt`, in `project(cromo VERSION 0.29.0)`: `0.<milestone>.<fix>` until 1.0. With the two builds of the same version:
+The version is in `CMakeLists.txt`, in `project(cromo VERSION 0.33.0)`: `0.<milestone>.<fix>` until 1.0. With the two builds of the same version:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File tools\package.ps1 -Key <private key>
