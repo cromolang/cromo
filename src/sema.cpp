@@ -3523,14 +3523,8 @@ private:
                 ok = false;
                 continue;
             }
-            // As the argument of add(move T): a variable gives its value only with `move` (D23).
-            const Expr* given = value.get();
-            if (given->kind == ExprKind::Conversion) given = static_cast<const ConversionExpr&>(*given).operand.get();
-            if (isPlace(*given) && needsDestruction(given->type)) {
-                diag_->error(given->loc, "an element of a list is given to it: write 'move " + placeText(*given) +
-                                             "', or copy it (D23, D308)");
-                ok = false;
-            }
+            // As the argument of add(move T): a variable without `move` gives a copy (D424).
+            if (value->kind != ExprKind::Conversion && !copyIfNeeded(value, element)) ok = false;
         }
         list.add = add;
         list.reserve = reserve;

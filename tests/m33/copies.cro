@@ -9,6 +9,7 @@
 // expect-output: field x, local y, param p
 // expect-output: kept 3
 // expect-output: ["x", "y"] ["x"]
+// expect-output: [hello, hello] 5 hello
 struct Person {
     string name
     i64 copies
@@ -19,6 +20,11 @@ struct Person {
         other.copies = copies + 1
         ret other
     }
+}
+
+enum Message {
+    Text(string body)
+    Empty
 }
 
 struct Box {
@@ -78,5 +84,17 @@ i32 main() {
     list<string> one = two
     one.remove(1)
     println("{:?} {:?}", two, one)
+
+    list<string> pair = [a, a]  // copies of a (D424)
+    Message message = Message.Text(a)
+    i64 length = 0
+    switch (message) {
+        case Text(string body) {
+            length = body.len()
+        }
+        case Empty {
+        }
+    }
+    println("[{}] {} {}", join(pair, ", "), length, a)
     ret 0
 }
