@@ -1,0 +1,12 @@
+// std.cmdline (D416): an option at the end without its value.
+// program-arg: --port
+// expect-stderr: the option --port needs a value
+// expect-exit: 2
+import std.cmdline
+
+i32 main(list<string> args) {
+    cmdline.CmdLine cmd
+    cmd.addInt("port", 'p', "port to listen on", false, 8080)
+    cmd.parse(args)
+    ret 0
+}

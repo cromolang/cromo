@@ -92,6 +92,50 @@ argument 2: beta
 
 `args[0]` è il nome del programma, come in C.
 
+## La riga di comando
+
+`std.cmdline` legge le opzioni di un programma da quegli argomenti. Ogni opzione ha un nome lungo, uno breve di una lettera (`' '` quando non c'è) e una descrizione; un'opzione con un valore dice anche se è obbligatoria, e il suo valore predefinito:
+
+```cromo args=-v,--port=9000,notes.txt
+import std.cmdline
+
+i32 main(list<string> args) {
+    cmdline.CmdLine cmd
+    cmd.flag("verbose", 'v', "print more")
+    cmd.addInt("port", 'p', "port to listen on", false, 8080)
+    cmd.addString("format", 'f', "output format", false, "text")
+    cmd.choices("format", ["text", "json"])
+    cmd.footer("files...")
+    cmd.parse(args)
+
+    println("port {}, format {}", cmd.getInt("port"), cmd.getString("format"))
+    if (cmd.exists("verbose")) {
+        println("files: {}", join(cmd.rest(), ", "))
+    }
+    ret 0
+}
+```
+
+```output
+port 9000, format text
+files: notes.txt
+```
+
+Le opzioni si possono scrivere `--port 9000`, `--port=9000`, `-p 9000` o `-p9000`, e i flag insieme, `-vq`; dopo `--` ogni argomento è un argomento, anche quando comincia con `-`. Gli altri argomenti, come `notes.txt`, sono in `rest()`. `getInt`, `getFloat` e `getString` danno il valore di un'opzione, o quello predefinito; `exists` dice se è stata data.
+
+`--help` stampa l'aiuto, costruito dalle opzioni, e termina il programma:
+
+```text
+usage: server [options] files...
+options:
+  -v, --verbose          print more
+  -p, --port <int>       port to listen on (default 8080)
+  -f, --format <string>  output format (text, json; default text)
+  -h, --help             print this help
+```
+
+Una riga di comando sbagliata, come un'opzione sconosciuta o una porta che non è un numero, stampa l'errore e l'aiuto sullo standard error, e termina il programma con il codice di uscita 2, come fanno i comandi del sistema.
+
 ## Altri programmi
 
 `process.run` esegue un programma, ne attende la fine e restituisce il suo codice di uscita, il suo output e i suoi errori:
@@ -167,6 +211,7 @@ the year has four digits: true
 
 - `std.fs` legge e scrive file e cartelle; gli errori sono eccezioni con un messaggio chiaro.
 - `std.os` fornisce l'ambiente; gli argomenti arrivano in `main(list<string> args)`.
+- `std.cmdline` legge le opzioni della riga di comando, e scrive l'aiuto.
 - `std.process` esegue altri programmi, senza passare da una shell.
 - `std.zip` e `std.tar` leggono ed estraggono gli archivi.
 - `std.time` misura le durate e fornisce la data e l'ora.

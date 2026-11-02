@@ -1,0 +1,13 @@
+// std.cmdline (D416): a value outside the choices.
+// program-arg: -fxml
+// expect-stderr: the value of --format is 'xml', and it can be text, json
+// expect-exit: 2
+import std.cmdline
+
+i32 main(list<string> args) {
+    cmdline.CmdLine cmd
+    cmd.addString("format", 'f', "output format", false, "text")
+    cmd.choices("format", ["text", "json"])
+    cmd.parse(args)
+    ret 0
+}

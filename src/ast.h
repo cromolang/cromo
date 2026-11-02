@@ -707,6 +707,7 @@ struct GlobalDecl {
     std::string name;
     SourceLocation loc;  // the name
     ExprPtr init;        // a literal, or null for the default value
+    bool isConst = false;  // a constant of the module (D414)
     std::unique_ptr<Variable> variable;  // set by sema, of kind Module
 };
 

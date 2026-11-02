@@ -1891,6 +1891,38 @@ lines.close()
 ### D408. The code of an architecture
 *2026-11-02.* It extends D202, as in Go: next to `fs_linux.cro` there can be `fs_linux_arm64.cro`, used only for Linux on ARM64, and `fs_arm64.cro`, used for ARM64 on every system. It holds for the library and for the modules of the programs.
 
+### D414. The constants of a module
+*2026-11-02.* It extends D26 and D394. Every module, also without `import unsafe`, can declare constants outside the functions: `const i64 limit = 1024`, and arrays, `const u32[4] masks = [0xFF, 0xFF00, 0xFF0000, 0xFF000000]`. Their type is a number, `bool` or `char`, or a fixed-size array of them (D196). Their value is a literal, with `-` before a number, and for an array a list of literals in square brackets, one for each element. They are read as variables and never change: they hold no state, unlike the module variables (D394), so every module can have them. They are private to their module. They hold the tables of numbers, as those of the runtime and of compression, written in the source instead of being computed.
+
+### D415. `std.cmdline`
+*2026-11-02.* The module `std.cmdline` reads the options of a program from the arguments of `main` (D154), with a `cmdline.CmdLine`:
+- `cmd.flag(name, short, description)`: an option without a value, as `--verbose` and `-v`;
+- `cmd.addInt`, `cmd.addFloat` and `cmd.addString(name, short, description, required, default)`: an option with an `i64`, an `f64` or a `string`; the default of a required option is not used;
+- `cmd.choices(name, values)`: the values allowed for an option, as texts;
+- `cmd.footer(text)`: what the line of usage shows after the options, as `files...`;
+- `cmd.parse(args)`, and then `cmd.exists(name)`, whether the option was given, `cmd.getInt`, `cmd.getFloat` and `cmd.getString(name)`, its value or its default, and `cmd.rest()`, the arguments that are not options.
+
+The short name is a `char`, `' '` when there is none. Cromo has no overloading, so the type is in the name of the method. A wrong use, as two options with the same name or `getInt` of an option of text, is a panic: it is an error of the program, not of who runs it.
+
+```cromo
+import std.cmdline
+
+i32 main(list<string> args) {
+    cmdline.CmdLine cmd
+    cmd.flag("verbose", 'v', "verbose output")
+    cmd.addInt("port", 'p', "port to listen on", false, 8080)
+    cmd.addString("format", 'f', "output format", false, "text")
+    cmd.choices("format", ["text", "json"])
+    cmd.footer("files...")
+    cmd.parse(args)
+    i64 port = cmd.getInt("port")
+    ret 0
+}
+```
+
+### D416. The errors of the command line
+*2026-11-02.* `parse` handles them as the commands of the system do. With `-h` or `--help` it prints the help on the standard output and ends the program with 0. With an error, as an unknown option, a missing value, a number that is not valid, a value outside the choices or a required option that is missing, it prints the error and the help on the standard error and ends the program with 2, the code of the errors of use, as `cromo`, Go and Python do.
+
 ---
 
 ## Proposed
@@ -1953,6 +1985,25 @@ The largest body of a response, also once decompressed: 16 MB, as before, unless
 
 ### P24. The runtime of Linux ARM64
 In `lib/linux_arm64/`, next to `lib/linux/` and `lib/windows/` (D237), with `memcpy` and the others, `_start`, the switch of the tasks and the functions of the atomics in `runtime/mem_arm64.S`.
+
+### P25. The output and the formatting in Cromo (D393)
+`std.runtime` holds the buffers of the standard output and of the standard error, the writing to the system and the formatting of every value, with the names of C that the generated code calls: `cromo_write`, `cromo_fmt_str`, `cromo_fmt_bool`, `cromo_fmt_int`, `cromo_fmt_f32`, `cromo_fmt_f64`, and `cromo_flush` for the runtime in C. In C stay the lock of printing, which the threads share, `cromo_print_begin` and `cromo_print_end`, `cromo_exit`, the panics and the stack traces, which write through those functions. The tables of Ryū are constants of `std.runtime` (D414), at the end of `runtime.cro`, written by `tools/ryu_tables.py`.
+
+### P26. The forms of the command line (D415)
+`--name value` and `--name=value`; `-n value` and `-nvalue`; flags grouped, `-vq`, where the last letter can take a value, `-vp 8080`. `--` ends the options: what follows is in `rest()`, also when it starts with `-`; `-` alone is an argument, as the standard input of many commands. An option given twice keeps its last value. The numbers are read as `i64("...")` and `f64("...")` read them (D199).
+
+### P27. The help of the command line (D415)
+The line of usage, with the name of the program from `args[0]` without its folder and without `.exe`, the required options, `[options]` and the footer; then one line for each option, with its short name, its long name, its description and, in parentheses, its type, its choices and its default; `-h, --help` last.
+
+```
+usage: server --config <string> [options] files...
+options:
+  -v, --verbose          verbose output
+  -p, --port <int>       port to listen on (default 8080)
+  -f, --format <string>  output format (text, json; default text)
+      --config <string>  configuration file (required)
+  -h, --help             print this help
+```
 
 ---
 

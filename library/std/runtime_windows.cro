@@ -7,6 +7,11 @@ extern "kernel32" {
     addr HeapAlloc(addr heap, u32 flags, u64 size)
     addr HeapReAlloc(addr heap, u32 flags, addr memory, u64 size)
     i32 HeapFree(addr heap, u32 flags, addr memory)
+    addr GetStdHandle(u32 which)
+    i32 GetConsoleMode(addr console, ref u32 mode)
+    i32 MultiByteToWideChar(u32 codePage, u32 flags, addr text, i32 size, addr wide, i32 wideSize)
+    i32 WriteConsoleW(addr console, addr text, u32 count, ref u32 written, addr reserved)
+    i32 WriteFile(addr file, addr data, u32 size, ref u32 written, addr overlapped)
 }
 
 // ---- The heap (D98): the one of the process, which has its own lock ----
@@ -27,4 +32,31 @@ void lockHeap() {
 }
 
 void unlockHeap() {
+}
+
+// ---- The output (P25) ----
+
+u16[4096] wide  // the text of a console, in UTF-16
+
+// The bytes of a buffer on the standard output (1) or error (2). A console wants
+// UTF-16: converting keeps readable the text that is not ASCII.
+void writeRaw(i64 stream, addr data, i64 size) {
+    if (size == 0) {
+        ret
+    }
+    u32 which = 0xFFFFFFF5  // STD_OUTPUT_HANDLE
+    if (stream == 2) {
+        which = 0xFFFFFFF4  // STD_ERROR_HANDLE
+    }
+    addr handle = GetStdHandle(which)
+    u32 mode = 0
+    u32 written = 0
+    if (GetConsoleMode(handle, ref mode) != 0) {
+        i32 count = MultiByteToWideChar(65001, 0, data, i32(size), variableAddress(wide), 4096)
+        if (count > 0) {
+            WriteConsoleW(handle, variableAddress(wide), u32(count), ref written, addr(0))
+            ret
+        }
+    }
+    WriteFile(handle, data, u32(size), ref written, addr(0))
 }

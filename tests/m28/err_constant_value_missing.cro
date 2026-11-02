@@ -1,0 +1,7 @@
+// A constant has its value (D414).
+// expect-error: constant 'limit' needs its value (D414)
+const i64 limit
+
+i32 main() {
+    ret 0
+}

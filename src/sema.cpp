@@ -418,10 +418,12 @@ private:
         }
         for (GlobalDecl& global : module_.globals) {
             ModuleScope& scope = modules_[scopeOf(global.loc.file)];
-            if (!isUnsafe(global.loc)) {
-                diag_->error(global.loc, "a variable outside the functions is only for the modules with 'import unsafe' (D394)");
+            if (!isUnsafe(global.loc) && !global.isConst) {
+                diag_->error(global.loc, "a variable outside the functions is only for the modules with 'import unsafe' (D394); "
+                                         "a constant is written 'const' (D414)");
             } else if (scope.globals.count(global.name)) {
-                diag_->error(global.loc, "module variable '" + global.name + "' is already defined");
+                diag_->error(global.loc, (global.isConst ? "constant '" : "module variable '") + global.name +
+                                             "' is already defined");
             } else if (findBuiltinType(global.name) || isBuiltinFunction(global.name)) {
                 diag_->error(global.loc, "'" + global.name + "' is a built-in name");
             } else if (scope.functions.count(global.name) || scope.structs.count(global.name) ||
@@ -448,6 +450,12 @@ private:
             variable->symbol = symbolFor(global.loc, global.name);
             std::optional<Type> type = resolveType(global.typeName);
             variable->type = type ? *type : Type::error();
+            if (global.isConst) {
+                variable->isConst = true;
+                declareConstant(global, *variable);
+                global.variable = std::move(variable);
+                continue;
+            }
             if (type && !isStaticType(*type)) {
                 diag_->error(global.typeName.loc, "a module variable holds numbers, bool, addr, or arrays and structs of them "
                                                   "whose fields have no initial values, not " + type->name() +
@@ -471,6 +479,51 @@ private:
                 }
             }
             global.variable = std::move(variable);
+        }
+    }
+
+    // D414: a constant of a module is a number, bool or char, or an array of them, with
+    // a literal for each value.
+    void declareConstant(GlobalDecl& global, Variable& variable) {
+        Type type = variable.type;
+        if (type.isError()) return;
+        Type element = type.isArray() ? type.array->element : type;
+        if (!element.isNumeric() && !element.isBool()) {
+            diag_->error(global.typeName.loc, "a constant of a module is a number, bool or char, or an array of them, not " +
+                                                  type.name() + " (D414)");
+            variable.type = Type::error();
+            return;
+        }
+        if (!global.init) {
+            diag_->error(global.loc, "constant '" + global.name + "' needs its value (D414)");
+            variable.type = Type::error();
+            return;
+        }
+        auto literal = [&](ExprPtr& value) {
+            if (!isConstantLiteral(*value)) {
+                diag_->error(value->loc, "the value of a constant of a module is a number, a character, true or false (D414)");
+                return false;
+            }
+            return coerce(value, element);
+        };
+        if (!type.isArray()) {
+            if (!literal(global.init)) variable.type = Type::error();
+            return;
+        }
+        if (global.init->kind != ExprKind::ListLiteral) {
+            diag_->error(global.init->loc, "the value of a constant array is a list of literals in square brackets (D414)");
+            variable.type = Type::error();
+            return;
+        }
+        auto& list = static_cast<ListLiteralExpr&>(*global.init);
+        if (static_cast<int64_t>(list.elements.size()) != type.array->count) {
+            diag_->error(list.loc, "the array has " + std::to_string(type.array->count) + " elements, and the list " +
+                                       std::to_string(list.elements.size()) + " (D414)");
+            variable.type = Type::error();
+            return;
+        }
+        for (ExprPtr& value : list.elements) {
+            if (!literal(value)) variable.type = Type::error();
         }
     }
 

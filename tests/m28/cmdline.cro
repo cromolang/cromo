@@ -1,0 +1,40 @@
+// std.cmdline (D415, P26): flags alone and grouped, the values after the option, after
+// '=' or attached to a short name, the defaults, the choices, '--' and '-'.
+// program-arg: -vq
+// program-arg: --port=9000
+// program-arg: first
+// program-arg: -r
+// program-arg: 2.5
+// program-arg: -nanna
+// program-arg: --format
+// program-arg: json
+// program-arg: -
+// program-arg: --
+// program-arg: --not-an-option
+// expect-output: verbose true quiet true dry false
+// expect-output: port 9000 ratio 2.5 limit 10 offset -3.5
+// expect-output: name anna format json given true
+// expect-output: rest first, -, --not-an-option
+import std.cmdline
+
+i32 main(list<string> args) {
+    cmdline.CmdLine cmd
+    cmd.flag("verbose", 'v', "verbose output")
+    cmd.flag("quiet", 'q', "no output")
+    cmd.flag("dry", ' ', "only print what it would do")
+    cmd.addInt("port", 'p', "port to listen on", false, 8080)
+    cmd.addInt("limit", 'l', "most items", false, 10)
+    cmd.addFloat("ratio", 'r', "the ratio", false, 1.0)
+    cmd.addFloat("offset", 'o', "the offset", false, -3.5)
+    cmd.addString("name", 'n', "the name", true, "")
+    cmd.addString("format", 'f', "output format", false, "text")
+    cmd.choices("format", ["text", "json"])
+    cmd.footer("files...")
+    cmd.parse(args)
+    println("verbose {} quiet {} dry {}", cmd.exists("verbose"), cmd.exists("quiet"), cmd.exists("dry"))
+    println("port {} ratio {} limit {} offset {}", cmd.getInt("port"), cmd.getFloat("ratio"), cmd.getInt("limit"),
+            cmd.getFloat("offset"))
+    println("name {} format {} given {}", cmd.getString("name"), cmd.getString("format"), cmd.exists("format"))
+    println("rest {}", join(cmd.rest(), ", "))
+    ret 0
+}

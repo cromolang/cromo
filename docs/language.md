@@ -79,6 +79,7 @@ list<f64> grades        // empty list
 - Variables are mutable by default; `const` makes them immutable (D26).
 - `const` is deep: on a `const` `string` or `list` only `const` methods can be called, and it cannot be passed with `ref`.
 - A `const` variable can be moved with `move`: the value does not change, it only passes to another owner (D26).
+- **Constants of a module** (D414): outside the functions, every module can declare constants of numbers, `bool` and `char`, and fixed-size arrays of them, with literals: `const i64 limit = 1024`, `const u32[4] masks = [0xFF, 0xFF00, 0xFF0000, 0xFF000000]`. They never change, so they hold no state; only their module sees them.
 
 ## 5. Functions and parameter passing (D22)
 
@@ -638,7 +639,7 @@ i32 main() {
 }
 ```
 
-- The core (`list`, `string`, `map`, `format`, `join`, the numbers from text) is visible everywhere; `std.fs`, `std.time`, `std.os`, `std.process`, `std.thread`, `std.net`, `std.crypto`, `std.json`, `std.jwt`, `std.http`, `std.gzip`, `std.zip`, `std.tar` and `std.websocket` are imported (D201). The functions of the first three are in D211.
+- The core (`list`, `string`, `map`, `format`, `join`, the numbers from text) is visible everywhere; `std.fs`, `std.time`, `std.os`, `std.process`, `std.thread`, `std.net`, `std.crypto`, `std.json`, `std.jwt`, `std.http`, `std.gzip`, `std.zip`, `std.tar`, `std.websocket` and `std.cmdline` are imported (D201). The functions of the first three are in D211.
 - `std.fs` has also `isFile`, `isLink`, `size`, `modified` (the seconds from 1970), `rename`, `copy`, `createFolders` with the folders above, `removeAll`, which never follows a link, and the parts of a path: `joinPath`, `parent`, `fileName` and `extension`.
 - `fs.createLink(target, path)` makes a link to a folder, a symbolic link on Linux and a junction on Windows, which needs no administrator; `fs.readLink(path)` gives where it points, and `fs.makeExecutable(path)` lets a file run on Linux (P18).
 - Next to `fs.cro` a module can have `fs_windows.cro` and `fs_linux.cro`: only the file of the system the program is compiled for is used, and it shares the names of the module, also the private ones (D202). It holds for the library and for the programs.
@@ -671,6 +672,28 @@ for (zip.Entry entry in zip.read(fs.readBytes("photos.zip"))) {
 }
 tar.extract(gzip.decompress(fs.readBytes("site.tar.gz")), "site")
 ```
+
+```cromo
+import std.cmdline
+
+i32 main(list<string> args) {
+    cmdline.CmdLine cmd
+    cmd.flag("verbose", 'v', "verbose output")
+    cmd.addInt("port", 'p', "port to listen on", false, 8080)
+    cmd.addString("format", 'f', "output format", false, "text")
+    cmd.choices("format", ["text", "json"])
+    cmd.footer("files...")
+    cmd.parse(args)          // --help, or an error: the help, and the end of the program
+    i64 port = cmd.getInt("port")
+    for (string file in cmd.rest()) {
+        println("{} on {}", file, port)
+    }
+    ret 0
+}
+```
+
+- `std.cmdline` reads the options of the program (D415): `flag`, `addInt`, `addFloat` and `addString` with the long name, the short one (`' '` without it), the description and, for a value, whether it is required and its default; `choices` for the values allowed, `footer` for the usage line. After `parse(args)`, `exists`, `getInt`, `getFloat`, `getString` and `rest`. The forms are `--name value`, `--name=value`, `-n value`, `-nvalue` and the flags grouped, `-vq`; `--` ends the options (P26).
+- With `-h` or `--help`, `parse` prints the help (P27) and ends the program with 0; with a wrong command line, it prints the error and the help on the standard error and ends with 2 (D416). A wrong use of the module, as `getInt` of an option of text, is a panic.
 
 - `zip.read` and `tar.read` give the entries of an archive, each with `name`, `folder`, `link`, `executable` and `data`; `zip.extract` and `tar.extract` write its files and folders in a folder, without the links, and refuse a name that would leave it, as `../x` (D404, P21). A zip can be stored, with deflate or Zip64; a tar ustar, of GNU or of pax.
 

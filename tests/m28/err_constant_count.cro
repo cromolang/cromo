@@ -1,0 +1,7 @@
+// The list of a constant array has one literal for each element (D414).
+// expect-error: the array has 3 elements, and the list 2 (D414)
+const i32[3] table = [1, 2]
+
+i32 main() {
+    ret 0
+}

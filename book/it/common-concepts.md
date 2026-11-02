@@ -62,6 +62,22 @@ error: 'PI' is const
 
 Una variabile `const` deve ricevere il suo valore nel punto in cui viene dichiarata.
 
+Fuori dalle funzioni, un modulo può dichiarare anche delle costanti, come limiti e tabelle di numeri. Contengono numeri, `bool` e `char`, o array di dimensione fissa di questi, scritti con dei letterali, e le vede solo il loro modulo:
+
+```cromo
+const i64 minute = 60
+const u8[4] masks = [1, 2, 4, 8]
+
+i32 main() {
+    println("{} {}", 3 * minute, masks[3])
+    ret 0
+}
+```
+
+```output
+180 8
+```
+
 ## Tipi
 
 ### Interi

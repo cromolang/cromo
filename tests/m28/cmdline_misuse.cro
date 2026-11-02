@@ -1,0 +1,12 @@
+// std.cmdline (D415): a wrong use of the module is a panic, an error of the program.
+// expect-stderr: panic: cmdline: --port is not an option of string (D415)
+// expect-exit: 101
+import std.cmdline
+
+i32 main(list<string> args) {
+    cmdline.CmdLine cmd
+    cmd.addInt("port", 'p', "port to listen on", false, 8080)
+    cmd.parse(args)
+    string port = cmd.getString("port")
+    ret 0
+}

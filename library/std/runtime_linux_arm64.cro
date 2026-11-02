@@ -1,6 +1,7 @@
 // std.runtime on Linux ARM64 (D408, P23): the numbers of its system calls.
 
 enum Call {
+    Write = 64
     Futex = 98
     Munmap = 215
     Mremap = 216

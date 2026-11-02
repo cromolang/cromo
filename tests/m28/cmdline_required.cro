@@ -1,0 +1,12 @@
+// std.cmdline (D416): a required option that is missing.
+// program-arg: file.txt
+// expect-stderr: the option --config is required
+// expect-exit: 2
+import std.cmdline
+
+i32 main(list<string> args) {
+    cmdline.CmdLine cmd
+    cmd.addString("config", 'c', "configuration file", true, "")
+    cmd.parse(args)
+    ret 0
+}

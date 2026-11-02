@@ -1,0 +1,13 @@
+// std.cmdline (D416): a value that is not a number, outside the choices, or missing.
+// program-arg: --level
+// program-arg: high
+// expect-stderr: the value of --level is not an integer: 'high'
+// expect-exit: 2
+import std.cmdline
+
+i32 main(list<string> args) {
+    cmdline.CmdLine cmd
+    cmd.addInt("level", 'l', "the level", false, 1)
+    cmd.parse(args)
+    ret 0
+}

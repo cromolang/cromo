@@ -1,0 +1,7 @@
+// The value of a constant of a module is a literal (D414).
+// expect-error: the value of a constant of a module is a number, a character, true or false (D414)
+const i64 size = 4 * 1024
+
+i32 main() {
+    ret 0
+}

@@ -1,0 +1,7 @@
+// A constant is private to its module (D414).
+// expect-error: a constant of a module has no attributes and is not public: only its module sees it (D414)
+public const i64 limit = 10
+
+i32 main() {
+    ret 0
+}

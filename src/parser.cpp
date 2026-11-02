@@ -70,22 +70,25 @@ private:
             if (!decl) return skipToNextDeclaration();
             decl->isPublic = isPublic;
             module.interfaces.push_back(std::move(*decl));
-        } else if (startsModuleVariable()) {
+        } else if (check(TokenKind::KwConst) || startsModuleVariable()) {
             if (isPublic || !attributes.empty()) {
                 diag_.error(isPublic ? peek().loc : attributes[0].loc,
-                            "a module variable has no attributes and is not public: only its module sees it (D394)");
+                            check(TokenKind::KwConst)
+                                ? "a constant of a module has no attributes and is not public: only its module sees it (D414)"
+                                : "a module variable has no attributes and is not public: only its module sees it (D394)");
             }
             StmtPtr decl = parseVarDecl();
             if (!decl) return skipToNextDeclaration();
             auto& variable = static_cast<VarDeclStmt&>(*decl);
             GlobalDecl global;
+            global.isConst = variable.isConst;
             global.typeName = std::move(variable.typeName);
             global.name = std::move(variable.name);
             global.loc = variable.nameLoc;
             global.init = std::move(variable.init);
             module.globals.push_back(std::move(global));
             if (!check(TokenKind::Newline) && !check(TokenKind::EndOfFile)) {
-                errorAtCurrent("a newline after the module variable");
+                errorAtCurrent(variable.isConst ? "a newline after the constant" : "a newline after the module variable");
                 skipToNextDeclaration();
             }
         } else if (auto function = parseFunction()) {

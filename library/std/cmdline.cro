@@ -1,0 +1,421 @@
+// The module std.cmdline (D415, D416): the options of a program, read from the
+// arguments of main (D154).
+//
+//   cmdline.CmdLine cmd
+//   cmd.flag("verbose", 'v', "verbose output")
+//   cmd.addInt("port", 'p', "port to listen on", false, 8080)
+//   cmd.parse(args)
+//   i64 port = cmd.getInt("port")
+//
+// The forms of the command line are in P26, the help in P27. A wrong use of the
+// module is a panic; a wrong command line ends the program with its error and the
+// help, with the exit code 2.
+import std.fs
+import std.os
+
+enum Kind {
+    Flag
+    Int
+    Float
+    Text
+}
+
+struct Option {
+    string name
+    char letter  // ' ' without a short name
+    string description
+    Kind kind
+    bool required
+    list<string> choices
+    bool given
+    i64 integer
+    f64 real
+    string text
+    string defaultText  // the value before the command line, for the help
+
+    // The type in the help: "int", "float" or "string".
+    string typeName() const {
+        switch (kind) {
+            case Int {
+                ret "int"
+            }
+            case Float {
+                ret "float"
+            }
+            default {
+                ret "string"
+            }
+        }
+    }
+
+    // The value as text, for the default in the help and for the choices.
+    string valueText() const {
+        switch (kind) {
+            case Int {
+                ret format("{}", integer)
+            }
+            case Float {
+                ret format("{}", real)
+            }
+            default {
+                ret text.copy()
+            }
+        }
+    }
+}
+
+// The options of a program, the arguments that are not options, and the text of
+// the help.
+public struct CmdLine {
+    list<Option> options
+    list<string> others
+    string footerText
+    string program = "program"
+
+    // An option without a value, as --verbose and -v.
+    public void flag(string name, char letter, string description) {
+        options.add(newOption(name, letter, description, Kind.Flag, false))
+    }
+
+    // An option with an i64; the default is used when the option is not given.
+    public void addInt(string name, char letter, string description, bool required, i64 value) {
+        Option option = newOption(name, letter, description, Kind.Int, required)
+        option.integer = value
+        option.defaultText = option.valueText()
+        options.add(move option)
+    }
+
+    // An option with an f64.
+    public void addFloat(string name, char letter, string description, bool required, f64 value) {
+        Option option = newOption(name, letter, description, Kind.Float, required)
+        option.real = value
+        option.defaultText = option.valueText()
+        options.add(move option)
+    }
+
+    // An option with a string.
+    public void addString(string name, char letter, string description, bool required, string value) {
+        Option option = newOption(name, letter, description, Kind.Text, required)
+        option.text = value.copy()
+        option.defaultText = value.copy()
+        options.add(move option)
+    }
+
+    // The values allowed for an option, as texts: "8080", "json".
+    public void choices(string name, list<string> values) {
+        i64 at = indexOf(name)
+        if (options[at].kind == Kind.Flag) {
+            panic(format("cmdline: --{} is a flag and has no values (D415)", name))
+        }
+        options[at].choices = values.copy()
+        if (!options[at].required && !allowed(options[at], options[at].defaultText)) {
+            panic(format("cmdline: the default of --{} is not among its choices (D415)", name))
+        }
+    }
+
+    // What the line of usage shows after the options, as "files...".
+    public void footer(string text) {
+        footerText = text.copy()
+    }
+
+    // Reads the arguments of main: with -h or --help it prints the help and ends the
+    // program with 0; with an error, the error and the help on the standard error,
+    // and the exit code 2 (D416).
+    public void parse(list<string> args) {
+        if (args.len() > 0) {
+            program = fs.fileName(args[0])
+            if (program.lower().endsWith(".exe")) {
+                program = program.slice(0, program.len() - 4)
+            }
+        }
+        bool ended = false  // after --, everything is an argument
+        for (i64 i = 1; i < args.len(); i++) {
+            if (ended || args[i] == "-" || !args[i].startsWith("-")) {
+                others.add(args[i].copy())
+                continue
+            }
+            if (args[i] == "--") {
+                ended = true
+                continue
+            }
+            if (args[i] == "--help") {
+                showHelp()
+            }
+            if (args[i].startsWith("--")) {
+                i = readLong(args, i)
+            } else {
+                i = readShort(args, i)
+            }
+        }
+        for (Option option in options) {
+            if (option.required && !option.given) {
+                fail(format("the option --{} is required", option.name))
+            }
+        }
+    }
+
+    // Whether the option was given.
+    public bool exists(string name) const {
+        ret options[indexOf(name)].given
+    }
+
+    // The value of an option of int: the one given, or the default.
+    public i64 getInt(string name) const {
+        ret options[kindOf(name, Kind.Int)].integer
+    }
+
+    public f64 getFloat(string name) const {
+        ret options[kindOf(name, Kind.Float)].real
+    }
+
+    public string getString(string name) const {
+        ret options[kindOf(name, Kind.Text)].text.copy()
+    }
+
+    // The arguments that are not options, in their order.
+    public list<string> rest() const {
+        ret others.copy()
+    }
+
+    // The text of the help (P27).
+    public string help() const {
+        string usage = "usage: " + program
+        for (Option option in options) {
+            if (option.required) {
+                usage += format(" --{} <{}>", option.name, option.typeName())
+            }
+        }
+        usage += " [options]"
+        if (footerText.len() > 0) {
+            usage += " " + footerText
+        }
+
+        list<string> left
+        i64 width = 10  // "-h, --help"
+        for (Option option in options) {
+            string text = "    --" + option.name
+            if (option.letter != ' ') {
+                text = format("-{:c}, --{}", option.letter, option.name)
+            }
+            if (option.kind != Kind.Flag) {
+                text += format(" <{}>", option.typeName())
+            }
+            if (text.len() > width) {
+                width = text.len()
+            }
+            left.add(move text)
+        }
+
+        string out = usage + "\noptions:\n"
+        for (i64 i = 0; i < options.len(); i++) {
+            out += "  " + left[i] + " ".repeat(width - left[i].len() + 2) + options[i].description
+            string notes = ""
+            if (options[i].choices.len() > 0) {
+                notes = join(options[i].choices, ", ")
+            }
+            if (options[i].required) {
+                notes = joined(notes, "required")
+            } else if (options[i].defaultText.len() > 0) {
+                notes = joined(notes, "default " + options[i].defaultText)
+            }
+            if (notes.len() > 0) {
+                out += " (" + notes + ")"
+            }
+            out += "\n"
+        }
+        ret out + "  -h, --help" + " ".repeat(width - 10 + 2) + "print this help\n"
+    }
+
+    Option newOption(string name, char letter, string description, Kind kind, bool required) {
+        if (name.len() == 0 || name.startsWith("-") || name == "help") {
+            panic(format("cmdline: '{}' cannot be the name of an option (D415)", name))
+        }
+        if (letter == '-' || letter == 'h') {
+            panic(format("cmdline: '{:c}' cannot be the short name of an option (D415)", letter))
+        }
+        for (Option option in options) {
+            if (option.name == name) {
+                panic(format("cmdline: the option --{} is added twice (D415)", name))
+            }
+            if (letter != ' ' && option.letter == letter) {
+                panic(format("cmdline: the short name -{:c} is used twice (D415)", letter))
+            }
+        }
+        Option option
+        option.name = name.copy()
+        option.letter = letter
+        option.description = description.copy()
+        option.kind = kind
+        option.required = required
+        ret option
+    }
+
+    i64 indexOf(string name) const {
+        for (i64 i = 0; i < options.len(); i++) {
+            if (options[i].name == name) {
+                ret i
+            }
+        }
+        panic(format("cmdline: there is no option --{} (D415)", name))
+    }
+
+    i64 kindOf(string name, Kind kind) const {
+        i64 at = indexOf(name)
+        if (options[at].kind != kind) {
+            panic(format("cmdline: --{} is not an option of {} (D415)", name, kindName(kind)))
+        }
+        ret at
+    }
+
+    // --name, --name=value or --name value; returns the index of the last argument read.
+    i64 readLong(list<string> args, i64 i) {
+        string body = args[i].slice(2, args[i].len())
+        string name = body.copy()
+        string value = ""
+        bool hasValue = false
+        i64 equal = body.find("=")
+        if (equal >= 0) {
+            name = body.slice(0, equal)
+            value = body.slice(equal + 1, body.len())
+            hasValue = true
+        }
+        i64 at = find(name)
+        if (at < 0) {
+            fail(format("unknown option --{}", name))
+        }
+        if (options[at].kind == Kind.Flag) {
+            if (hasValue) {
+                fail(format("the option --{} takes no value", name))
+            }
+            options[at].given = true
+            ret i
+        }
+        i64 last = i
+        if (!hasValue) {
+            if (i + 1 >= args.len()) {
+                fail(format("the option --{} needs a value", name))
+            }
+            last = i + 1
+            value = args[last].copy()
+        }
+        setValue(at, value)
+        ret last
+    }
+
+    // -v, -vq, -p 8080, -p8080 and -vp 8080; returns the index of the last argument read.
+    i64 readShort(list<string> args, i64 i) {
+        for (i64 k = 1; k < args[i].len(); k++) {
+            char letter = args[i][k]
+            if (letter == 'h') {
+                showHelp()
+            }
+            i64 at = findLetter(letter)
+            if (at < 0) {
+                fail(format("unknown option -{:c}", letter))
+            }
+            if (options[at].kind == Kind.Flag) {
+                options[at].given = true
+                continue
+            }
+            if (k + 1 < args[i].len()) {
+                setValue(at, args[i].slice(k + 1, args[i].len()))
+                ret i
+            }
+            if (i + 1 >= args.len()) {
+                fail(format("the option -{:c} needs a value", letter))
+            }
+            setValue(at, args[i + 1])
+            ret i + 1
+        }
+        ret i
+    }
+
+    i64 find(string name) const {
+        for (i64 i = 0; i < options.len(); i++) {
+            if (options[i].name == name) {
+                ret i
+            }
+        }
+        ret -1
+    }
+
+    i64 findLetter(char letter) const {
+        for (i64 i = 0; i < options.len(); i++) {
+            if (options[i].letter == letter) {
+                ret i
+            }
+        }
+        ret -1
+    }
+
+    // The value of an option from its text, checked as a number and among the choices.
+    void setValue(i64 at, string value) {
+        string name = options[at].name.copy()
+        if (options[at].kind == Kind.Int) {
+            try {
+                options[at].integer = i64(value)
+            } catch (Exception e) {
+                fail(format("the value of --{} is not an integer: '{}'", name, value))
+            }
+        } else if (options[at].kind == Kind.Float) {
+            try {
+                options[at].real = f64(value)
+            } catch (Exception e) {
+                fail(format("the value of --{} is not a number: '{}'", name, value))
+            }
+        } else {
+            options[at].text = value.copy()
+        }
+        if (!allowed(options[at], options[at].valueText())) {
+            fail(format("the value of --{} is '{}', and it can be {}", name, value, join(options[at].choices, ", ")))
+        }
+        options[at].given = true
+    }
+
+    void showHelp() const {
+        print("{}", help())
+        os.exit(0)
+    }
+
+    // D416: the error and the help on the standard error, and the exit code 2.
+    void fail(string message) const {
+        eprint("{}: {}\n\n{}", program, message, help())
+        os.exit(2)
+    }
+}
+
+bool allowed(Option option, string value) {
+    if (option.choices.len() == 0) {
+        ret true
+    }
+    for (string choice in option.choices) {
+        if (choice == value) {
+            ret true
+        }
+    }
+    ret false
+}
+
+string joined(string first, string second) {
+    if (first.len() == 0) {
+        ret second.copy()
+    }
+    ret first + "; " + second
+}
+
+string kindName(Kind kind) {
+    switch (kind) {
+        case Int {
+            ret "int"
+        }
+        case Float {
+            ret "float"
+        }
+        case Text {
+            ret "string"
+        }
+        default {
+            ret "flag"
+        }
+    }
+}

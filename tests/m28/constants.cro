@@ -1,0 +1,36 @@
+// The constants of a module, also without 'import unsafe' (D414): numbers, bool,
+// char, and arrays of them, read as variables.
+// expect-output: 1024 -3 true z 2.5
+// expect-output: 4 0x77073096 -1 255
+// expect-output: sum 6
+// expect-output: 3 false
+const i64 limit = 1024
+const i32 below = -3
+const bool enabled = true
+const char letter = 'z'
+const f64 half = 2.5
+const u32[4] crc = [0x00000000, 0x77073096, 0xEE0E612C, 0x990951BA]
+const i8[3] signs = [-1, 0, 1]
+const u8[2] edges = [0, 255]
+const i64[3] values = [
+    1, 2,
+    3,
+]
+const bool[2] states = [true, false]
+
+i64 total(i64[3] numbers) {
+    i64 sum = 0
+    for (i64 n in numbers) {
+        sum += n
+    }
+    ret sum
+}
+
+i32 main() {
+    println("{} {} {} {:c} {}", limit, below, enabled, letter, half)
+    println("{} {:#x} {} {}", crc.len(), crc[1], signs[0], edges[1])
+    println("sum {}", total(values))
+    i64 at = 1
+    println("{} {}", values[2], states[at])
+    ret 0
+}

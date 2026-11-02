@@ -1,0 +1,15 @@
+// std.cmdline (D416): an unknown option, with the help on the standard error and the
+// exit code 2.
+// program-arg: -vx
+// expect-stderr: unknown option -x
+// expect-stderr: usage:
+// expect-stderr:   -v, --verbose  verbose output
+// expect-exit: 2
+import std.cmdline
+
+i32 main(list<string> args) {
+    cmdline.CmdLine cmd
+    cmd.flag("verbose", 'v', "verbose output")
+    cmd.parse(args)
+    ret 0
+}

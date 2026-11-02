@@ -62,6 +62,22 @@ error: 'PI' is const
 
 A `const` must be given its value where it is declared.
 
+Outside the functions, a module can declare constants too, as limits and tables of numbers. They hold numbers, `bool` and `char`, or fixed-size arrays of them, written with literals, and only their module sees them:
+
+```cromo
+const i64 minute = 60
+const u8[4] masks = [1, 2, 4, 8]
+
+i32 main() {
+    println("{} {}", 3 * minute, masks[3])
+    ret 0
+}
+```
+
+```output
+180 8
+```
+
 ## Types
 
 ### Integers

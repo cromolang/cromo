@@ -314,7 +314,17 @@ public:
             if (!global.variable || global.variable->type.isError()) continue;
             Type type = global.variable->type;
             std::string value = global.init ? literalConstant(*global.init, type) : "zeroinitializer";
-            out << llvmName('@', global.variable->symbol) << " = internal global " << llvmType(type) << " " << value << "\n";
+            if (global.isConst && type.isArray()) {  // D414: a table
+                Type element = type.array->element;
+                const auto& list = static_cast<const ListLiteralExpr&>(*global.init);
+                value = "[";
+                for (size_t i = 0; i < list.elements.size(); ++i) {
+                    value += (i ? ", " : "") + llvmType(element) + " " + literalConstant(*list.elements[i], element);
+                }
+                value += "]";
+            }
+            out << llvmName('@', global.variable->symbol) << (global.isConst ? " = internal constant " : " = internal global ")
+                << llvmType(type) << " " << value << "\n";
         }
         if (!module.globals.empty()) out << "\n";
         for (const LambdaExpr* lambda : module.lambdas) {

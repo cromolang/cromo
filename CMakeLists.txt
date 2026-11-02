@@ -123,7 +123,7 @@ cromo_tls_objects(tls_linux_arm64 "${CROMO_RT_ARM64_BASE_FLAGS}" CROMO_TLS_ARM64
 add_custom_command(
   OUTPUT "${CROMO_RT_DIR}/cromo_rt.obj"
   COMMAND "${CROMO_CLANG}" ${CROMO_RT_FLAGS} -c "${CMAKE_SOURCE_DIR}/runtime/cromo_rt.c" -o "${CROMO_RT_DIR}/cromo_rt.obj"
-  DEPENDS runtime/cromo_rt.c runtime/ryu.h runtime/ryu_tables.h
+  DEPENDS runtime/cromo_rt.c
   COMMENT "Compiling the Cromo runtime")
 add_custom_command(
   OUTPUT "${CROMO_RT_DIR}/mem_x64.obj"
@@ -142,7 +142,7 @@ add_custom_command(
 add_custom_command(
   OUTPUT "${CROMO_RT_DIR}/cromo_rt_linux.o"
   COMMAND "${CROMO_CLANG}" ${CROMO_RT_LINUX_FLAGS} -c "${CMAKE_SOURCE_DIR}/runtime/cromo_rt.c" -o "${CROMO_RT_DIR}/cromo_rt_linux.o"
-  DEPENDS runtime/cromo_rt.c runtime/ryu.h runtime/ryu_tables.h
+  DEPENDS runtime/cromo_rt.c
   COMMENT "Compiling the Cromo runtime for Linux")
 add_custom_command(
   OUTPUT "${CROMO_RT_DIR}/mem_x64_linux.o"
@@ -161,7 +161,7 @@ add_custom_command(
 add_custom_command(
   OUTPUT "${CROMO_RT_DIR}/cromo_rt_linux_arm64.o"
   COMMAND "${CROMO_CLANG}" ${CROMO_RT_ARM64_FLAGS} -c "${CMAKE_SOURCE_DIR}/runtime/cromo_rt.c" -o "${CROMO_RT_DIR}/cromo_rt_linux_arm64.o"
-  DEPENDS runtime/cromo_rt.c runtime/ryu.h runtime/ryu_tables.h
+  DEPENDS runtime/cromo_rt.c
   COMMENT "Compiling the Cromo runtime for Linux on ARM64")
 add_custom_command(
   OUTPUT "${CROMO_RT_DIR}/mem_arm64_linux.o"

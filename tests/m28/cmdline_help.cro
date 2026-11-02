@@ -1,0 +1,26 @@
+// std.cmdline (D416, P27): --help prints the help on the standard output and ends with 0.
+// program-arg: --port
+// program-arg: 1
+// program-arg: --help
+// expect-output-contains: --config <string> [options] files...
+// expect-output-contains: options:
+// expect-output-contains:   -v, --verbose          verbose output
+// expect-output-contains:   -p, --port <int>       port to listen on (default 8080)
+// expect-output-contains:   -f, --format <string>  output format (text, json; default text)
+// expect-output-contains:       --config <string>  configuration file (required)
+// expect-output-contains:   -h, --help             print this help
+// expect-exit: 0
+import std.cmdline
+
+i32 main(list<string> args) {
+    cmdline.CmdLine cmd
+    cmd.flag("verbose", 'v', "verbose output")
+    cmd.addInt("port", 'p', "port to listen on", false, 8080)
+    cmd.addString("format", 'f', "output format", false, "text")
+    cmd.choices("format", ["text", "json"])
+    cmd.addString("config", ' ', "configuration file", true, "")
+    cmd.footer("files...")
+    cmd.parse(args)
+    println("not reached")
+    ret 1
+}

@@ -176,3 +176,25 @@ void unlockHeap() {
         systemCall(i64(Call.Futex), state, 129, 1, 0, 0, 0)  // FUTEX_WAKE | FUTEX_PRIVATE, one thread
     }
 }
+
+// ---- The output (P25) ----
+
+// The bytes of a buffer on the standard output (1) or error (2). With nowhere to
+// write, the text is lost, as on Windows.
+void writeRaw(i64 stream, addr data, i64 size) {
+    i64 descriptor = 1
+    if (stream == 2) {
+        descriptor = 2
+    }
+    i64 done = 0
+    for (done < size) {
+        i64 written = systemCall(i64(Call.Write), descriptor, offset(data, done), size - done, 0, 0, 0)
+        if (written == -4) {  // EINTR
+            continue
+        }
+        if (written <= 0) {
+            ret
+        }
+        done += written
+    }
+}

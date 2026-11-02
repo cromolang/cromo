@@ -92,6 +92,50 @@ argument 2: beta
 
 `args[0]` is the name of the program, as in C.
 
+## The command line
+
+`std.cmdline` reads the options of a program from those arguments. Each option has a long name, a short one of one letter (`' '` when it has none) and a description; an option with a value also says whether it is required, and its default:
+
+```cromo args=-v,--port=9000,notes.txt
+import std.cmdline
+
+i32 main(list<string> args) {
+    cmdline.CmdLine cmd
+    cmd.flag("verbose", 'v', "print more")
+    cmd.addInt("port", 'p', "port to listen on", false, 8080)
+    cmd.addString("format", 'f', "output format", false, "text")
+    cmd.choices("format", ["text", "json"])
+    cmd.footer("files...")
+    cmd.parse(args)
+
+    println("port {}, format {}", cmd.getInt("port"), cmd.getString("format"))
+    if (cmd.exists("verbose")) {
+        println("files: {}", join(cmd.rest(), ", "))
+    }
+    ret 0
+}
+```
+
+```output
+port 9000, format text
+files: notes.txt
+```
+
+The options can be written `--port 9000`, `--port=9000`, `-p 9000` or `-p9000`, and the flags together, `-vq`; after `--` every argument is an argument, also when it starts with `-`. The other arguments, as `notes.txt`, are in `rest()`. `getInt`, `getFloat` and `getString` give the value of an option, or its default; `exists` says whether it was given.
+
+`--help` prints the help, made from the options, and ends the program:
+
+```text
+usage: server [options] files...
+options:
+  -v, --verbose          print more
+  -p, --port <int>       port to listen on (default 8080)
+  -f, --format <string>  output format (text, json; default text)
+  -h, --help             print this help
+```
+
+A wrong command line, as an unknown option or a port that is not a number, prints the error and the help on the standard error, and ends the program with the exit code 2, as the commands of the system do.
+
 ## Other programs
 
 `process.run` runs a program, waits for it, and gives its exit code, its output and its errors:
@@ -167,6 +211,7 @@ the year has four digits: true
 
 - `std.fs` reads and writes files and folders; errors are exceptions with a clear message.
 - `std.os` gives the environment; the arguments arrive in `main(list<string> args)`.
+- `std.cmdline` reads the options of the command line, and writes the help.
 - `std.process` runs other programs, without a shell.
 - `std.zip` and `std.tar` read and extract archives.
 - `std.time` measures durations and gives the date and time.
