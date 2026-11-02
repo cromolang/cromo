@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Download Cromo @VERSION@ — Windows and Linux</title>
+<meta name="description" content="Download Cromo @VERSION@ for Windows x64 and Linux x64: one line installs the compiler, the library and the VS Code extension. The archives, their SHA-256 and the signed manifest.">
+<meta name="theme-color" content="#f6f8fb">
+<link rel="icon" href="../logo-mark.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="../logo-avatar.png">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://cromolang.org/download/">
+<meta property="og:title" content="Download Cromo">
+<meta property="og:description" content="One line installs Cromo for Windows and Linux, without administrator rights.">
+<meta property="og:image" content="https://cromolang.org/social-preview.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../site.css">
+</head>
+<body>
+<div class="backdrop" aria-hidden="true"></div>
+
+<header class="nav">
+  <div class="wrap">
+    <a class="brand" href="../" aria-label="Cromo, home">
+      <svg height="30" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 228 64">
+  <defs>
+    <linearGradient id="nav-orbit" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1b2230"/>
+      <stop offset="0.38" stop-color="#5d697b"/>
+      <stop offset="0.52" stop-color="#9ba6b5"/>
+      <stop offset="0.72" stop-color="#465164"/>
+      <stop offset="1" stop-color="#171d29"/>
+    </linearGradient>
+    <radialGradient id="nav-nucleus" cx="0.35" cy="0.3" r="0.75">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="0.35" stop-color="#cfd6df"/>
+      <stop offset="0.8" stop-color="#7c8797"/>
+      <stop offset="1" stop-color="#4b5565"/>
+    </radialGradient>
+  </defs>
+  <g transform="translate(32 32) rotate(-28)">
+    <path d="M23.84 -5.16A27 11 0 1 0 23.84 5.16" fill="none" stroke="url(#nav-orbit)" stroke-width="4" stroke-linecap="round"/>
+    <circle cx="23.84" cy="5.16" r="3.6" fill="#0ea5c6"/>
+  </g>
+  <circle cx="32" cy="32" r="9" fill="url(#nav-nucleus)" stroke="#3a4454" stroke-width="1"/>
+  <g fill="none" stroke="#151b26" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round" transform="translate(-4 0)">
+    <path d="M96.4 26.9A11 11 0 1 0 96.4 41.1"/>
+    <path d="M108 23V45M108 31.5A9 9 0 0 1 117.5 23.5"/>
+    <circle cx="140" cy="34" r="11"/>
+    <path d="M163 45V23M163 30A7 7 0 0 1 177 30V45M177 30A7 7 0 0 1 191 30V45"/>
+    <circle cx="213.5" cy="34" r="11"/>
+  </g>
+</svg>
+    </a>
+    <nav class="nav-links" aria-label="Sections">
+      <a href="../#features">Features</a>
+      <a href="../#ownership">Ownership</a>
+      <a href="../#examples">Examples</a>
+      <a href="../#tooling">Tooling</a>
+      <a href="../#benchmarks">Benchmarks</a>
+      <a href="../#roadmap">Roadmap</a>
+      <a href="../book/">Guide</a>
+      <a href="https://github.com/cromolang/cromo">GitHub</a>
+    </nav>
+    <div class="nav-right">
+      <span class="pill">v@VERSION@ · preview</span>
+      <a class="btn small primary" href="./" aria-current="page"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5v8M4.5 7 8 10.5 11.5 7M3 13.5h10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>Download</a>
+    </div>
+  </div>
+</header>
+
+<main>
+  <div class="page-head">
+    <div class="wrap">
+      <div class="kicker">Download</div>
+      <h1>Install Cromo <span class="chrome">@VERSION@</span></h1>
+      <p class="lead">One line installs <code>cromo</code>, its library and the extension for VS Code, for your user and without administrator rights, in <code>~/.cromo</code>. The script checks the SHA-256 of the archive against the manifest of the version, and adds <code>cromo</code> to the <code>PATH</code>.</p>
+
+      <div class="installers">
+        <div class="install" data-system="windows">
+          <h3>Windows x64 <span class="badge done yours-badge">your system</span></h3>
+          <p class="meta">In PowerShell:</p>
+          <div class="command"><pre><span class="prompt">&gt; </span><span class="cmd">irm https://cromolang.org/install.ps1 | iex</span></pre><button class="copy" type="button" data-copy="irm https://cromolang.org/install.ps1 | iex" aria-label="Copy the command">copy</button></div>
+          <p class="meta">64-bit Windows. Or download the archive: <a href="../package/win_x86_64-@VERSION@.zip"><code>win_x86_64-@VERSION@.zip</code></a>, @WIN_SIZE@.</p>
+        </div>
+        <div class="install" data-system="linux">
+          <h3>Linux x64 <span class="badge done yours-badge">your system</span></h3>
+          <p class="meta">In a terminal:</p>
+          <div class="command"><pre><span class="prompt">$ </span><span class="cmd">curl -sSf https://cromolang.org/install.sh | sh</span></pre><button class="copy" type="button" data-copy="curl -sSf https://cromolang.org/install.sh | sh" aria-label="Copy the command">copy</button></div>
+          <p class="meta">Linux on x86-64 with glibc 2.29 or later, as Ubuntu 20.04 and later, and <code>curl</code>, <code>tar</code> and <code>sha256sum</code>. Or download the archive: <a href="../package/linux_x86_64-@VERSION@.tar.gz"><code>linux_x86_64-@VERSION@.tar.gz</code></a>, @LINUX_SIZE@.</p>
+        </div>
+      </div>
+
+      <div class="window check">
+        <div class="window-bar"><i></i><i></i><i></i><span class="title"><b>then, in a new terminal</b></span></div>
+        <pre><span class="prompt">$ </span><span class="cmd">cromo version</span>
+cromo @VERSION@ (LLVM 23.1.4)
+<span class="prompt">$ </span><span class="cmd">cromo run hello.cro</span>
+Hello, world!</pre>
+      </div>
+    </div>
+  </div>
+
+  <section id="archives">
+    <div class="wrap">
+      <div class="kicker">Archives</div>
+      <h2>Version @VERSION@</h2>
+      <p class="section-lead">Each archive holds <code>cromo</code> in <code>bin</code>, the library and the runtime in <code>lib</code>, the extension for VS Code in <code>extension</code>, and the licenses. The manifest of the version lists the archives with their SHA-256; <code>cromo update</code> checks its Ed25519 signature before it installs a version.</p>
+      <div class="files-card">
+        <div class="table-wrap">
+          <table class="files">
+            <thead><tr><th>System</th><th>Archive</th><th>Size</th><th>SHA-256</th></tr></thead>
+            <tbody>
+              <tr><td>Windows x64</td><td><a href="../package/win_x86_64-@VERSION@.zip">win_x86_64-@VERSION@.zip</a></td><td>@WIN_SIZE@</td><td><code class="hash">@WIN_SHA256@</code></td></tr>
+              <tr><td>Linux x64</td><td><a href="../package/linux_x86_64-@VERSION@.tar.gz">linux_x86_64-@VERSION@.tar.gz</a></td><td>@LINUX_SIZE@</td><td><code class="hash">@LINUX_SHA256@</code></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="files-foot">The manifest: <a href="../release/@VERSION@">release/@VERSION@</a>, and its signature: <a href="../release/@VERSION@.sig">release/@VERSION@.sig</a>. The latest version is always at <a href="../latest">cromolang.org/latest</a>.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="more">
+    <div class="wrap">
+      <div class="kicker">More</div>
+      <h2>After the installation</h2>
+      <div class="notes">
+        <div class="card">
+          <h3>Updating</h3>
+          <p><code>cromo update</code> installs the latest version next to the one you have, after checking its signature, and makes it the active one. <code>cromo update 0.27.1</code> goes back to an older version.</p>
+        </div>
+        <div class="card">
+          <h3>Linux on ARM64</h3>
+          <p><code>cromo</code> runs on Windows x64 and Linux x64, and both write programs for Linux on ARM64, as a Raspberry Pi or a server with Graviton: <code>cromo build --target linux-arm64</code>. A <code>cromo</code> that runs on ARM64, Windows on ARM64 and macOS come later.</p>
+        </div>
+        <div class="card">
+          <h3>Installing by hand</h3>
+          <p>Unpack the archive anywhere and add its <code>bin</code> folder to the <code>PATH</code>: <code>cromo</code> finds its library in <code>lib</code>, next to <code>bin</code>. The extension is the <code>.vsix</code> file in <code>extension</code>.</p>
+        </div>
+        <div class="card">
+          <h3>Visual Studio Code</h3>
+          <p>The installer adds the extension when it finds the command <code>code</code>. It is also <code>cromolang.cromo</code> in the <a href="https://marketplace.visualstudio.com/items?itemName=cromolang.cromo">Visual Studio Marketplace</a> and in <a href="https://open-vsx.org/extension/cromolang/cromo">Open VSX</a>.</p>
+        </div>
+        <div class="card">
+          <h3>Uninstalling</h3>
+          <p>Delete <code>~/.cromo</code>, <code>%USERPROFILE%\.cromo</code> on Windows, and its <code>bin</code> from the <code>PATH</code>: on Windows the installer added it to the <code>PATH</code> of the user, on Linux to <code>~/.profile</code>, <code>~/.bashrc</code> and <code>~/.zshrc</code>, after the line <code>#&nbsp;Cromo</code>.</p>
+        </div>
+        <div class="card">
+          <h3>The guide and the sources</h3>
+          <p><a href="../book/">The Cromo Guide</a>, also as PDF, <a href="../book/cromo-guide-en.pdf">in English</a> and <a href="../book/cromo-guida-it.pdf">in Italian</a>. The compiler, the library and the design decisions are <a href="https://github.com/cromolang/cromo">on GitHub</a>, with <a href="https://github.com/cromolang/cromo/blob/main/BUILD.md">the way to build them</a>.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="brand"><svg height="26" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="foot-orbit" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1b2230"/>
+      <stop offset="0.38" stop-color="#5d697b"/>
+      <stop offset="0.52" stop-color="#9ba6b5"/>
+      <stop offset="0.72" stop-color="#465164"/>
+      <stop offset="1" stop-color="#171d29"/>
+    </linearGradient>
+    <radialGradient id="foot-nucleus" cx="0.35" cy="0.3" r="0.75">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="0.35" stop-color="#cfd6df"/>
+      <stop offset="0.8" stop-color="#7c8797"/>
+      <stop offset="1" stop-color="#4b5565"/>
+    </radialGradient>
+  </defs>
+  <g transform="translate(32 32) rotate(-28)">
+    <path d="M23.84 -5.16A27 11 0 1 0 23.84 5.16" fill="none" stroke="url(#foot-orbit)" stroke-width="4" stroke-linecap="round"/>
+    <circle cx="23.84" cy="5.16" r="3.6" fill="#0ea5c6"/>
+  </g>
+  <circle cx="32" cy="32" r="9" fill="url(#foot-nucleus)" stroke="#3a4454" stroke-width="1"/>
+</svg><span>Cromo is the Italian word for chromium, element 24.</span></div>
+    <div class="links">
+      <a href="../#features">Features</a>
+      <a href="./">Download</a>
+      <a href="../book/">Guide</a>
+      <a href="https://github.com/cromolang/cromo">GitHub</a>
+      <span>MIT or Apache 2.0</span>
+    </div>
+  </div>
+</footer>
+
+<script>
+// The installer of the system of the visitor comes first, and the buttons copy the commands.
+(function () {
+  const agent = navigator.userAgent;
+  const system = /Windows/.test(agent) ? "windows" : /Linux x86_64|X11; Linux/.test(agent) && !/Android/.test(agent) ? "linux" : "";
+  const card = system && document.querySelector('.install[data-system="' + system + '"]');
+  if (card) {
+    card.classList.add("yours");
+    card.parentNode.prepend(card);
+  }
+  document.querySelectorAll(".copy").forEach((button) => {
+    button.addEventListener("click", () => {
+      const done = (word) => {
+        button.textContent = word;
+        setTimeout(() => { button.textContent = "copy"; }, 1600);
+      };
+      const select = () => {
+        const range = document.createRange();
+        range.selectNodeContents(button.previousElementSibling.querySelector(".cmd"));
+        const selection = window.getSelection();
+        selection.removeAllRanges();
+        selection.addRange(range);
+        done("selected");
+      };
+      if (navigator.clipboard) {
+        navigator.clipboard.writeText(button.dataset.copy).then(() => done("copied"), select);
+      } else {
+        select();
+      }
+    });
+  });
+})();
+</script>
+</body>
+</html>

@@ -14,11 +14,25 @@ $version = [regex]::Match((Get-Content (Join-Path $root 'CMakeLists.txt') -Raw),
 if (Test-Path $out) { Remove-Item -Recurse -Force $out }
 New-Item -ItemType Directory -Force $out | Out-Null
 
-# The pages, with the version of the archives they link.
+# The pages, with the version of the archives they link, and the size and the
+# SHA-256 of each archive for the download page.
 Copy-Item (Join-Path $root 'site\*') $out -Recurse
-$index = Join-Path $out 'index.html'
-$text = [System.IO.File]::ReadAllText($index) -replace '@VERSION@', $version
-[System.IO.File]::WriteAllText($index, $text, (New-Object System.Text.UTF8Encoding($false)))
+$values = @{ '@VERSION@' = $version }
+foreach ($archive in @(@('WIN', "win_x86_64-$version.zip"), @('LINUX', "linux_x86_64-$version.tar.gz"))) {
+    $path = Join-Path $dist "package\$($archive[1])"
+    $size, $sum = '?', 'missing'
+    if (Test-Path $path) {
+        $size = [string]::Format([Globalization.CultureInfo]::InvariantCulture, '{0:N1}&nbsp;MB', (Get-Item $path).Length / 1MB)
+        $sum = (Get-FileHash -Algorithm SHA256 $path).Hash.ToLower()
+    }
+    $values["@$($archive[0])_SIZE@"] = $size
+    $values["@$($archive[0])_SHA256@"] = $sum
+}
+foreach ($page in Get-ChildItem $out -Recurse -Filter *.html) {
+    $text = [System.IO.File]::ReadAllText($page.FullName)
+    foreach ($key in $values.Keys) { $text = $text.Replace($key, $values[$key]) }
+    [System.IO.File]::WriteAllText($page.FullName, $text, (New-Object System.Text.UTF8Encoding($false)))
+}
 
 # The guide, in every language, with its PDFs.
 $arguments = @((Join-Path $root 'tools\book.py'), '--out', $out, '--pdf')

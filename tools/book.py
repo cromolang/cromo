@@ -58,7 +58,7 @@ LANGUAGES = {
         'name': 'English', 'pdf': 'cromo-guide-en.pdf',
         'previous': 'Previous', 'next': 'Next', 'search': 'Search the guide',
         'pdf_link': 'PDF', 'contents': 'Contents', 'theme': 'Light or dark theme',
-        'site': 'cromolang.org', 'source': 'Source', 'no_results': 'No results',
+        'site': 'cromolang.org', 'source': 'Source', 'no_results': 'No results', 'download': 'Download',
         'menu': 'Chapters', 'chapter': 'Chapter', 'appendix': 'Appendix',
         'subtitle': 'The Cromo programming language',
         'version': 'Version {} · {}',
@@ -70,7 +70,7 @@ LANGUAGES = {
         'name': 'Italiano', 'pdf': 'cromo-guida-it.pdf',
         'previous': 'Precedente', 'next': 'Successivo', 'search': 'Cerca nella guida',
         'pdf_link': 'PDF', 'contents': 'Indice', 'theme': 'Tema chiaro o scuro',
-        'site': 'cromolang.org', 'source': 'Sorgenti', 'no_results': 'Nessun risultato',
+        'site': 'cromolang.org', 'source': 'Sorgenti', 'no_results': 'Nessun risultato', 'download': 'Scarica',
         'menu': 'Capitoli', 'chapter': 'Capitolo', 'appendix': 'Appendice',
         'subtitle': 'Il linguaggio di programmazione Cromo',
         'version': 'Versione {} · {}',
@@ -405,6 +405,7 @@ def page(language, title, book_title, chapters, index, body, headings, previous,
   <a class="book-title" href="index.html">{html.escape(book_title)}</a>
   <div class="tools">
     <input class="search" type="search" placeholder="{words['search']}" aria-label="{words['search']}" data-empty="{words['no_results']}">
+    <a class="get" href="../../download/">{words['download']}</a>
     <a class="pdf" href="../{words['pdf']}" download>{words['pdf_link']}</a>
     {switch}
     <button class="theme" aria-label="{words['theme']}" title="{words['theme']}"></button>
@@ -418,7 +419,7 @@ def page(language, title, book_title, chapters, index, body, headings, previous,
 {body}
 </article>
 {nav}
-<footer><a href="../../">{words['site']}</a> · <a href="{REPOSITORY}">{words['source']}</a></footer>
+<footer><a href="../../">{words['site']}</a> · <a href="../../download/">{words['download']}</a> · <a href="{REPOSITORY}">{words['source']}</a></footer>
 </main>
 </div>
 <script src="../book.js"></script>

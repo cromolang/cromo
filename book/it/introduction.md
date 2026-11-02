@@ -57,7 +57,7 @@ La guida è disponibile anche in PDF, in inglese e in italiano: usa il pulsante 
 
 ## Lo stato di Cromo
 
-Cromo è giovane. La versione attuale è la 0.27, e il linguaggio può ancora cambiare prima della versione 1.0. Ogni decisione di progetto è registrata, con le sue motivazioni, nel file `docs/decisions.md` del [repository](https://github.com/cromolang/cromo), accanto alla bozza di specifica `docs/language.md`.
+Cromo è giovane. La versione attuale è la 0.29, e il linguaggio può ancora cambiare prima della versione 1.0. Ogni decisione di progetto è registrata, con le sue motivazioni, nel file `docs/decisions.md` del [repository](https://github.com/cromolang/cromo), accanto alla bozza di specifica `docs/language.md`.
 
 Cromo funziona su Windows x64 e Linux x64, e ogni versione compila programmi per entrambi i sistemi, e per Linux su ARM64.
 

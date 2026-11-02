@@ -11,6 +11,7 @@
 
 <p align="center">
   <a href="https://cromolang.org">Website</a> ·
+  <a href="https://cromolang.org/download/">Download</a> ·
   <a href="https://cromolang.org/book/">The Cromo Guide</a> ·
   <a href="BUILD.md">Building from source</a> ·
   <a href="docs/decisions.md">Design decisions</a>
@@ -102,6 +103,8 @@ irm https://cromolang.org/install.ps1 | iex          # Windows
 curl -sSf https://cromolang.org/install.sh | sh     # Linux
 ```
 
+The archives, their SHA-256 and the way to install them by hand are on [the download page](https://cromolang.org/download/).
+
 Then:
 
 ```sh
@@ -117,7 +120,7 @@ The [Cromo Guide](https://cromolang.org/book/) teaches the language step by step
 
 ## Status
 
-Cromo is in development, at version 0.27. The language and the compiler can still change before 1.0: every design choice is recorded, with its reasons, in [docs/decisions.md](docs/decisions.md).
+Cromo is in development, at version 0.29. The language and the compiler can still change before 1.0: every design choice is recorded, with its reasons, in [docs/decisions.md](docs/decisions.md).
 
 The current compiler is written in C++ and uses LLVM 23. A compiler written in Cromo will follow, once the language is mature.
 

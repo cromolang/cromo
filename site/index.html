@@ -17,282 +17,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
-<style>
-:root {
-  --bg: #f6f8fb;
-  --bg-2: #ffffff;
-  --surface: #ffffff;
-  --surface-2: #eef2f6;
-  --border: #e1e6ed;
-  --border-2: #cfd7e2;
-  --text: #121826;
-  --muted: #4d596b;
-  --dim: #7a8597;
-  --ink: #141b28;
-  --accent: #0a8fae;
-  --accent-rgb: 10, 143, 174;
-  --accent-2: #6553e0;
-  --ok: #12925c;
-  --warn: #b7700b;
-  --error: #d23a4f;
-  --chrome: linear-gradient(100deg, #151c29 0%, #5a6678 32%, #98a3b2 47%, #3b4556 66%, #151c29 100%);
-  --code-bg: #ffffff;
-  --term-bg: #f3f6f9;
-  --shadow: 0 1px 2px rgba(16, 24, 40, 0.04), 0 10px 30px rgba(16, 24, 40, 0.06);
-  --radius: 14px;
-  --mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
-  --sans: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
-  --display: "Space Grotesk", "Inter", system-ui, sans-serif;
-}
-
-* { box-sizing: border-box; }
-html { scroll-behavior: smooth; }
-body {
-  margin: 0;
-  background: var(--bg);
-  color: var(--text);
-  font: 16px/1.6 var(--sans);
-  -webkit-font-smoothing: antialiased;
-  overflow-x: hidden;
-}
-a { color: inherit; text-decoration: none; }
-code { font-family: var(--mono); font-size: 0.9em; color: #0b5d72; background: rgba(var(--accent-rgb), 0.07); border: 1px solid rgba(var(--accent-rgb), 0.18); padding: 0.05em 0.35em; border-radius: 6px; white-space: nowrap; }
-.wrap { width: 100%; max-width: 1180px; margin: 0 auto; padding: 0 24px; }
-
-/* The grid of the background, faded at the edges */
-.backdrop {
-  position: absolute; inset: 0 0 auto 0; height: 980px; pointer-events: none; z-index: 0;
-  background:
-    radial-gradient(600px 380px at 75% 22%, rgba(var(--accent-rgb), 0.10), transparent 70%),
-    radial-gradient(520px 360px at 15% 10%, rgba(101, 83, 224, 0.07), transparent 70%),
-    linear-gradient(rgba(20, 27, 40, 0.05) 1px, transparent 1px) 0 0 / 40px 40px,
-    linear-gradient(90deg, rgba(20, 27, 40, 0.05) 1px, transparent 1px) 0 0 / 40px 40px;
-  -webkit-mask-image: linear-gradient(to bottom, #000 40%, transparent);
-  mask-image: linear-gradient(to bottom, #000 40%, transparent);
-}
-
-/* Navigation */
-header.nav {
-  position: sticky; top: 0; z-index: 10;
-  background: rgba(246, 248, 251, 0.82);
-  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
-  border-bottom: 1px solid var(--border);
-}
-.nav .wrap { display: flex; align-items: center; gap: 28px; height: 64px; }
-.brand { display: flex; align-items: center; gap: 10px; }
-.brand svg { display: block; }
-.nav-links { display: flex; gap: 22px; margin-left: 8px; font-size: 14.5px; color: var(--muted); }
-.nav-links a:hover { color: var(--text); }
-.nav-right { margin-left: auto; display: flex; align-items: center; gap: 12px; }
-.pill {
-  font: 500 12px/1 var(--mono); color: var(--accent);
-  border: 1px solid rgba(var(--accent-rgb), 0.35); background: rgba(var(--accent-rgb), 0.07);
-  padding: 7px 10px; border-radius: 999px; white-space: nowrap;
-}
-
-/* Buttons */
-.btn {
-  display: inline-flex; align-items: center; gap: 8px;
-  font: 600 15px/1 var(--sans); padding: 13px 18px; border-radius: 10px;
-  border: 1px solid var(--border-2); background: var(--surface); color: var(--text);
-  transition: transform 0.15s ease, border-color 0.15s ease, background 0.15s ease;
-}
-.btn:hover { transform: translateY(-1px); border-color: #b4bfcd; }
-.btn.primary { background: var(--ink); color: #ffffff; border-color: var(--ink); box-shadow: 0 8px 24px rgba(20, 27, 40, 0.18); }
-.btn.primary:hover { background: #222c3d; }
-.btn.small { padding: 9px 13px; font-size: 14px; }
-
-/* Hero */
-.hero { position: relative; z-index: 1; padding: 84px 0 40px; }
-.hero .wrap { display: grid; grid-template-columns: 0.92fr 1.08fr; gap: 48px; align-items: center; }
-.eyebrow { display: inline-flex; align-items: center; gap: 10px; font: 500 13px/1 var(--mono); color: var(--muted); margin-bottom: 22px; }
-.eyebrow .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 4px rgba(18, 146, 92, 0.14); }
-h1 { font: 700 clamp(40px, 5.6vw, 66px)/1.03 var(--display); letter-spacing: -0.03em; margin: 0 0 22px; }
-.chrome { background: var(--chrome); -webkit-background-clip: text; background-clip: text; color: transparent; }
-.lead { font-size: 18.5px; color: var(--muted); max-width: 540px; margin: 0 0 30px; }
-.lead strong { color: var(--text); font-weight: 500; }
-.cta { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 28px; }
-.facts { display: flex; flex-wrap: wrap; gap: 8px 18px; font: 13px/1.4 var(--mono); color: var(--dim); }
-.facts span::before { content: "▸ "; color: var(--accent); }
-
-/* Windows with code and terminals */
-.window {
-  background: var(--code-bg);
-  border: 1px solid var(--border); border-radius: var(--radius);
-  box-shadow: 0 2px 4px rgba(16, 24, 40, 0.04), 0 24px 60px rgba(16, 24, 40, 0.10);
-  overflow: hidden; min-width: 0;
-}
-.window-bar { display: flex; align-items: center; gap: 8px; padding: 11px 14px; border-bottom: 1px solid var(--border); background: #f7f9fb; }
-.window-bar i { width: 11px; height: 11px; border-radius: 50%; background: #d5dbe3; }
-.window-bar i:nth-child(1) { background: #ff5f57; } .window-bar i:nth-child(2) { background: #febc2e; } .window-bar i:nth-child(3) { background: #28c840; }
-.window-bar .title { margin-left: 8px; font: 12.5px/1 var(--mono); color: var(--muted); }
-.window-bar .title b { color: var(--text); font-weight: 500; }
-pre { margin: 0; padding: 18px 20px; overflow-x: auto; font: 13.5px/1.62 var(--mono); color: #263142; tab-size: 4; }
-pre code { all: unset; font: inherit; white-space: pre; }
-pre, .lsp-demo, .table-wrap { scrollbar-width: thin; scrollbar-color: #c3ccd8 transparent; }
-pre::-webkit-scrollbar, .lsp-demo::-webkit-scrollbar { height: 8px; }
-pre::-webkit-scrollbar-thumb, .lsp-demo::-webkit-scrollbar-thumb { background: #c3ccd8; border-radius: 8px; }
-pre::-webkit-scrollbar-track, .lsp-demo::-webkit-scrollbar-track { background: transparent; }
-.term { border-top: 1px solid var(--border); background: var(--term-bg); }
-.term pre { padding: 14px 20px; font-size: 13px; color: #3a4556; }
-.prompt { color: var(--ok); user-select: none; }
-.cmd { color: var(--text); }
-.out-dim { color: var(--dim); }
-.out-err { color: var(--error); }
-.out-ok { color: var(--ok); }
-.hero .window { transform: perspective(1400px) rotateY(-4deg) rotateX(2deg); }
-
-/* The colors of the code */
-.tk-k { color: #2c56c9; }
-.tk-s { color: #2a7d3a; }
-.tk-n { color: #c2410c; }
-.tk-c { color: #8a94a3; font-style: italic; }
-.tk-t { color: #0b7f93; }
-.tk-f { color: #7a3fd1; }
-.tk-o { color: #0f6b85; }
-
-/* Numbers */
-.stats { position: relative; z-index: 1; padding: 34px 0 10px; }
-.stats-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 1px; background: var(--border); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; box-shadow: var(--shadow); }
-.stat { background: var(--bg-2); padding: 22px 22px 20px; }
-.stat b { display: block; font: 700 30px/1.1 var(--display); letter-spacing: -0.02em; }
-.stat span { font-size: 13.5px; color: var(--muted); }
-
-/* Sections */
-section { position: relative; z-index: 1; padding: 96px 0 0; }
-.kicker { font: 500 13px/1 var(--mono); color: var(--accent); letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 14px; }
-h2 { font: 700 clamp(30px, 3.6vw, 42px)/1.1 var(--display); letter-spacing: -0.025em; margin: 0 0 16px; }
-.section-lead { color: var(--muted); font-size: 17.5px; max-width: 680px; margin: 0 0 40px; }
-
-/* Features */
-.features { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
-.card {
-  background: var(--surface);
-  border: 1px solid var(--border); border-radius: var(--radius); padding: 22px; box-shadow: var(--shadow);
-  transition: border-color 0.2s ease, transform 0.2s ease;
-}
-.card:hover { border-color: #c3ccd8; transform: translateY(-2px); }
-.card .icon {
-  width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center; margin-bottom: 16px;
-  background: rgba(var(--accent-rgb), 0.08); border: 1px solid rgba(var(--accent-rgb), 0.22); color: var(--accent);
-}
-.card h3 { font: 600 17px/1.3 var(--display); margin: 0 0 8px; }
-.card p { margin: 0; color: var(--muted); font-size: 14.5px; line-height: 1.58; }
-
-/* Two columns: text and code */
-.split { display: grid; grid-template-columns: 0.9fr 1.1fr; gap: 48px; align-items: center; }
-.modes { display: grid; gap: 12px; margin: 26px 0 0; padding: 0; list-style: none; }
-.modes li { display: grid; grid-template-columns: 74px 1fr; gap: 14px; align-items: baseline; padding: 14px 16px; border: 1px solid var(--border); border-radius: 12px; background: var(--bg-2); }
-.modes li b { font: 500 14px var(--mono); color: var(--accent); }
-.modes li span { color: var(--muted); font-size: 14.5px; }
-
-/* Examples with tabs */
-.tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
-.tab {
-  font: 500 13.5px/1 var(--mono); color: var(--muted); background: transparent;
-  border: 1px solid var(--border); border-radius: 9px; padding: 10px 14px; cursor: pointer;
-}
-.tab:hover { color: var(--text); }
-.tab { background: var(--surface); }
-.tab[aria-selected="true"] { color: #ffffff; background: var(--ink); border-color: var(--ink); }
-.panel[hidden] { display: none; }
-.panel .window { transform: none; }
-
-/* Toolchain */
-.tools { display: grid; grid-template-columns: 1.15fr 0.85fr; gap: 20px; align-items: stretch; }
-.vscode { display: flex; flex-direction: column; gap: 14px; }
-.vscode .card { flex: 1; }
-.lsp-demo { font: 13px/1.6 var(--mono); background: var(--term-bg); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; margin-top: 14px; color: #263142; overflow-x: auto; white-space: pre; }
-.squiggle { text-decoration: underline wavy var(--error); text-underline-offset: 3px; }
-.hover-box { display: inline-block; margin-top: 6px; padding: 6px 10px; border: 1px solid var(--border-2); border-radius: 8px; background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
-
-/* Benchmarks */
-.bench { display: grid; grid-template-columns: 0.8fr 1.2fr; gap: 20px; align-items: start; }
-.bench .card { min-width: 0; }
-.bench .card:hover { transform: none; border-color: var(--border); }
-.bench h3 { font: 600 17px/1.3 var(--display); margin: 0 0 4px; }
-.bench .note { color: var(--dim); font-size: 13.5px; margin: 0 0 18px; }
-.bars { display: grid; gap: 10px; margin-bottom: 26px; }
-.bars:last-child { margin-bottom: 0; }
-.bar { display: grid; grid-template-columns: 112px 1fr 44px; gap: 12px; align-items: center; font: 13px/1 var(--mono); color: var(--muted); }
-.bar i { display: block; height: 12px; border-radius: 6px; background: #cfd7e2; }
-.bar b { font-weight: 500; color: var(--text); text-align: right; }
-.bar.cromo { color: var(--text); }
-.bar.cromo i { background: linear-gradient(90deg, var(--accent), #12b5d6); }
-.table-wrap { overflow-x: auto; }
-table.times { width: 100%; border-collapse: collapse; font: 13px/1.4 var(--mono); }
-.times th, .times td { padding: 9px 10px; text-align: right; border-bottom: 1px solid var(--border); white-space: nowrap; }
-.times th { font: 600 12px/1.3 var(--mono); color: var(--dim); }
-.times th:first-child, .times td:first-child { text-align: left; color: var(--text); }
-.times td { color: var(--muted); }
-.times .cromo { background: rgba(var(--accent-rgb), 0.06); color: var(--text); }
-.times td.best { color: var(--ok); font-weight: 600; }
-.times tr:last-child td { border-bottom: 0; }
-.bench-foot { margin-top: 14px; color: var(--dim); font-size: 13px; }
-
-/* Roadmap */
-.roadmap { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
-.phase { border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-2); padding: 22px; box-shadow: var(--shadow); }
-.phase h3 { display: flex; align-items: center; justify-content: space-between; font: 600 17px var(--display); margin: 0 0 16px; }
-.badge { font: 500 11.5px/1 var(--mono); padding: 6px 9px; border-radius: 999px; border: 1px solid; }
-.badge.done { color: var(--ok); border-color: rgba(18, 146, 92, 0.35); background: rgba(18, 146, 92, 0.07); }
-.badge.next { color: var(--warn); border-color: rgba(183, 112, 11, 0.35); background: rgba(183, 112, 11, 0.07); }
-.badge.later { color: var(--accent-2); border-color: rgba(101, 83, 224, 0.35); background: rgba(101, 83, 224, 0.07); }
-.steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
-.steps li { display: grid; grid-template-columns: 46px 1fr; gap: 10px; font-size: 14.5px; color: var(--muted); }
-.steps li b { font: 500 12.5px/1.75 var(--mono); color: var(--text); }
-.progress-label { display: flex; justify-content: space-between; gap: 12px; font: 12.5px var(--mono); color: var(--dim); }
-.progress { height: 6px; border-radius: 999px; background: var(--surface-2); overflow: hidden; margin: 8px 0 18px; }
-.progress div { height: 100%; width: 100%; background: linear-gradient(90deg, var(--accent), var(--accent-2)); }
-
-/* Get started */
-.start { margin-top: 96px; border: 1px solid var(--border); border-radius: 20px; padding: 44px; box-shadow: var(--shadow); background: radial-gradient(500px 240px at 85% 0%, rgba(var(--accent-rgb), 0.08), transparent 70%), var(--surface); display: grid; grid-template-columns: 1fr 1fr; gap: 36px; align-items: center; }
-.downloads { display: grid; gap: 10px; }
-.download { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 16px; border: 1px dashed var(--border-2); border-radius: 12px; color: var(--muted); font-size: 14.5px; background: var(--bg); }
-.download b { color: var(--text); font-weight: 500; }
-.download .soon { font: 500 12px var(--mono); color: var(--dim); }
-a.download { border-style: solid; transition: border-color 0.15s ease, transform 0.15s ease; }
-a.download:hover { border-color: #b4bfcd; transform: translateY(-1px); }
-a.download .soon { color: var(--accent); }
-
-footer { margin-top: 96px; border-top: 1px solid var(--border); padding: 36px 0 48px; color: var(--dim); font-size: 14px; }
-footer .wrap { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 20px; }
-footer .links { display: flex; gap: 20px; }
-footer a:hover { color: var(--text); }
-
-@media (max-width: 1100px) {
-  .hero { padding-top: 48px; }
-  .hero .wrap { grid-template-columns: 1fr; }
-  .hero .window { transform: none; }
-}
-@media (max-width: 1020px) {
-  .features { grid-template-columns: repeat(2, 1fr); }
-  .stats-grid { grid-template-columns: repeat(6, 1fr); }
-  .stat { grid-column: span 2; }
-  .stat:nth-child(n+4) { grid-column: span 3; }
-}
-@media (max-width: 900px) {
-  .split, .tools, .start, .bench { grid-template-columns: 1fr; }
-  .roadmap { grid-template-columns: 1fr; }
-  .nav-links { display: none; }
-  .start { padding: 28px; }
-}
-@media (max-width: 560px) {
-  .wrap { padding: 0 16px; }
-  .features { grid-template-columns: 1fr; }
-  .stats-grid { grid-template-columns: 1fr 1fr; }
-  .stat, .stat:nth-child(n+4) { grid-column: span 1; }
-  .stat:last-child { grid-column: span 2; }
-  .bar { grid-template-columns: 96px 1fr 40px; }
-  pre { font-size: 12.5px; padding: 16px; }
-  .pill { display: none; }
-  section { padding-top: 72px; }
-}
-@media (prefers-reduced-motion: reduce) {
-  html { scroll-behavior: auto; }
-  .btn, .card { transition: none; }
-}
-</style>
+<link rel="stylesheet" href="site.css">
 </head>
 <body>
 <div class="backdrop" aria-hidden="true"></div>
@@ -342,7 +67,7 @@ footer a:hover { color: var(--text); }
     </nav>
     <div class="nav-right">
       <span class="pill">v@VERSION@ · preview</span>
-      <a class="btn small" href="#start">Get started</a>
+      <a class="btn small primary" href="download/"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5v8M4.5 7 8 10.5 11.5 7M3 13.5h10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>Download</a>
     </div>
   </div>
 </header>
@@ -351,13 +76,11 @@ footer a:hover { color: var(--text); }
   <div class="hero">
     <div class="wrap">
       <div>
-        <div class="eyebrow"><span class="dot"></span>A systems language in development · Windows &amp; Linux x64</div>
+        <div class="eyebrow"><span class="dot"></span>A systems language in development · Windows, Linux, ARM64</div>
         <h1>Native code.<br>Familiar syntax.<br><span class="chrome">No pointers.</span></h1>
         <p class="lead">Cromo is a compiled language with the syntax of C and C++, <strong>RAII</strong> and <strong>ownership checked by the compiler</strong>, and no garbage collector. One command, <code>cromo</code>, compiles and links your program. Cromo brings together the best ideas of C++, Rust and Go, with rules that <strong>stay simple</strong>.</p>
         <div class="cta">
-          <a class="btn primary" href="#start">Get started
-            <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h9M8.5 4.5 12 8l-3.5 3.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          </a>
+          <a class="btn primary" href="download/"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5v8M4.5 7 8 10.5 11.5 7M3 13.5h10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>Download Cromo @VERSION@</a>
           <a class="btn" href="book/">Read the guide</a>
         </div>
         <div class="facts"><span>LLVM backend</span><span>as fast as C++</span><span>no libc, no SDK</span><span>Windows and Linux, from either</span><span>lightweight tasks</span><span>HTTP, TLS and JSON built in</span><span>VS Code support</span></div>
@@ -402,8 +125,8 @@ sum: 120 µs</pre></div>
       <div class="stat"><b>1</b><span>command: compiler, linker, formatter and language server</span></div>
       <div class="stat"><b>0</b><span>dependencies: no libc, no Windows SDK</span></div>
       <div class="stat"><b>32 KB</b><span>for a hello world, statically linked</span></div>
-      <div class="stat"><b>2</b><span>targets: Windows and Linux x64</span></div>
-      <div class="stat"><b>374</b><span>design decisions, all written down</span></div>
+      <div class="stat"><b>3</b><span>targets: Windows x64, Linux x64 and Linux ARM64</span></div>
+      <div class="stat"><b>408</b><span>design decisions, all written down</span></div>
     </div></div>
   </div>
 
@@ -436,7 +159,7 @@ sum: 120 µs</pre></div>
         <div class="card">
           <div class="icon"><svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><rect x="2.5" y="4" width="15" height="10" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M7 17h6M6 8l2 1.5L6 11m4 0h3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
           <h3>Windows and Linux</h3>
-          <p>Build for Linux or Windows from either system with <code>--target linux</code> or <code>--target windows</code>. A module can add <code>fs_windows.cro</code> and <code>fs_linux.cro</code> next to <code>fs.cro</code>.</p>
+          <p>Build for Windows, Linux or Linux on ARM64 from either system with <code>--target windows</code>, <code>--target linux</code> or <code>--target linux-arm64</code>. A module can add <code>fs_windows.cro</code> and <code>fs_linux.cro</code> next to <code>fs.cro</code>.</p>
         </div>
         <div class="card">
           <div class="icon"><svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><path d="M7 4 3 10l4 6M13 4l4 6-4 6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
@@ -667,10 +390,11 @@ Hello, world!
 <span class="prompt">$ </span><span class="cmd">cromo build</span>                 <span class="out-dim"># main.cro of the folder</span>
 <span class="prompt">$ </span><span class="cmd">cromo build --release</span>       <span class="out-dim"># optimized</span>
 <span class="prompt">$ </span><span class="cmd">cromo build --target linux</span>  <span class="out-dim"># an ELF, from Windows</span>
+<span class="prompt">$ </span><span class="cmd">cromo update</span>                <span class="out-dim"># the latest signed version</span>
 <span class="prompt">$ </span><span class="cmd">cromo fmt .</span>                 <span class="out-dim"># one style, no options</span>
 <span class="prompt">$ </span><span class="cmd">cromo lsp</span>                   <span class="out-dim"># for the editors</span>
 <span class="prompt">$ </span><span class="cmd">cromo version</span>
-cromo 0.27.0 (LLVM 23.1.4)</pre>
+cromo @VERSION@ (LLVM 23.1.4)</pre>
         </div>
         <div class="vscode">
           <div class="card">
@@ -742,12 +466,12 @@ cromo 0.27.0 (LLVM 23.1.4)</pre>
     <div class="wrap">
       <div class="kicker">Roadmap</div>
       <h2>Built in the open, <span class="chrome">one milestone at a time</span></h2>
-      <p class="section-lead">Every choice is decided first and written down with its reasons, then implemented with tests on Windows and Linux. Twenty-eight milestones, M0 to M27, are done.</p>
-      <div class="progress-label"><span>M0 – M27 done</span><span>28 of 28 numbered milestones</span></div>
-      <div class="progress" aria-hidden="true"><div></div></div>
+      <p class="section-lead">Every choice is decided first and written down with its reasons, then implemented with tests on Windows and Linux. Twenty-nine milestones are done, M0 to M27 and M29; M28 is under way.</p>
+      <div class="progress-label"><span>M0 – M29: 29 done, 1 under way</span><span>29 of 30 numbered milestones</span></div>
+      <div class="progress" aria-hidden="true"><div style="width: 96.7%"></div></div>
       <div class="roadmap">
         <div class="phase">
-          <h3>Done <span class="badge done">M0 – M27</span></h3>
+          <h3>Done <span class="badge done">29 milestones</span></h3>
           <ul class="steps">
             <li><b>M0–2</b><span>LLVM backend, numbers, control flow, structs, RAII</span></li>
             <li><b>M3–6</b><span>Ownership, generics, interfaces, lists, strings, enums, exceptions</span></li>
@@ -767,12 +491,14 @@ cromo 0.27.0 (LLVM 23.1.4)</pre>
             <li><b>M26</b><span>Values of interfaces everywhere, computed initial values of fields</span></li>
             <li><b>M27</b><span>JSON of enums and arrays, <code>http.Client</code>, gzip, WebSocket</span></li>
             <li><b>0.27</b><span>The first public release: the one-line installer and the Cromo Guide</span></li>
+            <li><b>M29</b><span>Linux on ARM64, from Windows and Linux x64: Raspberry Pi, Graviton, Ampere</span></li>
+            <li><b>0.29</b><span><code>cromo update</code> with signed versions; <code>std.jwt</code>, <code>std.zip</code> and <code>std.tar</code></span></li>
           </ul>
         </div>
         <div class="phase">
-          <h3>Next</h3>
+          <h3>Next <span class="badge next">M28</span></h3>
           <ul class="steps">
-            <li><b>update</b><span><code>cromo update</code>, with the signed manifests of the versions</span></li>
+            <li><b>M28</b><span>The runtime in Cromo: after gzip and the heap, the output and the formatting of numbers</span></li>
             <li><b>packages</b><span><code>cromo get</code>, <code>cromo.mod</code> and versions from Git tags</span></li>
           </ul>
         </div>
@@ -810,6 +536,7 @@ cromo 0.27.0 (LLVM 23.1.4)</pre>
       <div class="downloads">
         <a class="download" href="package/win_x86_64-@VERSION@.zip"><span><b>Windows x64</b> · <code>win_x86_64-@VERSION@.zip</code></span><span class="soon">download</span></a>
         <a class="download" href="package/linux_x86_64-@VERSION@.tar.gz"><span><b>Linux x64</b> · <code>linux_x86_64-@VERSION@.tar.gz</code></span><span class="soon">download</span></a>
+        <a class="download" href="download/"><span><b>All downloads</b> · checksums, signatures, installing by hand</span><span class="soon">open</span></a>
         <a class="download" href="book/"><span><b>The Cromo Guide</b> · also as PDF, in English and Italian</span><span class="soon">read</span></a>
         <a class="download" href="https://github.com/cromolang/cromo"><span><b>Source</b> · compiler, library, specification and decisions</span><span class="soon">GitHub</span></a>
       </div>
@@ -843,6 +570,7 @@ cromo 0.27.0 (LLVM 23.1.4)</pre>
 </svg><span>Cromo is the Italian word for chromium, element 24.</span></div>
     <div class="links">
       <a href="#features">Features</a>
+      <a href="download/">Download</a>
       <a href="book/">Guide</a>
       <a href="https://github.com/cromolang/cromo">GitHub</a>
       <span>MIT or Apache 2.0</span>

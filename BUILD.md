@@ -37,7 +37,7 @@ powershell -ExecutionPolicy Bypass -File build.ps1
 build\cromo.exe version
 ```
 
-The last command prints `cromo 0.27.1 (LLVM 23.1.4)`, with the version of the sources.
+The last command prints `cromo 0.29.0 (LLVM 23.1.4)`, with the version of the sources.
 
 `build.ps1` accepts:
 
@@ -115,7 +115,7 @@ npx ovsx publish tools\vscode-cromo\dist\cromo-<version>.vsix -p <token>
 
 ## Making a release
 
-The version is in `CMakeLists.txt`, in `project(cromo VERSION 0.27.1)`: `0.<milestone>.<fix>` until 1.0. With the two builds of the same version:
+The version is in `CMakeLists.txt`, in `project(cromo VERSION 0.29.0)`: `0.<milestone>.<fix>` until 1.0. With the two builds of the same version:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File tools\package.ps1 -Key <private key>
@@ -147,14 +147,14 @@ python tools\book.py --pdf            # the pages in dist\site\book, and the PDF
 
 `--check` compiles every program of the guide with `build\cromo.exe` and compares what it prints with the `output` block that follows it, in every language: run it after a change to the compiler or to the library, too. The head of `tools/book.py` describes the flags of the code blocks. The PDFs are printed by Microsoft Edge or Chrome, headless.
 
-`tools\site.ps1` assembles the whole site in `dist\site`: the pages of `site\` with the version of the archives, the installers `install.ps1` and `install.sh`, the guide with its PDFs, and the archives and the manifests of the version that `tools\package.ps1` made:
+`tools\site.ps1` assembles the whole site in `dist\site`: the pages of `site\` with the version of the archives, and their sizes and SHA-256 on the download page, the installers `install.ps1` and `install.sh`, the guide with its PDFs, and the archives and the manifests of the version that `tools\package.ps1` made:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File tools\package.ps1 -Key <private key>
 powershell -ExecutionPolicy Bypass -File tools\site.ps1
 ```
 
-Publishing is copying `dist\site` to the folder of the server, `/var/www/cromolang.org`; `tools/nginx/cromolang.org.conf` is the configuration of nginx, with the types of the manifests and the caching of each kind of file. The installers read `CROMO_SITE` to install from another site, and `CROMO_NO_MODIFY_PATH=1` to leave the `PATH` as it is, for tests.
+Publishing is copying `dist\site` to the folder of the server, `/var/www/cromolang.org`, without deleting what is there: the archives and the manifests of the older versions stay, for `cromo update <version>`; `tools/nginx/cromolang.org.conf` is the configuration of nginx, with the types of the manifests and the caching of each kind of file. The installers read `CROMO_SITE` to install from another site, and `CROMO_NO_MODIFY_PATH=1` to leave the `PATH` as it is, for tests.
 
 ## Benchmarks
 

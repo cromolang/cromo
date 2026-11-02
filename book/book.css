@@ -85,6 +85,11 @@ a:hover { text-decoration: underline; }
   border: 1px solid var(--border-2); background: var(--surface);
 }
 .pdf:hover, .lang:hover { color: var(--text); text-decoration: none; border-color: var(--dim); }
+.get {
+  font: 600 13px/1 var(--sans); color: var(--bg); padding: 10px 12px; border-radius: 8px;
+  background: var(--ink); border: 1px solid var(--ink); white-space: nowrap;
+}
+.get:hover { color: var(--bg); text-decoration: none; opacity: 0.88; }
 .theme, .menu {
   width: 36px; height: 36px; border-radius: 8px; border: 1px solid var(--border-2);
   background: var(--surface); color: var(--muted); cursor: pointer; display: grid; place-items: center; padding: 0;
