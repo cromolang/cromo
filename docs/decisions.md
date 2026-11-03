@@ -2046,6 +2046,9 @@ w.start()
 ret 0  // the program ends when the window is closed
 ```
 
+### D443. The look of a dashboard of Tailwind
+*2026-11-03.* The components and the windows of `std.gui` have the look of a dashboard made with Tailwind, not that of the controls of Microsoft: the grays and the indigo of its palette, light and dark, with a hint of depth. The buttons, and the check boxes when checked, are a vertical gradient of indigo with a border of a deeper indigo and a line of light inside their top edge; under them, and under the text boxes and the check boxes, a soft shadow of a few pixels. The corners are rounded by 7 pixels, 4 on the check boxes; the text box with the keyboard has an indigo border with a glow around it, and the other components a ring of 2 pixels. The text is Inter at 14 pixels, semibold on the buttons. The title bar keeps its layout and its buttons (D431), in the colors of that palette, with a line under it. It is the first of six alternatives, with other fonts and colors, drawn for the author; the look can change later.
+
 ---
 
 ## Proposed
@@ -2155,6 +2158,12 @@ The thread of the GUI draws all the windows at each frame, at the most frames pe
 
 ### P36. The handlers that throw (D437)
 A second thread of the runtime waits for the thread of the GUI: when an exception leaves a handler, the thread of the GUI ends with it, and that thread stops the program as for a thread that no `join()` takes, with the message `uncaught exception in a thread`, its stack trace and, with `[[window]]`, the message box (D427).
+
+### P37. The components of `std.gui` (D434, D439)
+Each is made with its text, its position and its size, `gui.Button("OK", x, y, width, height)`, and put in a window with `w.add(...)`, which gives it back: `gui.Button ok = w.add(gui.Button("OK", 20, 20, 100, 28))`; `add` is generic, on the interface `gui.Component` that the four implement, and a component is in one window only. They have in common `setText` and `text`, `setPosition`, `setSize`, `x`, `y`, `width` and `height`, `setVisible` and `visible`, `setEnabled` and `enabled`. `Button` has `onClick(func())`; `TextBox` has `setPlaceholder` and `placeholder`, `onChange(func(string))` at each change and `onEnter(func(string))`; `CheckBox` has `setChecked` and `checked` and `onChange(func(bool))`. Changing a property from the program does not call the handlers.
+
+### P38. The keyboard and the look of the components (D439)
+A click gives the keyboard to a button, a text box or a check box, and Tab and Shift+Tab move it among those of the window, in the order they were added. Space and Enter press a button, Space changes a check box. A text box writes the text of the keyboard, with its input method; the arrows, Home and End move in it, with Shift they select, as the mouse does, and Backspace, Delete, Ctrl+A, Ctrl+C, Ctrl+X and Ctrl+V do what they do everywhere, the text pasted in one line. The keys that the component in focus uses do not go to `onKeyDown` of the window. A component disabled is drawn at half its opacity; the rest of the look is D443.
 
 ---
 

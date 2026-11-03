@@ -1,0 +1,32 @@
+// Example 16: a form with the components of std.gui.
+//
+// Decided: the components are handles with their properties as methods (D434),
+//          Label, Button, TextBox and CheckBox (D439), their handlers on the
+//          thread of the GUI (D435), the positions in logical pixels from the
+//          top left corner of the content (D438), the window as a handle (D442)
+// Draft:   the names of the components, of their methods and of their events
+//          (P34, P37), the keys and the focus (P38)
+import std.gui
+
+[[window]]
+i32 main() {
+    gui.Window w = gui.Window("Example 16", 520, 330)
+    w.setResizable(false)
+    w.add(gui.Label("Your name", 24, 24, 200, 20))
+    gui.TextBox name = w.add(gui.TextBox("", 24, 48, 300, 28))
+    name.setPlaceholder("Write your name")
+    gui.CheckBox news = w.add(gui.CheckBox("Send me the news", 24, 92, 240, 24))
+    gui.Button greet = w.add(gui.Button("Greet", 24, 136, 100, 28))
+    gui.Button quit = w.add(gui.Button("Quit", 136, 136, 100, 28))
+    gui.Label answer = w.add(gui.Label("", 24, 188, 460, 20))
+
+    // The handlers capture the handles by copy: each reads the components when it runs.
+    greet.onClick([name, news, answer]() {
+        string who = name.text().len() > 0 ? name.text() : "nobody"
+        answer.setText(format("Hello, {}{}", who, news.checked() ? ": the news will come" : ""))
+    })
+    name.onEnter([greet](string text) { greet.setText("Again") })
+    quit.onClick([w]() { w.close() })
+    w.start()
+    ret 0
+}

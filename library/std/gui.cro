@@ -1,11 +1,13 @@
 // The module std.gui (D429-D442): windows with their title bar drawn by the
 // library, in the style of Visual Studio Code (D431), the themes light, dark and of
-// the system (D432), and the events of the mouse and of the keyboard, given to
-// lambdas (D430). A window is a handle (D442): its methods can be called from any
-// thread, and change its data under one lock. All the windows run on one thread
-// of the GUI, which SDL wants (D436); the handlers of the events run there, one at
-// a time (D435). SDL is in lib/ (D429), and the parts in C, the hit test, the text
-// and the symbols, are in runtime/gui (D441).
+// the system (D432), the components Label, Button, TextBox and CheckBox (D434,
+// D439), and the events of the mouse, of the keyboard and of the components, given
+// to lambdas (D430). A window and a component are handles (D434, D442): their
+// methods can be called from any thread, and change their data under one lock.
+// All the windows run on one thread of the GUI, which SDL wants (D436); the
+// handlers of the events run there, one at a time (D435). SDL is in lib/ (D429),
+// and the parts in C, the hit test, the text, the symbols and the boxes, are in
+// runtime/gui (D441).
 import std.time
 import unsafe
 
@@ -22,6 +24,7 @@ extern "SDL3" {
     bool SDL_SetRenderDrawColor(addr renderer, u8 r, u8 g, u8 b, u8 a)
     bool SDL_SetRenderDrawBlendMode(addr renderer, u32 mode)
     bool SDL_SetRenderScale(addr renderer, f32 x, f32 y)
+    bool SDL_SetRenderClipRect(addr renderer, addr rect)
     bool SDL_RenderClear(addr renderer)
     bool SDL_RenderFillRect(addr renderer, ref Rect rect)
     bool SDL_RenderRect(addr renderer, ref Rect rect)
@@ -41,6 +44,13 @@ extern "SDL3" {
     u32 SDL_GetSystemTheme()
     u64 SDL_GetTicksNS()
     void SDL_DelayPrecise(u64 nanoseconds)
+    bool SDL_StartTextInput(addr window)
+    bool SDL_StopTextInput(addr window)
+    bool SDL_SetClipboardText(addr text)
+    addr SDL_GetClipboardText()
+    void SDL_free(addr memory)
+    addr SDL_CreateSystemCursor(u32 kind)
+    bool SDL_SetCursor(addr cursor)
 }
 
 extern "cromo" {
@@ -54,6 +64,11 @@ extern "cromo" {
     void cromo_gui_text(addr font, addr text, i64 length, f32 x, f32 y, u8 r, u8 g, u8 b, u8 alpha)
     void cromo_gui_symbol(addr renderer, i32 kind, f32 x, f32 y, f32 density, u8 r, u8 g, u8 b)
     void cromo_gui_symbols_free(addr renderer)
+    void cromo_gui_box(addr renderer, f32 x, f32 y, f32 w, f32 h, f32 radius, f32 border, f32 density, u32 fill, u32 line)
+    void cromo_gui_boxes_free(addr renderer)
+    void cromo_gui_shadow(addr renderer, f32 x, f32 y, f32 w, f32 h, f32 radius, f32 density, u32 color, f32 blur, f32 dy)
+    void cromo_gui_gradient(addr renderer, f32 x, f32 y, f32 w, f32 h, f32 radius, f32 border, f32 density, u32 top, u32 bottom,
+        u32 line, u32 highlight)
     void cromo_gui_wait_at_end()
 }
 
@@ -84,7 +99,307 @@ public struct Key {
     public bool alt
 }
 
-// ---- The data of the windows ----
+// What the components have in common, for Window.add (D434).
+public interface Component {
+    i64 componentId() const
+}
+
+// ---- The components (D434, D439) ----
+//
+// Each is a handle, with its position and its size in logical pixels from the top
+// left corner of the content (D438). Its text and its properties are methods.
+
+// A text.
+public struct Label : Component {
+    i64 id
+
+    public Label(string text, i32 x, i32 y, i32 width, i32 height) {
+        id = newPart(kindLabel, text, x, y, width, height)
+    }
+
+    i64 componentId() const {
+        ret id
+    }
+
+    public void setText(string value) const {
+        setPartText(id, value)
+    }
+
+    public string text() const {
+        ret partText(id, false)
+    }
+
+    public void setPosition(i32 x, i32 y) const {
+        setPartBounds(id, x, y, -1, -1)
+    }
+
+    public void setSize(i32 width, i32 height) const {
+        setPartBounds(id, -1, -1, width, height)
+    }
+
+    public i32 x() const {
+        ret partBound(id, 0)
+    }
+
+    public i32 y() const {
+        ret partBound(id, 1)
+    }
+
+    public i32 width() const {
+        ret partBound(id, 2)
+    }
+
+    public i32 height() const {
+        ret partBound(id, 3)
+    }
+
+    public void setVisible(bool value) const {
+        setPartFlag(id, 0, value)
+    }
+
+    public bool visible() const {
+        ret partFlag(id, 0)
+    }
+
+    public void setEnabled(bool value) const {
+        setPartFlag(id, 1, value)
+    }
+
+    public bool enabled() const {
+        ret partFlag(id, 1)
+    }
+}
+
+// A button: a click, Space or Enter with it in focus, calls its handlers of onClick.
+public struct Button : Component {
+    i64 id
+
+    public Button(string text, i32 x, i32 y, i32 width, i32 height) {
+        id = newPart(kindButton, text, x, y, width, height)
+    }
+
+    i64 componentId() const {
+        ret id
+    }
+
+    public void onClick(move func() handler) const {
+        addr box = alloc(sizeOf<func()>())
+        put<func()>(box, move handler)
+        addPartHandler(id, 0, box)
+    }
+
+    public void setText(string value) const {
+        setPartText(id, value)
+    }
+
+    public string text() const {
+        ret partText(id, false)
+    }
+
+    public void setPosition(i32 x, i32 y) const {
+        setPartBounds(id, x, y, -1, -1)
+    }
+
+    public void setSize(i32 width, i32 height) const {
+        setPartBounds(id, -1, -1, width, height)
+    }
+
+    public i32 x() const {
+        ret partBound(id, 0)
+    }
+
+    public i32 y() const {
+        ret partBound(id, 1)
+    }
+
+    public i32 width() const {
+        ret partBound(id, 2)
+    }
+
+    public i32 height() const {
+        ret partBound(id, 3)
+    }
+
+    public void setVisible(bool value) const {
+        setPartFlag(id, 0, value)
+    }
+
+    public bool visible() const {
+        ret partFlag(id, 0)
+    }
+
+    public void setEnabled(bool value) const {
+        setPartFlag(id, 1, value)
+    }
+
+    public bool enabled() const {
+        ret partFlag(id, 1)
+    }
+}
+
+// A line of text that the user writes: the arrows, Home and End move in it, with
+// Shift they select, Ctrl+A, Ctrl+C, Ctrl+X and Ctrl+V as in every program. Its
+// handlers of onChange receive the text at each change, those of onEnter when
+// Enter is pressed.
+public struct TextBox : Component {
+    i64 id
+
+    public TextBox(string text, i32 x, i32 y, i32 width, i32 height) {
+        id = newPart(kindTextBox, text, x, y, width, height)
+    }
+
+    i64 componentId() const {
+        ret id
+    }
+
+    public void onChange(move func(string) handler) const {
+        addr box = alloc(sizeOf<func(string)>())
+        put<func(string)>(box, move handler)
+        addPartHandler(id, 1, box)
+    }
+
+    public void onEnter(move func(string) handler) const {
+        addr box = alloc(sizeOf<func(string)>())
+        put<func(string)>(box, move handler)
+        addPartHandler(id, 2, box)
+    }
+
+    // The text shown while the box is empty.
+    public void setPlaceholder(string value) const {
+        i64 me = id
+        withData([me, value](ref Shared data) { data.parts[partIndexOf(ref data, me)].placeholder = value })
+    }
+
+    public string placeholder() const {
+        ret partText(id, true)
+    }
+
+    public void setText(string value) const {
+        setPartText(id, value)
+    }
+
+    public string text() const {
+        ret partText(id, false)
+    }
+
+    public void setPosition(i32 x, i32 y) const {
+        setPartBounds(id, x, y, -1, -1)
+    }
+
+    public void setSize(i32 width, i32 height) const {
+        setPartBounds(id, -1, -1, width, height)
+    }
+
+    public i32 x() const {
+        ret partBound(id, 0)
+    }
+
+    public i32 y() const {
+        ret partBound(id, 1)
+    }
+
+    public i32 width() const {
+        ret partBound(id, 2)
+    }
+
+    public i32 height() const {
+        ret partBound(id, 3)
+    }
+
+    public void setVisible(bool value) const {
+        setPartFlag(id, 0, value)
+    }
+
+    public bool visible() const {
+        ret partFlag(id, 0)
+    }
+
+    public void setEnabled(bool value) const {
+        setPartFlag(id, 1, value)
+    }
+
+    public bool enabled() const {
+        ret partFlag(id, 1)
+    }
+}
+
+// A box to check, with its text on the right: a click or Space changes it, and its
+// handlers of onChange receive the new state.
+public struct CheckBox : Component {
+    i64 id
+
+    public CheckBox(string text, i32 x, i32 y, i32 width, i32 height) {
+        id = newPart(kindCheckBox, text, x, y, width, height)
+    }
+
+    i64 componentId() const {
+        ret id
+    }
+
+    public void onChange(move func(bool) handler) const {
+        addr box = alloc(sizeOf<func(bool)>())
+        put<func(bool)>(box, move handler)
+        addPartHandler(id, 1, box)
+    }
+
+    public void setChecked(bool value) const {
+        setPartFlag(id, 2, value)
+    }
+
+    public bool checked() const {
+        ret partFlag(id, 2)
+    }
+
+    public void setText(string value) const {
+        setPartText(id, value)
+    }
+
+    public string text() const {
+        ret partText(id, false)
+    }
+
+    public void setPosition(i32 x, i32 y) const {
+        setPartBounds(id, x, y, -1, -1)
+    }
+
+    public void setSize(i32 width, i32 height) const {
+        setPartBounds(id, -1, -1, width, height)
+    }
+
+    public i32 x() const {
+        ret partBound(id, 0)
+    }
+
+    public i32 y() const {
+        ret partBound(id, 1)
+    }
+
+    public i32 width() const {
+        ret partBound(id, 2)
+    }
+
+    public i32 height() const {
+        ret partBound(id, 3)
+    }
+
+    public void setVisible(bool value) const {
+        setPartFlag(id, 0, value)
+    }
+
+    public bool visible() const {
+        ret partFlag(id, 0)
+    }
+
+    public void setEnabled(bool value) const {
+        setPartFlag(id, 1, value)
+    }
+
+    public bool enabled() const {
+        ret partFlag(id, 1)
+    }
+}
+
+// ---- The data of the windows and of the components ----
 
 struct Rect {
     f32 x
@@ -131,7 +446,9 @@ struct WindowData {
     addr window
     addr renderer
     addr chrome
-    addr font
+    addr font    // of the title
+    addr body    // of the components
+    addr strong  // of the buttons, semibold
     u32 sdlId
     f32 density = 1
     i32 hovered = -1  // the button of the title bar under the mouse
@@ -139,10 +456,45 @@ struct WindowData {
     bool focused = true
     bool maximized
     bool minimized
+    i64 focus     // the component with the keyboard, or 0
+    i64 hot       // the component under the mouse
+    i64 held      // the component pressed with the mouse
+    i64 dragging  // the text box whose text the mouse selects
+    u64 caretStart
+}
+
+const i32 kindLabel = 1
+const i32 kindButton = 2
+const i32 kindTextBox = 3
+const i32 kindCheckBox = 4
+
+// A component: its kind, its window once added, its properties, and for a text
+// box where its cursor and the other end of its selection are, as indices of
+// bytes, and how much its text is scrolled.
+struct PartData {
+    i64 id
+    i64 window
+    i32 kind
+    string text
+    string placeholder
+    i32 x
+    i32 y
+    i32 width
+    i32 height
+    bool visible = true
+    bool enabled = true
+    bool checked
+    i64 caret
+    i64 anchor
+    f32 scroll
+    list<addr> click   // func()
+    list<addr> change  // func(string) of a text box, func(bool) of a check box
+    list<addr> enter   // func(string)
 }
 
 struct Shared {
     list<WindowData> windows
+    list<PartData> parts
     i64 next
     bool running  // the thread of the GUI
 }
@@ -151,6 +503,9 @@ u64 lock          // of the data of all the windows
 addr shared       // Shared, from the first window
 addr guiThread    // the thread of the GUI, in the runtime
 addr guardThread  // the thread that waits for it (D437)
+addr arrow        // the cursors of the mouse, made by the thread of the GUI
+addr beam
+i32[4] clip  // the SDL_Rect of SDL_SetRenderClipRect
 
 // The data under the lock, as a Mutex (D216).
 void withData(func(ref Shared) body) {
@@ -179,6 +534,123 @@ i64 indexOf(ref Shared data, i64 id) {
     panic("the window does not exist")
 }
 
+i64 partIndexOf(ref Shared data, i64 id) {
+    for (i64 i = 0; i < data.parts.len(); i++) {
+        if (data.parts[i].id == id) {
+            ret i
+        }
+    }
+    panic("the component does not exist")
+}
+
+i64 newPart(i32 kind, string text, i32 x, i32 y, i32 w, i32 h) {
+    i64 made = 0
+    withData([ref made, kind, text, x, y, w, h](ref Shared data) {
+        data.next++
+        PartData part
+        part.id = data.next
+        part.kind = kind
+        part.text = text
+        part.x = x
+        part.y = y
+        part.width = w
+        part.height = h
+        part.caret = text.len()
+        part.anchor = part.caret
+        data.parts.add(move part)
+        made = data.next
+    })
+    ret made
+}
+
+void setPartText(i64 id, string value) {
+    withData([id, value](ref Shared data) {
+        i64 p = partIndexOf(ref data, id)
+        data.parts[p].text = value
+        data.parts[p].caret = value.len()
+        data.parts[p].anchor = value.len()
+    })
+}
+
+string partText(i64 id, bool placeholder) {
+    string result
+    withData([id, placeholder, ref result](ref Shared data) {
+        i64 p = partIndexOf(ref data, id)
+        result = placeholder ? data.parts[p].placeholder : data.parts[p].text
+    })
+    ret result
+}
+
+// A negative value leaves that one as it is.
+void setPartBounds(i64 id, i32 x, i32 y, i32 w, i32 h) {
+    withData([id, x, y, w, h](ref Shared data) {
+        i64 p = partIndexOf(ref data, id)
+        if (x >= 0 || y >= 0) {
+            data.parts[p].x = x
+            data.parts[p].y = y
+        }
+        if (w >= 0 || h >= 0) {
+            data.parts[p].width = w
+            data.parts[p].height = h
+        }
+    })
+}
+
+// 0 x, 1 y, 2 width, 3 height.
+i32 partBound(i64 id, i32 which) {
+    i32 result = 0
+    withData([id, which, ref result](ref Shared data) {
+        i64 p = partIndexOf(ref data, id)
+        if (which == 0) {
+            result = data.parts[p].x
+        } else if (which == 1) {
+            result = data.parts[p].y
+        } else if (which == 2) {
+            result = data.parts[p].width
+        } else {
+            result = data.parts[p].height
+        }
+    })
+    ret result
+}
+
+// 0 visible, 1 enabled, 2 checked.
+void setPartFlag(i64 id, i32 which, bool value) {
+    withData([id, which, value](ref Shared data) {
+        i64 p = partIndexOf(ref data, id)
+        if (which == 0) {
+            data.parts[p].visible = value
+        } else if (which == 1) {
+            data.parts[p].enabled = value
+        } else {
+            data.parts[p].checked = value
+        }
+    })
+}
+
+bool partFlag(i64 id, i32 which) {
+    bool result = false
+    withData([id, which, ref result](ref Shared data) {
+        i64 p = partIndexOf(ref data, id)
+        result = which == 0 ? data.parts[p].visible : which == 1 ? data.parts[p].enabled : data.parts[p].checked
+    })
+    ret result
+}
+
+// 0 click, 1 change, 2 enter.
+void addPartHandler(i64 id, i32 which, addr box) {
+    withData([id, which, box](ref Shared data) {
+        i64 p = partIndexOf(ref data, id)
+        if (which == 0) {
+            data.parts[p].click.add(box)
+        } else if (which == 1) {
+            data.parts[p].change.add(box)
+        } else {
+            data.parts[p].enter.add(box)
+        }
+    })
+}
+
 // ---- The window ----
 
 // A window (D430, D442): made with its title and its size in logical pixels,
@@ -200,6 +672,22 @@ public struct Window {
             made = data.next
         })
         id = made
+    }
+
+    // Puts a component in the window, and gives it back (D434): a component is in
+    // one window only.
+    public T add<T : Component>(T component) const {
+        i64 me = id
+        i64 part = component.componentId()
+        withData([me, part](ref Shared data) {
+            indexOf(ref data, me)
+            i64 p = partIndexOf(ref data, part)
+            if (data.parts[p].window != 0) {
+                panic("the component is already in a window")
+            }
+            data.parts[p].window = me
+        })
+        ret component
     }
 
     public void setTitle(string text) const {
@@ -382,6 +870,7 @@ public struct Window {
         withData([me, box](ref Shared data) { data.windows[indexOf(ref data, me)].mouseUp.add(box) })
     }
 
+    // The keys that the component in focus does not use.
     public void onKeyDown(move func(Key) handler) const {
         addr box = alloc(sizeOf<func(Key)>())
         put<func(Key)>(box, move handler)
@@ -460,42 +949,101 @@ const f32 barHeight = 35
 const f32 buttonWidth = 46
 const f32 edgeWidth = 6
 const f32 titleSize = 12
+const f32 bodySize = 14  // text-sm
+const f32 padding = 12   // of the text in a text box, px-3
+const f32 checkSide = 16
+const f32 corner = 7       // of the buttons and the text boxes
+const f32 checkCorner = 4  // of the check boxes
 
-// The colors of the themes Dark Modern and Light Modern of Visual Studio Code.
+// The colors of the look (D443): the grays and the indigo of Tailwind, light and
+// dark, with buttons in a gradient and a border of a deeper color.
 struct Colors {
     u32 bar
+    u32 separator
     u32 title
     u32 inactive
     u32 content
     u32 border
     u32 hover
     u32 pressed
+    u32 text
+    u32 label
+    u32 muted
+    u32 buttonTop
+    u32 buttonBottom
+    u32 hoverTop
+    u32 hoverBottom
+    u32 buttonLine
+    u32 buttonText
+    u32 highlight  // 0xAARRGGBB, a line of light inside the top of a button
+    u32 input
+    u32 inputBorder
+    u32 check
+    u32 checkBorder
+    u32 focus
+    u32 selection
+    u32 shadow       // 0xAARRGGBB, under the buttons
+    u32 inputShadow  // under the text boxes and the check boxes
+    u32 glow         // around the text box in focus
 }
 
 Colors colorsOf(bool dark) {
     Colors c
+    c.buttonTop = 0x6366F1     // indigo-500
+    c.buttonBottom = 0x4F46E5  // indigo-600
+    c.hoverTop = 0x818CF8      // indigo-400
+    c.hoverBottom = 0x6366F1
+    c.buttonLine = 0x4338CA  // indigo-700
+    c.buttonText = 0xFFFFFF
+    c.focus = 0x6366F1
     if (dark) {
-        c.bar = 0x181818
-        c.title = 0xCCCCCC
-        c.inactive = 0x8B8B8B
-        c.content = 0x1F1F1F
-        c.border = 0x2B2B2B
-        c.hover = 0x2F2F2F
-        c.pressed = 0x444444
+        c.bar = 0x111827        // gray-900
+        c.separator = 0x1F2937  // gray-800
+        c.title = 0xD1D5DB      // gray-300
+        c.inactive = 0x6B7280   // gray-500
+        c.content = 0x111827
+        c.border = 0x1F2937
+        c.hover = 0x1F2937
+        c.pressed = 0x374151  // gray-700
+        c.text = 0xF3F4F6     // gray-100
+        c.label = 0xD1D5DB
+        c.muted = 0x6B7280
+        c.highlight = 0x33FFFFFF
+        c.input = 0x1D2331  // white/5 on gray-900
+        c.inputBorder = 0x374151
+        c.check = 0x1D2331
+        c.checkBorder = 0x4B5563  // gray-600
+        c.selection = 0x3730A3    // indigo-800
+        c.shadow = 0x73000000
+        c.inputShadow = 0x40000000
+        c.glow = 0x596366F1
     } else {
-        c.bar = 0xF8F8F8
-        c.title = 0x1E1E1E
-        c.inactive = 0x8B8B8B
-        c.content = 0xFFFFFF
-        c.border = 0xE5E5E5
-        c.hover = 0xE2E2E2
-        c.pressed = 0xCBCBCB
+        c.bar = 0xFFFFFF
+        c.separator = 0xE5E7EB  // gray-200
+        c.title = 0x374151      // gray-700
+        c.inactive = 0x9CA3AF   // gray-400
+        c.content = 0xF3F4F6    // gray-100
+        c.border = 0xE5E7EB
+        c.hover = 0xF3F4F6
+        c.pressed = 0xE5E7EB
+        c.text = 0x111827  // gray-900
+        c.label = 0x374151
+        c.muted = 0x9CA3AF
+        c.highlight = 0x40FFFFFF
+        c.input = 0xFFFFFF
+        c.inputBorder = 0xD1D5DB  // gray-300
+        c.check = 0xFFFFFF
+        c.checkBorder = 0xC9CDD4
+        c.selection = 0xC7D2FE  // indigo-200
+        c.shadow = 0x30111827
+        c.inputShadow = 0x14111827
+        c.glow = 0x406366F1
     }
     ret c
 }
 
-const u32 closeHover = 0xE81123
-const u32 closePressed = 0xF1707A
+const u32 closeHover = 0xDC2626    // red-600
+const u32 closePressed = 0xB91C1C  // red-700
 
 u8 red(u32 rgb) {
     ret u8((rgb >> 16) & 0xFF)
@@ -509,10 +1057,32 @@ u8 blue(u32 rgb) {
     ret u8(rgb & 0xFF)
 }
 
+// A color of the boxes of C, 0xAARRGGBB: opaque, or half for a component disabled.
+u32 solid(u32 rgb, bool enabled) {
+    ret enabled ? (0xFF000000 | rgb) : (0x80000000 | rgb)
+}
+
 void fill(addr renderer, u32 rgb, f32 x, f32 y, f32 w, f32 h) {
     SDL_SetRenderDrawColor(renderer, red(rgb), green(rgb), blue(rgb), 255)
     Rect area = Rect(x, y, w, h)
     SDL_RenderFillRect(renderer, ref area)
+}
+
+void text(addr font, string s, f32 x, f32 y, u32 rgb, bool enabled) {
+    cromo_gui_text(font, s.cstring(), s.len(), x, y, red(rgb), green(rgb), blue(rgb), enabled ? 255 : 128)
+}
+
+f32 textWidth(addr font, string s, i64 bytes) {
+    ret cromo_gui_text_width(font, s.cstring(), bytes)
+}
+
+// Drawing only inside a rectangle, in logical pixels.
+void clipTo(addr renderer, f32 x, f32 y, f32 w, f32 h) {
+    clip[0] = i32(x)
+    clip[1] = i32(y)
+    clip[2] = i32(w)
+    clip[3] = i32(h)
+    SDL_SetRenderClipRect(renderer, variableAddress(clip))
 }
 
 // A string of C, ended by a zero.
@@ -528,7 +1098,9 @@ void run() {
     if (!SDL_Init(0x20)) {  // SDL_INIT_VIDEO
         panic(format("cannot start the windows: {}", cText(SDL_GetError())))
     }
-    addr event = alloc(128)  // SDL_Event, a union of 128 bytes
+    arrow = SDL_CreateSystemCursor(0)  // SDL_SYSTEM_CURSOR_DEFAULT
+    beam = SDL_CreateSystemCursor(1)   // SDL_SYSTEM_CURSOR_TEXT
+    addr event = alloc(128)            // SDL_Event, a union of 128 bytes
     for (true) {
         u64 start = SDL_GetTicksNS()
         i32 fps = prepare()
@@ -654,8 +1226,12 @@ void setDensity(ref WindowData window) {
     addr none
     if (window.font != none) {
         cromo_gui_font_free(window.font)
+        cromo_gui_font_free(window.body)
+        cromo_gui_font_free(window.strong)
     }
     window.font = cromo_gui_font(window.renderer, 0, titleSize, density)
+    window.body = cromo_gui_font(window.renderer, 0, bodySize, density)
+    window.strong = cromo_gui_font(window.renderer, 1, bodySize, density)
 }
 
 void apply(ref WindowData window) {
@@ -687,8 +1263,13 @@ void apply(ref WindowData window) {
 void shut(ref WindowData window) {
     addr none
     cromo_gui_font_free(window.font)
+    cromo_gui_font_free(window.body)
+    cromo_gui_font_free(window.strong)
     window.font = none
+    window.body = none
+    window.strong = none
     cromo_gui_symbols_free(window.renderer)
+    cromo_gui_boxes_free(window.renderer)
     SDL_DestroyRenderer(window.renderer)
     SDL_DestroyWindow(window.window)
     cromo_gui_chrome_free(window.chrome)
@@ -705,14 +1286,16 @@ i32 buttonAt(f32 x, f32 y, f32 width) {
     ret i32((x - start) / buttonWidth)
 }
 
-// What the program receives of an event, with the boxes of its handlers.
+// A call of handlers, made under the lock and run after it.
 struct Call {
-    i32 kind  // 0 none, 1 mouse move, 2 mouse down, 3 mouse up, 4 key, 5 resize
+    i32 kind  // 1 mouse move, 2 mouse down, 3 mouse up, 4 key, 5 resize, 6 click, 7 text, 8 check
     list<addr> boxes
     Mouse mouse
     Key key
     i32 w
     i32 h
+    string text
+    bool value
 }
 
 void handle(addr event) {
@@ -721,50 +1304,80 @@ void handle(addr event) {
         ret
     }
     u32 sdlId = take<u32>(offset(event, 16))
-    Call call
-    withData([event, kind, sdlId, ref call](ref Shared data) {
-        for (ref WindowData window in data.windows) {
+    list<Call> calls
+    withData([event, kind, sdlId, ref calls](ref Shared data) {
+        for (i64 w = 0; w < data.windows.len(); w++) {
             addr none
-            if (window.window == none || window.sdlId != sdlId) {
+            if (data.windows[w].window == none || data.windows[w].sdlId != sdlId) {
                 continue
             }
-            route(ref window, event, kind, ref call)
+            route(ref data.windows[w], ref data.parts, event, kind, ref calls)
             ret
         }
     })
-    if (call.kind == 1 || call.kind == 2 || call.kind == 3) {
-        for (addr box in call.boxes) {
+    for (ref Call call in calls) {
+        dispatch(ref call)
+    }
+}
+
+void dispatch(ref Call call) {
+    for (addr box in call.boxes) {
+        if (call.kind >= 1 && call.kind <= 3) {
             func(Mouse) handler = take<func(Mouse)>(box)
             try {
                 handler(call.mouse)
             } finally {
                 put<func(Mouse)>(box, move handler)
             }
-        }
-    } else if (call.kind == 4) {
-        for (addr box in call.boxes) {
+        } else if (call.kind == 4) {
             func(Key) handler = take<func(Key)>(box)
             try {
                 handler(call.key)
             } finally {
                 put<func(Key)>(box, move handler)
             }
-        }
-    } else if (call.kind == 5) {
-        for (addr box in call.boxes) {
+        } else if (call.kind == 5) {
             func(i32, i32) handler = take<func(i32, i32)>(box)
             try {
                 handler(call.w, call.h)
             } finally {
                 put<func(i32, i32)>(box, move handler)
             }
+        } else if (call.kind == 6) {
+            func() handler = take<func()>(box)
+            try {
+                handler()
+            } finally {
+                put<func()>(box, move handler)
+            }
+        } else if (call.kind == 7) {
+            func(string) handler = take<func(string)>(box)
+            try {
+                handler(call.text)
+            } finally {
+                put<func(string)>(box, move handler)
+            }
+        } else if (call.kind == 8) {
+            func(bool) handler = take<func(bool)>(box)
+            try {
+                handler(call.value)
+            } finally {
+                put<func(bool)>(box, move handler)
+            }
         }
     }
 }
 
-// An event of a window: the title bar handles its own, the others go to the
-// handlers of the program, in `call`.
-void route(ref WindowData window, addr event, u32 kind, ref Call call) {
+Call callOf(i32 kind, list<addr> boxes) {
+    Call call
+    call.kind = kind
+    call.boxes = boxes
+    ret call
+}
+
+// An event of a window: the title bar handles its own, the components theirs, and
+// the others go to the handlers of the program, in `calls`.
+void route(ref WindowData window, ref list<PartData> parts, addr event, u32 kind, ref list<Call> calls) {
     if (kind >= 0x400 && kind <= 0x402) {  // the mouse: in logical pixels
         SDL_ConvertEventToRenderCoordinates(window.renderer, event)
     }
@@ -776,10 +1389,23 @@ void route(ref WindowData window, addr event, u32 kind, ref Call call) {
         f32 x = take<f32>(offset(event, 28))
         f32 y = take<f32>(offset(event, 32))
         window.hovered = buttonAt(x, y, width)
+        i64 hot = y >= barHeight ? partAt(ref parts, window.id, x, y - barHeight) : -1
+        i64 hotId = hot >= 0 ? parts[hot].id : 0
+        if (hotId != window.hot) {
+            window.hot = hotId
+            SDL_SetCursor(hot >= 0 && parts[hot].kind == kindTextBox && parts[hot].enabled ? beam : arrow)
+        }
+        if (window.dragging != 0) {
+            i64 d = partNumber(ref parts, window.dragging)
+            if (d >= 0) {
+                parts[d].caret = indexAt(window.body, parts[d].text, x - f32(parts[d].x) - padding + parts[d].scroll)
+                window.caretStart = SDL_GetTicksNS()
+            }
+        }
         if (y >= barHeight) {
-            call.kind = 1
-            call.boxes = window.mouseMove
+            Call call = callOf(1, window.mouseMove)
             call.mouse = mouseAt(x, y, 0)
+            calls.add(move call)
         }
     } else if (kind == 0x401 || kind == 0x402) {  // SDL_EVENT_MOUSE_BUTTON_DOWN, _UP
         f32 x = take<f32>(offset(event, 28))
@@ -794,13 +1420,19 @@ void route(ref WindowData window, addr event, u32 kind, ref Call call) {
             }
             window.pressed = -1
         } else if (y >= barHeight) {
-            call.kind = kind == 0x401 ? 2 : 3
-            call.boxes = kind == 0x401 ? window.mouseDown : window.mouseUp
+            if (kind == 0x401 && button == 1) {
+                pressPart(ref window, ref parts, x, y - barHeight)
+            } else if (kind == 0x402 && button == 1) {
+                releasePart(ref window, ref parts, x, y - barHeight, ref calls)
+            }
+            Call call = callOf(kind == 0x401 ? 2 : 3, kind == 0x401 ? window.mouseDown : window.mouseUp)
             call.mouse = mouseAt(x, y, button)
+            calls.add(move call)
         }
     } else if (kind == 0x20D) {  // SDL_EVENT_WINDOW_MOUSE_LEAVE
         window.hovered = -1
         window.pressed = -1
+        window.hot = 0
     } else if (kind == 0x20E) {  // FOCUS_GAINED
         window.focused = true
     } else if (kind == 0x20F) {  // FOCUS_LOST
@@ -821,18 +1453,29 @@ void route(ref WindowData window, addr event, u32 kind, ref Call call) {
         f32 scale = toWindow(ref window)
         window.width = i32(f32(take<i32>(offset(event, 20))) / scale + 0.5)
         window.height = i32(f32(take<i32>(offset(event, 24))) / scale + 0.5)
-        call.kind = 5
-        call.boxes = window.resize
+        Call call = callOf(5, window.resize)
         call.w = window.width
         call.h = window.height
+        calls.add(move call)
     } else if (kind == 0x300) {  // SDL_EVENT_KEY_DOWN
         u32 modifiers = u32(take<u16>(offset(event, 32)))
-        call.kind = 4
-        call.boxes = window.keyDown
-        call.key.code = i64(take<u32>(offset(event, 28)))
-        call.key.shift = (modifiers & 0x3) != 0
-        call.key.control = (modifiers & 0xC0) != 0
-        call.key.alt = (modifiers & 0x300) != 0
+        Key key
+        key.code = i64(take<u32>(offset(event, 28)))
+        key.shift = (modifiers & 0x3) != 0
+        key.control = (modifiers & 0xC0) != 0
+        key.alt = (modifiers & 0x300) != 0
+        if (!keyOfPart(ref window, ref parts, key, ref calls)) {
+            Call call = callOf(4, window.keyDown)
+            call.key = key
+            calls.add(move call)
+        }
+    } else if (kind == 0x303) {  // SDL_EVENT_TEXT_INPUT, in UTF-8
+        i64 f = partNumber(ref parts, window.focus)
+        if (f >= 0 && parts[f].kind == kindTextBox && parts[f].enabled) {
+            insert(ref parts[f], cText(take<addr>(offset(event, 24))))
+            window.caretStart = SDL_GetTicksNS()
+            changed(ref parts[f], ref calls)
+        }
     }
 }
 
@@ -857,20 +1500,287 @@ void press(ref WindowData window, i32 button) {
     }
 }
 
+// ---- The components on the thread of the GUI ----
+
+// The index of a component in the list, or -1.
+i64 partNumber(ref list<PartData> parts, i64 id) {
+    if (id == 0) {
+        ret -1
+    }
+    for (i64 i = 0; i < parts.len(); i++) {
+        if (parts[i].id == id) {
+            ret i
+        }
+    }
+    ret -1
+}
+
+// The component of a window at a point of its content, the last added on top.
+i64 partAt(ref list<PartData> parts, i64 window, f32 x, f32 y) {
+    for (i64 i = parts.len() - 1; i >= 0; i--) {
+        if (parts[i].window == window && parts[i].visible && inside(ref parts[i], x, y)) {
+            ret i
+        }
+    }
+    ret -1
+}
+
+bool inside(ref PartData part, f32 x, f32 y) {
+    ret x >= f32(part.x) && x < f32(part.x + part.width) && y >= f32(part.y) && y < f32(part.y + part.height)
+}
+
+bool focusable(ref PartData part) {
+    ret part.kind != kindLabel && part.visible && part.enabled
+}
+
+// Gives the keyboard to a component, or to none with 0: a text box receives the
+// text of the keyboard, with its input method.
+void focusTo(ref WindowData window, ref list<PartData> parts, i64 id) {
+    if (window.focus == id) {
+        ret
+    }
+    i64 old = partNumber(ref parts, window.focus)
+    i64 now = partNumber(ref parts, id)
+    bool wasText = old >= 0 && parts[old].kind == kindTextBox
+    bool isText = now >= 0 && parts[now].kind == kindTextBox
+    window.focus = id
+    if (wasText && !isText) {
+        SDL_StopTextInput(window.window)
+    } else if (isText && !wasText) {
+        SDL_StartTextInput(window.window)
+    }
+    window.caretStart = SDL_GetTicksNS()
+}
+
+// Tab and Shift+Tab: the next or the previous component that takes the keyboard.
+void moveFocus(ref WindowData window, ref list<PartData> parts, i64 step) {
+    list<i64> order
+    i64 current = -1
+    for (ref PartData part in parts) {
+        if (part.window == window.id && focusable(ref part)) {
+            if (part.id == window.focus) {
+                current = order.len()
+            }
+            order.add(part.id)
+        }
+    }
+    if (order.len() == 0) {
+        ret
+    }
+    i64 next = current < 0 ? (step > 0 ? 0 : order.len() - 1) : (current + step + order.len()) % order.len()
+    focusTo(ref window, ref parts, order[next])
+}
+
+void pressPart(ref WindowData window, ref list<PartData> parts, f32 x, f32 y) {
+    i64 p = partAt(ref parts, window.id, x, y)
+    focusTo(ref window, ref parts, p >= 0 && focusable(ref parts[p]) ? parts[p].id : 0)
+    if (p < 0 || !parts[p].enabled) {
+        ret
+    }
+    window.held = parts[p].id
+    if (parts[p].kind == kindTextBox) {
+        parts[p].caret = indexAt(window.body, parts[p].text, x - f32(parts[p].x) - padding + parts[p].scroll)
+        parts[p].anchor = parts[p].caret
+        window.dragging = parts[p].id
+    }
+}
+
+void releasePart(ref WindowData window, ref list<PartData> parts, f32 x, f32 y, ref list<Call> calls) {
+    i64 p = partNumber(ref parts, window.held)
+    window.held = 0
+    window.dragging = 0
+    if (p >= 0 && parts[p].enabled && inside(ref parts[p], x, y)) {
+        activate(ref parts[p], ref calls)
+    }
+}
+
+// A click, or Space: a button calls its handlers, a check box changes.
+void activate(ref PartData part, ref list<Call> calls) {
+    if (part.kind == kindButton) {
+        calls.add(callOf(6, part.click))
+    } else if (part.kind == kindCheckBox) {
+        part.checked = !part.checked
+        Call call = callOf(8, part.change)
+        call.value = part.checked
+        calls.add(move call)
+    }
+}
+
+// A key for the component in focus: false if it does not use it.
+bool keyOfPart(ref WindowData window, ref list<PartData> parts, Key key, ref list<Call> calls) {
+    if (key.code == 9) {  // Tab
+        moveFocus(ref window, ref parts, key.shift ? -1 : 1)
+        ret true
+    }
+    i64 f = partNumber(ref parts, window.focus)
+    if (f < 0 || !parts[f].enabled || !parts[f].visible) {
+        ret false
+    }
+    if (parts[f].kind == kindTextBox) {
+        window.caretStart = SDL_GetTicksNS()
+        ret edit(ref parts[f], key, ref calls)
+    }
+    if (key.code == 32 || (key.code == 13 && parts[f].kind == kindButton)) {  // Space, Enter
+        activate(ref parts[f], ref calls)
+        ret true
+    }
+    ret false
+}
+
+const i64 keyLeft = 0x40000050
+const i64 keyRight = 0x4000004F
+const i64 keyHome = 0x4000004A
+const i64 keyEnd = 0x4000004D
+const i64 keyEnter = 0x40000058  // of the numeric keypad
+
+// The editing of a text box: the characters come with the text of the keyboard.
+bool edit(ref PartData box, Key key, ref list<Call> calls) {
+    i64 code = key.code
+    if (code == 8) {  // Backspace
+        if (!removeSelection(ref box) && box.caret > 0) {
+            i64 from = previousCharacter(box.text, box.caret)
+            box.text = box.text.slice(0, from).concat(box.text.slice(box.caret, box.text.len()))
+            box.caret = from
+            box.anchor = from
+        }
+        changed(ref box, ref calls)
+    } else if (code == 0x7F) {  // Delete
+        if (!removeSelection(ref box) && box.caret < box.text.len()) {
+            i64 to = nextCharacter(box.text, box.caret)
+            box.text = box.text.slice(0, box.caret).concat(box.text.slice(to, box.text.len()))
+        }
+        changed(ref box, ref calls)
+    } else if (code == keyLeft || code == keyRight || code == keyHome || code == keyEnd) {
+        i64 low = box.caret < box.anchor ? box.caret : box.anchor
+        i64 high = box.caret < box.anchor ? box.anchor : box.caret
+        if (code == keyLeft) {
+            box.caret = !key.shift && low != high ? low : previousCharacter(box.text, box.caret)
+        } else if (code == keyRight) {
+            box.caret = !key.shift && low != high ? high : nextCharacter(box.text, box.caret)
+        } else if (code == keyHome) {
+            box.caret = 0
+        } else {
+            box.caret = box.text.len()
+        }
+        if (!key.shift) {
+            box.anchor = box.caret
+        }
+    } else if (code == 13 || code == keyEnter) {
+        Call call = callOf(7, box.enter)
+        call.text = box.text
+        calls.add(move call)
+    } else if (key.control && code == 97) {  // Ctrl+A
+        box.anchor = 0
+        box.caret = box.text.len()
+    } else if (key.control && (code == 99 || code == 120)) {  // Ctrl+C, Ctrl+X
+        if (box.caret != box.anchor) {
+            SDL_SetClipboardText(selection(ref box).cstring())
+            if (code == 120) {
+                removeSelection(ref box)
+                changed(ref box, ref calls)
+            }
+        }
+    } else if (key.control && code == 118) {  // Ctrl+V: the text in one line
+        addr none
+        addr pasted = SDL_GetClipboardText()
+        if (pasted != none) {
+            string line = cText(pasted).replace("\r\n", " ").replace("\n", " ").replace("\r", " ")
+            SDL_free(pasted)
+            insert(ref box, line)
+            changed(ref box, ref calls)
+        }
+    } else {
+        ret !key.control && !key.alt && code >= 32 && code < 127
+    }
+    ret true
+}
+
+void changed(ref PartData box, ref list<Call> calls) {
+    Call call = callOf(7, box.change)
+    call.text = box.text
+    calls.add(move call)
+}
+
+string selection(ref PartData box) {
+    i64 low = box.caret < box.anchor ? box.caret : box.anchor
+    i64 high = box.caret < box.anchor ? box.anchor : box.caret
+    ret box.text.slice(low, high)
+}
+
+// Removes the text selected: false without a selection.
+bool removeSelection(ref PartData box) {
+    if (box.caret == box.anchor) {
+        ret false
+    }
+    i64 low = box.caret < box.anchor ? box.caret : box.anchor
+    i64 high = box.caret < box.anchor ? box.anchor : box.caret
+    box.text = box.text.slice(0, low).concat(box.text.slice(high, box.text.len()))
+    box.caret = low
+    box.anchor = low
+    ret true
+}
+
+void insert(ref PartData box, string piece) {
+    removeSelection(ref box)
+    box.text = box.text.slice(0, box.caret).concat(piece).concat(box.text.slice(box.caret, box.text.len()))
+    box.caret = box.caret + piece.len()
+    box.anchor = box.caret
+}
+
+// Where the characters of UTF-8 start: a byte 10xxxxxx continues one.
+i64 previousCharacter(string s, i64 at) {
+    list<u8> bytes = s.bytes()
+    i64 i = at - 1
+    for (i > 0 && (bytes[i] & 0xC0) == 0x80) {
+        i--
+    }
+    ret i < 0 ? 0 : i
+}
+
+i64 nextCharacter(string s, i64 at) {
+    list<u8> bytes = s.bytes()
+    if (at >= bytes.len()) {
+        ret bytes.len()
+    }
+    i64 i = at + 1
+    for (i < bytes.len() && (bytes[i] & 0xC0) == 0x80) {
+        i++
+    }
+    ret i
+}
+
+// The place between two characters nearest to x, from the start of the text.
+i64 indexAt(addr font, string s, f32 x) {
+    i64 at = 0
+    f32 left = 0
+    for (at < s.len()) {
+        i64 next = nextCharacter(s, at)
+        f32 right = textWidth(font, s, next)
+        if (x < (left + right) / 2) {
+            ret at
+        }
+        at = next
+        left = right
+    }
+    ret s.len()
+}
+
+// ---- The drawing ----
+
 void draw() {
     withData([](ref Shared data) {
         for (ref WindowData window in data.windows) {
             addr none
             if (window.window != none && !window.closing) {
-                drawWindow(ref window)
+                drawWindow(ref window, ref data.parts)
             }
         }
     })
 }
 
-// The content, the title bar with its title and its buttons, and a line at the
-// edges when the window is not maximized (D431).
-void drawWindow(ref WindowData window) {
+// The content with its components, the title bar with its title and its buttons,
+// and a line at the edges when the window is not maximized (D431).
+void drawWindow(ref WindowData window, ref list<PartData> parts) {
     i32 w = 0
     i32 h = 0
     SDL_GetWindowSize(window.window, ref w, ref h)
@@ -883,21 +1793,27 @@ void drawWindow(ref WindowData window) {
     Colors c = colorsOf(dark)
     addr r = window.renderer
     fill(r, c.content, 0, 0, width, height)
-    fill(r, c.bar, 0, 0, width, barHeight)
 
-    u32 text = window.focused ? c.title : c.inactive
+    clipTo(r, 0, barHeight, width, height - barHeight)
+    for (ref PartData part in parts) {
+        if (part.window == window.id && part.visible) {
+            drawPart(ref window, ref part, ref c, width, height)
+        }
+    }
+    addr none
+    SDL_SetRenderClipRect(r, none)
+
+    fill(r, c.bar, 0, 0, width, barHeight)
+    u32 title = window.focused ? c.title : c.inactive
     f32 ascent = 0
     f32 descent = 0
     f32 gap = 0
     cromo_gui_font_metrics(window.font, ref ascent, ref descent, ref gap)
-    f32 titleWidth = cromo_gui_text_width(window.font, window.title.cstring(), window.title.len())
-    f32 baseline = barHeight / 2 + (ascent - descent) / 2
-    cromo_gui_text(window.font, window.title.cstring(), window.title.len(), (width - titleWidth) / 2, baseline, red(text),
-        green(text), blue(text), 255)
-
+    f32 titleWidth = textWidth(window.font, window.title, window.title.len())
+    text(window.font, window.title, (width - titleWidth) / 2, barHeight / 2 + (ascent - descent) / 2, title, true)
     for (i32 b = 0; b < 3; b++) {
         f32 x = width - f32(3 - b) * buttonWidth
-        u32 symbol = text
+        u32 symbol = title
         bool disabled = b == 1 && !window.resizable
         if (b == 2 && window.hovered == 2) {
             fill(r, window.pressed == 2 ? closePressed : closeHover, x, 0, buttonWidth, barHeight)
@@ -911,10 +1827,108 @@ void drawWindow(ref WindowData window) {
         i32 kind = b == 2 ? 3 : b == 1 && window.maximized ? 2 : b
         cromo_gui_symbol(r, kind, x + buttonWidth / 2, barHeight / 2, window.density, red(symbol), green(symbol), blue(symbol))
     }
+    fill(r, c.separator, 0, barHeight - 1, width, 1)
     if (!window.maximized) {
         SDL_SetRenderDrawColor(r, red(c.border), green(c.border), blue(c.border), 255)
         Rect edge = Rect(0, 0, width, height)
         SDL_RenderRect(r, ref edge)
     }
     SDL_RenderPresent(r)
+}
+
+// A component, in the look of D443: a soft shadow under it, buttons and check
+// boxes checked in a gradient with a line of light and a border of a deeper
+// color, a glow around the text box in focus and a ring of 2 pixels around the
+// other components in focus.
+void drawPart(ref WindowData window, ref PartData part, ref Colors c, f32 width, f32 height) {
+    addr r = window.renderer
+    f32 d = window.density
+    f32 x = f32(part.x)
+    f32 y = barHeight + f32(part.y)
+    f32 w = f32(part.width)
+    f32 h = f32(part.height)
+    bool focused = window.focus == part.id && window.focused
+    bool on = part.enabled
+    f32 ascent = 0
+    f32 descent = 0
+    f32 gap = 0
+    cromo_gui_font_metrics(window.body, ref ascent, ref descent, ref gap)
+    f32 baseline = y + h / 2 + (ascent - descent) / 2
+    if (part.kind == kindLabel) {
+        text(window.body, part.text, x, baseline, c.label, on)
+    } else if (part.kind == kindButton) {
+        bool hot = window.hot == part.id && on
+        bool down = window.held == part.id && hot
+        u32 top = hot ? c.hoverTop : c.buttonTop
+        u32 bottom = hot ? c.hoverBottom : c.buttonBottom
+        if (down) {
+            top = c.buttonBottom
+            bottom = c.buttonBottom
+        }
+        if (on) {
+            cromo_gui_shadow(r, x, y, w, h, corner, d, c.shadow, 3, 1.5)
+        }
+        cromo_gui_gradient(r, x, y, w, h, corner, 1, d, solid(top, on), solid(bottom, on), solid(c.buttonLine, on),
+            down || !on ? 0 : c.highlight)
+        f32 size = textWidth(window.strong, part.text, part.text.len())
+        text(window.strong, part.text, x + (w - size) / 2, baseline, c.buttonText, on)
+        if (focused) {
+            cromo_gui_box(r, x - 4, y - 4, w + 8, h + 8, corner + 4, 2, d, 0, solid(c.focus, true))
+        }
+    } else if (part.kind == kindTextBox) {
+        if (focused) {
+            cromo_gui_shadow(r, x, y, w, h, corner, d, c.glow, 4, 0)
+        } else if (on) {
+            cromo_gui_shadow(r, x, y, w, h, corner, d, c.inputShadow, 2, 1)
+        }
+        cromo_gui_box(r, x, y, w, h, corner, focused ? 2 : 1, d, solid(c.input, on), solid(focused ? c.focus : c.inputBorder, on))
+        f32 inner = w - 2 * padding
+        f32 caretX = textWidth(window.body, part.text, part.caret)
+        f32 total = textWidth(window.body, part.text, part.text.len())
+        if (caretX - part.scroll > inner) {
+            part.scroll = caretX - inner
+        }
+        if (caretX < part.scroll) {
+            part.scroll = caretX
+        }
+        if (part.scroll > 0 && total - part.scroll < inner) {
+            part.scroll = total > inner ? total - inner : 0
+        }
+        f32 left = x + padding - part.scroll
+        clipTo(r, x + 2, y + 2, w - 4, h - 4)
+        if (part.caret != part.anchor) {
+            i64 low = part.caret < part.anchor ? part.caret : part.anchor
+            i64 high = part.caret < part.anchor ? part.anchor : part.caret
+            f32 from = textWidth(window.body, part.text, low)
+            f32 to = textWidth(window.body, part.text, high)
+            fill(r, c.selection, left + from, baseline - ascent - 1, to - from, ascent + descent + 2)
+        }
+        if (part.text.len() == 0) {
+            text(window.body, part.placeholder, x + padding, baseline, c.muted, on)
+        } else {
+            text(window.body, part.text, left, baseline, c.text, on)
+        }
+        bool blink = ((SDL_GetTicksNS() - window.caretStart) / 500000000) % 2 == 0
+        if (focused && blink) {
+            fill(r, c.focus, left + caretX, baseline - ascent, 1, ascent + descent)
+        }
+        clipTo(r, 0, barHeight, width, height - barHeight)
+    } else if (part.kind == kindCheckBox) {
+        f32 top = y + (h - checkSide) / 2
+        if (on) {
+            cromo_gui_shadow(r, x, top, checkSide, checkSide, checkCorner, d, c.inputShadow, 2, 1)
+        }
+        if (part.checked) {
+            cromo_gui_gradient(r, x, top, checkSide, checkSide, checkCorner, 1, d, solid(c.buttonTop, on), solid(c.buttonBottom, on),
+                solid(c.buttonLine, on), on ? c.highlight : 0)
+            cromo_gui_symbol(r, 4, x + checkSide / 2, top + checkSide / 2, d, red(c.buttonText), green(c.buttonText),
+                blue(c.buttonText))
+        } else {
+            cromo_gui_box(r, x, top, checkSide, checkSide, checkCorner, 1, d, solid(c.check, on), solid(c.checkBorder, on))
+        }
+        if (focused) {
+            cromo_gui_box(r, x - 4, top - 4, checkSide + 8, checkSide + 8, checkCorner + 4, 2, d, 0, solid(c.focus, true))
+        }
+        text(window.body, part.text, x + checkSide + 10, baseline, c.text, on)
+    }
 }

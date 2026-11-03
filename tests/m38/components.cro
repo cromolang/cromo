@@ -1,0 +1,44 @@
+// The components (D434, D439): handles with their properties, before and after
+// they are in a window that is drawn.
+// target: windows linux-x86_64
+// program-env: SDL_VIDEO_DRIVER=offscreen
+// expect-output: label Name at 10,20 size 100x20 visible true enabled true
+// expect-output: button OK at 10,60 size 80x28
+// expect-output: text box 'Ada' placeholder 'Your name' at 10,100 size 200x28
+// expect-output: check box Remember checked false
+// expect-output: after: Surname, Cancel, 'Lovelace', checked true, label visible false, button enabled false
+// expect-output: the same text box: Lovelace
+import std.gui
+import std.thread
+import std.time
+
+i32 main() {
+    gui.Window w = gui.Window("components", 400, 300)
+    gui.Label label = w.add(gui.Label("Name", 10, 20, 100, 20))
+    gui.Button button = w.add(gui.Button("OK", 10, 60, 80, 28))
+    gui.TextBox box = w.add(gui.TextBox("Ada", 10, 100, 200, 28))
+    gui.CheckBox check = w.add(gui.CheckBox("Remember", 10, 140, 200, 24))
+    box.setPlaceholder("Your name")
+    println("label {} at {},{} size {}x{} visible {} enabled {}", label.text(), label.x(), label.y(), label.width(),
+            label.height(), label.visible(), label.enabled())
+    println("button {} at {},{} size {}x{}", button.text(), button.x(), button.y(), button.width(), button.height())
+    println("text box '{}' placeholder '{}' at {},{} size {}x{}", box.text(), box.placeholder(), box.x(), box.y(),
+            box.width(), box.height())
+    println("check box {} checked {}", check.text(), check.checked())
+    w.start()
+    time.msleep(50)
+    label.setText("Surname")
+    label.setPosition(12, 22)
+    label.setVisible(false)
+    button.setText("Cancel")
+    button.setEnabled(false)
+    box.setText("Lovelace")
+    check.setChecked(true)
+    time.msleep(50)
+    println("after: {}, {}, '{}', checked {}, label visible {}, button enabled {}", label.text(), button.text(), box.text(),
+            check.checked(), label.visible(), button.enabled())
+    gui.TextBox same = box
+    println("the same text box: {}", same.text())
+    w.close()
+    ret 0
+}

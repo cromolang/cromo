@@ -1048,6 +1048,15 @@ i32 main() {
 - A window is a handle: a lambda captures it by copy, and its methods can be called from any thread, under one lock (D430, D442). When `main` returns, the program waits for its windows; `w.wait()` waits for one earlier.
 - An exception that leaves a handler stops the program, as one that leaves a thread (D437).
 - The positions and the sizes are in logical pixels, which the library scales with the density of the display (D438).
+- The components are `Label`, `Button`, `TextBox` and `CheckBox` (D439): handles, as the window, with their properties as methods, `b.setText("OK")` and `b.text()`, put in a window with `w.add(...)`, and their events, as `onClick` (D434). Their look is that of a dashboard made with Tailwind (D443).
+
+```cromo
+// draft: the names of the components and of their methods (P37)
+gui.TextBox name = w.add(gui.TextBox("", 24, 48, 300, 28))
+gui.Label answer = w.add(gui.Label("", 24, 92, 300, 20))
+gui.Button greet = w.add(gui.Button("Greet", 24, 136, 100, 28))
+greet.onClick([name, answer]() { answer.setText(format("Hello, {}", name.text())) })
+```
 
 ## 26. Still to be written
 

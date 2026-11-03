@@ -1,6 +1,7 @@
 // The part of std.gui in C (D441): the hit test of SDL, which takes a function of
 // C; the text, with stb_truetype and the fonts of Inter in fonts.S (D433, D440);
-// the symbols of the buttons of the title bar (D431); and what the end of main
+// the symbols of the buttons of the title bar (D431) and of the check boxes; the
+// boxes with rounded corners of the components (D439); and what the end of main
 // waits for (D442). Without the C library and without the headers of SDL, as the
 // rest of the runtime: the functions of SDL are declared here, and stb_truetype
 // takes its mathematics from SDL.
@@ -48,6 +49,10 @@ _Bool SDL_SetTextureBlendMode(void* texture, u32 mode);
 _Bool SDL_SetTextureColorMod(void* texture, u8 r, u8 g, u8 b);
 _Bool SDL_SetTextureAlphaMod(void* texture, u8 alpha);
 _Bool SDL_RenderTexture(void* renderer, void* texture, const FRect* source, const FRect* target);
+_Bool SDL_RenderTextureRotated(void* renderer, void* texture, const FRect* source, const FRect* target, double angle,
+                               const void* center, i32 flip);
+_Bool SDL_SetRenderDrawColor(void* renderer, u8 r, u8 g, u8 b, u8 a);
+_Bool SDL_RenderFillRect(void* renderer, const FRect* rect);
 void SDL_DestroyTexture(void* texture);
 
 void* memcpy(void* target, const void* source, size_t size);  // in the runtime (D19)
@@ -360,7 +365,7 @@ static f32 distance(const Segment* s, f32 x, f32 y) {
 }
 
 static void* drawSymbol(void* renderer, i32 kind, f32 density, i32* size) {
-    i32 line = (i32)SDL_floor(density + 0.5);
+    i32 line = (i32)SDL_floor((kind == 4 ? 1.75 : 1) * density + 0.5);  // the mark of a check box is bolder
     if (line < 1) line = 1;
     i32 extent = (i32)SDL_floor(10 * density + 0.5);  // the side of the square, in pixels
     i32 margin = line + 1;
@@ -389,9 +394,13 @@ static void* drawSymbol(void* renderer, i32 kind, f32 density, i32* size) {
         segments[count++] = (Segment){a + step, a, z, a};
         segments[count++] = (Segment){z, a, z, z - step};
         segments[count++] = (Segment){z, z - step, right, z - step};
-    } else {  // close: two diagonals
+    } else if (kind == 3) {  // close: two diagonals
         segments[count++] = (Segment){a, a, z, z};
         segments[count++] = (Segment){z, a, a, z};
+    } else {  // check: the mark of a check box
+        f32 d = z - a;
+        segments[count++] = (Segment){a + 0.05f * d, a + 0.55f * d, a + 0.35f * d, a + 0.85f * d};
+        segments[count++] = (Segment){a + 0.35f * d, a + 0.85f * d, a + 0.95f * d, a + 0.15f * d};
     }
     u8* pixels = SDL_malloc((size_t)n * n * 4);
     if (!pixels) return 0;
@@ -420,7 +429,8 @@ static void* drawSymbol(void* renderer, i32 kind, f32 density, i32* size) {
     return texture;
 }
 
-// A symbol centered at (x, y), in logical pixels: 0 minimize, 1 maximize, 2 restore, 3 close.
+// A symbol centered at (x, y), in logical pixels: 0 minimize, 1 maximize, 2 restore,
+// 3 close, 4 the mark of a check box.
 void cromo_gui_symbol(void* renderer, i32 kind, f32 x, f32 y, f32 density, u8 r, u8 g, u8 b) {
     Symbol* symbol = symbols;
     while (symbol && !(symbol->renderer == renderer && symbol->kind == kind && symbol->density == density)) {
@@ -456,6 +466,214 @@ void cromo_gui_symbols_free(void* renderer) {
             SDL_free(symbol);
         } else {
             link = &symbol->next;
+        }
+    }
+}
+
+// ---- The boxes of the components (D439) ----
+//
+// A rectangle with rounded corners, filled and with a border: each corner is a
+// quarter of a circle, or of a ring for the border, rasterized at the pixels of
+// the display with its coverage and turned for the four corners; the rest is
+// rectangles. The colors are 0xAARRGGBB, and an alpha of 0 draws nothing. On
+// them, the soft shadows and the boxes with a gradient of the look (D443).
+
+typedef struct Corner {
+    struct Corner* next;
+    void* renderer;
+    f32 radius;
+    f32 border;
+    f32 density;
+    i32 size;  // in pixels
+    void* fill;
+    void* line;
+} Corner;
+
+static Corner* corners;
+
+// The coverage of the quarter of a disc of `outer` pixels, minus the one of
+// `inner` when it is not negative, with its center at the corner (n, n).
+static void* cornerTexture(void* renderer, i32 n, f32 outer, f32 inner) {
+    u8* pixels = SDL_malloc((size_t)n * n * 4);
+    if (!pixels) return 0;
+    for (i32 y = 0; y < n; ++y) {
+        for (i32 x = 0; x < n; ++x) {
+            f32 dx = n - (x + 0.5f), dy = n - (y + 0.5f);
+            f32 d = (f32)SDL_sqrt(dx * dx + dy * dy);
+            f32 cover = outer + 0.5f - d;
+            cover = cover < 0 ? 0 : cover > 1 ? 1 : cover;
+            if (inner >= 0) {
+                f32 hole = inner + 0.5f - d;
+                hole = hole < 0 ? 0 : hole > 1 ? 1 : hole;
+                cover -= hole;
+                if (cover < 0) cover = 0;
+            }
+            u8* p = pixels + 4 * (y * n + x);
+            p[0] = p[1] = p[2] = 255;
+            p[3] = (u8)(cover * 255 + 0.5f);
+        }
+    }
+    void* texture = SDL_CreateTexture(renderer, PIXELS_RGBA, 0, n, n);
+    if (texture) {
+        SDL_SetTextureBlendMode(texture, BLEND);
+        SDL_UpdateTexture(texture, 0, pixels, n * 4);
+    }
+    SDL_free(pixels);
+    return texture;
+}
+
+static Corner* findCorner(void* renderer, f32 radius, f32 border, f32 density) {
+    Corner* corner = corners;
+    while (corner && !(corner->renderer == renderer && corner->radius == radius && corner->border == border &&
+                       corner->density == density)) {
+        corner = corner->next;
+    }
+    if (corner) return corner;
+    corner = SDL_calloc(1, sizeof(Corner));
+    if (!corner) return 0;
+    corner->renderer = renderer;
+    corner->radius = radius;
+    corner->border = border;
+    corner->density = density;
+    corner->size = (i32)SDL_ceil(radius * density);
+    if (corner->size < 1) corner->size = 1;
+    f32 outer = radius * density;
+    corner->fill = cornerTexture(renderer, corner->size, outer, -1);
+    corner->line = cornerTexture(renderer, corner->size, outer, outer - border * density);
+    corner->next = corners;
+    corners = corner;
+    return corner;
+}
+
+static void setColor(void* renderer, u32 color) {
+    SDL_SetRenderDrawColor(renderer, (u8)(color >> 16), (u8)(color >> 8), (u8)color, (u8)(color >> 24));
+}
+
+static void fillRect(void* renderer, f32 x, f32 y, f32 w, f32 h) {
+    if (w <= 0 || h <= 0) return;
+    FRect rect = {x, y, w, h};
+    SDL_RenderFillRect(renderer, &rect);
+}
+
+// The four corners of a texture of corners, tinted: the two above with `upper`,
+// the two below with `lower`.
+static void drawCorners(void* renderer, void* texture, f32 x, f32 y, f32 w, f32 h, f32 side, u32 upper, u32 lower) {
+    if (!texture) return;
+    FRect places[4] = {{x, y, side, side}, {x + w - side, y, side, side}, {x, y + h - side, side, side},
+                       {x + w - side, y + h - side, side, side}};
+    for (i32 i = 0; i < 4; ++i) {
+        u32 color = i < 2 ? upper : lower;
+        SDL_SetTextureColorMod(texture, (u8)(color >> 16), (u8)(color >> 8), (u8)color);
+        SDL_SetTextureAlphaMod(texture, (u8)(color >> 24));
+        SDL_RenderTextureRotated(renderer, texture, 0, &places[i], 0, 0, i);  // SDL_FLIP_HORIZONTAL 1, VERTICAL 2
+    }
+}
+
+// On whole pixels of the display.
+static void snap(f32* x, f32* y, f32* w, f32* h, f32 density) {
+    f32 left = (f32)SDL_floor(*x * density + 0.5) / density, top = (f32)SDL_floor(*y * density + 0.5) / density;
+    f32 right = (f32)SDL_floor((*x + *w) * density + 0.5) / density;
+    f32 bottom = (f32)SDL_floor((*y + *h) * density + 0.5) / density;
+    *x = left;
+    *y = top;
+    *w = right - left;
+    *h = bottom - top;
+}
+
+void cromo_gui_box(void* renderer, f32 x, f32 y, f32 w, f32 h, f32 radius, f32 border, f32 density, u32 fill, u32 line) {
+    snap(&x, &y, &w, &h, density);
+    if (w <= 0 || h <= 0) return;
+    if (radius * 2 > w) radius = w / 2;
+    if (radius * 2 > h) radius = h / 2;
+    Corner* corner = radius > 0 ? findCorner(renderer, radius, border, density) : 0;
+    f32 side = corner ? corner->size / density : 0;
+    f32 b = (f32)SDL_floor(border * density + 0.5) / density;
+    if (fill >> 24) {
+        setColor(renderer, fill);
+        fillRect(renderer, x + side, y, w - 2 * side, h);
+        fillRect(renderer, x, y + side, side, h - 2 * side);
+        fillRect(renderer, x + w - side, y + side, side, h - 2 * side);
+        if (corner) drawCorners(renderer, corner->fill, x, y, w, h, side, fill, fill);
+    }
+    if ((line >> 24) && b > 0) {
+        setColor(renderer, line);
+        fillRect(renderer, x + side, y, w - 2 * side, b);
+        fillRect(renderer, x + side, y + h - b, w - 2 * side, b);
+        fillRect(renderer, x, y + side, b, h - 2 * side);
+        fillRect(renderer, x + w - b, y + side, b, h - 2 * side);
+        if (corner) drawCorners(renderer, corner->line, x, y, w, h, side, line, line);
+    }
+}
+
+// A color between a and b, at t from 0 to 1, for each of its four bytes.
+static u32 mix(u32 a, u32 b, f32 t) {
+    u32 out = 0;
+    for (i32 shift = 0; shift < 32; shift += 8) {
+        f32 ca = (f32)((a >> shift) & 0xFF), cb = (f32)((b >> shift) & 0xFF);
+        out |= (u32)(ca + (cb - ca) * t + 0.5f) << shift;
+    }
+    return out;
+}
+
+// A soft shadow under a box: five layers, each larger by a fifth of `blur` and
+// with a fifth of the alpha of `color`, moved down by `dy`.
+void cromo_gui_shadow(void* renderer, f32 x, f32 y, f32 w, f32 h, f32 radius, f32 density, u32 color, f32 blur, f32 dy) {
+    if (!(color >> 24)) return;
+    const i32 layers = 5;
+    u32 alpha = (color >> 24) / layers;
+    if (alpha == 0) alpha = 1;
+    u32 layer = (alpha << 24) | (color & 0xFFFFFF);
+    for (i32 i = layers; i >= 1; --i) {
+        f32 grow = blur * i / layers;
+        cromo_gui_box(renderer, x - grow, y - grow + dy, w + 2 * grow, h + 2 * grow, radius + grow, 0, density, layer, 0);
+    }
+}
+
+// A box with a vertical gradient from `top` to `bottom`, a row for each pixel of
+// the display, a border of `line` and a line of light, `highlight`, inside its
+// top edge.
+void cromo_gui_gradient(void* renderer, f32 x, f32 y, f32 w, f32 h, f32 radius, f32 border, f32 density, u32 top, u32 bottom,
+                        u32 line, u32 highlight) {
+    snap(&x, &y, &w, &h, density);
+    if (w <= 0 || h <= 0) return;
+    if (radius * 2 > w) radius = w / 2;
+    if (radius * 2 > h) radius = h / 2;
+    Corner* corner = radius > 0 ? findCorner(renderer, radius, border, density) : 0;
+    f32 side = corner ? corner->size / density : 0;
+    i32 rows = (i32)SDL_floor(h * density + 0.5);
+    i32 sideRows = (i32)SDL_floor(side * density + 0.5);
+    for (i32 j = 0; j < rows; ++j) {
+        setColor(renderer, mix(top, bottom, (j + 0.5f) / rows));
+        f32 row = y + j / density;
+        if (j < sideRows || j >= rows - sideRows) {
+            fillRect(renderer, x + side, row, w - 2 * side, 1 / density);
+        } else {
+            fillRect(renderer, x, row, w, 1 / density);
+        }
+    }
+    if (corner) {
+        drawCorners(renderer, corner->fill, x, y, w, h, side, mix(top, bottom, side / h / 2), mix(top, bottom, 1 - side / h / 2));
+    }
+    f32 b = (f32)SDL_floor(border * density + 0.5) / density;
+    if (highlight >> 24) {
+        setColor(renderer, highlight);
+        fillRect(renderer, x + side, y + b, w - 2 * side, 1 / density);
+    }
+    if ((line >> 24) && b > 0) cromo_gui_box(renderer, x, y, w, h, radius, border, density, 0, line);
+}
+
+// The textures of the corners of a renderer, before it is destroyed.
+void cromo_gui_boxes_free(void* renderer) {
+    Corner** link = &corners;
+    while (*link) {
+        Corner* corner = *link;
+        if (corner->renderer == renderer) {
+            *link = corner->next;
+            if (corner->fill) SDL_DestroyTexture(corner->fill);
+            if (corner->line) SDL_DestroyTexture(corner->line);
+            SDL_free(corner);
+        } else {
+            link = &corner->next;
         }
     }
 }

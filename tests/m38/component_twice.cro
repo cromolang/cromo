@@ -1,0 +1,13 @@
+// A component is in one window only (D434).
+// target: windows linux-x86_64
+// expect-exit: 101
+// expect-stderr: panic: the component is already in a window
+import std.gui
+
+i32 main() {
+    gui.Window first = gui.Window("first", 300, 200)
+    gui.Window second = gui.Window("second", 300, 200)
+    gui.Button button = first.add(gui.Button("OK", 10, 10, 80, 28))
+    second.add(button)
+    ret 0
+}

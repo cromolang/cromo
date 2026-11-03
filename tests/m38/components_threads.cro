@@ -1,0 +1,29 @@
+// The properties of the components change from many tasks while the window is
+// drawn, under the lock (D430).
+// target: windows linux-x86_64
+// program-env: SDL_VIDEO_DRIVER=offscreen
+// expect-output: 200 labels, the last says 199
+import std.gui
+import std.thread
+
+i32 main() {
+    gui.Window w = gui.Window("threads", 400, 300)
+    w.setFps(240)
+    w.start()
+    list<gui.Label> labels
+    for (i64 i = 0; i < 200; i++) {
+        labels.add(w.add(gui.Label("", 10, i32(i), 200, 20)))
+    }
+    thread.Group writers
+    for (i64 i = 0; i < 200; i++) {
+        gui.Label label = labels[i]
+        writers.start([label, i]() {
+            label.setText(format("{}", i))
+            label.setPosition(10, i32(i % 13))
+        })
+    }
+    writers.wait()
+    println("{} labels, the last says {}", labels.len(), labels[199].text())
+    w.close()
+    ret 0
+}
