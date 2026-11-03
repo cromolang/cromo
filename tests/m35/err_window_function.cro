@@ -1,0 +1,9 @@
+// expect-error: [[window]] is only for main of the program, whose executable opens no console (D426)
+[[window]]
+void open() {
+}
+
+i32 main() {
+    open()
+    ret 0
+}

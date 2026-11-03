@@ -1,0 +1,6 @@
+// err_icon.ico next to this file is a text, not an icon (D425).
+// target: windows
+// expect-error: err_icon.ico is not a .ico file (D425)
+i32 main() {
+    ret 0
+}

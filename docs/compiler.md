@@ -286,6 +286,7 @@ The tag of an enum is the value of its case, which is its position unless it is 
 - **Target:** `--target windows`, `--target linux` or `--target linux-arm64` (D142, D144, D406); the default is the system that `cromo` runs on. The compiler writes the `target triple`, `x86_64-pc-windows-msvc`, `x86_64-unknown-linux-gnu` or `aarch64-unknown-linux-gnu`, and `src/target.h` keeps the choice.
 - **Windows (D27):** Microsoft x64 ABI. Linking does not require the Windows SDK: `cromo` writes the import libraries by itself from the list of the functions used, as Zig does, with the code that LLVM already contains (D136).
 - **Without libc (D19):** linking uses a custom entry point and no default libraries. On Windows with `/ENTRY` and `/NODEFAULTLIB`, on Linux with `-nostdlib` and `-static`.
+- **The icon and the subsystem on Windows (D425, D426):** sema takes `[[window]]` out of the attributes of `main` and sets `isWindow`, and the executable is linked with `/subsystem:windows` instead of `/subsystem:console`. The icon next to the file with `main` becomes a `.res` file written by `cromo`: each image of the `.ico` is an `RT_ICON` resource, numbered from 1, and their list the `RT_GROUP_ICON` 1, with the same 12 bytes of each image and its number instead of its offset. `lld-link` converts the `.res` and links it, as one written by `rc`.
 - **Linux (D27, D142):** System V ABI, by cross-compilation from Windows, on x86-64 and on ARM64 (D405). The ELF driver of LLD, which is in `cromo` with the COFF one, writes a static executable at a fixed address (`-static`, entry point `_start`), without the dynamic loader: it runs on any Linux x64, with or without glibc (D145). The static libraries of the `extern` blocks, `libname.a`, come before the runtime on the command line of the linker, because their C code can call `memcpy` (D143).
 - **Build of the C++ compiler (D53):** C++20 with MSVC, CMake and Ninja, through `build.ps1`. LLVM and LLD come from the official 23.1.4 archive, installed in `C:\software\llvm-23.1.4`.
   - **Static runtime:** the LLVM libraries are Release, with a static C runtime (`/MT`) and without RTTI, so `cromo` uses the same options. This way `cromo.exe` does not require the Visual C++ Redistributable.
@@ -318,6 +319,8 @@ What the runtime must provide:
 - **symbols that LLVM expects anyway:** `memcpy`, `memmove`, `memset` and `memcmp`, because the optimizer can generate calls to these functions even if the code does not use them. On Windows `__chkstk` is also needed, the stack check for frames larger than 4 KB, and `_fltused`, required when floating-point numbers are used. On Linux LLVM also calls `bcmp`, which is `memcmp`.
 
 Exceptions require nothing from the runtime (D36).
+
+The fatal errors of a program without a console (D427): the runtime reads the subsystem in the header of the executable, from `__ImageBase`. With the subsystem of the windows and a standard error that is neither a file, nor a pipe, nor a console, the text of a panic, of an uncaught exception or of a stack overflow goes to a string of the runtime instead of the buffer of the standard error; at the end it is shown with `MessageBoxW`, from `user32.dll` loaded then, on a thread of its own, since the handler of a stack overflow has only 64 KB of stack.
 
 ### The runtime in Cromo (D393–D398, M28)
 - **`std.runtime`** (`library/std/runtime.cro`, with a file for each system when it needs one) is a module of the library that the programs cannot import, as `std.winsock`. Its functions are exported with the names of the runtime in C that they replace, so the generated code calls them as before.
@@ -471,6 +474,10 @@ Each milestone lists the decisions still open that are needed **before** writing
 | **M32** | Sema in Cromo, the first part: the loader of the modules and their names, on one tree for the program | none: D423, P29, P30 |
 | **M33** | The copies implicit, with `copy()` (D424) | none: D424 |
 | **M34** | Sema in Cromo, the next parts: the types of the declarations, then of the expressions, then the moves | the representation of the types |
+| **M35** | Windows: the icon of the executable, `[[window]]` without a console, and its fatal errors in a message box | none: D425–D427 |
+| **M36** | SDL3 in the library: `third_party/SDL` built for Windows and for Linux, and on Linux the link with glibc when a C library calls the C library, with the runtime for glibc | none: D428, D429 |
+| **M37** | `std.gui`: the window and its thread, the title bar drawn, the themes, the text with stb_truetype and Inter | none: D430–D433, D435–D438, D440, D441 |
+| **M38** | `std.gui`: the components `Label`, `Button`, `TextBox` and `CheckBox`, with their events | none: D434, D439 |
 | **Later** | Packages: `cromo.mod`, `cromo.sum`, `cromo get`, the archives of the tags over HTTPS, a reader of tar (D376–D391) | none: D376–D391 |
 | **Last** | Compiler written in Cromo that compiles itself and makes the same archives, when the language is mature (§2, D147, D290, D291) | |
 

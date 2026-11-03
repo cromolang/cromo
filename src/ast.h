@@ -544,10 +544,11 @@ struct FunctionDecl {
     bool isLambda = false;        // the body of a lambda, or the signature of a function type (D183)
     std::vector<TypeParam> typeParams;  // a generic function (D39)
     Block body;
-    std::vector<Attribute> attributes;  // `[[test]]` (D349), `[[export("name")]]` (D395)
+    std::vector<Attribute> attributes;  // `[[test]]` (D349), `[[export("name")]]` (D395), `[[window]]` (D426)
     bool isTest = false;                // set by sema
     bool isExported = false;            // set by sema: called by C with its name, in symbol (D395)
     bool isCold = false;                // set by sema: [[cold]], it runs rarely (D398)
+    bool isWindow = false;              // set by sema: [[window]] on main, without a console (D426)
 
     // Set by sema.
     std::string symbol;           // its name in the IR, with its module in front

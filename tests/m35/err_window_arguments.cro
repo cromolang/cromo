@@ -1,0 +1,5 @@
+// expect-error: [[window]] takes no arguments (D426)
+[[window(console)]]
+i32 main() {
+    ret 0
+}

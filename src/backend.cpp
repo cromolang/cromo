@@ -372,6 +372,84 @@ bool writeImportLibrary(const ImportLibrary& import, const std::string& path, st
     return true;
 }
 
+// The icon of the executable (D425): each image of the .ico is an RT_ICON resource,
+// and their list an RT_GROUP_ICON, in a .res file as rc writes it, which lld-link
+// converts and links.
+bool writeIconResources(const std::string& iconPath, const std::string& resPath, std::string& error) {
+    llvm::ErrorOr<std::unique_ptr<llvm::MemoryBuffer>> file = llvm::MemoryBuffer::getFile(iconPath);
+    if (!file) {
+        error = "cannot read the icon " + iconPath + ": " + file.getError().message() + " (D425)";
+        return false;
+    }
+    llvm::StringRef data = (*file)->getBuffer();
+    auto u16At = [&](size_t at) { return uint16_t(uint8_t(data[at]) | uint8_t(data[at + 1]) << 8); };
+    auto u32At = [&](size_t at) { return uint32_t(u16At(at)) | uint32_t(u16At(at + 2)) << 16; };
+    // The header: 0, 1 for an icon and the number of images, then 16 bytes for each,
+    // with the size of its data and where it starts.
+    size_t count = data.size() >= 6 && u16At(0) == 0 && u16At(2) == 1 ? u16At(4) : 0;
+    bool valid = count > 0 && data.size() >= 6 + 16 * count;
+    for (size_t i = 0; valid && i < count; ++i) {
+        uint32_t size = u32At(6 + 16 * i + 8);
+        uint32_t start = u32At(6 + 16 * i + 12);
+        valid = size > 0 && start <= data.size() && size <= data.size() - start;
+    }
+    if (!valid) {
+        error = "the icon " + iconPath + " is not a .ico file (D425)";
+        return false;
+    }
+
+    std::string out;
+    auto put16 = [&](uint16_t value) {
+        out.push_back(char(value));
+        out.push_back(char(value >> 8));
+    };
+    auto put32 = [&](uint32_t value) {
+        put16(uint16_t(value));
+        put16(uint16_t(value >> 16));
+    };
+    // A resource: its header of 32 bytes, with a number for the type and one for
+    // the name, the language neutral, and its data aligned to 4 bytes.
+    auto resource = [&](uint16_t type, uint16_t name, uint16_t flags, llvm::StringRef bytes) {
+        put32(uint32_t(bytes.size()));
+        put32(32);
+        put16(0xFFFF);
+        put16(type);
+        put16(0xFFFF);
+        put16(name);
+        put32(0);
+        put16(flags);
+        put16(0);
+        put32(0);
+        put32(0);
+        out += bytes.str();
+        while (out.size() % 4 != 0) out.push_back(0);
+    };
+    resource(0, 0, 0, {});  // a .res file starts with an empty resource
+    std::string group;
+    for (uint16_t value : {uint16_t(0), uint16_t(1), uint16_t(count)}) {
+        group.push_back(char(value));
+        group.push_back(char(value >> 8));
+    }
+    for (size_t i = 0; i < count; ++i) {
+        // RT_ICON, moveable and discardable; in the group the same 12 bytes of the
+        // image, with the number of its resource instead of where it starts.
+        resource(3, uint16_t(i + 1), 0x1010, data.substr(u32At(6 + 16 * i + 12), u32At(6 + 16 * i + 8)));
+        group += data.substr(6 + 16 * i, 12).str();
+        group.push_back(char(i + 1));
+        group.push_back(char((i + 1) >> 8));
+    }
+    resource(14, 1, 0x1030, group);  // RT_GROUP_ICON, pure too
+
+    std::error_code ec;
+    llvm::raw_fd_ostream stream(resPath, ec, llvm::sys::fs::OF_None);
+    if (ec) {
+        error = "cannot write " + resPath + ": " + ec.message();
+        return false;
+    }
+    stream << out;
+    return true;
+}
+
 bool runLld(const std::vector<std::string>& args, std::string& error) {
     std::vector<const char*> argv;
     for (const std::string& arg : args) argv.push_back(arg.c_str());
@@ -408,7 +486,7 @@ bool linkWindows(const std::string& objectPath, const std::string& tablePath, co
         "/nologo",
         "/out:" + options.outputPath,
         "/entry:cromo_start",
-        "/subsystem:console",
+        options.window ? "/subsystem:windows" : "/subsystem:console",  // D426
         "/machine:x64",
         "/nodefaultlib",
         objectPath,
@@ -423,6 +501,12 @@ bool linkWindows(const std::string& objectPath, const std::string& tablePath, co
         args.push_back("/opt:ref");
     }
     for (const std::string& archive : options.archives) args.push_back(archive);
+    if (!options.icon.empty()) {
+        std::string path = options.outputPath + ".res";
+        temporaries.push_back(path);
+        if (!writeIconResources(options.icon, path, error)) return false;
+        args.push_back(path);
+    }
     for (const ImportLibrary& import : imports) {
         std::string path = options.outputPath + "." + import.dll.substr(0, import.dll.size() - 4) + ".lib";
         temporaries.push_back(path);

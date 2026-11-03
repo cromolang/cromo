@@ -142,6 +142,20 @@ int build(Compilation& compilation) {
     if (diag.hasErrors()) return 1;
     options.archives = libraries.archives;
     options.imports = libraries.imports;
+    if (options.target == cromo::Target::Windows && !tests && !compilation.runtime) {
+        for (const cromo::FunctionDecl& function : module.functions) {
+            if (function.isWindow) options.window = true;  // D426
+        }
+        // D425: the icon next to the file with main, with its name or main.ico.
+        fs::path source(inputPath);
+        std::error_code ec;
+        for (const fs::path& icon : {fs::path(source).replace_extension(".ico"), source.parent_path() / "main.ico"}) {
+            if (fs::is_regular_file(icon, ec)) {
+                options.icon = icon.string();
+                break;
+            }
+        }
+    }
 
     std::string sourceName = fs::path(sources[0].path).filename().string();
     // In the messages of the program, a file of the library is named without the

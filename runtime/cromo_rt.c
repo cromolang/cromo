@@ -61,6 +61,11 @@ __declspec(dllimport) void WINAPI Sleep(u32 milliseconds);
 __declspec(dllimport) u16 WINAPI RtlCaptureStackBackTrace(u32 skip, u32 count, void** frames, u32* hash);
 __declspec(dllimport) void* WINAPI AddVectoredExceptionHandler(u32 first, void* handler);
 __declspec(dllimport) int WINAPI SetThreadStackGuarantee(u32* size);
+__declspec(dllimport) u32 WINAPI GetFileType(void* file);
+__declspec(dllimport) void* WINAPI LoadLibraryW(const u16* name);
+__declspec(dllimport) int WINAPI MultiByteToWideChar(u32 codePage, u32 flags, const char* text, int size, u16* out,
+                                                     int outSize);
+__declspec(dllimport) u32 WINAPI GetModuleFileNameW(void* module, u16* name, u32 size);
 
 // The Microsoft x64 ABI requires this symbol when floating point is used (D19).
 int _fltused = 0;
@@ -643,10 +648,90 @@ static __attribute__((noinline)) u32 traceCapture(void** frames, u32 most) {
 
 #endif
 
+// ---- The text of a fatal error (D427) ----
+//
+// It goes to the standard error. In an executable without a console (D426) whose
+// standard error is not redirected, it goes to a string instead, which a message
+// box shows when the program ends.
+
+static i64 fatalStream = 2;
+
+#ifdef _WIN32
+
+extern const u8 __ImageBase[];  // the header of the executable, from lld-link
+static Text fatalText;
+static const u8* fatalData;
+static u64 fatalSize;
+
+// The subsystem in the header of the executable: 2 for the windows, with [[window]].
+static int windowed(void) {
+    const u8* headers = __ImageBase + *(const u32*)(__ImageBase + 0x3C);
+    return *(const u16*)(headers + 4 + 20 + 68) == 2;
+}
+
+// Whether the text has somewhere to go: a file, a pipe or a console.
+static int errorRedirected(void) {
+    void* handle = GetStdHandle((u32)-12);
+    return handle && handle != (void*)-1 && GetFileType(handle) != 0;  // not FILE_TYPE_UNKNOWN
+}
+
+// The message box, on a thread of its own: the handler of a stack overflow has
+// little stack, and user32 needs more.
+static u32 WINAPI fatalWindow(void* argument) {
+    (void)argument;
+    static const u16 user32[] = L"user32.dll";
+    void* library = LoadLibraryW(user32);
+    i32(WINAPI * messageBox)(void*, const u16*, const u16*, u32) =
+        library ? (i32(WINAPI*)(void*, const u16*, const u16*, u32))GetProcAddress(library, "MessageBoxW") : 0;
+    if (!messageBox) return 0;
+    // Each byte of UTF-8 is at most a unit of UTF-16: the text is cut to fit.
+    static u16 text[8192];
+    u64 size = fatalSize < 8191 ? fatalSize : 8191;
+    i32 count = MultiByteToWideChar(65001, 0, (const char*)fatalData, (int)size, text, 8191);
+    text[count > 0 ? count : 0] = 0;
+    static u16 path[1024];
+    u32 length = GetModuleFileNameW(0, path, 1024);
+    const u16* title = path;
+    for (u32 i = 0; i < length; ++i) {
+        if (path[i] == '\\') title = path + i + 1;
+    }
+    messageBox(0, text, title, 0x10 | 0x10000);  // MB_ICONERROR, MB_SETFOREGROUND
+    return 0;
+}
+
+static void showFatal(const u8* data, u64 size) {
+    fatalData = data;
+    fatalSize = size;
+    void* thread = CreateThread(0, 0, fatalWindow, 0, 0, 0);
+    if (!thread) {
+        fatalWindow(0);
+        return;
+    }
+    WaitForSingleObject(thread, 0xFFFFFFFF);
+}
+
+#endif
+
+// After the lock of printing is taken.
+static void fatalStart(void) {
+    cromo_flush(1);
+#ifdef _WIN32
+    if (windowed() && !errorRedirected()) fatalStream = (i64)&fatalText;
+#endif
+}
+
+static NORETURN void fatalEnd(i32 code) {
+#ifdef _WIN32
+    if (fatalStream != 2) showFatal(fatalText.data, (u64)fatalText.length);
+#endif
+    cromo_flush(2);
+    exitProcess(code);
+}
+
 static void putText(const char* text) {
     u64 size = 0;
     while (text[size]) ++size;
-    cromo_write(2, (const u8*)text, size);
+    cromo_write(fatalStream, (const u8*)text, size);
 }
 
 // The frames of the program at a return address, from the innermost, or none.
@@ -672,7 +757,7 @@ static const u32* traceFind(const void* address) {
 static void traceRepeats(u64 repeats) {
     if (repeats == 0) return;
     putText("    ... the same ");
-    cromo_fmt_int(2, repeats, 0, 0);
+    cromo_fmt_int(fatalStream, repeats, 0, 0);
     putText(repeats == 1 ? " more time\n" : " more times\n");
 }
 
@@ -695,7 +780,7 @@ static void tracePrint(void* const* frames, u32 count) {
                 putText(" (");
                 putText(strings + frame[1]);
                 putText(":");
-                cromo_fmt_int(2, frame[2] & ~TRACE_MORE, 0, 0);
+                cromo_fmt_int(fatalStream, frame[2] & ~TRACE_MORE, 0, 0);
                 putText(")\n");
                 last = frame;
             }
@@ -714,50 +799,48 @@ typedef struct {
 
 static void panicStart(void) {
     sharedAcquire(&printLock);
-    cromo_flush(1);
-    cromo_write(2, (const u8*)"panic: ", 7);
+    fatalStart();
+    cromo_write(fatalStream, (const u8*)"panic: ", 7);
 }
 
 static NORETURN void panicEnd(const Where* where) {
     if (where) {
-        cromo_write(2, (const u8*)" at ", 4);
-        cromo_write(2, where->text, where->size);
+        cromo_write(fatalStream, (const u8*)" at ", 4);
+        cromo_write(fatalStream, where->text, where->size);
     }
-    cromo_write(2, (const u8*)"\n", 1);
+    cromo_write(fatalStream, (const u8*)"\n", 1);
     void* frames[TRACE_FRAMES];
     tracePrint(frames, traceCapture(frames, TRACE_FRAMES));  // D339
-    cromo_flush(2);
-    exitProcess(101);
+    fatalEnd(101);
 }
 
 // D62: "panic: <reason> at <file>:<line>:<column>" on stderr, exit code 101.
 NORETURN void cromo_panic(const u8* message, u64 size, const Where* where) {
     panicStart();
-    cromo_write(2, message, size);
+    cromo_write(fatalStream, message, size);
     panicEnd(where);
 }
 
 // D30: an index out of the bounds of a list.
 NORETURN void cromo_panic_index(i64 index, i64 length, const Where* where) {
     panicStart();
-    cromo_write(2, (const u8*)"index out of bounds: the index is ", 34);
-    cromo_fmt_int(2, (u64)index, 1, 0);
-    cromo_write(2, (const u8*)" but the length is ", 19);
-    cromo_fmt_int(2, (u64)length, 1, 0);
+    cromo_write(fatalStream, (const u8*)"index out of bounds: the index is ", 34);
+    cromo_fmt_int(fatalStream, (u64)index, 1, 0);
+    cromo_write(fatalStream, (const u8*)" but the length is ", 19);
+    cromo_fmt_int(fatalStream, (u64)length, 1, 0);
     panicEnd(where);
 }
 
 // With the stack of its throw (D340).
 static NORETURN void uncaught(const char* prefix, u32 prefixSize, const u8* message, u64 size, const void* object) {
     sharedAcquire(&printLock);
-    cromo_flush(1);
-    cromo_write(2, (const u8*)prefix, prefixSize);
-    cromo_write(2, message, size);
-    cromo_write(2, (const u8*)"\n", 1);
+    fatalStart();
+    cromo_write(fatalStream, (const u8*)prefix, prefixSize);
+    cromo_write(fatalStream, message, size);
+    cromo_write(fatalStream, (const u8*)"\n", 1);
     const ExceptionTrace* trace = (const ExceptionTrace*)object - 1;
     tracePrint(trace->frames, (u32)trace->count);
-    cromo_flush(2);
-    exitProcess(1);
+    fatalEnd(1);
 }
 
 // D121: an exception that leaves main, with its message; exit code 1.
@@ -776,6 +859,9 @@ void cromo_heap_threaded(void);
 
 // Without the lock of printing: memory can run out while a format holds it.
 NORETURN void cromo_out_of_memory(void) {
+#ifdef _WIN32
+    if (windowed() && !errorRedirected()) showFatal((const u8*)"panic: out of memory\n", 21);  // D427
+#endif
     writeRaw((const u8*)"panic: out of memory\n", 21);
     exitProcess(101);
 }
@@ -1006,8 +1092,7 @@ static NORETURN void stackOverflow(void** frames, u32 count) {
     panicStart();
     putText("stack overflow\n");
     tracePrint(frames, count);
-    cromo_flush(2);
-    exitProcess(101);
+    fatalEnd(101);
 }
 
 #ifdef _WIN32

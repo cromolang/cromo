@@ -1499,6 +1499,7 @@ private:
 
         for (FunctionDecl& function : module_.functions) {
             readCold(function);
+            readWindow(function);
             if (function.attributes.empty()) continue;
             if (function.attributes[0].name == "export") {
                 readExport(function);
@@ -1594,6 +1595,29 @@ private:
         }
     }
 
+    // `[[window]] i32 main()` (D426): the executable for Windows opens no console.
+    // Like [[cold]], it goes with the other attributes and is taken out of the list.
+    void readWindow(FunctionDecl& function) {
+        std::vector<Attribute>& attributes = function.attributes;
+        for (auto it = attributes.begin(); it != attributes.end();) {
+            if (it->name != "window") {
+                ++it;
+                continue;
+            }
+            auto main = modules_[0].functions.find("main");
+            if (main == modules_[0].functions.end() || main->second != &function) {
+                diag_->error(it->loc, "[[window]] is only for main of the program, whose executable opens no console (D426)");
+            } else if (!it->args.empty()) {
+                diag_->error(it->loc, "[[window]] takes no arguments (D426)");
+            } else if (function.isWindow) {
+                diag_->error(it->loc, "main already has [[window]] (D426)");
+            } else {
+                function.isWindow = true;
+            }
+            it = attributes.erase(it);
+        }
+    }
+
     // `[[test]] void name()` (D349): what cromo test runs.
     void readTestAttribute(FunctionDecl& function) {
         for (const Attribute& attribute : function.attributes) {
@@ -1601,7 +1625,8 @@ private:
                 diag_->error(attribute.loc, "unknown attribute '" + attribute.name + "': a function has only [[test]] (D349)" +
                                                 std::string(isUnsafe(function.loc)
                                                                 ? ", [[export(\"name\")]] (D395) or [[cold]] (D398)"
-                                                                : ""));
+                                                                : "") +
+                                                std::string(function.name == "main" ? ", and main [[window]] (D426)" : ""));
                 return;
             }
         }

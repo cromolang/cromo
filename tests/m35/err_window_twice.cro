@@ -1,0 +1,6 @@
+// expect-error: main already has [[window]] (D426)
+[[window]]
+[[window]]
+i32 main() {
+    ret 0
+}

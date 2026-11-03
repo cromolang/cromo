@@ -155,6 +155,8 @@ i32 main(list<string> args) {
 }
 ```
 
+On Windows, `[[window]]` before `main` makes a program of the windows, which opens no console when it starts (D426): its standard output and error go nowhere unless they are redirected, and a panic or an exception that leaves `main` is shown in a message box, with the stack trace (D427). An icon next to the file with `main`, with its name (`app.ico` for `app.cro`) or `main.ico`, becomes the icon of the executable (D425). Neither needs options of `cromo build`, and on Linux neither changes anything.
+
 ## 6. Structs, constructors and destructors (RAII)
 
 ```cromo

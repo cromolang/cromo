@@ -1966,6 +1966,74 @@ names.add(a)          // a copy
 names.add(move b)     // b is given to the list: using it is an error
 ```
 
+### D425. The icon of an executable for Windows
+*2026-11-03.* When compiling for Windows, an icon next to the file with `main`, with the name of that file, `app.ico` for `app.cro`, or else `main.ico`, goes in the executable: Explorer and the taskbar show it. `cromo build` and `cromo run` take it without options. `cromo` reads the `.ico` and writes its resources itself, without the `rc` of the Windows SDK (D136): a file that is not an icon is an error. On Linux an executable has no icon, and the file is not read.
+
+### D426. `[[window]]`: an executable without a console
+*2026-11-03.* `[[window]] i32 main()` makes the executable for Windows a program of the windows, which opens no console when it starts: the program says it, so `cromo build` and `cromo run` take no option. Only `main` of the program can have it, and on Linux it changes nothing. The standard output and error go nowhere, unless they are redirected, as in `app.exe > log.txt`.
+
+```cromo
+[[window]]
+i32 main() {
+    // opens its windows, without a console behind them
+    ret 0
+}
+```
+
+### D427. The fatal errors of a program without a console
+*2026-11-03.* In an executable with `[[window]]` (D426), a panic, an exception that leaves `main` or a stack overflow shows its message and its stack trace in a message box of Windows, and the program ends with its usual exit code when the box is closed (D62, D121). If the standard error is redirected to a file or a pipe, the text goes there, as without `[[window]]`. The runtime loads `user32.dll` only then, so the programs that do not fail do not load it.
+
+### D428. On Linux, a C library that calls the C library brings glibc
+*2026-11-03.* It resolves the part of D143 on the C library. When the static libraries of the `extern` blocks call functions of the C library, as `libSDL3.a` does with `malloc` and `dlopen`, `cromo` links the executable with glibc by itself: an ELF for the dynamic loader of the system, with the stubs of glibc that are in `lib/linux`, so it works also from Windows; a start that goes through `__libc_start_main`; and the runtime for glibc, whose threads are those of glibc and whose block of the thread is a thread-local variable, since glibc owns the register of the thread. The others stay static, as today (D145). The programmer writes only `cromo build`. Such an executable needs glibc 2.29 or later, as `cromo` for Linux (D299), and does not run on the distributions with musl. A prototype in WSL, linked by hand, ran the same program of SDL3 with X11 and Wayland on Ubuntu 20.04 and 24.04, and its threads, tasks and channels passed their tests.
+
+### D429. `std.gui`, on SDL3 inside the executable
+*2026-11-03.* The windows and the graphics of the library are `std.gui`, written on SDL3. SDL is compiled from `third_party` as a static library, as mbedTLS (D233), and goes in `lib/`: on Windows without the C runtime, with the import libraries of the system DLLs that it calls written by `cromo` (D136), and on Linux with glibc (D428), loading X11, Wayland, the graphics and the audio of the system with `dlopen`. An executable with a window has no DLL or `.so` to bring with it. The functions of SDL are in a module of the library that the programs cannot import, as `std.winsock`; the programs use `std.gui`, which is safe.
+
+### D430. The model of `std.gui`: a window with its components
+*2026-11-03.* The program makes a `gui.Window` and adds to it its components, as a button, a text box or a label, each with its properties: a flat list, without a tree of containers. The events, as the movement of the mouse or the click of a button, are handled by lambdas given to the window and to the components. The program sets the frames per second, and `w.start()` starts a thread that runs the loop of the events and of the drawing: the program does not write that loop. A property of a component can be changed from any thread, and every change is thread-safe. A window can start minimized, maximized, resizable or not, and change while it is open.
+
+### D431. The title bar is drawn by `std.gui`
+*2026-11-03.* A window has no title bar of the system: `std.gui` draws its own, with the title and the buttons to minimize, maximize or restore, and close, in the style of Visual Studio Code on Windows. It follows the theme (D432). Dragging the bar moves the window, a double click maximizes it, and the edges resize it, through the hit test of SDL, which leaves these to the system: on Windows the window keeps the snap to the edges of the screen.
+
+### D432. The themes: light, dark and that of the system
+*2026-11-03.* A window has the theme `Light`, `Dark` or `System`, which is the default: it follows the theme of Windows or of the desktop of Linux, and changes when the user changes it. The program can choose `Light` or `Dark`.
+
+### D433. The text: stb_truetype and a font in the library
+*2026-11-03.* `std.gui` draws the text with stb_truetype, a small C file in the public domain, compiled as mbedTLS (D233), and a font with the SIL Open Font License that is in `lib/`: the same look on Windows and on Linux, and nothing to look for on the system. The scripts that need shaping, as Arabic, come later.
+
+### D434. The components are handles
+*2026-11-03.* A component, as a `gui.Button`, is a handle: a struct of numbers, a simple type (D23), that names the component inside its window. Two copies name the same component, and a lambda captures it by copy, so that it can be kept as the handler of an event (D184, D187). Its properties are methods, as `b.setText("OK")` and `b.text()`, since Cromo has no syntax of properties.
+
+```cromo
+// draft: the names of the API are not decided
+gui.Label status = w.add(gui.Label("", 20, 100, 300, 24))
+gui.Button save = w.add(gui.Button("Save", 20, 60, 100, 30))
+save.onClick([status]() {
+    status.setText("Saved")
+})
+```
+
+### D435. The handlers of the events run on the thread of the GUI
+*2026-11-03.* The lambdas of the events run on the thread that draws the windows (D430), one at a time, and can change any component. A handler that takes long stops the drawing, as in every toolkit: its work goes to a task (D269).
+
+### D436. `start()` and `wait()`
+*2026-11-03.* `w.start()` shows the window and returns at once; `w.wait()` waits until it is closed, and the destructor of the window waits for it too, as that of a thread (D217). All the windows of a program share one thread of the GUI, since SDL wants its windows and its events on one thread: the first `start()` starts it.
+
+### D437. An exception that leaves a handler
+*2026-11-03.* It stops the program, as one that leaves the lambda of a thread without a `join()` (D217); with `[[window]]` it is shown in the message box (D427).
+
+### D438. The positions of the components
+*2026-11-03.* A component has its position and its size in logical pixels, from the top left corner of the content of the window, under the title bar: `std.gui` scales them with the density of the display. The anchors to the edges, for the windows that can be resized, come later.
+
+### D439. The first components
+*2026-11-03.* `Label`, `Button`, `TextBox` and `CheckBox`.
+
+### D440. The font and the symbols
+*2026-11-03.* The font of `std.gui` is Inter, with the SIL Open Font License, regular and semibold (D433). The symbols of the buttons of the title bar are shapes drawn by `std.gui`, as the codicons of Visual Studio Code, the same on Windows and on Linux: no font of the system.
+
+### D441. The glue of `std.gui` in C
+*2026-11-03.* The hit test of SDL, which takes a function of C, and stb_truetype are in a small layer of C, compiled as the glue of mbedTLS in `runtime/tls` (D233). The rest of `std.gui` is in Cromo.
+
 ---
 
 ## Proposed

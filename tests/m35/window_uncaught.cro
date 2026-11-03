@@ -1,0 +1,8 @@
+// D427: an exception that leaves main, in a program without a console, with the
+// standard error redirected.
+// expect-exit: 1
+// expect-stderr: uncaught exception: no window
+[[window]]
+void main() {
+    throw Error("no window")
+}

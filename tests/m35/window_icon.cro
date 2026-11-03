@@ -1,0 +1,23 @@
+// [[window]] (D426): the executable for Windows has the subsystem of the windows,
+// and window_icon.ico, next to this file with its name, is its icon (D425).
+// target: windows
+// expect-output: subsystem 2
+// expect-output: icon found
+import unsafe
+
+extern "kernel32" {
+    addr GetModuleHandleW(addr name)
+    addr FindResourceW(addr module, addr name, addr kind)
+}
+
+[[window]]
+i32 main() {
+    addr none
+    addr base = GetModuleHandleW(none)
+    i64 headers = i64(take<u32>(offset(base, 0x3C)))
+    println("subsystem {}", take<u16>(offset(base, headers + 92)))
+    if (FindResourceW(none, addr(1), addr(14)) != none) {  // RT_GROUP_ICON, the list of the images
+        println("icon found")
+    }
+    ret 0
+}

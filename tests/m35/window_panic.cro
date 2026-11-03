@@ -1,0 +1,12 @@
+// D427: the standard error of the tests is redirected, so a panic of a program
+// without a console writes there, as in a console, and opens no message box.
+// expect-exit: 101
+// expect-stderr: panic: index out of bounds: the index is 3 but the length is 3
+// expect-stderr: window_panic.cro:10)
+[[window]]
+i32 main() {
+    list<i32> values = [1, 2, 3]
+    i64 i = 3
+    println("{}", values[i])
+    ret 0
+}

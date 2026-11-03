@@ -1,0 +1,5 @@
+// expect-error: unknown attribute 'windows': a function has only [[test]] (D349), and main [[window]] (D426)
+[[windows]]
+i32 main() {
+    ret 0
+}
