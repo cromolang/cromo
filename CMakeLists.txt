@@ -158,6 +158,41 @@ add_custom_command(
           ${CROMO_TLS_LINUX_OBJECTS} "${CROMO_RT_DIR}/tls_linux.rsp"
   COMMENT "Archiving the Cromo runtime for Linux")
 
+# The runtime for the executables linked with glibc (D428): the same, with
+# CROMO_GLIBC and runtime/glibc.c, and the stubs of the libraries of glibc, written
+# from runtime/glibc/symbols.txt, for the linker.
+add_custom_command(
+  OUTPUT "${CROMO_RT_DIR}/cromo_rt_glibc.o"
+  COMMAND "${CROMO_CLANG}" ${CROMO_RT_LINUX_FLAGS} -DCROMO_GLIBC -c "${CMAKE_SOURCE_DIR}/runtime/cromo_rt.c" -o "${CROMO_RT_DIR}/cromo_rt_glibc.o"
+  DEPENDS runtime/cromo_rt.c
+  COMMENT "Compiling the Cromo runtime for glibc")
+add_custom_command(
+  OUTPUT "${CROMO_RT_DIR}/glibc.o"
+  COMMAND "${CROMO_CLANG}" ${CROMO_RT_LINUX_FLAGS} -c "${CMAKE_SOURCE_DIR}/runtime/glibc.c" -o "${CROMO_RT_DIR}/glibc.o"
+  DEPENDS runtime/glibc.c
+  COMMENT "Compiling the start for glibc")
+add_custom_command(
+  OUTPUT "${CROMO_RT_DIR}/mem_x64_glibc.o"
+  COMMAND "${CROMO_CLANG}" --target=x86_64-unknown-linux-gnu -DCROMO_GLIBC -c "${CMAKE_SOURCE_DIR}/runtime/mem_x64.S" -o "${CROMO_RT_DIR}/mem_x64_glibc.o"
+  DEPENDS runtime/mem_x64.S
+  COMMENT "Assembling the Cromo runtime for glibc")
+add_custom_command(
+  OUTPUT "${CROMO_RT_DIR}/libcromo_rt_glibc.a"
+  COMMAND "${CMAKE_COMMAND}" -E rm -f "${CROMO_RT_DIR}/libcromo_rt_glibc.a"
+  COMMAND "${CROMO_LLVM_AR}" rcs "${CROMO_RT_DIR}/libcromo_rt_glibc.a" "${CROMO_RT_DIR}/cromo_rt_glibc.o" "${CROMO_RT_DIR}/glibc.o"
+          "${CROMO_RT_DIR}/mem_x64_glibc.o" "${CROMO_RT_DIR}/runtime_cromo_linux.o" "@${CROMO_RT_DIR}/tls_linux.rsp"
+  DEPENDS "${CROMO_RT_DIR}/cromo_rt_glibc.o" "${CROMO_RT_DIR}/glibc.o" "${CROMO_RT_DIR}/mem_x64_glibc.o"
+          "${CROMO_RT_DIR}/runtime_cromo_linux.o" ${CROMO_TLS_LINUX_OBJECTS} "${CROMO_RT_DIR}/tls_linux.rsp"
+  COMMENT "Archiving the Cromo runtime for glibc")
+set(CROMO_GLIBC_STUBS libc.so.6 libm.so.6 libpthread.so.0 libdl.so.2 librt.so.1 ld-linux-x86-64.so.2)
+list(TRANSFORM CROMO_GLIBC_STUBS PREPEND "${CROMO_RT_DIR}/glibc/" OUTPUT_VARIABLE CROMO_GLIBC_STUB_FILES)
+add_custom_command(
+  OUTPUT ${CROMO_GLIBC_STUB_FILES}
+  COMMAND "${CMAKE_COMMAND}" "-DSYMBOLS=${CMAKE_SOURCE_DIR}/runtime/glibc/symbols.txt" "-DOUT=${CROMO_RT_DIR}/glibc"
+          "-DCLANG=${CROMO_CLANG}" "-DLLD=${CROMO_LLVM_ROOT}/bin/ld.lld.exe" -P "${CMAKE_SOURCE_DIR}/runtime/glibc/stubs.cmake"
+  DEPENDS runtime/glibc/symbols.txt runtime/glibc/stubs.cmake
+  COMMENT "Writing the stubs of glibc")
+
 add_custom_command(
   OUTPUT "${CROMO_RT_DIR}/cromo_rt_linux_arm64.o"
   COMMAND "${CROMO_CLANG}" ${CROMO_RT_ARM64_FLAGS} -c "${CMAKE_SOURCE_DIR}/runtime/cromo_rt.c" -o "${CROMO_RT_DIR}/cromo_rt_linux_arm64.o"
@@ -180,6 +215,64 @@ add_custom_command(
 # cromo reads the library and the runtime from lib/: next to its folder bin/ in
 # an archive, inside its folder in a build. Here they change at the next build.
 set(CROMO_LIB_DIR "${CMAKE_BINARY_DIR}/lib")
+
+# ---- SDL3 (D429) ----
+# For Windows, compiled from third_party/SDL with the clang of LLVM, without the C
+# runtime (SDL_LIBC=OFF): /GS- without the cookies of the stack, and without the
+# idioms of strlen and wcslen, which clang would turn into calls of the C library.
+# runtime/sdl/windows.ps1 makes it SDL3.lib. For Linux, runtime/sdl/linux.sh in
+# WSL, on Ubuntu 20.04 (D292), writes libSDL3.a; without WSL there is none, and
+# std.gui is only for Windows.
+include(ExternalProject)
+set(CROMO_SDL_DIR "${CMAKE_BINARY_DIR}/sdl")
+ExternalProject_Add(sdl_windows
+  SOURCE_DIR "${CMAKE_SOURCE_DIR}/third_party/SDL"
+  BINARY_DIR "${CROMO_SDL_DIR}/windows"
+  CMAKE_GENERATOR Ninja
+  CMAKE_ARGS
+    -DCMAKE_BUILD_TYPE=MinSizeRel
+    "-DCMAKE_C_FLAGS=/DWIN32 /D_WINDOWS /GS- /clang:-fno-builtin-strlen /clang:-fno-builtin-wcslen"
+    "-DCMAKE_CXX_FLAGS=/DWIN32 /D_WINDOWS /GS- /EHsc"
+    "-DCMAKE_C_COMPILER=${CROMO_LLVM_ROOT}/bin/clang-cl.exe"
+    "-DCMAKE_CXX_COMPILER=${CROMO_LLVM_ROOT}/bin/clang-cl.exe"
+    "-DCMAKE_AR=${CROMO_LLVM_LIB}"
+    "-DCMAKE_LINKER=${CROMO_LLVM_ROOT}/bin/lld-link.exe"
+    -DSDL_SHARED=OFF -DSDL_STATIC=ON -DSDL_LIBC=OFF -DSDL_TEST_LIBRARY=OFF -DSDL_TESTS=OFF -DSDL_EXAMPLES=OFF
+    -DSDL_INSTALL=OFF
+  BUILD_ALWAYS ON
+  INSTALL_COMMAND ""
+  BUILD_BYPRODUCTS "${CROMO_SDL_DIR}/windows/SDL3-static.lib")
+find_program(CROMO_POWERSHELL NAMES powershell pwsh PATHS "$ENV{SystemRoot}/System32/WindowsPowerShell/v1.0" REQUIRED)
+add_custom_command(
+  OUTPUT "${CROMO_SDL_DIR}/SDL3.lib"
+  COMMAND "${CROMO_POWERSHELL}" -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_SOURCE_DIR}/runtime/sdl/windows.ps1"
+          -Static "${CROMO_SDL_DIR}/windows/SDL3-static.lib" -Out "${CROMO_SDL_DIR}/SDL3.lib"
+          -Work "${CROMO_SDL_DIR}/windows-parts" -Llvm "${CROMO_LLVM_ROOT}"
+  DEPENDS sdl_windows "${CROMO_SDL_DIR}/windows/SDL3-static.lib" runtime/sdl/windows.ps1 runtime/sdl/guids.c
+  COMMENT "Making SDL3.lib")
+set(CROMO_SDL_FILES "${CROMO_SDL_DIR}/SDL3.lib")
+set(CROMO_SDL_PLACE COMMAND "${CMAKE_COMMAND}" -E copy "${CROMO_SDL_DIR}/SDL3.lib" "${CROMO_LIB_DIR}/windows")
+find_program(CROMO_WSL wsl)
+if(CROMO_WSL)
+  file(GLOB_RECURSE CROMO_SDL_SOURCES CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/third_party/SDL/*")
+  # The paths as WSL sees them: /mnt/c/...
+  string(REGEX REPLACE "^([A-Za-z]):" "/mnt/\\1" CROMO_SDL_SOURCE_WSL "${CMAKE_SOURCE_DIR}/third_party/SDL")
+  string(REGEX REPLACE "^([A-Za-z]):" "/mnt/\\1" CROMO_SDL_OUT_WSL "${CROMO_SDL_DIR}/libSDL3.a")
+  string(REGEX REPLACE "^([A-Za-z]):" "/mnt/\\1" CROMO_SDL_SCRIPT_WSL "${CMAKE_SOURCE_DIR}/runtime/sdl/linux.sh")
+  string(TOLOWER "${CROMO_SDL_SOURCE_WSL}" CROMO_SDL_SOURCE_WSL)
+  string(TOLOWER "${CROMO_SDL_OUT_WSL}" CROMO_SDL_OUT_WSL)
+  string(TOLOWER "${CROMO_SDL_SCRIPT_WSL}" CROMO_SDL_SCRIPT_WSL)
+  add_custom_command(
+    OUTPUT "${CROMO_SDL_DIR}/libSDL3.a"
+    COMMAND "${CROMO_WSL}" -e sh "${CROMO_SDL_SCRIPT_WSL}" "${CROMO_SDL_SOURCE_WSL}" "${CROMO_SDL_OUT_WSL}"
+    DEPENDS ${CROMO_SDL_SOURCES} runtime/sdl/linux.sh
+    COMMENT "Compiling SDL3 for Linux in WSL")
+  list(APPEND CROMO_SDL_FILES "${CROMO_SDL_DIR}/libSDL3.a")
+  list(APPEND CROMO_SDL_PLACE COMMAND "${CMAKE_COMMAND}" -E copy "${CROMO_SDL_DIR}/libSDL3.a" "${CROMO_LIB_DIR}/linux")
+else()
+  message(STATUS "WSL not found: lib/linux will have no libSDL3.a (D429)")
+endif()
+
 file(GLOB CROMO_STD_MODULES CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/library/std/*.cro")
 # The programs of cromo written in Cromo, as cromo update (D403).
 file(GLOB CROMO_TOOLS CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/library/tools/*.cro")
@@ -187,7 +280,7 @@ add_custom_command(
   OUTPUT "${CROMO_RT_DIR}/library.stamp"
   COMMAND "${CMAKE_COMMAND}" -E rm -rf "${CROMO_LIB_DIR}/std" "${CROMO_LIB_DIR}/tools"
   COMMAND "${CMAKE_COMMAND}" -E make_directory "${CROMO_LIB_DIR}/std" "${CROMO_LIB_DIR}/tools" "${CROMO_LIB_DIR}/windows"
-          "${CROMO_LIB_DIR}/linux" "${CROMO_LIB_DIR}/linux_arm64"
+          "${CROMO_LIB_DIR}/linux" "${CROMO_LIB_DIR}/linux/glibc" "${CROMO_LIB_DIR}/linux_arm64"
   COMMAND "${CMAKE_COMMAND}" -E copy "${CMAKE_SOURCE_DIR}/library/core.cro" "${CROMO_LIB_DIR}"
   COMMAND "${CMAKE_COMMAND}" -E copy ${CROMO_STD_MODULES} "${CROMO_LIB_DIR}/std"
   COMMAND "${CMAKE_COMMAND}" -E copy ${CROMO_TOOLS} "${CROMO_LIB_DIR}/tools"
@@ -219,9 +312,12 @@ add_custom_command(
   COMMAND "${CMAKE_COMMAND}" -E copy "${CROMO_RT_DIR}/cromo_rt.lib" "${CROMO_LIB_DIR}/windows"
   COMMAND "${CMAKE_COMMAND}" -E copy "${CROMO_RT_DIR}/libcromo_rt.a" "${CROMO_LIB_DIR}/linux"
   COMMAND "${CMAKE_COMMAND}" -E copy "${CROMO_RT_DIR}/libcromo_rt_arm64.a" "${CROMO_LIB_DIR}/linux_arm64/libcromo_rt.a"
+  COMMAND "${CMAKE_COMMAND}" -E copy "${CROMO_RT_DIR}/libcromo_rt_glibc.a" "${CROMO_LIB_DIR}/linux"
+  COMMAND "${CMAKE_COMMAND}" -E copy ${CROMO_GLIBC_STUB_FILES} "${CROMO_LIB_DIR}/linux/glibc"
+  ${CROMO_SDL_PLACE}
   COMMAND "${CMAKE_COMMAND}" -E touch "${CROMO_RT_DIR}/runtime.stamp"
   DEPENDS "${CROMO_RT_DIR}/cromo_rt.lib" "${CROMO_RT_DIR}/libcromo_rt.a" "${CROMO_RT_DIR}/libcromo_rt_arm64.a"
-          "${CROMO_RT_DIR}/library.stamp"
+          "${CROMO_RT_DIR}/libcromo_rt_glibc.a" ${CROMO_GLIBC_STUB_FILES} ${CROMO_SDL_FILES} "${CROMO_RT_DIR}/library.stamp"
   COMMENT "Placing the runtime in lib/")
 add_custom_target(cromo_runtime ALL DEPENDS "${CROMO_RT_DIR}/runtime.stamp")
 

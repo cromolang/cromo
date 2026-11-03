@@ -61,6 +61,10 @@ fs::path runtimeLibraryPath(Target target) {
     }
 }
 
+fs::path glibcRuntimePath() { return libraryFolder() / "linux" / "libcromo_rt_glibc.a"; }
+
+fs::path glibcFolder() { return libraryFolder() / "linux" / "glibc"; }
+
 bool isLibraryFile(const std::string& path) {
     if (libraryFolder().empty()) return false;
     std::string folder = comparable(libraryFolder()) + "/";

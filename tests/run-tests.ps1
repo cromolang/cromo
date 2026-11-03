@@ -18,8 +18,9 @@
 #   // expect-stderr: text          text that must appear in the standard error
 #   // expect-error: text           text that must appear among the compiler errors
 #   // expect-warning: text         text that must appear among the compiler warnings
-#   // target: windows              the test is only for that system: windows, linux, which
-#                                  is also linux-arm64, or only linux-arm64 (D406)
+#   // target: windows              the test is only for those systems: windows, linux, which
+#                                  is also linux-arm64, only linux-arm64 (D406), or only
+#                                  linux-x86_64, as glibc (D428); several with spaces
 #   // program-arg: text           an argument of the program (repeatable, exact)
 #   // program-env: NAME=value     a variable of the environment of the program
 #   // program-input: text         a line of the standard input of the program (repeatable)
@@ -84,6 +85,22 @@ $triple = if ((Get-Target ($Flags -split '\s+')) -eq 'linux-arm64') { 'aarch64-u
 Invoke-Tool 'clang.exe' ($cflags + @("--target=$triple", '-fno-pic', "$native\scale.c", '-o', "$out\scale.o"))
 Remove-Item -Force -ErrorAction SilentlyContinue "$modules\libscale.a"
 Invoke-Tool 'llvm-ar.exe' @('rcs', "$modules\libscale.a", "$out\scale.o")
+
+# A static library for Linux x86-64 that calls the C library, for the link with
+# glibc (D428), next to the tests of M36.
+$glibcTests = Join-Path $PSScriptRoot 'm36'
+Invoke-Tool 'clang.exe' ($cflags + @('--target=x86_64-unknown-linux-gnu', '-fno-pic', "$glibcTests\native\greet.c", '-o', "$out\greet.o"))
+Remove-Item -Force -ErrorAction SilentlyContinue "$glibcTests\libgreet.a"
+Invoke-Tool 'llvm-ar.exe' @('rcs', "$glibcTests\libgreet.a", "$out\greet.o")
+
+# SDL3 of the lib/ of the cromo of the tests (D429), next to the tests of SDL.
+$cromoFolder = Split-Path $Cromo
+$cromoLib = @((Join-Path $cromoFolder 'lib'), (Join-Path (Split-Path $cromoFolder) 'lib')) | Where-Object { Test-Path "$_\core.cro" } | Select-Object -First 1
+foreach ($sdl in @('windows\SDL3.lib', 'linux\libSDL3.a')) {
+    $from = Join-Path $cromoLib $sdl
+    $to = Join-Path $glibcTests ('sdl\' + (Split-Path -Leaf $sdl))
+    if (Test-Path $from) { Copy-Item -Force $from $to } else { Remove-Item -Force -ErrorAction SilentlyContinue $to }
+}
 
 # A path of Windows as WSL sees it: /mnt/c/...
 function ConvertTo-LinuxPath([string]$Path) {
@@ -186,7 +203,7 @@ foreach ($test in Get-ChildItem $PSScriptRoot -Recurse -Filter *.cro | Sort-Obje
         elseif ($line -match '^\s*//\s*expect-stderr:\s*(.+?)\s*$') { $expectStderr += $matches[1] }
         elseif ($line -match '^\s*//\s*expect-error:\s*(.+?)\s*$') { $expectError += $matches[1] }
         elseif ($line -match '^\s*//\s*expect-warning:\s*(.+?)\s*$') { $expectWarning += $matches[1] }
-        elseif ($line -match '^\s*//\s*target:\s*([\w-]+)\s*$') { $only = $matches[1] }
+        elseif ($line -match '^\s*//\s*target:\s*([\w\s-]+?)\s*$') { $only = $matches[1] -split '\s+' }
         elseif ($line -match '^\s*//\s*program-arg:\s?(.*)$') { $programArgs += $matches[1] }
         elseif ($line -match '^\s*//\s*program-env:\s*([^=\s]+)=(.*?)\s*$') { $programEnv[$matches[1]] = $matches[2] }
         elseif ($line -match '^\s*//\s*program-input:\s?(.*)$') { $programInput += [Text.Encoding]::UTF8.GetBytes($matches[1] + "`n") }
@@ -194,7 +211,8 @@ foreach ($test in Get-ChildItem $PSScriptRoot -Recurse -Filter *.cro | Sort-Obje
     }
     $target = Get-Target $compileFlags
     $linux = $target -like 'linux*'
-    if ($only -and $only -ne $target -and -not ($only -eq 'linux' -and $linux)) {
+    $chosen = $only | Where-Object { $_ -eq $target -or ($_ -eq 'linux' -and $linux) -or ($_ -eq 'linux-x86_64' -and $target -eq 'linux') }
+    if ($only -and -not $chosen) {
         $skipped++
         continue
     }

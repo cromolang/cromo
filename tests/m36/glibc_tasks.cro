@@ -1,0 +1,41 @@
+// With glibc the threads of the runtime are those of glibc (D428): the C library
+// runs in the tasks and in the threads, and each task finds its worker.
+// target: linux-x86_64
+// expect-output: 1000 greetings, 18000 letters
+// expect-output: from a thread: hello 7 from glibc
+import std.thread
+import unsafe
+
+extern "greet" {
+    i64 greet(addr out, i64 size, i64 n)
+}
+
+string hello(i64 n) {
+    addr text = alloc(64)
+    i64 length = greet(text, 64, n)
+    string result = string(text, length)
+    free(text)
+    ret result
+}
+
+i32 main() {
+    thread.Mutex<i64> letters
+    thread.Group greeters
+    for (i64 i = 0; i < 1000; i++) {
+        greeters.start([letters, i]() {
+            i64 length = hello(i % 10).len()
+            letters.lock([length](ref i64 total) { total += length })
+        })
+    }
+    greeters.wait()
+    i64 total = 0
+    letters.lock([ref total](ref i64 t) { total = t })
+    println("1000 greetings, {} letters", total)
+
+    thread.Channel<string> words = thread.Channel<string>(1)
+    thread.Thread t = thread.Thread([words]() { words.send(hello(7)) })
+    t.start()
+    println("from a thread: {}", words.receive())
+    t.join()
+    ret 0
+}

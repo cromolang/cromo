@@ -38,6 +38,12 @@ The runtime contains Monocypher 4.0, for Ed25519 and X25519: <https://monocypher
 
 Dual-licensed under CC0 1.0 or the 2-clause BSD license. Its license is in `licenses/monocypher.md` (`third_party/monocypher/LICENCE.md` in the repository).
 
+## SDL
+
+The programs that use the windows of the library contain SDL 3.4: <https://libsdl.org>.
+
+Licensed under the zlib license. Its license is in `licenses/sdl.txt` (`third_party/SDL/LICENSE.txt` in the repository).
+
 ## zlib and zstd
 
 `cromo` links statically zlib (<https://zlib.net>, zlib license) and zstd (<https://github.com/facebook/zstd>, BSD license), which LLVM uses.

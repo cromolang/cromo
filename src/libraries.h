@@ -22,6 +22,11 @@ struct Libraries {
 // reported to `diag`.
 Libraries findLibraries(const Module& module, const std::deque<SourceFile>& sources, Target target, Diagnostics& diag);
 
+// Whether the static libraries of the extern blocks for Linux call functions of
+// the C library that the runtime does not have, so that the executable is
+// linked with glibc (D428). On failure it returns false and puts the reason in `error`.
+bool callsTheCLibrary(const std::vector<std::string>& archives, bool& calls, std::string& error);
+
 // Copies the DLLs next to the executable, when it is in another folder (D138).
 // On failure it returns false and puts the reason in `error`.
 bool copyLibraries(const std::vector<std::string>& dlls, const std::string& executable, std::string& error);

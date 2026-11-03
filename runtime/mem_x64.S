@@ -239,9 +239,29 @@ bcmp:
 # The register fs of every thread points to its block in the runtime, which says
 # whether it is a worker of the tasks (D269): for the main thread, arch_prctl
 # with ARCH_SET_FS before anything else.
+#
+# With glibc (D428), fs is that of glibc, and _start calls __libc_start_main as
+# the crt1.o of glibc does: with the main and the constructors of runtime/glibc.c,
+# the function of the dynamic loader to call at the exit, from rdx, and the end of
+# the stack.
     .globl _start
     .p2align 4
 _start:
+#ifdef CROMO_GLIBC
+    xor ebp, ebp
+    mov qword ptr [rip + cromo_initial_stack], rsp
+    mov r9, rdx
+    mov rsi, qword ptr [rsp]
+    lea rdx, [rsp + 8]
+    and rsp, -16
+    push rax
+    push rsp
+    xor r8d, r8d
+    lea rcx, [rip + cromo_glibc_init]
+    lea rdi, [rip + cromo_glibc_main]
+    call __libc_start_main@PLT
+    ud2
+#else
     xor ebp, ebp
     mov qword ptr [rip + cromo_initial_stack], rsp
     and rsp, -16
@@ -251,6 +271,7 @@ _start:
     syscall
     call cromo_start
     ud2
+#endif
 
 # void cromo_switch(void** save, void* next): leaves the stack of the caller,
 # keeping its stack pointer in *save, and continues on the stack `next` where

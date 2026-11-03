@@ -2123,7 +2123,17 @@ A branch whose type is not simple, as a `string`, gives a new value, also a copy
 The parser adds every file to the same `Tree`, whose `files` keep for each file its module, the file of the module it is a part of, its imports and whether it writes `import unsafe`; the declarations keep the index of their file, as the `SourceLocation` of the C++.
 
 ### P30. The check of the first part of sema (D423)
-`cromo build --check-names`, an option not in the help, stops the C++ after the names of the modules; `build\cromo-check.exe` does the same in Cromo, and `testsun-pilot.ps1` compares them on every test. The library is found next to the folder of the executable, from `args[0]`: the library of Cromo cannot give the path of the program yet.
+`cromo build --check-names`, an option not in the help, stops the C++ after the names of the modules; `build\cromo-check.exe` does the same in Cromo, and `tests
+un-pilot.ps1` compares them on every test. The library is found next to the folder of the executable, from `args[0]`: the library of Cromo cannot give the path of the program yet.
+
+### P31. The C libraries of the modules of the library (D429)
+The `extern` blocks of a module of the library find their libraries in the folder of the runtime for the system, `lib/windows/SDL3.lib` and `lib/linux/libSDL3.a`, instead of next to the module, so that each architecture has its own; a DLL is still looked for in the folder of the system.
+
+### P32. The stubs of glibc (D428)
+They are written by the build from a list of the names of glibc 2.31, taken once from Ubuntu 20.04 by `tools/glibc-symbols.sh`: each name with its default version only, so that an executable never asks for a version newer than 2.31, and the stubs do not depend on the glibc of the machine that builds. They have no code of glibc. The functions that glibc gives in `libc_nonshared.a`, as `stat` and `atexit`, are in the runtime for glibc. For now only on x86-64: on ARM64 a C library that calls the C library still cannot be linked.
+
+### P33. How SDL is built (D429)
+For Windows by the build of `cromo`, with the CMake of SDL and clang-cl; for Linux by the same build in WSL, on Ubuntu 20.04, as `cromo` for Linux (D292), because SDL needs the headers of X11 and Wayland, which Windows does not have. Without WSL the build has no `libSDL3.a`, and the windows of the library are only for Windows.
 
 ---
 

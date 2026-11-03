@@ -63,6 +63,7 @@ function New-Stage([string]$Name, [string]$Compiler, [string]$Executable) {
     New-Item -ItemType Directory -Force (Join-Path $folder 'licenses') | Out-Null
     Copy-Item (Join-Path $root 'third_party\mbedtls\LICENSE') (Join-Path $folder 'licenses\mbedtls.txt')
     Copy-Item (Join-Path $root 'third_party\monocypher\LICENCE.md') (Join-Path $folder 'licenses\monocypher.md')
+    Copy-Item (Join-Path $root 'third_party\SDL\LICENSE.txt') (Join-Path $folder 'licenses\sdl.txt')
     $folder
 }
 $contents = @('bin', 'lib', 'extension', 'licenses', 'LICENSE-MIT', 'LICENSE-APACHE', 'THIRD-PARTY-NOTICES.md')

@@ -545,7 +545,7 @@ public struct Stopwatch {
 - `extern "name"` is `name.dll`, and `cromo` writes its import library: the Windows SDK is not needed. A `name.lib` next to the module is used instead, for example a static C library (D136).
 - `cromo` reads the functions exported by the DLL, next to the module or in the system folder of Windows: a C function that the DLL does not have is a compile error (D137).
 - A DLL next to a module is copied next to the executable, if that is in another folder (D138).
-- When compiling for Linux, `extern "name"` is the static library `libname.a` next to the module (D143). Shared libraries and the C library of Linux are not supported yet.
+- When compiling for Linux, `extern "name"` is the static library `libname.a` next to the module (D143). If it calls functions of the C library, the executable is linked with glibc by `cromo` itself, and needs glibc 2.29 or later where it runs (D428); the others stay static. Shared libraries are not supported yet, nor the C library on Linux ARM64.
 - They take and return numbers, `bool` and `addr`; a `ref` parameter is a C pointer to a number or to a struct of numbers, which have the layout of C (D129). The `BOOL` of Windows is an `i32`.
 - C resources are wrapped in structs with a destructor (D42): see `examples/05_c_interop.cro`.
 - `[[cold]]` before a function says that it runs rarely, as `#[cold]` of Rust: the compiler keeps it out of its callers and optimizes them for the other path (D398).

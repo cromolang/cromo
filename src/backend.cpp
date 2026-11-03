@@ -519,14 +519,27 @@ bool linkWindows(const std::string& objectPath, const std::string& tablePath, co
 // A static executable at a fixed address, without the dynamic loader (D142, D145).
 // The static libraries of the extern blocks come before the runtime, because
 // their C code can call memcpy and the other functions of mem_x64.S.
+//
+// With glibc (D428), an executable at a fixed address for the dynamic loader of
+// the system, with the stubs of glibc before the runtime for glibc: a function of
+// C that the runtime has too, as strlen, is that of glibc for the C libraries.
+// Only the libraries of glibc that are used are needed.
 bool linkLinux(const std::string& objectPath, const std::string& tablePath, const std::string& runtimePath,
                const BackendOptions& options, std::string& error) {
     // --eh-frame-hdr: the index of the unwind tables, for the stack traces (D375).
-    std::vector<std::string> args = {"ld.lld", "-o", options.outputPath, "-e", "_start", "-static", "--eh-frame-hdr",
-                                     objectPath, tablePath};
+    std::vector<std::string> args = {"ld.lld", "-o", options.outputPath, "-e", "_start",
+                                     options.glibc ? "--dynamic-linker=/lib64/ld-linux-x86-64.so.2" : "-static",
+                                     "--eh-frame-hdr", objectPath, tablePath};
     if (!options.debugInfo) args.push_back("--strip-debug");  // D338: only the table of the stack traces
     for (const std::string& archive : options.archives) args.push_back(archive);
-    args.push_back(runtimePath);
+    if (!options.glibc) {
+        args.push_back(runtimePath);
+        return runLld(args, error);
+    }
+    args.push_back("--as-needed");
+    for (const char* stub : kGlibcLibraries) args.push_back((glibcFolder() / stub).string());
+    args.push_back("--no-as-needed");
+    args.push_back(glibcRuntimePath().string());
     return runLld(args, error);
 }
 

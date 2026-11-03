@@ -25,6 +25,7 @@ struct BackendOptions {
     bool debugInfo = true;  // D338: a PDB next to the executable on Windows, DWARF kept in it on Linux
     bool window = false;    // D426: on Windows, an executable of the windows, without a console
     std::string icon;       // D425: on Windows, the .ico of the executable, or nothing
+    bool glibc = false;     // D428: on Linux, linked with glibc, for the C libraries that call it
     // D339: the path of each source file in the debug information, and its name in a stack trace.
     std::vector<std::pair<std::string, std::string>> fileNames;
 };

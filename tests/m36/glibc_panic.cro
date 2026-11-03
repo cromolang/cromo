@@ -1,0 +1,23 @@
+// A panic of an executable linked with glibc (D428), with its stack trace.
+// target: linux-x86_64
+// expect-exit: 101
+// expect-stderr: panic: index out of bounds: the index is 5 but the length is 1
+// expect-stderr: at pick (
+// expect-stderr: at main (
+import unsafe
+
+extern "greet" {
+    i64 greet(addr out, i64 size, i64 n)
+}
+
+i64 pick(list<i64> values, i64 i) {
+    ret values[i]
+}
+
+i32 main() {
+    addr text = alloc(64)
+    list<i64> lengths = [greet(text, 64, 1)]
+    free(text)
+    println("{}", pick(lengths, 5))
+    ret 0
+}

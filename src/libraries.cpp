@@ -3,8 +3,11 @@
 #include "installation.h"
 #include "loader.h"
 
+#include <llvm/Object/Archive.h>
 #include <llvm/Object/COFF.h>
+#include <llvm/Object/ELFObjectFile.h>
 #include <llvm/Object/ObjectFile.h>
+#include <llvm/Support/MemoryBuffer.h>
 #include <llvm/Support/Error.h>
 
 #include <algorithm>
@@ -66,6 +69,55 @@ bool readExports(const fs::path& dll, std::set<std::string>& names, std::string&
     return true;
 }
 
+// The global names that the objects of an archive define, and those that they
+// leave undefined.
+bool readArchive(const std::string& path, std::set<std::string>& defined, std::set<std::string>& undefined,
+                 std::string& error) {
+    llvm::ErrorOr<std::unique_ptr<llvm::MemoryBuffer>> data = llvm::MemoryBuffer::getFile(path);
+    if (!data) {
+        error = "cannot read " + path + ": " + data.getError().message();
+        return false;
+    }
+    llvm::Expected<std::unique_ptr<llvm::object::Archive>> archive = llvm::object::Archive::create((*data)->getMemBufferRef());
+    if (!archive) {
+        error = "cannot read " + path + ": " + llvm::toString(archive.takeError());
+        return false;
+    }
+    llvm::Error failure = llvm::Error::success();
+    for (const llvm::object::Archive::Child& child : (*archive)->children(failure)) {
+        llvm::Expected<llvm::MemoryBufferRef> member = child.getMemoryBufferRef();
+        if (!member) {
+            llvm::consumeError(member.takeError());
+            continue;
+        }
+        llvm::Expected<std::unique_ptr<llvm::object::ObjectFile>> object = llvm::object::ObjectFile::createObjectFile(*member);
+        if (!object) {  // not an object, as the list of the symbols
+            llvm::consumeError(object.takeError());
+            continue;
+        }
+        for (const llvm::object::SymbolRef& symbol : (*object)->symbols()) {
+            llvm::Expected<uint32_t> flags = symbol.getFlags();
+            llvm::Expected<llvm::StringRef> name = symbol.getName();
+            if (!flags || !name) {
+                if (!flags) llvm::consumeError(flags.takeError());
+                if (!name) llvm::consumeError(name.takeError());
+                continue;
+            }
+            if (!(*flags & (llvm::object::SymbolRef::SF_Global | llvm::object::SymbolRef::SF_Weak)) || name->empty()) continue;
+            if (*flags & llvm::object::SymbolRef::SF_Undefined) {
+                undefined.insert(name->str());
+            } else {
+                defined.insert(name->str());
+            }
+        }
+    }
+    if (failure) {
+        error = "cannot read " + path + ": " + llvm::toString(std::move(failure));
+        return false;
+    }
+    return true;
+}
+
 // The C functions of one library, and the folders of the modules that declare
 // them, in the order in which the modules are loaded (D139).
 struct Use {
@@ -83,8 +135,11 @@ Libraries findLibraries(const Module& module, const std::deque<SourceFile>& sour
         auto use = std::find_if(uses.begin(), uses.end(), [&](const Use& u) { return u.name == function.library; });
         if (use == uses.end()) use = uses.insert(uses.end(), Use{function.library, {}, {}});
         use->functions.push_back(&function);
-        if (function.loc.file == kLibraryFile || isLibraryFile(sources[function.loc.file].path)) continue;  // no folder
-        fs::path folder = fs::absolute(sources[function.loc.file].path).parent_path();
+        // The C libraries of the modules of the library are in its folder for the
+        // system, as lib/windows/SDL3.lib and lib/linux/libSDL3.a (P31).
+        bool library = function.loc.file == kLibraryFile || isLibraryFile(sources[function.loc.file].path);
+        fs::path folder = library ? runtimeLibraryPath(target).parent_path()
+                                  : fs::absolute(sources[function.loc.file].path).parent_path();
         if (std::find(use->folders.begin(), use->folders.end(), folder) == use->folders.end()) {
             use->folders.push_back(folder);
         }
@@ -156,6 +211,42 @@ Libraries findLibraries(const Module& module, const std::deque<SourceFile>& sour
         libraries.imports.push_back(std::move(import));
     }
     return libraries;
+}
+
+bool callsTheCLibrary(const std::vector<std::string>& archives, bool& calls, std::string& error) {
+    calls = false;
+    if (archives.empty()) return true;
+    std::set<std::string> defined;
+    std::set<std::string> undefined;
+    for (const std::string& archive : archives) {
+        if (!readArchive(archive, defined, undefined, error)) return false;
+    }
+    std::set<std::string> runtime;  // memcpy and the others, which a C library can call without glibc
+    std::set<std::string> unused;
+    if (!readArchive(runtimeLibraryPath(Target::Linux).string(), runtime, unused, error)) return false;
+    for (const char* stub : kGlibcLibraries) {
+        fs::path path = glibcFolder() / stub;
+        llvm::Expected<llvm::object::OwningBinary<llvm::object::ObjectFile>> file =
+            llvm::object::ObjectFile::createObjectFile(path.string());
+        const auto* elf = file ? llvm::dyn_cast<llvm::object::ELFObjectFileBase>(file->getBinary()) : nullptr;
+        if (!elf) {
+            if (!file) llvm::consumeError(file.takeError());
+            error = "cannot read the stub of glibc " + path.string() + " (D428)";
+            return false;
+        }
+        for (const llvm::object::ELFSymbolRef& symbol : elf->getDynamicSymbolIterators()) {
+            llvm::Expected<llvm::StringRef> name = symbol.getName();
+            if (!name) {
+                llvm::consumeError(name.takeError());
+                continue;
+            }
+            if (undefined.count(name->str()) && !defined.count(name->str()) && !runtime.count(name->str())) {
+                calls = true;
+                return true;
+            }
+        }
+    }
+    return true;
 }
 
 bool copyLibraries(const std::vector<std::string>& dlls, const std::string& executable, std::string& error) {

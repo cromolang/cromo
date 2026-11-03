@@ -10,10 +10,13 @@ tests/out/
 # Packaged VS Code extension
 tools/vscode-cromo/dist/
 
-# Libraries built by tests/run-tests.ps1 for the tests of M8
+# Libraries built by tests/run-tests.ps1 for the tests of M8 and M36
 tests/m8/modules/*.dll
 tests/m8/modules/*.lib
 tests/m8/modules/*.a
+tests/m36/*.a
+tests/m36/sdl/*.a
+tests/m36/sdl/*.lib
 
 # The build of cromo for Linux (build-linux.sh), and the archives (tools/package.ps1)
 build-linux/

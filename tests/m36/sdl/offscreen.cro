@@ -1,0 +1,65 @@
+// SDL3 of lib/ (D429), which run-tests.ps1 copies next to this file: on Windows in
+// the executable, without DLLs, and on Linux with glibc, linked by itself (D428).
+// The driver offscreen draws without a screen.
+// target: windows linux-x86_64
+// program-env: SDL_VIDEO_DRIVER=offscreen
+// expect-output: video offscreen
+// expect-output: pixel 255 128 0 255
+import unsafe
+
+extern "SDL3" {
+    bool SDL_Init(u32 flags)
+    void SDL_Quit()
+    addr SDL_GetError()
+    addr SDL_GetCurrentVideoDriver()
+    addr SDL_CreateWindow(addr title, i32 w, i32 h, u64 flags)
+    void SDL_DestroyWindow(addr window)
+    addr SDL_CreateRenderer(addr window, addr name)
+    void SDL_DestroyRenderer(addr renderer)
+    bool SDL_SetRenderDrawColor(addr renderer, u8 r, u8 g, u8 b, u8 a)
+    bool SDL_RenderClear(addr renderer)
+    addr SDL_RenderReadPixels(addr renderer, addr rect)
+    bool SDL_ReadSurfacePixel(addr surface, i32 x, i32 y, ref u8 r, ref u8 g, ref u8 b, ref u8 a)
+    void SDL_DestroySurface(addr surface)
+}
+
+// A string of C, ended by a zero.
+string cText(addr text) {
+    i64 n = 0
+    for (take<u8>(offset(text, n)) != 0) {
+        n++
+    }
+    ret string(text, n)
+}
+
+i32 main() {
+    if (!SDL_Init(0x20)) {  // SDL_INIT_VIDEO
+        println("SDL_Init: {}", cText(SDL_GetError()))
+        ret 1
+    }
+    println("video {}", cText(SDL_GetCurrentVideoDriver()))
+    addr none
+    addr window = SDL_CreateWindow("test".cstring(), 64, 48, 0)
+    addr renderer = SDL_CreateRenderer(window, none)
+    if (window == none || renderer == none) {
+        println("SDL: {}", cText(SDL_GetError()))
+        ret 1
+    }
+    SDL_SetRenderDrawColor(renderer, 255, 128, 0, 255)
+    SDL_RenderClear(renderer)
+    addr surface = SDL_RenderReadPixels(renderer, none)
+    u8 r = 0
+    u8 g = 0
+    u8 b = 0
+    u8 a = 0
+    if (surface == none || !SDL_ReadSurfacePixel(surface, 10, 10, ref r, ref g, ref b, ref a)) {
+        println("SDL: {}", cText(SDL_GetError()))
+        ret 1
+    }
+    println("pixel {} {} {} {}", r, g, b, a)
+    SDL_DestroySurface(surface)
+    SDL_DestroyRenderer(renderer)
+    SDL_DestroyWindow(window)
+    SDL_Quit()
+    ret 0
+}

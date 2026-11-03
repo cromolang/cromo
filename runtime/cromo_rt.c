@@ -283,11 +283,22 @@ static void writeRaw(const u8* data, u32 size) {
     }
 }
 
+#ifdef CROMO_GLIBC
+
+// With glibc (D428), exit() of glibc: the C libraries write what is left in their
+// buffers, and their functions of atexit run.
+NORETURN void exit(i32 code);
+static NORETURN void exitProcess(i32 code) { exit(code); }
+
+#else
+
 // The exit code is the lowest byte of `code`, as in C (D145).
 static NORETURN void exitProcess(i32 code) {
     systemCall(SYS_exit_group, code, 0, 0, 0, 0, 0);
     __builtin_unreachable();
 }
+
+#endif
 
 #endif
 
@@ -917,12 +928,24 @@ typedef struct {
     i32 tid;  // the kernel clears it, and wakes its futex, when the thread ends
     u8* stack;
     ThreadBlock block;
+#ifdef CROMO_GLIBC
+    u64 pthread;  // pthread_t
+#endif
 #endif
 } ThreadRecord;
+
+#ifdef CROMO_GLIBC
+// With glibc (D428) the register of the thread is that of glibc: the block of a
+// thread is a variable of the thread, 0 in the main thread.
+static __thread ThreadBlock* threadBlock;
+#endif
 
 static void crashStack(ThreadRecord* thread);
 
 static void runThread(ThreadRecord* thread) {
+#ifdef CROMO_GLIBC
+    threadBlock = &thread->block;
+#endif
     crashStack(thread);
     thread->head.code(thread->head.env, thread->head.raised);
 }
@@ -964,6 +987,29 @@ static void freeSystemThread(ThreadRecord* thread) { CloseHandle(thread->handle)
 #define THREAD_STACK ((u64)8 << 20)  // as the main thread; the pages are taken when used
 // VM, FS, FILES, SIGHAND, THREAD, SYSVSEM, SETTLS, PARENT_SETTID, CHILD_CLEARTID
 #define CLONE_FLAGS 0x3D0F00
+
+#ifdef CROMO_GLIBC
+
+// With glibc the threads are those of glibc, which the C libraries can use.
+typedef struct {
+    u64 words[7];  // pthread_attr_t of x86-64, 56 bytes
+} ThreadAttributes;
+int pthread_attr_init(ThreadAttributes* attributes);
+int pthread_attr_setstack(ThreadAttributes* attributes, void* stack, u64 size);
+int pthread_attr_destroy(ThreadAttributes* attributes);
+int pthread_create(u64* thread, const ThreadAttributes* attributes, void* (*start)(void*), void* argument);
+int pthread_join(u64 thread, void** result);
+
+// A stack trace stops in start_thread of glibc, which has no rules in the
+// executable: the label of the bottom of a thread is not reached.
+__asm__(".text\n.globl cromo_thread_bottom\ncromo_thread_bottom:\n\tud2\n");
+
+static void* threadEntry(void* argument) {
+    runThread(argument);
+    return 0;
+}
+
+#else
 
 static void threadEntry(void* argument) { runThread(argument); }
 
@@ -1031,6 +1077,8 @@ static __attribute__((noinline)) i64 cloneThread(ThreadRecord* thread, u8* top) 
 
 #endif
 
+#endif
+
 static void startSystemThread(ThreadRecord* thread) {
     i64 stack = systemCall(SYS_mmap, 0, (i64)THREAD_STACK, 3, 0x22 | 0x20000, -1, 0);  // MAP_PRIVATE|ANONYMOUS|STACK
     if (stack < 0 && stack > -4096) threadFailure();
@@ -1040,15 +1088,29 @@ static void startSystemThread(ThreadRecord* thread) {
     systemCall(SYS_mprotect, stack, (i64)pageSize, 0, 0, 0, 0);
     systemCall(SYS_mprotect, stack + (i64)pageSize + CRASH_STACK, (i64)pageSize, 0, 0, 0, 0);
     thread->block.self = &thread->block;
+#ifdef CROMO_GLIBC
+    ThreadAttributes attributes;
+    pthread_attr_init(&attributes);
+    u64 bottom = 2 * pageSize + CRASH_STACK;
+    pthread_attr_setstack(&attributes, thread->stack + bottom, THREAD_STACK - bottom);
+    i32 failed = pthread_create(&thread->pthread, &attributes, threadEntry, thread);
+    pthread_attr_destroy(&attributes);
+    if (failed) threadFailure();
+#else
     if (cloneThread(thread, thread->stack + THREAD_STACK) < 0) threadFailure();
+#endif
 }
 
 static void waitSystemThread(ThreadRecord* thread) {
+#ifdef CROMO_GLIBC
+    pthread_join(thread->pthread, 0);
+#else
     for (;;) {
         i32 tid = __atomic_load_n(&thread->tid, __ATOMIC_ACQUIRE);
         if (tid == 0) return;
         systemCall(SYS_futex, (i64)&thread->tid, FUTEX_WAIT, tid, 0, 0, 0);
     }
+#endif
 }
 
 static void freeSystemThread(ThreadRecord* thread) { systemCall(SYS_munmap, (i64)thread->stack, (i64)THREAD_STACK, 0, 0, 0, 0); }
@@ -1407,6 +1469,13 @@ static Worker* currentWorker(void) {
 
 #else
 
+#ifdef CROMO_GLIBC
+// Read again at every call: after a switch, a task can continue on another thread.
+static __attribute__((noinline)) Worker* currentWorker(void) {
+    ThreadBlock* block = *(ThreadBlock* volatile*)&threadBlock;
+    return block ? block->worker : 0;
+}
+#else
 static Worker* currentWorker(void) {
     ThreadBlock* block;
 #ifdef __aarch64__
@@ -1416,6 +1485,7 @@ static Worker* currentWorker(void) {
 #endif
     return block->worker;
 }
+#endif
 
 #endif
 

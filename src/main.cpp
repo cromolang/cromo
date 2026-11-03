@@ -142,6 +142,11 @@ int build(Compilation& compilation) {
     if (diag.hasErrors()) return 1;
     options.archives = libraries.archives;
     options.imports = libraries.imports;
+    std::string failure;
+    if (options.target == cromo::Target::Linux && !cromo::callsTheCLibrary(options.archives, options.glibc, failure)) {
+        std::fprintf(stderr, "cromo: %s\n", failure.c_str());  // D428
+        return 1;
+    }
     if (options.target == cromo::Target::Windows && !tests && !compilation.runtime) {
         for (const cromo::FunctionDecl& function : module.functions) {
             if (function.isWindow) options.window = true;  // D426

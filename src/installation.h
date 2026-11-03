@@ -19,6 +19,15 @@ std::filesystem::path libraryFile(const std::string& name);
 // lib/linux/libcromo_rt.a.
 std::filesystem::path runtimeLibraryPath(Target target);
 
+// For the executables for Linux linked with glibc (D428): the runtime,
+// lib/linux/libcromo_rt_glibc.a, and the folder of the stubs of glibc.
+std::filesystem::path glibcRuntimePath();
+std::filesystem::path glibcFolder();
+
+// The libraries of glibc whose stubs are in glibcFolder(), in the order of the linker.
+inline constexpr const char* kGlibcLibraries[] = {"libc.so.6",  "libm.so.6",  "libpthread.so.0",
+                                                  "libdl.so.2", "librt.so.1", "ld-linux-x86-64.so.2"};
+
 // Whether a source file is part of the standard library, which can use the
 // dialect unsafe and the modules that serve only the library.
 bool isLibraryFile(const std::string& path);

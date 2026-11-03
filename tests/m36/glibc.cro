@@ -1,0 +1,21 @@
+// libgreet.a calls the C library: cromo links the executable with glibc by itself
+// (D428). The buffer of glibc is written by exit(), after the functions of atexit.
+// target: linux-x86_64
+// expect-output: hello 42 from glibc (19)
+// expect-output: printed by glibc
+// expect-output: goodbye from atexit
+import unsafe
+
+extern "greet" {
+    i64 greet(addr out, i64 size, i64 n)
+    void later()
+}
+
+i32 main() {
+    addr text = alloc(64)
+    i64 length = greet(text, 64, 42)
+    println("{} ({})", string(text, length), length)
+    free(text)
+    later()
+    ret 0
+}
