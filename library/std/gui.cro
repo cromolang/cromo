@@ -1,0 +1,920 @@
+// The module std.gui (D429-D442): windows with their title bar drawn by the
+// library, in the style of Visual Studio Code (D431), the themes light, dark and of
+// the system (D432), and the events of the mouse and of the keyboard, given to
+// lambdas (D430). A window is a handle (D442): its methods can be called from any
+// thread, and change its data under one lock. All the windows run on one thread
+// of the GUI, which SDL wants (D436); the handlers of the events run there, one at
+// a time (D435). SDL is in lib/ (D429), and the parts in C, the hit test, the text
+// and the symbols, are in runtime/gui (D441).
+import std.time
+import unsafe
+
+extern "SDL3" {
+    bool SDL_Init(u32 flags)
+    addr SDL_GetError()
+    addr SDL_CreateWindow(addr title, i32 w, i32 h, u64 flags)
+    void SDL_DestroyWindow(addr window)
+    u32 SDL_GetWindowID(addr window)
+    addr SDL_CreateRenderer(addr window, addr name)
+    void SDL_DestroyRenderer(addr renderer)
+    bool SDL_PollEvent(addr event)
+    bool SDL_ConvertEventToRenderCoordinates(addr renderer, addr event)
+    bool SDL_SetRenderDrawColor(addr renderer, u8 r, u8 g, u8 b, u8 a)
+    bool SDL_SetRenderDrawBlendMode(addr renderer, u32 mode)
+    bool SDL_SetRenderScale(addr renderer, f32 x, f32 y)
+    bool SDL_RenderClear(addr renderer)
+    bool SDL_RenderFillRect(addr renderer, ref Rect rect)
+    bool SDL_RenderRect(addr renderer, ref Rect rect)
+    bool SDL_RenderPresent(addr renderer)
+    bool SDL_GetWindowSize(addr window, ref i32 w, ref i32 h)
+    bool SDL_SetWindowSize(addr window, i32 w, i32 h)
+    bool SDL_SetWindowTitle(addr window, addr title)
+    bool SDL_SetWindowResizable(addr window, bool resizable)
+    u64 SDL_GetWindowFlags(addr window)
+    bool SDL_MinimizeWindow(addr window)
+    bool SDL_MaximizeWindow(addr window)
+    bool SDL_RestoreWindow(addr window)
+    f32 SDL_GetWindowDisplayScale(addr window)
+    f32 SDL_GetWindowPixelDensity(addr window)
+    u32 SDL_GetPrimaryDisplay()
+    f32 SDL_GetDisplayContentScale(u32 display)
+    u32 SDL_GetSystemTheme()
+    u64 SDL_GetTicksNS()
+    void SDL_DelayPrecise(u64 nanoseconds)
+}
+
+extern "cromo" {
+    addr cromo_gui_chrome(addr window)
+    void cromo_gui_chrome_size(addr chrome, f32 bar, f32 buttons, f32 edge, bool resizable)
+    void cromo_gui_chrome_free(addr chrome)
+    addr cromo_gui_font(addr renderer, i32 face, f32 size, f32 density)
+    void cromo_gui_font_free(addr font)
+    void cromo_gui_font_metrics(addr font, ref f32 ascent, ref f32 descent, ref f32 gap)
+    f32 cromo_gui_text_width(addr font, addr text, i64 length)
+    void cromo_gui_text(addr font, addr text, i64 length, f32 x, f32 y, u8 r, u8 g, u8 b, u8 alpha)
+    void cromo_gui_symbol(addr renderer, i32 kind, f32 x, f32 y, f32 density, u8 r, u8 g, u8 b)
+    void cromo_gui_symbols_free(addr renderer)
+    void cromo_gui_wait_at_end()
+}
+
+// ---- The public types ----
+
+// The theme of a window (D432): System follows that of the system, and changes
+// with it.
+public enum Theme {
+    System
+    Light
+    Dark
+}
+
+// The mouse, in logical pixels from the top left corner of the content, under the
+// title bar (D438), and its button: 1 left, 2 middle, 3 right, 0 when it moves.
+public struct Mouse {
+    public f32 x
+    public f32 y
+    public i32 button
+}
+
+// A key pressed: its code is that of SDL, the character for the letters, the
+// digits and the signs, 27 for Esc, 13 for Enter.
+public struct Key {
+    public i64 code
+    public bool shift
+    public bool control
+    public bool alt
+}
+
+// ---- The data of the windows ----
+
+struct Rect {
+    f32 x
+    f32 y
+    f32 w
+    f32 h
+
+    Rect(f32 left, f32 top, f32 width, f32 height) {
+        x = left
+        y = top
+        w = width
+        h = height
+    }
+}
+
+// What a window has: what the program asks, and what only the thread of the GUI
+// uses. The handlers are in boxes on the heap, which never move: the thread of
+// the GUI calls them without the lock.
+struct WindowData {
+    i64 id
+    string title
+    i32 width  // of the whole window, in logical pixels
+    i32 height
+    bool resizable = true
+    i32 show  // what is asked: 0 normal, 1 minimized, 2 maximized
+    Theme theme
+    i32 fps = 60
+    bool started
+    bool closing
+    bool notified  // its handlers of onClose are called
+    bool closed    // after them
+    bool titleChanged
+    bool sizeChanged
+    bool resizableChanged
+    bool showChanged
+    list<addr> mouseMove
+    list<addr> mouseDown
+    list<addr> mouseUp
+    list<addr> keyDown
+    list<addr> resize
+    list<addr> close
+
+    // The thread of the GUI.
+    addr window
+    addr renderer
+    addr chrome
+    addr font
+    u32 sdlId
+    f32 density = 1
+    i32 hovered = -1  // the button of the title bar under the mouse
+    i32 pressed = -1
+    bool focused = true
+    bool maximized
+    bool minimized
+}
+
+struct Shared {
+    list<WindowData> windows
+    i64 next
+    bool running  // the thread of the GUI
+}
+
+u64 lock          // of the data of all the windows
+addr shared       // Shared, from the first window
+addr guiThread    // the thread of the GUI, in the runtime
+addr guardThread  // the thread that waits for it (D437)
+
+// The data under the lock, as a Mutex (D216).
+void withData(func(ref Shared) body) {
+    mutexLock(variableAddress(lock))
+    addr none
+    if (shared == none) {
+        shared = alloc(sizeOf<Shared>())
+        Shared fresh
+        put<Shared>(shared, move fresh)
+    }
+    Shared data = take<Shared>(shared)
+    try {
+        body(ref data)
+    } finally {
+        put<Shared>(shared, move data)
+        mutexUnlock(variableAddress(lock))
+    }
+}
+
+i64 indexOf(ref Shared data, i64 id) {
+    for (i64 i = 0; i < data.windows.len(); i++) {
+        if (data.windows[i].id == id) {
+            ret i
+        }
+    }
+    panic("the window does not exist")
+}
+
+// ---- The window ----
+
+// A window (D430, D442): made with its title and its size in logical pixels,
+// shown by start(). It is a handle: its copies name the same window, and a lambda
+// captures it by copy. The program ends when its windows are closed.
+public struct Window {
+    i64 id
+
+    public Window(string text, i32 w, i32 h) {
+        i64 made = 0
+        withData([ref made, text, w, h](ref Shared data) {
+            data.next++
+            WindowData window
+            window.id = data.next
+            window.title = text
+            window.width = w
+            window.height = h
+            data.windows.add(move window)
+            made = data.next
+        })
+        id = made
+    }
+
+    public void setTitle(string text) const {
+        i64 me = id
+        withData([me, text](ref Shared data) {
+            i64 i = indexOf(ref data, me)
+            data.windows[i].title = text
+            data.windows[i].titleChanged = true
+        })
+    }
+
+    public string title() const {
+        i64 me = id
+        string result
+        withData([me, ref result](ref Shared data) { result = data.windows[indexOf(ref data, me)].title })
+        ret result
+    }
+
+    // The size of the whole window, with its title bar, in logical pixels.
+    public void setSize(i32 w, i32 h) const {
+        i64 me = id
+        withData([me, w, h](ref Shared data) {
+            i64 i = indexOf(ref data, me)
+            data.windows[i].width = w
+            data.windows[i].height = h
+            data.windows[i].sizeChanged = true
+        })
+    }
+
+    public i32 width() const {
+        i64 me = id
+        i32 result = 0
+        withData([me, ref result](ref Shared data) { result = data.windows[indexOf(ref data, me)].width })
+        ret result
+    }
+
+    public i32 height() const {
+        i64 me = id
+        i32 result = 0
+        withData([me, ref result](ref Shared data) { result = data.windows[indexOf(ref data, me)].height })
+        ret result
+    }
+
+    // Whether the edges resize the window, and the button maximizes it.
+    public void setResizable(bool value) const {
+        i64 me = id
+        withData([me, value](ref Shared data) {
+            i64 i = indexOf(ref data, me)
+            data.windows[i].resizable = value
+            data.windows[i].resizableChanged = true
+        })
+    }
+
+    public bool resizable() const {
+        i64 me = id
+        bool result = false
+        withData([me, ref result](ref Shared data) { result = data.windows[indexOf(ref data, me)].resizable })
+        ret result
+    }
+
+    // Before start(), the window starts so.
+    public void minimize() const {
+        showAs(1)
+    }
+
+    public void maximize() const {
+        showAs(2)
+    }
+
+    public void restore() const {
+        showAs(0)
+    }
+
+    public bool minimized() const {
+        i64 me = id
+        bool result = false
+        withData([me, ref result](ref Shared data) {
+            i64 i = indexOf(ref data, me)
+            result = data.windows[i].window == addr(0) ? data.windows[i].show == 1 : data.windows[i].minimized
+        })
+        ret result
+    }
+
+    public bool maximized() const {
+        i64 me = id
+        bool result = false
+        withData([me, ref result](ref Shared data) {
+            i64 i = indexOf(ref data, me)
+            result = data.windows[i].window == addr(0) ? data.windows[i].show == 2 : data.windows[i].maximized
+        })
+        ret result
+    }
+
+    public void setTheme(Theme value) const {
+        i64 me = id
+        withData([me, value](ref Shared data) { data.windows[indexOf(ref data, me)].theme = value })
+    }
+
+    public Theme theme() const {
+        i64 me = id
+        Theme result = Theme.System
+        withData([me, ref result](ref Shared data) { result = data.windows[indexOf(ref data, me)].theme })
+        ret result
+    }
+
+    // The frames that are drawn each second, from 1 to 240: 60 by default.
+    public void setFps(i32 value) const {
+        if (value < 1 || value > 240) {
+            panic(format("the frames per second are from 1 to 240, found {}", value))
+        }
+        i64 me = id
+        withData([me, value](ref Shared data) { data.windows[indexOf(ref data, me)].fps = value })
+    }
+
+    public i32 fps() const {
+        i64 me = id
+        i32 result = 0
+        withData([me, ref result](ref Shared data) { result = data.windows[indexOf(ref data, me)].fps })
+        ret result
+    }
+
+    // Shows the window and returns: the thread of the GUI draws it (D436).
+    public void start() const {
+        i64 me = id
+        withData([me](ref Shared data) {
+            i64 i = indexOf(ref data, me)
+            if (data.windows[i].started) {
+                panic("the window is already started")
+            }
+            data.windows[i].started = true
+            if (!data.running) {
+                data.running = true
+                guiThread = threadStart([]() { run() })
+                guardThread = threadStart([]() { watch() })
+                cromo_gui_wait_at_end()
+            }
+        })
+    }
+
+    // Closes the window; it can also be closed with its button.
+    public void close() const {
+        i64 me = id
+        withData([me](ref Shared data) { data.windows[indexOf(ref data, me)].closing = true })
+    }
+
+    public bool closed() const {
+        i64 me = id
+        bool result = false
+        withData([me, ref result](ref Shared data) { result = isClosed(ref data.windows[indexOf(ref data, me)]) })
+        ret result
+    }
+
+    // Waits until the window is closed (D436).
+    public void wait() const {
+        for (!closed()) {
+            time.msleep(10)
+        }
+    }
+
+    // ---- The events: the lambdas run on the thread of the GUI (D435) ----
+
+    public void onMouseMove(move func(Mouse) handler) const {
+        addr box = alloc(sizeOf<func(Mouse)>())
+        put<func(Mouse)>(box, move handler)
+        i64 me = id
+        withData([me, box](ref Shared data) { data.windows[indexOf(ref data, me)].mouseMove.add(box) })
+    }
+
+    public void onMouseDown(move func(Mouse) handler) const {
+        addr box = alloc(sizeOf<func(Mouse)>())
+        put<func(Mouse)>(box, move handler)
+        i64 me = id
+        withData([me, box](ref Shared data) { data.windows[indexOf(ref data, me)].mouseDown.add(box) })
+    }
+
+    public void onMouseUp(move func(Mouse) handler) const {
+        addr box = alloc(sizeOf<func(Mouse)>())
+        put<func(Mouse)>(box, move handler)
+        i64 me = id
+        withData([me, box](ref Shared data) { data.windows[indexOf(ref data, me)].mouseUp.add(box) })
+    }
+
+    public void onKeyDown(move func(Key) handler) const {
+        addr box = alloc(sizeOf<func(Key)>())
+        put<func(Key)>(box, move handler)
+        i64 me = id
+        withData([me, box](ref Shared data) { data.windows[indexOf(ref data, me)].keyDown.add(box) })
+    }
+
+    // The new size of the whole window, in logical pixels.
+    public void onResize(move func(i32, i32) handler) const {
+        addr box = alloc(sizeOf<func(i32, i32)>())
+        put<func(i32, i32)>(box, move handler)
+        i64 me = id
+        withData([me, box](ref Shared data) { data.windows[indexOf(ref data, me)].resize.add(box) })
+    }
+
+    // After the window is closed.
+    public void onClose(move func() handler) const {
+        addr box = alloc(sizeOf<func()>())
+        put<func()>(box, move handler)
+        i64 me = id
+        withData([me, box](ref Shared data) { data.windows[indexOf(ref data, me)].close.add(box) })
+    }
+
+    void showAs(i32 state) const {
+        i64 me = id
+        withData([me, state](ref Shared data) {
+            i64 i = indexOf(ref data, me)
+            data.windows[i].show = state
+            data.windows[i].showChanged = true
+        })
+    }
+}
+
+bool isClosed(ref WindowData window) {
+    ret window.closed || (window.closing && !window.started)
+}
+
+// ---- The end of main (D442) and the exceptions of the handlers (D437) ----
+
+// When main returns, the program waits for its windows. It reads only the data
+// under the lock: a failure there is a panic, since C has no exceptions (D395).
+[[export("cromo_gui_finish")]]
+void finish() {
+    try {
+        for (openWindows() > 0) {
+            time.msleep(10)
+        }
+    } catch (Exception e) {
+        panic(e.message())
+    }
+}
+
+i64 openWindows() {
+    i64 count = 0
+    withData([ref count](ref Shared data) {
+        for (ref WindowData window in data.windows) {
+            if (window.started && !isClosed(ref window)) {
+                count++
+            }
+        }
+    })
+    ret count
+}
+
+// An exception that leaves a handler ends the thread of the GUI: this thread stops
+// the program with it, as for a thread that no join() takes (D217).
+void watch() {
+    if (threadWait(guiThread)) {
+        threadUncaught(guiThread)
+    }
+}
+
+// ---- The thread of the GUI ----
+
+const f32 barHeight = 35
+const f32 buttonWidth = 46
+const f32 edgeWidth = 6
+const f32 titleSize = 12
+
+// The colors of the themes Dark Modern and Light Modern of Visual Studio Code.
+struct Colors {
+    u32 bar
+    u32 title
+    u32 inactive
+    u32 content
+    u32 border
+    u32 hover
+    u32 pressed
+}
+
+Colors colorsOf(bool dark) {
+    Colors c
+    if (dark) {
+        c.bar = 0x181818
+        c.title = 0xCCCCCC
+        c.inactive = 0x8B8B8B
+        c.content = 0x1F1F1F
+        c.border = 0x2B2B2B
+        c.hover = 0x2F2F2F
+        c.pressed = 0x444444
+    } else {
+        c.bar = 0xF8F8F8
+        c.title = 0x1E1E1E
+        c.inactive = 0x8B8B8B
+        c.content = 0xFFFFFF
+        c.border = 0xE5E5E5
+        c.hover = 0xE2E2E2
+        c.pressed = 0xCBCBCB
+    }
+    ret c
+}
+
+const u32 closeHover = 0xE81123
+const u32 closePressed = 0xF1707A
+
+u8 red(u32 rgb) {
+    ret u8((rgb >> 16) & 0xFF)
+}
+
+u8 green(u32 rgb) {
+    ret u8((rgb >> 8) & 0xFF)
+}
+
+u8 blue(u32 rgb) {
+    ret u8(rgb & 0xFF)
+}
+
+void fill(addr renderer, u32 rgb, f32 x, f32 y, f32 w, f32 h) {
+    SDL_SetRenderDrawColor(renderer, red(rgb), green(rgb), blue(rgb), 255)
+    Rect area = Rect(x, y, w, h)
+    SDL_RenderFillRect(renderer, ref area)
+}
+
+// A string of C, ended by a zero.
+string cText(addr text) {
+    i64 n = 0
+    for (take<u8>(offset(text, n)) != 0) {
+        n++
+    }
+    ret string(text, n)
+}
+
+void run() {
+    if (!SDL_Init(0x20)) {  // SDL_INIT_VIDEO
+        panic(format("cannot start the windows: {}", cText(SDL_GetError())))
+    }
+    addr event = alloc(128)  // SDL_Event, a union of 128 bytes
+    for (true) {
+        u64 start = SDL_GetTicksNS()
+        i32 fps = prepare()
+        for (SDL_PollEvent(event)) {
+            handle(event)
+        }
+        draw()
+        u64 frame = 20000000  // without windows, 50 times a second
+        if (fps > 0) {
+            frame = 1000000000 / u64(fps)
+        }
+        u64 spent = SDL_GetTicksNS() - start
+        if (spent < frame) {
+            SDL_DelayPrecise(frame - spent)
+        }
+    }
+}
+
+// Opens the windows started, gives to SDL what the program changed, and closes
+// the windows closed. A window is closed for the program after its handlers of
+// onClose: if one throws, the program stops before (D437). The frames per second
+// are the most among the windows open, or 0 without windows.
+i32 prepare() {
+    i32 fps = 0
+    list<addr> handlers
+    list<i64> ended
+    withData([ref fps, ref handlers, ref ended](ref Shared data) {
+        for (ref WindowData window in data.windows) {
+            addr none
+            if (window.started && window.window == none && !window.closing) {
+                open(ref window)
+            }
+            if (window.closing && window.started && !window.notified) {
+                if (window.window != none) {
+                    shut(ref window)
+                }
+                window.notified = true
+                for (addr box in window.close) {
+                    handlers.add(box)
+                }
+                ended.add(window.id)
+                continue
+            }
+            if (window.window == none) {
+                continue
+            }
+            apply(ref window)
+            if (window.fps > fps) {
+                fps = window.fps
+            }
+        }
+    })
+    for (addr box in handlers) {
+        func() handler = take<func()>(box)
+        try {
+            handler()
+        } finally {
+            put<func()>(box, move handler)
+        }
+    }
+    if (ended.len() > 0) {
+        withData([ended](ref Shared data) {
+            for (i64 id in ended) {
+                data.windows[indexOf(ref data, id)].closed = true
+            }
+        })
+    }
+    ret fps
+}
+
+// From logical pixels to the coordinates of the window, which are pixels on
+// Windows and on X11, and logical pixels on Wayland.
+f32 toWindow(ref WindowData window) {
+    f32 density = SDL_GetWindowPixelDensity(window.window)
+    if (density <= 0) {
+        ret 1
+    }
+    ret window.density / density
+}
+
+void open(ref WindowData window) {
+    f32 scale = SDL_GetDisplayContentScale(SDL_GetPrimaryDisplay())
+    if (scale <= 0) {
+        scale = 1
+    }
+    u64 flags = 0x10 | 0x2000  // SDL_WINDOW_BORDERLESS, SDL_WINDOW_HIGH_PIXEL_DENSITY
+    if (window.resizable) {
+        flags = flags | 0x20
+    }
+    if (window.show == 1) {
+        flags = flags | 0x40
+    } else if (window.show == 2) {
+        flags = flags | 0x80
+    }
+    window.window = SDL_CreateWindow(window.title.cstring(), i32(f32(window.width) * scale), i32(f32(window.height) * scale), flags)
+    addr none
+    if (window.window == none) {
+        panic(format("cannot open the window: {}", cText(SDL_GetError())))
+    }
+    window.renderer = SDL_CreateRenderer(window.window, none)
+    if (window.renderer == none) {
+        panic(format("cannot draw in the window: {}", cText(SDL_GetError())))
+    }
+    SDL_SetRenderDrawBlendMode(window.renderer, 1)  // SDL_BLENDMODE_BLEND
+    window.sdlId = SDL_GetWindowID(window.window)
+    window.chrome = cromo_gui_chrome(window.window)
+    setDensity(ref window)
+    window.titleChanged = false
+    window.sizeChanged = false
+    window.resizableChanged = false
+    window.showChanged = false
+}
+
+// The scale of the display: the renderer draws in logical pixels, and the fonts
+// are rasterized for the pixels of the display.
+void setDensity(ref WindowData window) {
+    f32 density = SDL_GetWindowDisplayScale(window.window)
+    if (density <= 0) {
+        density = 1
+    }
+    window.density = density
+    SDL_SetRenderScale(window.renderer, density, density)
+    addr none
+    if (window.font != none) {
+        cromo_gui_font_free(window.font)
+    }
+    window.font = cromo_gui_font(window.renderer, 0, titleSize, density)
+}
+
+void apply(ref WindowData window) {
+    if (window.titleChanged) {
+        SDL_SetWindowTitle(window.window, window.title.cstring())
+        window.titleChanged = false
+    }
+    if (window.sizeChanged) {
+        f32 scale = toWindow(ref window)
+        SDL_SetWindowSize(window.window, i32(f32(window.width) * scale), i32(f32(window.height) * scale))
+        window.sizeChanged = false
+    }
+    if (window.resizableChanged) {
+        SDL_SetWindowResizable(window.window, window.resizable)
+        window.resizableChanged = false
+    }
+    if (window.showChanged) {
+        if (window.show == 1) {
+            SDL_MinimizeWindow(window.window)
+        } else if (window.show == 2) {
+            SDL_MaximizeWindow(window.window)
+        } else {
+            SDL_RestoreWindow(window.window)
+        }
+        window.showChanged = false
+    }
+}
+
+void shut(ref WindowData window) {
+    addr none
+    cromo_gui_font_free(window.font)
+    window.font = none
+    cromo_gui_symbols_free(window.renderer)
+    SDL_DestroyRenderer(window.renderer)
+    SDL_DestroyWindow(window.window)
+    cromo_gui_chrome_free(window.chrome)
+    window.window = none
+    window.renderer = none
+}
+
+// The button of the title bar at a point: 0 minimize, 1 maximize, 2 close, or -1.
+i32 buttonAt(f32 x, f32 y, f32 width) {
+    f32 start = width - 3 * buttonWidth
+    if (y < 0 || y >= barHeight || x < start || x >= width) {
+        ret -1
+    }
+    ret i32((x - start) / buttonWidth)
+}
+
+// What the program receives of an event, with the boxes of its handlers.
+struct Call {
+    i32 kind  // 0 none, 1 mouse move, 2 mouse down, 3 mouse up, 4 key, 5 resize
+    list<addr> boxes
+    Mouse mouse
+    Key key
+    i32 w
+    i32 h
+}
+
+void handle(addr event) {
+    u32 kind = take<u32>(event)
+    if (kind == 0x108) {  // SDL_EVENT_SYSTEM_THEME_CHANGED: drawn at the next frame
+        ret
+    }
+    u32 sdlId = take<u32>(offset(event, 16))
+    Call call
+    withData([event, kind, sdlId, ref call](ref Shared data) {
+        for (ref WindowData window in data.windows) {
+            addr none
+            if (window.window == none || window.sdlId != sdlId) {
+                continue
+            }
+            route(ref window, event, kind, ref call)
+            ret
+        }
+    })
+    if (call.kind == 1 || call.kind == 2 || call.kind == 3) {
+        for (addr box in call.boxes) {
+            func(Mouse) handler = take<func(Mouse)>(box)
+            try {
+                handler(call.mouse)
+            } finally {
+                put<func(Mouse)>(box, move handler)
+            }
+        }
+    } else if (call.kind == 4) {
+        for (addr box in call.boxes) {
+            func(Key) handler = take<func(Key)>(box)
+            try {
+                handler(call.key)
+            } finally {
+                put<func(Key)>(box, move handler)
+            }
+        }
+    } else if (call.kind == 5) {
+        for (addr box in call.boxes) {
+            func(i32, i32) handler = take<func(i32, i32)>(box)
+            try {
+                handler(call.w, call.h)
+            } finally {
+                put<func(i32, i32)>(box, move handler)
+            }
+        }
+    }
+}
+
+// An event of a window: the title bar handles its own, the others go to the
+// handlers of the program, in `call`.
+void route(ref WindowData window, addr event, u32 kind, ref Call call) {
+    if (kind >= 0x400 && kind <= 0x402) {  // the mouse: in logical pixels
+        SDL_ConvertEventToRenderCoordinates(window.renderer, event)
+    }
+    i32 w = 0
+    i32 h = 0
+    SDL_GetWindowSize(window.window, ref w, ref h)
+    f32 width = f32(w) / toWindow(ref window)
+    if (kind == 0x400) {  // SDL_EVENT_MOUSE_MOTION
+        f32 x = take<f32>(offset(event, 28))
+        f32 y = take<f32>(offset(event, 32))
+        window.hovered = buttonAt(x, y, width)
+        if (y >= barHeight) {
+            call.kind = 1
+            call.boxes = window.mouseMove
+            call.mouse = mouseAt(x, y, 0)
+        }
+    } else if (kind == 0x401 || kind == 0x402) {  // SDL_EVENT_MOUSE_BUTTON_DOWN, _UP
+        f32 x = take<f32>(offset(event, 28))
+        f32 y = take<f32>(offset(event, 32))
+        i32 button = i32(take<u8>(offset(event, 24)))
+        i32 on = buttonAt(x, y, width)
+        if (kind == 0x401 && button == 1 && on >= 0) {
+            window.pressed = on
+        } else if (kind == 0x402 && window.pressed >= 0) {
+            if (button == 1 && on == window.pressed) {
+                press(ref window, on)
+            }
+            window.pressed = -1
+        } else if (y >= barHeight) {
+            call.kind = kind == 0x401 ? 2 : 3
+            call.boxes = kind == 0x401 ? window.mouseDown : window.mouseUp
+            call.mouse = mouseAt(x, y, button)
+        }
+    } else if (kind == 0x20D) {  // SDL_EVENT_WINDOW_MOUSE_LEAVE
+        window.hovered = -1
+        window.pressed = -1
+    } else if (kind == 0x20E) {  // FOCUS_GAINED
+        window.focused = true
+    } else if (kind == 0x20F) {  // FOCUS_LOST
+        window.focused = false
+    } else if (kind == 0x210) {  // CLOSE_REQUESTED, as Alt+F4
+        window.closing = true
+    } else if (kind == 0x209) {  // MINIMIZED
+        window.minimized = true
+    } else if (kind == 0x20A) {  // MAXIMIZED
+        window.maximized = true
+        window.minimized = false
+    } else if (kind == 0x20B) {  // RESTORED
+        window.maximized = false
+        window.minimized = false
+    } else if (kind == 0x214) {  // DISPLAY_SCALE_CHANGED
+        setDensity(ref window)
+    } else if (kind == 0x206) {  // RESIZED, in the coordinates of the window
+        f32 scale = toWindow(ref window)
+        window.width = i32(f32(take<i32>(offset(event, 20))) / scale + 0.5)
+        window.height = i32(f32(take<i32>(offset(event, 24))) / scale + 0.5)
+        call.kind = 5
+        call.boxes = window.resize
+        call.w = window.width
+        call.h = window.height
+    } else if (kind == 0x300) {  // SDL_EVENT_KEY_DOWN
+        u32 modifiers = u32(take<u16>(offset(event, 32)))
+        call.kind = 4
+        call.boxes = window.keyDown
+        call.key.code = i64(take<u32>(offset(event, 28)))
+        call.key.shift = (modifiers & 0x3) != 0
+        call.key.control = (modifiers & 0xC0) != 0
+        call.key.alt = (modifiers & 0x300) != 0
+    }
+}
+
+Mouse mouseAt(f32 x, f32 y, i32 button) {
+    Mouse m
+    m.x = x
+    m.y = y - barHeight
+    m.button = button
+    ret m
+}
+
+// A click on a button of the title bar.
+void press(ref WindowData window, i32 button) {
+    if (button == 0) {
+        SDL_MinimizeWindow(window.window)
+    } else if (button == 1 && window.maximized) {
+        SDL_RestoreWindow(window.window)
+    } else if (button == 1 && window.resizable) {
+        SDL_MaximizeWindow(window.window)
+    } else if (button == 2) {
+        window.closing = true
+    }
+}
+
+void draw() {
+    withData([](ref Shared data) {
+        for (ref WindowData window in data.windows) {
+            addr none
+            if (window.window != none && !window.closing) {
+                drawWindow(ref window)
+            }
+        }
+    })
+}
+
+// The content, the title bar with its title and its buttons, and a line at the
+// edges when the window is not maximized (D431).
+void drawWindow(ref WindowData window) {
+    i32 w = 0
+    i32 h = 0
+    SDL_GetWindowSize(window.window, ref w, ref h)
+    f32 scale = toWindow(ref window)
+    f32 width = f32(w) / scale
+    f32 height = f32(h) / scale
+    cromo_gui_chrome_size(window.chrome, barHeight * scale, 3 * buttonWidth * scale, edgeWidth * scale, window.resizable)
+    window.maximized = (SDL_GetWindowFlags(window.window) & 0x80) != 0
+    bool dark = window.theme == Theme.Dark || (window.theme == Theme.System && SDL_GetSystemTheme() == 2)
+    Colors c = colorsOf(dark)
+    addr r = window.renderer
+    fill(r, c.content, 0, 0, width, height)
+    fill(r, c.bar, 0, 0, width, barHeight)
+
+    u32 text = window.focused ? c.title : c.inactive
+    f32 ascent = 0
+    f32 descent = 0
+    f32 gap = 0
+    cromo_gui_font_metrics(window.font, ref ascent, ref descent, ref gap)
+    f32 titleWidth = cromo_gui_text_width(window.font, window.title.cstring(), window.title.len())
+    f32 baseline = barHeight / 2 + (ascent - descent) / 2
+    cromo_gui_text(window.font, window.title.cstring(), window.title.len(), (width - titleWidth) / 2, baseline, red(text),
+        green(text), blue(text), 255)
+
+    for (i32 b = 0; b < 3; b++) {
+        f32 x = width - f32(3 - b) * buttonWidth
+        u32 symbol = text
+        bool disabled = b == 1 && !window.resizable
+        if (b == 2 && window.hovered == 2) {
+            fill(r, window.pressed == 2 ? closePressed : closeHover, x, 0, buttonWidth, barHeight)
+            symbol = 0xFFFFFF
+        } else if (b == window.hovered && !disabled) {
+            fill(r, window.pressed == b ? c.pressed : c.hover, x, 0, buttonWidth, barHeight)
+        }
+        if (disabled) {
+            symbol = c.inactive
+        }
+        i32 kind = b == 2 ? 3 : b == 1 && window.maximized ? 2 : b
+        cromo_gui_symbol(r, kind, x + buttonWidth / 2, barHeight / 2, window.density, red(symbol), green(symbol), blue(symbol))
+    }
+    if (!window.maximized) {
+        SDL_SetRenderDrawColor(r, red(c.border), green(c.border), blue(c.border), 255)
+        Rect edge = Rect(0, 0, width, height)
+        SDL_RenderRect(r, ref edge)
+    }
+    SDL_RenderPresent(r)
+}

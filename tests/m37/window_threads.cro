@@ -1,0 +1,26 @@
+// The methods of a window can be called from any thread while it is drawn (D430):
+// tasks change its title under the lock, and the last one is kept.
+// target: windows linux-x86_64
+// program-env: SDL_VIDEO_DRIVER=offscreen
+// expect-output: title 100 of 100
+import std.gui
+import std.thread
+
+i32 main() {
+    gui.Window w = gui.Window("start", 320, 200)
+    w.setFps(240)
+    w.start()
+    thread.Group writers
+    for (i64 i = 1; i <= 100; i++) {
+        writers.start([w, i]() {
+            w.setTitle(format("title {} of 100", i))
+            w.setSize(i32(300 + i), 200)
+        })
+    }
+    writers.wait()
+    w.setTitle("title 100 of 100")
+    println("{}", w.title())
+    w.close()
+    w.wait()
+    ret 0
+}

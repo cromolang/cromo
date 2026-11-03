@@ -1,0 +1,32 @@
+// Example 15: a window with std.gui.
+//
+// Decided: [[window]], an executable for Windows without a console (D426),
+//          std.gui on SDL3 inside the executable (D429), a window with its
+//          title bar drawn by the library (D430, D431), the themes (D432), the
+//          handlers on the thread of the GUI (D435), the window as a handle and
+//          the end of main that waits for the windows (D442)
+// Draft:   the names of the methods and of the events (P34)
+import std.gui
+
+[[window]]
+i32 main() {
+    gui.Window w = gui.Window("Example 15", 800, 500)
+    w.setTheme(gui.Theme.System)
+    w.onMouseDown([w](gui.Mouse m) { w.setTitle(format("Example 15: a click at {}, {}", i32(m.x), i32(m.y))) })
+    w.onKeyDown([w](gui.Key k) {
+        if (k.code == 27) {  // Esc
+            w.close()
+        } else if (k.code == 116) {  // T: light, dark, and that of the system again
+            if (w.theme() == gui.Theme.System) {
+                w.setTheme(gui.Theme.Light)
+            } else if (w.theme() == gui.Theme.Light) {
+                w.setTheme(gui.Theme.Dark)
+            } else {
+                w.setTheme(gui.Theme.System)
+            }
+        }
+    })
+    w.onResize([w](i32 width, i32 height) { w.setTitle(format("Example 15: {} x {}", width, height)) })
+    w.start()
+    ret 0  // the program ends when the window is closed
+}

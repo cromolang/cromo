@@ -1,0 +1,15 @@
+// An exception that leaves a handler stops the program, as one of a thread that
+// no join() takes (D437).
+// target: windows linux-x86_64
+// program-env: SDL_VIDEO_DRIVER=offscreen
+// expect-exit: 1
+// expect-stderr: uncaught exception in a thread: the handler failed
+import std.gui
+
+i32 main() {
+    gui.Window w = gui.Window("throws", 320, 200)
+    w.onClose([]() { throw Error("the handler failed") })
+    w.start()
+    w.close()
+    ret 0
+}

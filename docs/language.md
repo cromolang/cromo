@@ -1021,6 +1021,34 @@ cromo get github.com/anna/geometry@v2 geometry2     // the last v2, with its nam
 
 - **Development:** `require geometry ../geometry` uses a local folder in place of a version (D390).
 
-## 25. Still to be written
+## 25. Windows (D429–D442)
+
+`std.gui` opens windows with SDL3, which is inside the executable: on Windows without DLLs, on Linux with glibc (D428, D429). A window has its title bar drawn by the library, in the style of Visual Studio Code, with the buttons to minimize, maximize or restore and close; the bar moves the window and the edges resize it (D431). Its theme is `Light`, `Dark` or `System`, which follows that of the system (D432); its text is drawn with Inter, which is in the library (D433, D440).
+
+```cromo
+// draft: the names of the methods and of the events (P34)
+import std.gui
+
+[[window]]
+i32 main() {
+    gui.Window w = gui.Window("Notes", 800, 500)
+    w.setResizable(false)
+    w.onKeyDown([w](gui.Key k) {
+        if (k.code == 27) {  // Esc
+            w.close()
+        }
+    })
+    w.setFps(60)
+    w.start()
+    ret 0  // the program ends when the window is closed
+}
+```
+
+- `w.start()` shows the window and returns: one thread of the GUI draws all the windows and runs their handlers, one at a time; a handler that takes long stops the drawing, so its work goes to a task (D435, D436).
+- A window is a handle: a lambda captures it by copy, and its methods can be called from any thread, under one lock (D430, D442). When `main` returns, the program waits for its windows; `w.wait()` waits for one earlier.
+- An exception that leaves a handler stops the program, as one that leaves a thread (D437).
+- The positions and the sizes are in logical pixels, which the library scales with the density of the display (D438).
+
+## 26. Still to be written
 
 - The rest of the standard library.

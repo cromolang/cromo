@@ -163,15 +163,25 @@ std::string defaultConstant(Type type);
 // A C function (D128, D129): a `ref` is a pointer, and a bool is a byte, as in C.
 std::string cType(Type type) { return type.isBool() ? "i8" : llvmType(type); }
 
+// The C of Linux on x86-64 wants the integers smaller than 32 bits extended by the
+// caller, and clang relies on it: a u8 with other bits above it is another color.
+std::string cExtension(Type type) {
+    if (type.isBool() || (type.isInt() && type.bits < 32 && !type.isSigned)) return " zeroext";
+    if (type.isInt() && type.bits < 32) return " signext";
+    return "";
+}
+
 // The runtime written in Cromo declares the functions of kernel32 with dllimport,
 // as the runtime in C does: the linker of a program finds them among the `__imp_`
 // symbols that the runtime leaves undefined (backend.cpp).
 std::string externDeclaration(const FunctionDecl& function, bool imported) {
     Type ret = function.resolvedReturn;
-    std::string out = std::string(imported ? "declare dllimport " : "declare ") +
-                      (ret.isVoid() ? std::string("void") : cType(ret)) + " " + symbolOf(function) + "(";
+    std::string out = std::string(imported ? "declare dllimport" : "declare") +
+                      (ret.isVoid() ? std::string(" void") : cExtension(ret) + " " + cType(ret)) + " " + symbolOf(function) + "(";
     for (size_t i = 0; i < function.params.size(); ++i) {
-        out += (i ? ", " : "") + (function.params[i].mode == ParamMode::Ref ? std::string("ptr") : cType(function.paramTypes[i]));
+        Type type = function.paramTypes[i];
+        out += (i ? ", " : "") +
+               (function.params[i].mode == ParamMode::Ref ? std::string("ptr") : cType(type) + cExtension(type));
     }
     return out + ") nounwind\n";
 }
@@ -384,6 +394,7 @@ public:
         runtime("cromo_hash_bytes", "declare i64 @cromo_hash_bytes(ptr, i64) nounwind readonly");
         runtime("cromo_hash_bits", "declare i64 @cromo_hash_bits(i64) nounwind readnone");
         runtime("cromo_exit", "declare void @cromo_exit(i32) noreturn nounwind");
+        runtime("cromo_main_end", "declare void @cromo_main_end(i32) noreturn nounwind");
         runtime("cromo_panic", "declare void @cromo_panic(ptr, i64, ptr) noreturn nounwind cold");
         runtime("cromo_panic_index", "declare void @cromo_panic_index(i64, i64, ptr) noreturn nounwind cold");
         runtime("cromo_alloc", "declare ptr @cromo_alloc(i64) nounwind");
@@ -1138,7 +1149,7 @@ private:
             out << "  unreachable\n";
             out << "done:\n";
         }
-        out << "  call void @cromo_exit(i32 " << code << ")\n";
+        out << "  call void @cromo_main_end(i32 " << code << ")\n";  // D442: it waits for the windows
         out << "  unreachable\n";
         out << "}\n\n";
         return out.str();

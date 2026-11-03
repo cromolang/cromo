@@ -317,6 +317,15 @@ NORETURN void cromo_exit(i32 code) {
     exitProcess(code);
 }
 
+// D442: what the program waits for when main returns, as the windows of std.gui,
+// which set it; a call of exit does not wait.
+void (*cromo_at_main_end)(void);
+
+NORETURN void cromo_main_end(i32 code) {
+    if (cromo_at_main_end) cromo_at_main_end();
+    cromo_exit(code);
+}
+
 // ---- Stack traces (D339-D341) ----
 //
 // cromo writes in every program the table of its code (backend.cpp): from a

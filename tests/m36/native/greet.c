@@ -26,3 +26,10 @@ void later(void) {
     puts("printed by glibc");
     atexit(goodbye);
 }
+
+// Three bytes in one number: clang uses the registers of the arguments as they
+// are, since the caller extends them to 32 bits on x86-64.
+unsigned pack(unsigned char r, unsigned char g, unsigned char b) { return (unsigned)r << 16 | (unsigned)g << 8 | b; }
+
+// A signed one, extended with its sign.
+long widen(signed char small, short medium) { return (long)small * 1000000 + medium; }

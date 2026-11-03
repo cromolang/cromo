@@ -2017,7 +2017,7 @@ save.onClick([status]() {
 *2026-11-03.* The lambdas of the events run on the thread that draws the windows (D430), one at a time, and can change any component. A handler that takes long stops the drawing, as in every toolkit: its work goes to a task (D269).
 
 ### D436. `start()` and `wait()`
-*2026-11-03.* `w.start()` shows the window and returns at once; `w.wait()` waits until it is closed, and the destructor of the window waits for it too, as that of a thread (D217). All the windows of a program share one thread of the GUI, since SDL wants its windows and its events on one thread: the first `start()` starts it.
+*2026-11-03.* `w.start()` shows the window and returns at once; `w.wait()` waits until it is closed, and the destructor of the window waits for it too, as that of a thread (D217). *From D442 the window is a handle without a destructor: the end of `main` waits.* All the windows of a program share one thread of the GUI, since SDL wants its windows and its events on one thread: the first `start()` starts it.
 
 ### D437. An exception that leaves a handler
 *2026-11-03.* It stops the program, as one that leaves the lambda of a thread without a `join()` (D217); with `[[window]]` it is shown in the message box (D427).
@@ -2033,6 +2033,18 @@ save.onClick([status]() {
 
 ### D441. The glue of `std.gui` in C
 *2026-11-03.* The hit test of SDL, which takes a function of C, and stb_truetype are in a small layer of C, compiled as the glue of mbedTLS in `runtime/tls` (D233). The rest of `std.gui` is in Cromo.
+
+### D442. The window is a handle, and the end of `main` waits for the windows
+*2026-11-03.* It changes D436. `gui.Window` is a handle, a struct of numbers, as the components (D434): a lambda kept as a handler captures it by copy, so that a button can close or minimize its own window, which a window with a destructor would not allow (D184). Instead of the destructor, when `main` returns the program waits until its windows are closed, as Java and C# do with the thread of their GUI; `w.wait()` waits for one earlier.
+
+```cromo
+// draft: the names of the API are not decided
+gui.Window w = gui.Window("Notes", 800, 600)
+gui.Button quit = w.add(gui.Button("Quit", 20, 20, 100, 30))
+quit.onClick([w]() { w.close() })
+w.start()
+ret 0  // the program ends when the window is closed
+```
 
 ---
 
@@ -2134,6 +2146,15 @@ They are written by the build from a list of the names of glibc 2.31, taken once
 
 ### P33. How SDL is built (D429)
 For Windows by the build of `cromo`, with the CMake of SDL and clang-cl; for Linux by the same build in WSL, on Ubuntu 20.04, as `cromo` for Linux (D292), because SDL needs the headers of X11 and Wayland, which Windows does not have. Without WSL the build has no `libSDL3.a`, and the windows of the library are only for Windows.
+
+### P34. The windows of `std.gui` (D430, D442)
+`gui.Window(title, width, height)`, with the size of the whole window in logical pixels, its title bar too. Its methods, all `const`, since the window is a handle: `setTitle` and `title`, `setSize`, `width` and `height`, `setResizable` and `resizable`, `minimize`, `maximize`, `restore`, `minimized` and `maximized`, which before `start()` choose how it starts, `setTheme` and `theme` with `gui.Theme.System`, `Light` and `Dark`, `setFps` and `fps`, from 1 to 240 and 60 by default, `start`, `close`, `closed` and `wait`. Its events: `onMouseMove`, `onMouseDown` and `onMouseUp` with a `gui.Mouse`, its `x` and `y` from the top left corner of the content and its `button`; `onKeyDown` with a `gui.Key`, the code of the key of SDL, which is the character for the letters, and `shift`, `control` and `alt`; `onResize` with the new size; and `onClose`, after the window is closed. The title bar handles its own clicks: the program receives the events of the content.
+
+### P35. One rhythm for the thread of the GUI (D436)
+The thread of the GUI draws all the windows at each frame, at the most frames per second among the windows open, and without windows checks 50 times a second for those started. `wait()` and the end of `main` check every 10 ms whether the windows are closed; a window is closed for them after its handlers of `onClose`.
+
+### P36. The handlers that throw (D437)
+A second thread of the runtime waits for the thread of the GUI: when an exception leaves a handler, the thread of the GUI ends with it, and that thread stops the program as for a thread that no `join()` takes, with the message `uncaught exception in a thread`, its stack trace and, with `[[window]]`, the message box (D427).
 
 ---
 

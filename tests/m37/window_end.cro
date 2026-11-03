@@ -1,0 +1,24 @@
+// When main returns, the program waits for its windows (D442): a thread closes
+// the window, and its handler of onClose runs on the thread of the GUI.
+// target: windows linux-x86_64
+// program-env: SDL_VIDEO_DRIVER=offscreen
+// expect-output: main returns
+// expect-output: closed
+// expect-exit: 7
+import std.gui
+import std.thread
+import std.time
+
+i32 main() {
+    gui.Window w = gui.Window("end", 320, 200)
+    w.onClose([]() { println("closed") })
+    w.setFps(100)
+    w.start()
+    thread.Thread closer = thread.Thread([w]() {
+        time.msleep(100)
+        w.close()
+    })
+    closer.start()
+    println("main returns")
+    ret 7
+}

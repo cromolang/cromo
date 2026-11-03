@@ -1,0 +1,24 @@
+// The integers smaller than 32 bits given to C are extended by the caller, as the
+// C of Linux on x86-64 wants (D129): the bits above a u8 made from a larger number
+// do not reach the function.
+// target: linux-x86_64
+// expect-output: 1f2f3f
+// expect-output: -5000123
+import unsafe
+
+extern "greet" {
+    u32 pack(u8 r, u8 g, u8 b)
+    i64 widen(i8 small, i16 medium)
+}
+
+u8 low(u64 value) {
+    ret u8(value & 0xFF)
+}
+
+i32 main(list<string> args) {
+    u64 base = 0xABCDEF00 + u64(args.len()) - 1
+    println("{:x}", pack(low(base + 0x1F), low(base + 0x2F), low(base + 0x3F)))
+    i64 n = i64(args.len()) - 6
+    println("{}", widen(i8(n), i16(n * 0 - 123)))
+    ret 0
+}

@@ -153,6 +153,10 @@ Libraries findLibraries(const Module& module, const std::deque<SourceFile>& sour
                                        [&](const fs::path& f) { return isFile(f / file); });
             if (folder != use.folders.end()) {
                 libraries.archives.push_back((*folder / file).string());
+            } else if (use.folders.size() == 1 && use.folders[0] == runtimeLibraryPath(target).parent_path()) {
+                // A module of the library, as std.gui on ARM64, which has no SDL yet (P31).
+                diag.error(use.functions[0]->loc, "the library has no " + file + " for this system, in " +
+                                                      use.folders[0].string() + " (P31)");
             } else {
                 diag.error(use.functions[0]->loc, "cannot find the library '" + use.name + "': there is no " + file +
                                                       " next to the modules that use it (D143)");

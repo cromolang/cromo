@@ -1,0 +1,11 @@
+// The frames per second are from 1 to 240.
+// target: windows linux-x86_64
+// expect-exit: 101
+// expect-stderr: panic: the frames per second are from 1 to 240, found 0
+import std.gui
+
+i32 main() {
+    gui.Window w = gui.Window("fps", 320, 200)
+    w.setFps(0)
+    ret 0
+}

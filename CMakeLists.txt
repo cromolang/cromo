@@ -91,6 +91,26 @@ set(CROMO_TLS_FLAGS -nostdlibinc -isystem "${CMAKE_SOURCE_DIR}/runtime/libc" "-I
     "-I${CMAKE_SOURCE_DIR}/third_party/mbedtls/include" "-I${CMAKE_SOURCE_DIR}/third_party/monocypher"
     "-DMBEDTLS_USER_CONFIG_FILE=\"mbedtls_user_config.h\"")
 
+# The part of std.gui in C (D441), with stb_truetype and the fonts of Inter (D433,
+# D440), in the archives of the runtime as the glue of TLS: only the programs with
+# windows link it. Not for ARM64, which has no SDL yet.
+set(CROMO_GUI_SOURCES runtime/gui/gui.c runtime/gui/fonts.S third_party/stb/stb_truetype.h
+    third_party/inter/Inter-Regular.ttf third_party/inter/Inter-SemiBold.ttf)
+add_custom_command(
+  OUTPUT "${CROMO_RT_DIR}/gui.obj" "${CROMO_RT_DIR}/gui_fonts.obj"
+  COMMAND "${CROMO_CLANG}" ${CROMO_RT_FLAGS} "-I${CMAKE_SOURCE_DIR}/third_party/stb" -c "${CMAKE_SOURCE_DIR}/runtime/gui/gui.c" -o "${CROMO_RT_DIR}/gui.obj"
+  COMMAND "${CROMO_CLANG}" --target=x86_64-pc-windows-msvc "-I${CMAKE_SOURCE_DIR}/third_party/inter" -c "${CMAKE_SOURCE_DIR}/runtime/gui/fonts.S" -o "${CROMO_RT_DIR}/gui_fonts.obj"
+  DEPENDS ${CROMO_GUI_SOURCES}
+  COMMENT "Compiling the part of std.gui in C")
+add_custom_command(
+  OUTPUT "${CROMO_RT_DIR}/gui_linux.o" "${CROMO_RT_DIR}/gui_fonts_linux.o"
+  COMMAND "${CROMO_CLANG}" ${CROMO_RT_LINUX_FLAGS} "-I${CMAKE_SOURCE_DIR}/third_party/stb" -c "${CMAKE_SOURCE_DIR}/runtime/gui/gui.c" -o "${CROMO_RT_DIR}/gui_linux.o"
+  COMMAND "${CROMO_CLANG}" --target=x86_64-unknown-linux-gnu "-I${CMAKE_SOURCE_DIR}/third_party/inter" -c "${CMAKE_SOURCE_DIR}/runtime/gui/fonts.S" -o "${CROMO_RT_DIR}/gui_fonts_linux.o"
+  DEPENDS ${CROMO_GUI_SOURCES}
+  COMMENT "Compiling the part of std.gui in C for Linux")
+set(CROMO_GUI_WINDOWS_OBJECTS "${CROMO_RT_DIR}/gui.obj" "${CROMO_RT_DIR}/gui_fonts.obj")
+set(CROMO_GUI_LINUX_OBJECTS "${CROMO_RT_DIR}/gui_linux.o" "${CROMO_RT_DIR}/gui_fonts_linux.o")
+
 # The objects for one system, in <folder>, and a response file that lists them
 # for the archiver: their command line would be too long for Windows. The archive
 # depends on the response file too, so that a source removed leaves it.
@@ -134,8 +154,10 @@ add_custom_command(
   OUTPUT "${CROMO_RT_DIR}/cromo_rt.lib"
   COMMAND "${CMAKE_COMMAND}" -E rm -f "${CROMO_RT_DIR}/cromo_rt.lib"
   COMMAND "${CROMO_LLVM_LIB}" /nologo "/out:${CROMO_RT_DIR}/cromo_rt.lib" "${CROMO_RT_DIR}/cromo_rt.obj" "${CROMO_RT_DIR}/mem_x64.obj"
+          ${CROMO_GUI_WINDOWS_OBJECTS}
           "${CROMO_RT_DIR}/runtime_cromo.obj" "@${CROMO_RT_DIR}/tls_windows.rsp"
   DEPENDS "${CROMO_RT_DIR}/cromo_rt.obj" "${CROMO_RT_DIR}/mem_x64.obj" "${CROMO_RT_DIR}/runtime_cromo.obj" ${CROMO_TLS_WINDOWS_OBJECTS}
+          ${CROMO_GUI_WINDOWS_OBJECTS}
           "${CROMO_RT_DIR}/tls_windows.rsp"
   COMMENT "Archiving the Cromo runtime")
 
@@ -153,9 +175,9 @@ add_custom_command(
   OUTPUT "${CROMO_RT_DIR}/libcromo_rt.a"
   COMMAND "${CMAKE_COMMAND}" -E rm -f "${CROMO_RT_DIR}/libcromo_rt.a"
   COMMAND "${CROMO_LLVM_AR}" rcs "${CROMO_RT_DIR}/libcromo_rt.a" "${CROMO_RT_DIR}/cromo_rt_linux.o" "${CROMO_RT_DIR}/mem_x64_linux.o"
-          "${CROMO_RT_DIR}/runtime_cromo_linux.o" "@${CROMO_RT_DIR}/tls_linux.rsp"
+          "${CROMO_RT_DIR}/runtime_cromo_linux.o" ${CROMO_GUI_LINUX_OBJECTS} "@${CROMO_RT_DIR}/tls_linux.rsp"
   DEPENDS "${CROMO_RT_DIR}/cromo_rt_linux.o" "${CROMO_RT_DIR}/mem_x64_linux.o" "${CROMO_RT_DIR}/runtime_cromo_linux.o"
-          ${CROMO_TLS_LINUX_OBJECTS} "${CROMO_RT_DIR}/tls_linux.rsp"
+          ${CROMO_GUI_LINUX_OBJECTS} ${CROMO_TLS_LINUX_OBJECTS} "${CROMO_RT_DIR}/tls_linux.rsp"
   COMMENT "Archiving the Cromo runtime for Linux")
 
 # The runtime for the executables linked with glibc (D428): the same, with
@@ -180,9 +202,11 @@ add_custom_command(
   OUTPUT "${CROMO_RT_DIR}/libcromo_rt_glibc.a"
   COMMAND "${CMAKE_COMMAND}" -E rm -f "${CROMO_RT_DIR}/libcromo_rt_glibc.a"
   COMMAND "${CROMO_LLVM_AR}" rcs "${CROMO_RT_DIR}/libcromo_rt_glibc.a" "${CROMO_RT_DIR}/cromo_rt_glibc.o" "${CROMO_RT_DIR}/glibc.o"
-          "${CROMO_RT_DIR}/mem_x64_glibc.o" "${CROMO_RT_DIR}/runtime_cromo_linux.o" "@${CROMO_RT_DIR}/tls_linux.rsp"
+          "${CROMO_RT_DIR}/mem_x64_glibc.o" "${CROMO_RT_DIR}/runtime_cromo_linux.o" ${CROMO_GUI_LINUX_OBJECTS}
+          "@${CROMO_RT_DIR}/tls_linux.rsp"
   DEPENDS "${CROMO_RT_DIR}/cromo_rt_glibc.o" "${CROMO_RT_DIR}/glibc.o" "${CROMO_RT_DIR}/mem_x64_glibc.o"
-          "${CROMO_RT_DIR}/runtime_cromo_linux.o" ${CROMO_TLS_LINUX_OBJECTS} "${CROMO_RT_DIR}/tls_linux.rsp"
+          "${CROMO_RT_DIR}/runtime_cromo_linux.o" ${CROMO_GUI_LINUX_OBJECTS} ${CROMO_TLS_LINUX_OBJECTS}
+          "${CROMO_RT_DIR}/tls_linux.rsp"
   COMMENT "Archiving the Cromo runtime for glibc")
 set(CROMO_GLIBC_STUBS libc.so.6 libm.so.6 libpthread.so.0 libdl.so.2 librt.so.1 ld-linux-x86-64.so.2)
 list(TRANSFORM CROMO_GLIBC_STUBS PREPEND "${CROMO_RT_DIR}/glibc/" OUTPUT_VARIABLE CROMO_GLIBC_STUB_FILES)

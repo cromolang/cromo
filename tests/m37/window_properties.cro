@@ -1,0 +1,43 @@
+// The properties of a window, before and after start() (D430), and wait() (D436).
+// target: windows linux-x86_64
+// program-env: SDL_VIDEO_DRIVER=offscreen
+// expect-output: Notes 640x480 resizable true fps 60 theme System
+// expect-output: Diary 800x600 resizable false fps 30 theme Dark
+// expect-output: maximized true minimized false
+// expect-output: open, then closed true
+import std.gui
+import std.thread
+import std.time
+
+void show(gui.Window w) {
+    string theme = "System"
+    if (w.theme() == gui.Theme.Light) {
+        theme = "Light"
+    } else if (w.theme() == gui.Theme.Dark) {
+        theme = "Dark"
+    }
+    println("{} {}x{} resizable {} fps {} theme {}", w.title(), w.width(), w.height(), w.resizable(), w.fps(), theme)
+}
+
+i32 main() {
+    gui.Window w = gui.Window("Notes", 640, 480)
+    show(w)
+    w.setTitle("Diary")
+    w.setSize(800, 600)
+    w.setResizable(false)
+    w.setFps(30)
+    w.setTheme(gui.Theme.Dark)
+    show(w)
+    w.maximize()
+    println("maximized {} minimized {}", w.maximized(), w.minimized())
+    w.start()
+    thread.Thread closer = thread.Thread([w]() {
+        time.msleep(100)
+        w.close()
+    })
+    closer.start()
+    w.wait()
+    println("open, then closed {}", w.closed())
+    closer.join()
+    ret 0
+}
