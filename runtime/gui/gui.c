@@ -5,7 +5,8 @@
 // shadows and their gradients (D443); and what the end of main waits for (D442).
 // Without the C library and without the headers of SDL, as the rest of the
 // runtime: the functions of SDL are declared here, and stb_truetype takes its
-// mathematics from SDL. The images are in image.c (D446).
+// mathematics from SDL. The icons of Lucide are a third font (D448); the images
+// are in image.c (D446).
 
 typedef unsigned char u8;
 typedef unsigned int u32;
@@ -144,9 +145,11 @@ void cromo_gui_chrome_free(void* chrome) { SDL_free(chrome); }
 
 extern const u8 cromo_gui_inter_regular[];
 extern const u8 cromo_gui_inter_semibold[];
+extern const u8 cromo_gui_lucide[];
 
-#define ATLAS 1024
-#define GLYPHS 4096  // the slots of the table of the glyphs, a power of 2
+#define ATLAS 1024      // the side of the texture of a font of text
+#define ICON_ATLAS 512  // of a font of icons, which has fewer glyphs
+#define GLYPHS 4096     // the slots of the table of the glyphs, a power of 2
 
 typedef struct {
     i32 code;  // -1 for a free slot
@@ -164,20 +167,25 @@ typedef struct {
     f32 ascent;   // in logical pixels, as the others
     f32 descent;
     f32 gap;
+    i32 atlas;  // the side of its texture
     i32 shelfX, shelfY, shelfHeight;
     i32 count;
     Glyph glyphs[GLYPHS];
 } Font;
 
+// A font of text, face 0 regular and 1 semibold, whose size is the height of its
+// letters; or with face 2 the font of the icons, whose size is that of the square
+// of an icon.
 void* cromo_gui_font(void* renderer, i32 face, f32 size, f32 density) {
     Font* font = SDL_malloc(sizeof(Font));
     if (!font) return 0;
-    const u8* data = face ? cromo_gui_inter_semibold : cromo_gui_inter_regular;
+    const u8* data = face == 2 ? cromo_gui_lucide : face ? cromo_gui_inter_semibold : cromo_gui_inter_regular;
     if (!stbtt_InitFont(&font->info, data, stbtt_GetFontOffsetForIndex(data, 0))) {
         SDL_free(font);
         return 0;
     }
-    font->texture = SDL_CreateTexture(renderer, PIXELS_RGBA, 0, ATLAS, ATLAS);  // SDL_TEXTUREACCESS_STATIC
+    font->atlas = face == 2 ? ICON_ATLAS : ATLAS;
+    font->texture = SDL_CreateTexture(renderer, PIXELS_RGBA, 0, font->atlas, font->atlas);  // SDL_TEXTUREACCESS_STATIC
     if (!font->texture) {
         SDL_free(font);
         return 0;
@@ -185,7 +193,8 @@ void* cromo_gui_font(void* renderer, i32 face, f32 size, f32 density) {
     SDL_SetTextureBlendMode(font->texture, BLEND);
     font->renderer = renderer;
     font->density = density;
-    font->scale = stbtt_ScaleForPixelHeight(&font->info, size * density);
+    font->scale = face == 2 ? stbtt_ScaleForMappingEmToPixels(&font->info, size * density)
+                            : stbtt_ScaleForPixelHeight(&font->info, size * density);
     i32 ascent, descent, gap;
     stbtt_GetFontVMetrics(&font->info, &ascent, &descent, &gap);
     font->ascent = ascent * font->scale / density;
@@ -236,12 +245,12 @@ static Glyph* findGlyph(Font* font, i32 code) {
     stbtt_GetGlyphBitmapBox(&font->info, index, font->scale, font->scale, &x0, &y0, &x1, &y1);
     i32 w = x1 - x0, h = y1 - y0;
     if (w > 0 && h > 0) {
-        if (font->shelfX + w + 1 > ATLAS) {
+        if (font->shelfX + w + 1 > font->atlas) {
             font->shelfX = 0;
             font->shelfY += font->shelfHeight + 1;
             font->shelfHeight = 0;
         }
-        if (font->shelfY + h > ATLAS) {
+        if (font->shelfY + h > font->atlas) {
             clearAtlas(font);
             return findGlyph(font, code);
         }
@@ -328,6 +337,64 @@ void cromo_gui_text(void* data, const u8* text, i64 length, f32 x, f32 y, u8 r, 
         }
         pen += glyph->advance;
         previous = code;
+    }
+}
+
+// ---- The icons (D448) ----
+//
+// The icons of Lucide are the characters of a font, whose square of 1000 units
+// stands on the baseline: a font of the icons for each renderer, size and
+// density, made the first time.
+
+typedef struct IconFont {
+    struct IconFont* next;
+    void* renderer;
+    f32 size;
+    f32 density;
+    Font* font;
+} IconFont;
+
+static IconFont* iconFonts;
+
+// An icon whose square of `size` logical pixels has its center at (x, y).
+void cromo_gui_icon(void* renderer, i32 code, f32 x, f32 y, f32 size, f32 density, u8 r, u8 g, u8 b, u8 alpha) {
+    IconFont* icons = iconFonts;
+    while (icons && !(icons->renderer == renderer && icons->size == size && icons->density == density)) icons = icons->next;
+    if (!icons) {
+        icons = SDL_calloc(1, sizeof(IconFont));
+        if (!icons) return;
+        icons->renderer = renderer;
+        icons->size = size;
+        icons->density = density;
+        icons->font = cromo_gui_font(renderer, 2, size, density);
+        icons->next = iconFonts;
+        iconFonts = icons;
+    }
+    Font* font = icons->font;
+    if (!font) return;
+    Glyph* glyph = findGlyph(font, code);
+    if (glyph->w <= 0) return;
+    SDL_SetTextureColorMod(font->texture, r, g, b);
+    SDL_SetTextureAlphaMod(font->texture, alpha);
+    f32 left = (f32)SDL_floor((x - size / 2) * density + 0.5) + glyph->left;
+    f32 baseline = (f32)SDL_floor((y + size / 2) * density + 0.5);
+    FRect source = {(f32)glyph->x, (f32)glyph->y, (f32)glyph->w, (f32)glyph->h};
+    FRect target = {left / density, (baseline + glyph->top) / density, glyph->w / density, glyph->h / density};
+    SDL_RenderTexture(renderer, font->texture, &source, &target);
+}
+
+// The fonts of the icons of a renderer, before it is destroyed.
+void cromo_gui_icons_free(void* renderer) {
+    IconFont** link = &iconFonts;
+    while (*link) {
+        IconFont* icons = *link;
+        if (icons->renderer == renderer) {
+            *link = icons->next;
+            cromo_gui_font_free(icons->font);
+            SDL_free(icons);
+        } else {
+            link = &icons->next;
+        }
     }
 }
 

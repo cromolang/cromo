@@ -1051,6 +1051,7 @@ i32 main() {
 - The components are `Label`, `Button`, `TextBox` and `CheckBox` (D439): handles, as the window, with their properties as methods, `b.setText("OK")` and `b.text()`, put in a window with `w.add(...)`, and their events, as `onClick` (D434). Their look is that of a dashboard made with Tailwind (D443).
 - A `GroupBox` contains components, with their positions from its top left corner, and moves, hides and disables them with it (D444); a `ComboBox` chooses among its items, with a list that opens over the other components (D445); an `ImageBox` shows an image in PNG, JPEG, BMP or GIF (D446).
 - A component is anchored to the edges of its window or of its group, `c.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Bottom)`, and follows them when they move, as in WinForms (D447).
+- The icons are those of Lucide, the cases of `gui.Icon`, as `gui.Icon.Mail` (D448, D449): an `IconBox` shows one, and a `Button` can have one before its text, or alone.
 
 ```cromo
 // draft: the names of the components and of their methods (P37)

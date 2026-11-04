@@ -2076,6 +2076,26 @@ gui.Button ok = w.add(gui.Button("OK", 284, 250, 100, 34))
 ok.setAnchor(gui.Horizontal.Right, gui.Vertical.Bottom)    // in the corner
 ```
 
+### D448. The icons: Lucide
+*2026-11-04.* `std.gui` has the vector icons of Lucide, with the ISC license: more than 1600 icons drawn with lines of 2 pixels on a square of 24, in the style of the dashboards of Tailwind (D443). They are a font, drawn by stb_truetype as the text (D433): sharp at every size and density, and of any color. `lib/` has a part of the font, about 150 icons, written by a script from the font of Lucide, so that an executable does not carry the whole font, of about 1 MB.
+
+### D449. An icon is a case of `gui.Icon`
+*2026-11-04.* `gui.Icon.Mail`, `gui.Icon.User`: a wrong name is an error of the compiler, and the language server completes the names. The enum has the icons that are in `lib/`; others are added when they are needed.
+
+### D450. The bars of the apps
+*2026-11-04.* For the apps, as those of Android, `std.gui` has `gui.AppBar`, the bar at the top with the title, an icon on the left and actions on the right, and `gui.NavigationBar`, the bar at the bottom whose items, an icon and a text each, choose the page of the app. The bar at the top is a component of the content: on Windows and on Linux it is under the title bar of the window (D431); on Android, which comes later with its own decisions, the window has no title bar. Their look is that of D443, with the shapes of the bars of Material 3.
+
+### D451. Each item of a navigation bar has its page
+*2026-11-04.* A page is a `gui.Panel`, a container without a look of its own: the navigation bar shows the page of the item chosen and hides the others.
+
+```cromo
+// draft: the names of the API are not decided
+gui.NavigationBar bar = w.navigationBar()
+gui.Panel home = bar.addPage("Home", gui.Icon.House)
+home.add(gui.Label("Welcome", 16, 16, 200, 20))
+gui.Panel settings = bar.addPage("Settings", gui.Icon.Settings)
+```
+
 ---
 
 ## Proposed
@@ -2201,6 +2221,18 @@ A click gives the keyboard to a button, a text box or a check box, and Tab and S
 ### P40. How the anchors move the components (D447)
 A component keeps the distances from the edges of its parent, the content of the window under the title bar or its group, that it had when it was put there, or when its position, its size or its anchors were last set: `Left` keeps the distance from the left edge, `Right` from the right edge, `Stretch` from both, changing the width, and `Center` that of its center from the center of the parent; the same vertically. The width and the height do not go below 0. `x()`, `y()`, `width()` and `height()` give the position and the size of now.
 
+
+### P41. The icons in the components (D448, D449)
+- `gui.IconBox(icon, x, y, width, height)` draws an icon centered in its box, its square of 24 as large as the smaller side; `setIcon` and `icon`, and the methods of the other components. It has the color of the text, at half its opacity when it is disabled.
+- `gui.Icon.None`, the first case and so the default (D111), is no icon.
+- `Button` has `setIcon` and `icon`: the icon of 18 pixels before the text, or alone in the middle without text.
+- The enum and the part of the font are written by `tools/lucide.py`, from the package `lucide-static`; the names are those of Lucide in the style of Cromo, `message-circle` as `MessageCircle`.
+
+### P42. The bars and the pages (D450, D451)
+- `gui.AppBar(title)`, put in a window with `w.add(...)`, takes the top of the content, the whole width and 56 pixels; `setTitle` and `title`; `setNavigation(icon)` with `onNavigation(func())`, the icon on the left, as a back arrow or a menu; `addAction(icon, func())`, an icon on the right, the first added on the right edge.
+- `w.navigationBar()` gives the navigation bar of the window, made the first time: a window has at most one, and a struct has no constructor without arguments (D69). It takes the bottom of the content, the whole width and 64 pixels. `addPage(text, icon)` adds an item and gives back its page, a `gui.Panel`, with the room between the bars; `setSelected(i64)` and `selected()`, 0 at the start; `onChange(func(i64))` when the user chooses an item.
+- `gui.Panel(x, y, width, height)` contains components as a `GroupBox`, without drawing anything; a page is anchored to the four edges.
+- The item chosen has its icon and its text in indigo, with a pill of indigo-50 behind the icon, as in Material 3.
 ---
 
 ## Open

@@ -1,14 +1,15 @@
-// The module std.gui (D429-D447): windows with their title bar drawn by the
+// The module std.gui (D429-D449): windows with their title bar drawn by the
 // library, in the style of Visual Studio Code (D431), the themes light, dark and of
 // the system (D432), the components Label, Button, TextBox, CheckBox, GroupBox,
-// ComboBox and ImageBox (D434, D439, D444-D446), anchored to the edges of their
-// window or group (D447), and the events of the mouse, of the keyboard and of the
-// components, given to lambdas (D430). A window and a component are handles (D434,
-// D442): their methods can be called from any thread, and change their data under
-// one lock. All the windows run on one thread of the GUI, which SDL wants (D436);
-// the handlers of the events run there, one at a time (D435). SDL is in lib/
-// (D429), and the parts in C, the hit test, the text, the symbols, the boxes and
-// the images, are in runtime/gui (D441).
+// ComboBox, ImageBox and IconBox (D434, D439, D444-D446, D448), anchored to the
+// edges of their window or group (D447), the icons of Lucide (D448, D449), and the
+// events of the mouse, of the keyboard and of the components, given to lambdas
+// (D430). A window and a component are handles (D434, D442): their methods can be
+// called from any thread, and change their data under one lock. All the windows
+// run on one thread of the GUI, which SDL wants (D436); the handlers of the events
+// run there, one at a time (D435). SDL is in lib/ (D429), and the parts in C, the
+// hit test, the text and the icons, the symbols, the boxes and the images, are in
+// runtime/gui (D441).
 import std.fs
 import std.time
 import unsafe
@@ -80,6 +81,8 @@ extern "cromo" {
     void cromo_gui_wait_at_end()
     addr cromo_gui_image_decode(addr bytes, i64 size, ref i32 width, ref i32 height, addr reason, i64 room)
     void cromo_gui_image_free(addr pixels)
+    void cromo_gui_icon(addr renderer, i32 code, f32 x, f32 y, f32 size, f32 density, u8 r, u8 g, u8 b, u8 alpha)
+    void cromo_gui_icons_free(addr renderer)
 }
 
 // ---- The public types ----
@@ -119,6 +122,163 @@ public enum Scale {
     Stretch
     Center
 }
+
+// ---- The icons (D448, D449), written by tools/lucide.py ----
+
+// An icon of Lucide 1.68.0 (D448): its value is its character in the font of the
+// icons. None, the default, is no icon.
+public enum Icon {
+    None = 0
+    Activity = 0xE038
+    AlarmClock = 0xE03A
+    Archive = 0xE041
+    ArrowDown = 0xE042
+    ArrowLeft = 0xE048
+    ArrowRight = 0xE049
+    ArrowUp = 0xE04A
+    AtSign = 0xE04E
+    Award = 0xE04F
+    Ban = 0xE051
+    Battery = 0xE053
+    Bell = 0xE059
+    BellOff = 0xE05A
+    Bike = 0xE1D2
+    Bluetooth = 0xE05C
+    Book = 0xE05E
+    BookOpen = 0xE05F
+    Bookmark = 0xE060
+    Briefcase = 0xE062
+    Building2 = 0xE290
+    Calendar = 0xE063
+    Camera = 0xE064
+    Car = 0xE1D5
+    ChartColumn = 0xE2A3
+    ChartLine = 0xE2A5
+    ChartPie = 0xE06B
+    Check = 0xE06C
+    ChevronDown = 0xE06D
+    ChevronLeft = 0xE06E
+    ChevronRight = 0xE06F
+    ChevronUp = 0xE070
+    CircleAlert = 0xE077
+    CircleCheck = 0xE226
+    CircleQuestionMark = 0xE082
+    CircleX = 0xE084
+    Clipboard = 0xE085
+    Clock = 0xE087
+    Cloud = 0xE088
+    Code = 0xE093
+    Coffee = 0xE096
+    Contact = 0xE09C
+    Copy = 0xE09E
+    Cpu = 0xE0A9
+    CreditCard = 0xE0AA
+    Database = 0xE0AD
+    Download = 0xE0B2
+    Droplet = 0xE0B4
+    Ellipsis = 0xE0B6
+    EllipsisVertical = 0xE0B7
+    ExternalLink = 0xE0B9
+    Eye = 0xE0BA
+    EyeOff = 0xE0BB
+    File = 0xE0C0
+    FileText = 0xE0CC
+    Flag = 0xE0D1
+    Flame = 0xE0D2
+    Folder = 0xE0D7
+    FolderOpen = 0xE247
+    Funnel = 0xE0DC
+    Gift = 0xE0E1
+    Globe = 0xE0E8
+    GraduationCap = 0xE234
+    Heart = 0xE0F2
+    History = 0xE1F5
+    House = 0xE0F5
+    Image = 0xE0F6
+    Inbox = 0xE0F7
+    Info = 0xE0F9
+    Key = 0xE0FD
+    Laptop = 0xE1CD
+    Layers = 0xE529
+    LayoutGrid = 0xE0FF
+    Lightbulb = 0xE1C2
+    Link = 0xE102
+    List = 0xE106
+    Loader = 0xE109
+    Lock = 0xE10B
+    LockOpen = 0xE10C
+    LogIn = 0xE10D
+    LogOut = 0xE10E
+    Mail = 0xE10F
+    Map = 0xE110
+    MapPin = 0xE111
+    Menu = 0xE115
+    MessageCircle = 0xE116
+    MessageSquare = 0xE117
+    Mic = 0xE118
+    Minus = 0xE11C
+    Monitor = 0xE11D
+    Moon = 0xE11E
+    Music = 0xE122
+    Package = 0xE129
+    Paperclip = 0xE12D
+    Pause = 0xE12E
+    Pencil = 0xE1F9
+    Phone = 0xE133
+    Plane = 0xE1DE
+    Play = 0xE13C
+    Plus = 0xE13D
+    Power = 0xE140
+    Printer = 0xE141
+    QrCode = 0xE1DF
+    RefreshCw = 0xE145
+    RotateCcw = 0xE148
+    Save = 0xE14D
+    Scan = 0xE257
+    Search = 0xE151
+    Send = 0xE152
+    Server = 0xE153
+    Settings = 0xE154
+    Share2 = 0xE156
+    Shield = 0xE158
+    ShoppingBag = 0xE15B
+    ShoppingCart = 0xE15C
+    SkipBack = 0xE15F
+    SkipForward = 0xE160
+    SlidersHorizontal = 0xE29A
+    Smartphone = 0xE163
+    Smile = 0xE164
+    Square = 0xE167
+    Star = 0xE176
+    Sun = 0xE178
+    Table = 0xE17D
+    Tag = 0xE17F
+    Terminal = 0xE181
+    Thermometer = 0xE186
+    ThumbsDown = 0xE189
+    ThumbsUp = 0xE18A
+    Trash2 = 0xE18E
+    TriangleAlert = 0xE193
+    Trophy = 0xE373
+    Truck = 0xE194
+    Umbrella = 0xE199
+    Upload = 0xE19E
+    User = 0xE19F
+    UserCheck = 0xE1A0
+    UserPlus = 0xE1A2
+    Users = 0xE1A4
+    Utensils = 0xE2F6
+    Video = 0xE1A5
+    Volume2 = 0xE1AB
+    VolumeX = 0xE1AC
+    Wallet = 0xE204
+    Wifi = 0xE1AE
+    WifiOff = 0xE1AF
+    X = 0xE1B2
+    Zap = 0xE1B4
+}
+
+// ---- The end of the icons ----
 
 // The mouse, in logical pixels from the top left corner of the content, under the
 // title bar (D438), and its button: 1 left, 2 middle, 3 right, 0 when it moves.
@@ -237,6 +397,15 @@ public struct Button : Component {
         addr box = alloc(sizeOf<func()>())
         put<func()>(box, move handler)
         addPartHandler(id, 0, box)
+    }
+
+    // An icon before the text, or alone in the middle without text (P41).
+    public void setIcon(Icon value) const {
+        setPartIcon(id, value)
+    }
+
+    public Icon icon() const {
+        ret partIcon(id)
     }
 
     public void setText(string value) const {
@@ -810,6 +979,82 @@ public struct ImageBox : Component {
     }
 }
 
+// An icon of Lucide (D448, P41), centered in its box, its square as large as the
+// smaller side, in the color of the text.
+public struct IconBox : Component {
+    i64 id
+
+    public IconBox(Icon icon, i32 x, i32 y, i32 width, i32 height) {
+        id = newPart(kindIconBox, "", x, y, width, height)
+        setPartIcon(id, icon)
+    }
+
+    i64 componentId() const {
+        ret id
+    }
+
+    public void setIcon(Icon value) const {
+        setPartIcon(id, value)
+    }
+
+    public Icon icon() const {
+        ret partIcon(id)
+    }
+
+    public void setPosition(i32 x, i32 y) const {
+        setPartBounds(id, x, y, -1, -1)
+    }
+
+    public void setSize(i32 width, i32 height) const {
+        setPartBounds(id, -1, -1, width, height)
+    }
+
+    public i32 x() const {
+        ret partBound(id, 0)
+    }
+
+    public i32 y() const {
+        ret partBound(id, 1)
+    }
+
+    public i32 width() const {
+        ret partBound(id, 2)
+    }
+
+    public i32 height() const {
+        ret partBound(id, 3)
+    }
+
+    public void setVisible(bool value) const {
+        setPartFlag(id, 0, value)
+    }
+
+    public bool visible() const {
+        ret partFlag(id, 0)
+    }
+
+    public void setEnabled(bool value) const {
+        setPartFlag(id, 1, value)
+    }
+
+    public bool enabled() const {
+        ret partFlag(id, 1)
+    }
+
+    // How it follows the edges of its window or of its group (D447).
+    public void setAnchor(Horizontal horizontal, Vertical vertical) const {
+        setPartAnchor(id, horizontal, vertical)
+    }
+
+    public Horizontal horizontalAnchor() const {
+        ret partHorizontal(id)
+    }
+
+    public Vertical verticalAnchor() const {
+        ret partVertical(id)
+    }
+}
+
 // ---- The data of the windows and of the components ----
 
 struct Rect {
@@ -883,6 +1128,7 @@ const i32 kindCheckBox = 4
 const i32 kindGroup = 5
 const i32 kindComboBox = 6
 const i32 kindImageBox = 7
+const i32 kindIconBox = 8
 
 // A component: its kind, its window and its group once added, its properties, for
 // a text box where its cursor and the other end of its selection are, as indices
@@ -923,6 +1169,7 @@ struct PartData {
     bool imageChanged
     Scale scale
     addr texture
+    Icon icon          // of an icon box, or of a button
     list<addr> click   // func()
     list<addr> change  // func(string) of a text box, func(bool) of a check box, func(i64) of a combo box
     list<addr> enter   // func(string)
@@ -1192,6 +1439,16 @@ void setPartAnchor(i64 id, Horizontal horizontal, Vertical vertical) {
         data.parts[p].vertical = vertical
         rebase(ref data, p)
     })
+}
+
+void setPartIcon(i64 id, Icon value) {
+    withData([id, value](ref Shared data) { data.parts[partIndexOf(ref data, id)].icon = value })
+}
+
+Icon partIcon(i64 id) {
+    Icon result = Icon.None
+    withData([id, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, id)].icon })
+    ret result
 }
 
 Horizontal partHorizontal(i64 id) {
@@ -1563,6 +1820,7 @@ const f32 checkCorner = 4  // of the check boxes
 const f32 groupCorner = 8
 const f32 itemHeight = 26  // of the list of a combo box
 const i64 listRows = 8
+const f32 buttonIcon = 18  // the size of the icon of a button
 
 // The colors of the look (D443): the grays and the indigo of Tailwind, light and
 // dark, with buttons in a gradient and a border of a deeper color.
@@ -1925,6 +2183,7 @@ void shut(ref WindowData window) {
     window.strong = none
     cromo_gui_symbols_free(window.renderer)
     cromo_gui_boxes_free(window.renderer)
+    cromo_gui_icons_free(window.renderer)
     SDL_DestroyRenderer(window.renderer)
     SDL_DestroyWindow(window.window)
     cromo_gui_chrome_free(window.chrome)
@@ -2838,7 +3097,14 @@ void drawPart(ref WindowData window, ref PartData part, ref Colors c) {
         cromo_gui_gradient(r, x, y, w, h, corner, 1, d, solid(top, on), solid(bottom, on), solid(c.buttonLine, on),
             down || !on ? 0 : c.highlight)
         f32 size = textWidth(window.strong, part.text, part.text.len())
-        text(window.strong, part.text, x + (w - size) / 2, baseline, c.buttonText, on)
+        if (part.icon != Icon.None) {
+            f32 space = part.text.len() > 0 ? 6 : 0
+            f32 start = x + (w - buttonIcon - space - size) / 2
+            drawIcon(r, part.icon, start + buttonIcon / 2, y + h / 2, buttonIcon, d, c.buttonText, on)
+            text(window.strong, part.text, start + buttonIcon + space, baseline, c.buttonText, on)
+        } else {
+            text(window.strong, part.text, x + (w - size) / 2, baseline, c.buttonText, on)
+        }
         if (focused) {
             cromo_gui_box(r, x - 3, y - 3, w + 6, h + 6, corner + 3, 2, d, 0, solid(c.focus, true))
         }
@@ -2911,6 +3177,15 @@ void drawPart(ref WindowData window, ref PartData part, ref Colors c) {
         cromo_gui_symbol(r, 5, x + w - 14, y + h / 2, d, red(arrow), green(arrow), blue(arrow))
     } else if (part.kind == kindImageBox) {
         drawImage(ref window, ref part)
+    } else if (part.kind == kindIconBox) {
+        drawIcon(r, part.icon, x + w / 2, y + h / 2, least(w, h), d, c.label, on)
+    }
+}
+
+// An icon of Lucide whose square of `size` logical pixels has its center at x, y.
+void drawIcon(addr renderer, Icon which, f32 x, f32 y, f32 size, f32 density, u32 rgb, bool enabled) {
+    if (which != Icon.None && size > 0) {
+        cromo_gui_icon(renderer, i32(which), x, y, size, density, red(rgb), green(rgb), blue(rgb), enabled ? 255 : 128)
     }
 }
 

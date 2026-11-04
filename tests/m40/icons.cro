@@ -1,0 +1,31 @@
+// The icons of Lucide (D448, D449, P41): an IconBox and a button with an icon, in
+// a window that is drawn; the value of a case is its character in the font.
+// target: windows linux-x86_64
+// program-env: SDL_VIDEO_DRIVER=offscreen
+// expect-output: none 0, mail 0xE10F
+// expect-output: icon box: Mail true, then User true
+// expect-output: button: None true, then Save true, its text 'Save'
+// expect-output: an icon alone: Plus true, text ''
+import std.gui
+import std.time
+
+i32 main() {
+    println("none {}, mail 0x{:X}", i32(gui.Icon.None), i32(gui.Icon.Mail))
+    gui.Window w = gui.Window("icons", 400, 300)
+    gui.IconBox mail = w.add(gui.IconBox(gui.Icon.Mail, 10, 10, 24, 24))
+    gui.Button save = w.add(gui.Button("Save", 10, 50, 100, 30))
+    gui.Button add = w.add(gui.Button("", 120, 50, 30, 30))
+    add.setIcon(gui.Icon.Plus)
+    w.start()
+    time.msleep(50)
+    print("icon box: Mail {}, ", mail.icon() == gui.Icon.Mail)
+    mail.setIcon(gui.Icon.User)
+    println("then User {}", mail.icon() == gui.Icon.User)
+    print("button: None {}, ", save.icon() == gui.Icon.None)
+    save.setIcon(gui.Icon.Save)
+    time.msleep(50)
+    println("then Save {}, its text '{}'", save.icon() == gui.Icon.Save, save.text())
+    println("an icon alone: Plus {}, text '{}'", add.icon() == gui.Icon.Plus, add.text())
+    w.close()
+    ret 0
+}
