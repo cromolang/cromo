@@ -1049,6 +1049,8 @@ i32 main() {
 - An exception that leaves a handler stops the program, as one that leaves a thread (D437).
 - The positions and the sizes are in logical pixels, which the library scales with the density of the display (D438).
 - The components are `Label`, `Button`, `TextBox` and `CheckBox` (D439): handles, as the window, with their properties as methods, `b.setText("OK")` and `b.text()`, put in a window with `w.add(...)`, and their events, as `onClick` (D434). Their look is that of a dashboard made with Tailwind (D443).
+- A `GroupBox` contains components, with their positions from its top left corner, and moves, hides and disables them with it (D444); a `ComboBox` chooses among its items, with a list that opens over the other components (D445); an `ImageBox` shows an image in PNG, JPEG, BMP or GIF (D446).
+- A component is anchored to the edges of its window or of its group, `c.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Bottom)`, and follows them when they move, as in WinForms (D447).
 
 ```cromo
 // draft: the names of the components and of their methods (P37)
@@ -1056,6 +1058,12 @@ gui.TextBox name = w.add(gui.TextBox("", 24, 48, 300, 28))
 gui.Label answer = w.add(gui.Label("", 24, 92, 300, 20))
 gui.Button greet = w.add(gui.Button("Greet", 24, 136, 100, 28))
 greet.onClick([name, answer]() { answer.setText(format("Hello, {}", name.text())) })
+
+// draft: the groups, the combo boxes and the anchors (P39, P40)
+gui.GroupBox account = w.add(gui.GroupBox("Account", 20, 20, 330, 200))
+gui.ComboBox role = account.add(gui.ComboBox(["Developer", "Designer"], 16, 48, 298, 32))
+role.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Top)  // as wide as the group
+role.onChange([role](i64 index) { println("{}", role.text()) })
 ```
 
 ## 26. Still to be written

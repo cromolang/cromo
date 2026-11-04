@@ -1,0 +1,11 @@
+// The choice of a combo box is one of its items, or -1 (P39).
+// target: windows linux-x86_64
+// expect-exit: 101
+// expect-stderr: panic: the combo box has no item 2
+import std.gui
+
+i32 main() {
+    gui.ComboBox combo = gui.ComboBox(["one", "two"], 0, 0, 100, 32)
+    combo.setSelected(2)
+    ret 0
+}

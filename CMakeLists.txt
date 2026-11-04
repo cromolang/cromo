@@ -93,9 +93,12 @@ set(CROMO_TLS_FLAGS -nostdlibinc -isystem "${CMAKE_SOURCE_DIR}/runtime/libc" "-I
 
 # The part of std.gui in C (D441), with stb_truetype and the fonts of Inter (D433,
 # D440), in the archives of the runtime as the glue of TLS: only the programs with
-# windows link it. Not for ARM64, which has no SDL yet.
+# windows link it. The images, with stb_image (D446), are an object of their own,
+# with the headers of runtime/libc. Not for ARM64, which has no SDL yet.
 set(CROMO_GUI_SOURCES runtime/gui/gui.c runtime/gui/fonts.S third_party/stb/stb_truetype.h
     third_party/inter/Inter-Regular.ttf third_party/inter/Inter-SemiBold.ttf)
+set(CROMO_GUI_IMAGE_SOURCES runtime/gui/image.c third_party/stb/stb_image.h)
+set(CROMO_GUI_IMAGE_FLAGS -nostdlibinc -isystem "${CMAKE_SOURCE_DIR}/runtime/libc" "-I${CMAKE_SOURCE_DIR}/third_party/stb")
 add_custom_command(
   OUTPUT "${CROMO_RT_DIR}/gui.obj" "${CROMO_RT_DIR}/gui_fonts.obj"
   COMMAND "${CROMO_CLANG}" ${CROMO_RT_FLAGS} "-I${CMAKE_SOURCE_DIR}/third_party/stb" -c "${CMAKE_SOURCE_DIR}/runtime/gui/gui.c" -o "${CROMO_RT_DIR}/gui.obj"
@@ -103,13 +106,24 @@ add_custom_command(
   DEPENDS ${CROMO_GUI_SOURCES}
   COMMENT "Compiling the part of std.gui in C")
 add_custom_command(
+  OUTPUT "${CROMO_RT_DIR}/gui_image.obj"
+  COMMAND "${CROMO_CLANG}" ${CROMO_RT_FLAGS} -fno-ms-compatibility ${CROMO_GUI_IMAGE_FLAGS} -c "${CMAKE_SOURCE_DIR}/runtime/gui/image.c" -o "${CROMO_RT_DIR}/gui_image.obj"
+  DEPENDS ${CROMO_GUI_IMAGE_SOURCES}
+  COMMENT "Compiling the images of std.gui")
+add_custom_command(
   OUTPUT "${CROMO_RT_DIR}/gui_linux.o" "${CROMO_RT_DIR}/gui_fonts_linux.o"
   COMMAND "${CROMO_CLANG}" ${CROMO_RT_LINUX_FLAGS} "-I${CMAKE_SOURCE_DIR}/third_party/stb" -c "${CMAKE_SOURCE_DIR}/runtime/gui/gui.c" -o "${CROMO_RT_DIR}/gui_linux.o"
   COMMAND "${CROMO_CLANG}" --target=x86_64-unknown-linux-gnu "-I${CMAKE_SOURCE_DIR}/third_party/inter" -c "${CMAKE_SOURCE_DIR}/runtime/gui/fonts.S" -o "${CROMO_RT_DIR}/gui_fonts_linux.o"
   DEPENDS ${CROMO_GUI_SOURCES}
   COMMENT "Compiling the part of std.gui in C for Linux")
-set(CROMO_GUI_WINDOWS_OBJECTS "${CROMO_RT_DIR}/gui.obj" "${CROMO_RT_DIR}/gui_fonts.obj")
-set(CROMO_GUI_LINUX_OBJECTS "${CROMO_RT_DIR}/gui_linux.o" "${CROMO_RT_DIR}/gui_fonts_linux.o")
+add_custom_command(
+  OUTPUT "${CROMO_RT_DIR}/gui_image_linux.o"
+  COMMAND "${CROMO_CLANG}" ${CROMO_RT_LINUX_FLAGS} ${CROMO_GUI_IMAGE_FLAGS} -c "${CMAKE_SOURCE_DIR}/runtime/gui/image.c" -o "${CROMO_RT_DIR}/gui_image_linux.o"
+  DEPENDS ${CROMO_GUI_IMAGE_SOURCES}
+  COMMENT "Compiling the images of std.gui for Linux")
+set(CROMO_GUI_WINDOWS_OBJECTS "${CROMO_RT_DIR}/gui.obj" "${CROMO_RT_DIR}/gui_fonts.obj" "${CROMO_RT_DIR}/gui_image.obj")
+set(CROMO_GUI_LINUX_OBJECTS "${CROMO_RT_DIR}/gui_linux.o" "${CROMO_RT_DIR}/gui_fonts_linux.o"
+    "${CROMO_RT_DIR}/gui_image_linux.o")
 
 # The objects for one system, in <folder>, and a response file that lists them
 # for the archiver: their command line would be too long for Windows. The archive

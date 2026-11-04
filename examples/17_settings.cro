@@ -1,0 +1,52 @@
+// Example 17: a window of settings with groups, a combo box, an image and anchors.
+// Run it with the path of a PNG, JPEG, BMP or GIF to see it in the preview.
+//
+// Decided: the groups contain components (D444), the combo box chooses among its
+//          items (D445), the images in PNG, JPEG, BMP and GIF (D446), the anchors
+//          to the edges of the window or of the group (D447)
+// Draft:   the names of the components and of their methods (P37, P39), how the
+//          anchors move the components (P40)
+import std.gui
+
+[[window]]
+i32 main(list<string> args) {
+    gui.Window w = gui.Window("Example 17", 720, 440)
+
+    // The components of a group take their positions from its top left corner.
+    gui.GroupBox account = w.add(gui.GroupBox("Account", 20, 20, 330, 250))
+    account.add(gui.Label("Name", 16, 48, 200, 20))
+    gui.TextBox name = account.add(gui.TextBox("", 16, 72, 298, 32))
+    name.setPlaceholder("Your name")
+    account.add(gui.Label("Role", 16, 116, 200, 20))
+    gui.ComboBox role = account.add(gui.ComboBox(["Administrator", "Developer", "Designer", "Viewer"], 16, 140, 298, 32))
+    role.setPlaceholder("Choose a role")
+    gui.CheckBox news = account.add(gui.CheckBox("Send me the news", 16, 196, 260, 24))
+
+    // The preview grows with the window, and its image with it.
+    gui.GroupBox preview = w.add(gui.GroupBox("Preview", 370, 20, 330, 250))
+    preview.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Stretch)
+    if (args.len() > 1) {
+        gui.ImageBox picture = preview.add(gui.ImageBox(args[1], 16, 48, 298, 186))
+        picture.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Stretch)
+    } else {
+        preview.add(gui.Label("No image: give its path to the program.", 16, 48, 298, 20))
+    }
+
+    // The buttons stay in the bottom right corner, the status in the bottom left.
+    gui.Label status = w.add(gui.Label("", 20, 362, 400, 20))
+    status.setAnchor(gui.Horizontal.Left, gui.Vertical.Bottom)
+    gui.Button save = w.add(gui.Button("Save", 496, 355, 96, 34))
+    save.setAnchor(gui.Horizontal.Right, gui.Vertical.Bottom)
+    gui.Button quit = w.add(gui.Button("Quit", 604, 355, 96, 34))
+    quit.setAnchor(gui.Horizontal.Right, gui.Vertical.Bottom)
+
+    role.onChange([news](i64 index) { news.setEnabled(index != 3) })  // no news for the viewers
+    save.onClick([name, role, status]() {
+        string who = name.text().len() > 0 ? name.text() : "nobody"
+        string what = role.selected() >= 0 ? role.text() : "no role"
+        status.setText(format("Saved: {}, {}", who, what))
+    })
+    quit.onClick([w]() { w.close() })
+    w.start()
+    ret 0
+}

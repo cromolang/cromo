@@ -48,6 +48,10 @@ Licensed under the zlib license. Its license is in `licenses/sdl.txt` (`third_pa
 
 The programs that use the windows of the library contain stb_truetype 1.26, by Sean Barrett: <https://github.com/nothings/stb>. In the public domain, or under the MIT license, at your option; its license is at the end of `third_party/stb/stb_truetype.h` in the repository.
 
+## stb_image
+
+The programs that show images with the library contain stb_image 2.30, by Sean Barrett: <https://github.com/nothings/stb>. In the public domain, or under the MIT license, at your option; its license is at the end of `third_party/stb/stb_image.h` in the repository.
+
 ## Inter
 
 The programs that use the windows of the library contain the font Inter 4.1, by The Inter Project Authors: <https://rsms.me/inter>. Licensed under the SIL Open Font License 1.1. Its license is in `licenses/inter.txt` (`third_party/inter/LICENSE.txt` in the repository).

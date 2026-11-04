@@ -1990,7 +1990,7 @@ i32 main() {
 *2026-11-03.* The windows and the graphics of the library are `std.gui`, written on SDL3. SDL is compiled from `third_party` as a static library, as mbedTLS (D233), and goes in `lib/`: on Windows without the C runtime, with the import libraries of the system DLLs that it calls written by `cromo` (D136), and on Linux with glibc (D428), loading X11, Wayland, the graphics and the audio of the system with `dlopen`. An executable with a window has no DLL or `.so` to bring with it. The functions of SDL are in a module of the library that the programs cannot import, as `std.winsock`; the programs use `std.gui`, which is safe.
 
 ### D430. The model of `std.gui`: a window with its components
-*2026-11-03.* The program makes a `gui.Window` and adds to it its components, as a button, a text box or a label, each with its properties: a flat list, without a tree of containers. The events, as the movement of the mouse or the click of a button, are handled by lambdas given to the window and to the components. The program sets the frames per second, and `w.start()` starts a thread that runs the loop of the events and of the drawing: the program does not write that loop. A property of a component can be changed from any thread, and every change is thread-safe. A window can start minimized, maximized, resizable or not, and change while it is open.
+*2026-11-03.* The program makes a `gui.Window` and adds to it its components, as a button, a text box or a label, each with its properties: a flat list, without a tree of containers. The events, as the movement of the mouse or the click of a button, are handled by lambdas given to the window and to the components. The program sets the frames per second, and `w.start()` starts a thread that runs the loop of the events and of the drawing: the program does not write that loop. A property of a component can be changed from any thread, and every change is thread-safe. A window can start minimized, maximized, resizable or not, and change while it is open. *From D444 a group contains components: they are a tree.*
 
 ### D431. The title bar is drawn by `std.gui`
 *2026-11-03.* A window has no title bar of the system: `std.gui` draws its own, with the title and the buttons to minimize, maximize or restore, and close, in the style of Visual Studio Code on Windows. It follows the theme (D432). Dragging the bar moves the window, a double click maximizes it, and the edges resize it, through the hit test of SDL, which leaves these to the system: on Windows the window keeps the snap to the edges of the screen.
@@ -2048,6 +2048,33 @@ ret 0  // the program ends when the window is closed
 
 ### D443. The look of a dashboard of Tailwind
 *2026-11-03.* The components and the windows of `std.gui` have the look of a dashboard made with Tailwind, not that of the controls of Microsoft: the grays and the indigo of its palette, light and dark, with a hint of depth. The buttons, and the check boxes when checked, are a vertical gradient of indigo with a border of a deeper indigo and a line of light inside their top edge; under them, and under the text boxes and the check boxes, a soft shadow of a few pixels. The corners are rounded by 7 pixels, 4 on the check boxes; the text box with the keyboard has an indigo border with a glow around it, and the other components a ring of 2 pixels. The text is Inter at 14 pixels, semibold on the buttons. The title bar keeps its layout and its buttons (D431), in the colors of that palette, with a line under it. It is the first of six alternatives, with other fonts and colors, drawn for the author; the look can change later.
+
+### D444. The groups contain components
+*2026-11-04.* It amends D430. A `gui.GroupBox` is a component that contains others: `g.add(...)`, as `w.add(...)`, puts a component in the group, with its position from the top left corner of the group. Moving the group moves its components, a group hidden or disabled hides or disables them, and they are drawn only inside it. A group can contain groups: the components of a window are a tree, whose root is the window. A component is in one window or in one group.
+
+```cromo
+// draft: the names of the API are not decided
+gui.GroupBox account = w.add(gui.GroupBox("Account", 16, 16, 320, 160))
+gui.TextBox name = account.add(gui.TextBox("", 16, 48, 200, 32))
+account.setEnabled(false)  // name too
+```
+
+### D445. The combo box chooses among its items
+*2026-11-04.* A `gui.ComboBox` shows the item chosen and, when it is clicked, opens the list of its items below it, or above it when there is no room below: the list is drawn inside the window, over the other components. The user chooses an item and cannot write one, as with the `<select>` of HTML.
+
+### D446. The images: stb_image
+*2026-11-04.* A `gui.ImageBox` shows an image in PNG, JPEG, BMP or GIF, its first frame, decoded by stb_image, of the same author and with the same license as stb_truetype (D433), in the layer of C (D441). SDL alone decodes only PNG and BMP.
+
+### D447. The anchors
+*2026-11-04.* It closes the point left open by D438. A component is anchored to the edges of its window, or of its group (D444), with two enums: `gui.Horizontal`, with `Left`, `Right`, `Stretch` and `Center`, and `gui.Vertical`, with `Top`, `Bottom`, `Stretch` and `Center`; by default `Left` and `Top`. They are the anchors of WinForms, with `Stretch` for left and right together and `Center` for neither: the enums of Cromo do not combine with `|` (D135).
+
+```cromo
+// draft: the names of the API are not decided
+gui.TextBox notes = w.add(gui.TextBox("", 16, 16, 368, 32))
+notes.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Top)  // as wide as the window
+gui.Button ok = w.add(gui.Button("OK", 284, 250, 100, 34))
+ok.setAnchor(gui.Horizontal.Right, gui.Vertical.Bottom)    // in the corner
+```
 
 ---
 
@@ -2164,6 +2191,15 @@ Each is made with its text, its position and its size, `gui.Button("OK", x, y, w
 
 ### P38. The keyboard and the look of the components (D439)
 A click gives the keyboard to a button, a text box or a check box, and Tab and Shift+Tab move it among those of the window, in the order they were added. Space and Enter press a button, Space changes a check box. A text box writes the text of the keyboard, with its input method; the arrows, Home and End move in it, with Shift they select, as the mouse does, and Backspace, Delete, Ctrl+A, Ctrl+C, Ctrl+X and Ctrl+V do what they do everywhere, the text pasted in one line. The keys that the component in focus uses do not go to `onKeyDown` of the window. A component disabled is drawn at half its opacity; the rest of the look is D443.
+
+### P39. The groups, the combo boxes and the images (D444-D446)
+- `gui.GroupBox(text, x, y, width, height)` has the methods of the others and `add<T : Component>(T)`, as `Window.add`; a group cannot contain itself or a group that contains it, a panic. It is drawn as a card of a dashboard, with its title semibold in its top left corner: its components start below it, at about 44 pixels.
+- `gui.ComboBox(items, x, y, width, height)`, with a `list<string>`: `setItems`, `items` and `addItem`; `setSelected(i64)` and `selected()`, -1 for none, the default; `text()`, the item chosen or `""`, without `setText`; `setPlaceholder` and `placeholder`, shown without a choice; `onChange(func(i64))` with the index, when the user chooses. The list shows up to 8 items, the others with the wheel of the mouse. It takes the keyboard as a button: closed, Up and Down choose the previous and the next item, Home and End the first and the last, a letter the next item that starts with it, Space, Enter and Alt+Down open the list; open, Up, Down, Home and End move among the items, Enter and Space choose, Esc and Tab close it. A click outside the list closes it, and does nothing else.
+- `gui.ImageBox(file, x, y, width, height)` reads the file with `std.fs` and throws its errors, and a file that is not an image throws an `Error` with the reason: the image is decoded on the thread that sets it. `setFile` and `file`, `""` for none; `setBytes(list<u8>)`, an image in memory; `imageWidth()` and `imageHeight()` in pixels; `setScale(gui.Scale)` and `scale()`: `Fit`, the default, the whole image as large as the box allows, with its proportions, centered; `Fill` covers the box with its proportions, cut at the edges; `Stretch` takes the size of the box; `Center` keeps its size, a pixel of the image for each logical pixel, centered. It has no text.
+- Every component has `setAnchor(gui.Horizontal, gui.Vertical)`, `horizontalAnchor()` and `verticalAnchor()` (D447).
+
+### P40. How the anchors move the components (D447)
+A component keeps the distances from the edges of its parent, the content of the window under the title bar or its group, that it had when it was put there, or when its position, its size or its anchors were last set: `Left` keeps the distance from the left edge, `Right` from the right edge, `Stretch` from both, changing the width, and `Center` that of its center from the center of the parent; the same vertically. The width and the height do not go below 0. `x()`, `y()`, `width()` and `height()` give the position and the size of now.
 
 ---
 

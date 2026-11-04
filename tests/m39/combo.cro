@@ -1,0 +1,36 @@
+// A combo box (D445, P39): its items, its choice, its text and its placeholder;
+// setItems takes away the choice.
+// target: windows linux-x86_64
+// program-env: SDL_VIDEO_DRIVER=offscreen
+// expect-output: items 3, selected -1, text '', placeholder 'Choose'
+// expect-output: selected 1, text 'Green'
+// expect-output: added: 4 items, the last Yellow
+// expect-output: new items: selected -1, items Small and Large
+// expect-output: after start: selected 0, text 'Small'
+import std.gui
+import std.time
+
+i32 main() {
+    gui.Window w = gui.Window("combo", 400, 300)
+    list<string> colors = ["Red", "Green", "Blue"]
+    gui.ComboBox combo = w.add(gui.ComboBox(colors, 20, 20, 200, 32))
+    combo.setPlaceholder("Choose")
+    println("items {}, selected {}, text '{}', placeholder '{}'", combo.items().len(), combo.selected(), combo.text(),
+            combo.placeholder())
+    combo.setSelected(1)
+    println("selected {}, text '{}'", combo.selected(), combo.text())
+    combo.addItem("Yellow")
+    list<string> now = combo.items()
+    println("added: {} items, the last {}", now.len(), now[3])
+    combo.setItems(["Small", "Large"])
+    list<string> sizes = combo.items()
+    println("new items: selected {}, items {} and {}", combo.selected(), sizes[0], sizes[1])
+    combo.onChange([](i64 index) { println("changed {}", index) })
+    w.start()
+    time.msleep(50)
+    combo.setSelected(0)
+    time.msleep(50)
+    println("after start: selected {}, text '{}'", combo.selected(), combo.text())
+    w.close()
+    ret 0
+}

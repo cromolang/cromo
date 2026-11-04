@@ -1,0 +1,39 @@
+// The groups contain components (D444): positions from the top left corner of the
+// group, a group in a group, and the window of a group given to its components.
+// target: windows linux-x86_64
+// program-env: SDL_VIDEO_DRIVER=offscreen
+// expect-output: group Account at 20,20 size 300x200
+// expect-output: name at 16,48, enabled true, visible true
+// expect-output: inner Address at 16,100, city at 8,40
+// expect-output: after start: Settings, name 'Grace', city 'Turin'
+// expect-output: group disabled true: name enabled true
+import std.gui
+import std.time
+
+i32 main() {
+    gui.Window w = gui.Window("groups", 400, 300)
+    // Components added to a group before the group is in the window.
+    gui.GroupBox group = gui.GroupBox("Account", 20, 20, 300, 200)
+    gui.TextBox name = group.add(gui.TextBox("Ada", 16, 48, 200, 32))
+    gui.GroupBox inner = group.add(gui.GroupBox("Address", 16, 100, 260, 80))
+    gui.TextBox city = inner.add(gui.TextBox("Rome", 8, 40, 200, 32))
+    w.add(group)
+    println("group {} at {},{} size {}x{}", group.text(), group.x(), group.y(), group.width(), group.height())
+    println("name at {},{}, enabled {}, visible {}", name.x(), name.y(), name.enabled(), name.visible())
+    println("inner {} at {},{}, city at {},{}", inner.text(), inner.x(), inner.y(), city.x(), city.y())
+    w.start()
+    time.msleep(50)
+    group.setText("Settings")
+    name.setText("Grace")
+    city.setText("Turin")
+    group.setPosition(10, 10)
+    time.msleep(50)
+    println("after start: {}, name '{}', city '{}'", group.text(), name.text(), city.text())
+    // A group disabled disables its components when they are drawn: their own
+    // property does not change.
+    group.setEnabled(false)
+    time.msleep(50)
+    println("group disabled {}: name enabled {}", !group.enabled(), name.enabled())
+    w.close()
+    ret 0
+}

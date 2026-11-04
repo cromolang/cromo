@@ -1,0 +1,13 @@
+// A component is in one window or in one group (D444).
+// target: windows linux-x86_64
+// expect-exit: 101
+// expect-stderr: panic: the component is already in a window or in a group
+import std.gui
+
+i32 main() {
+    gui.Window w = gui.Window("w", 300, 200)
+    gui.GroupBox group = w.add(gui.GroupBox("group", 0, 0, 300, 200))
+    gui.Button button = group.add(gui.Button("OK", 10, 40, 80, 28))
+    w.add(button)
+    ret 0
+}

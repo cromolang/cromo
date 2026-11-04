@@ -1,13 +1,15 @@
-// The module std.gui (D429-D442): windows with their title bar drawn by the
+// The module std.gui (D429-D447): windows with their title bar drawn by the
 // library, in the style of Visual Studio Code (D431), the themes light, dark and of
-// the system (D432), the components Label, Button, TextBox and CheckBox (D434,
-// D439), and the events of the mouse, of the keyboard and of the components, given
-// to lambdas (D430). A window and a component are handles (D434, D442): their
-// methods can be called from any thread, and change their data under one lock.
-// All the windows run on one thread of the GUI, which SDL wants (D436); the
-// handlers of the events run there, one at a time (D435). SDL is in lib/ (D429),
-// and the parts in C, the hit test, the text, the symbols and the boxes, are in
-// runtime/gui (D441).
+// the system (D432), the components Label, Button, TextBox, CheckBox, GroupBox,
+// ComboBox and ImageBox (D434, D439, D444-D446), anchored to the edges of their
+// window or group (D447), and the events of the mouse, of the keyboard and of the
+// components, given to lambdas (D430). A window and a component are handles (D434,
+// D442): their methods can be called from any thread, and change their data under
+// one lock. All the windows run on one thread of the GUI, which SDL wants (D436);
+// the handlers of the events run there, one at a time (D435). SDL is in lib/
+// (D429), and the parts in C, the hit test, the text, the symbols, the boxes and
+// the images, are in runtime/gui (D441).
+import std.fs
 import std.time
 import unsafe
 
@@ -51,6 +53,12 @@ extern "SDL3" {
     void SDL_free(addr memory)
     addr SDL_CreateSystemCursor(u32 kind)
     bool SDL_SetCursor(addr cursor)
+    addr SDL_CreateTexture(addr renderer, u32 format, i32 access, i32 w, i32 h)
+    bool SDL_UpdateTexture(addr texture, addr rect, addr pixels, i32 pitch)
+    bool SDL_SetTextureBlendMode(addr texture, u32 mode)
+    bool SDL_SetTextureAlphaMod(addr texture, u8 alpha)
+    bool SDL_RenderTexture(addr renderer, addr texture, addr source, ref Rect target)
+    void SDL_DestroyTexture(addr texture)
 }
 
 extern "cromo" {
@@ -70,6 +78,8 @@ extern "cromo" {
     void cromo_gui_gradient(addr renderer, f32 x, f32 y, f32 w, f32 h, f32 radius, f32 border, f32 density, u32 top, u32 bottom,
         u32 line, u32 highlight)
     void cromo_gui_wait_at_end()
+    addr cromo_gui_image_decode(addr bytes, i64 size, ref i32 width, ref i32 height, addr reason, i64 room)
+    void cromo_gui_image_free(addr pixels)
 }
 
 // ---- The public types ----
@@ -80,6 +90,34 @@ public enum Theme {
     System
     Light
     Dark
+}
+
+// How a component follows the left and the right edges of its window or of its
+// group, when they move (D447): Stretch follows both, changing its width, Center
+// neither, keeping its center at the same distance from the center.
+public enum Horizontal {
+    Left
+    Right
+    Stretch
+    Center
+}
+
+// The same for the top and the bottom edges (D447).
+public enum Vertical {
+    Top
+    Bottom
+    Stretch
+    Center
+}
+
+// How an ImageBox fits its image (P39): Fit shows all of it, as large as the box
+// allows; Fill covers the box, cut at the edges; Stretch takes the size of the box;
+// Center keeps its size. Fit, Fill and Center keep its proportions.
+public enum Scale {
+    Fit
+    Fill
+    Stretch
+    Center
 }
 
 // The mouse, in logical pixels from the top left corner of the content, under the
@@ -168,6 +206,19 @@ public struct Label : Component {
     public bool enabled() const {
         ret partFlag(id, 1)
     }
+
+    // How it follows the edges of its window or of its group (D447).
+    public void setAnchor(Horizontal horizontal, Vertical vertical) const {
+        setPartAnchor(id, horizontal, vertical)
+    }
+
+    public Horizontal horizontalAnchor() const {
+        ret partHorizontal(id)
+    }
+
+    public Vertical verticalAnchor() const {
+        ret partVertical(id)
+    }
 }
 
 // A button: a click, Space or Enter with it in focus, calls its handlers of onClick.
@@ -234,6 +285,19 @@ public struct Button : Component {
 
     public bool enabled() const {
         ret partFlag(id, 1)
+    }
+
+    // How it follows the edges of its window or of its group (D447).
+    public void setAnchor(Horizontal horizontal, Vertical vertical) const {
+        setPartAnchor(id, horizontal, vertical)
+    }
+
+    public Horizontal horizontalAnchor() const {
+        ret partHorizontal(id)
+    }
+
+    public Vertical verticalAnchor() const {
+        ret partVertical(id)
     }
 }
 
@@ -321,6 +385,19 @@ public struct TextBox : Component {
     public bool enabled() const {
         ret partFlag(id, 1)
     }
+
+    // How it follows the edges of its window or of its group (D447).
+    public void setAnchor(Horizontal horizontal, Vertical vertical) const {
+        setPartAnchor(id, horizontal, vertical)
+    }
+
+    public Horizontal horizontalAnchor() const {
+        ret partHorizontal(id)
+    }
+
+    public Vertical verticalAnchor() const {
+        ret partVertical(id)
+    }
 }
 
 // A box to check, with its text on the right: a click or Space changes it, and its
@@ -397,6 +474,340 @@ public struct CheckBox : Component {
     public bool enabled() const {
         ret partFlag(id, 1)
     }
+
+    // How it follows the edges of its window or of its group (D447).
+    public void setAnchor(Horizontal horizontal, Vertical vertical) const {
+        setPartAnchor(id, horizontal, vertical)
+    }
+
+    public Horizontal horizontalAnchor() const {
+        ret partHorizontal(id)
+    }
+
+    public Vertical verticalAnchor() const {
+        ret partVertical(id)
+    }
+}
+
+// A card with a title that contains components (D444): their positions are from
+// its top left corner, and they move, hide and are disabled with it.
+public struct GroupBox : Component {
+    i64 id
+
+    public GroupBox(string text, i32 x, i32 y, i32 width, i32 height) {
+        id = newPart(kindGroup, text, x, y, width, height)
+    }
+
+    i64 componentId() const {
+        ret id
+    }
+
+    // Puts a component in the group, and gives it back: a component is in one
+    // window or in one group only.
+    public T add<T : Component>(T component) const {
+        addPart(0, id, component.componentId())
+        ret component
+    }
+
+    public void setText(string value) const {
+        setPartText(id, value)
+    }
+
+    public string text() const {
+        ret partText(id, false)
+    }
+
+    public void setPosition(i32 x, i32 y) const {
+        setPartBounds(id, x, y, -1, -1)
+    }
+
+    public void setSize(i32 width, i32 height) const {
+        setPartBounds(id, -1, -1, width, height)
+    }
+
+    public i32 x() const {
+        ret partBound(id, 0)
+    }
+
+    public i32 y() const {
+        ret partBound(id, 1)
+    }
+
+    public i32 width() const {
+        ret partBound(id, 2)
+    }
+
+    public i32 height() const {
+        ret partBound(id, 3)
+    }
+
+    public void setVisible(bool value) const {
+        setPartFlag(id, 0, value)
+    }
+
+    public bool visible() const {
+        ret partFlag(id, 0)
+    }
+
+    public void setEnabled(bool value) const {
+        setPartFlag(id, 1, value)
+    }
+
+    public bool enabled() const {
+        ret partFlag(id, 1)
+    }
+
+    // How it follows the edges of its window or of its group (D447).
+    public void setAnchor(Horizontal horizontal, Vertical vertical) const {
+        setPartAnchor(id, horizontal, vertical)
+    }
+
+    public Horizontal horizontalAnchor() const {
+        ret partHorizontal(id)
+    }
+
+    public Vertical verticalAnchor() const {
+        ret partVertical(id)
+    }
+}
+
+// A choice among items (D445): a click, Space or Enter opens the list of its items
+// over the other components, and its handlers of onChange receive the index of
+// the item that the user chooses. Without a choice it shows its placeholder.
+public struct ComboBox : Component {
+    i64 id
+
+    public ComboBox(list<string> items, i32 x, i32 y, i32 width, i32 height) {
+        id = newPart(kindComboBox, "", x, y, width, height)
+        setComboItems(id, items)
+    }
+
+    i64 componentId() const {
+        ret id
+    }
+
+    public void onChange(move func(i64) handler) const {
+        addr box = alloc(sizeOf<func(i64)>())
+        put<func(i64)>(box, move handler)
+        addPartHandler(id, 1, box)
+    }
+
+    // The items, and no choice.
+    public void setItems(list<string> items) const {
+        setComboItems(id, items)
+    }
+
+    public list<string> items() const {
+        list<string> result
+        i64 me = id
+        withData([me, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, me)].items })
+        ret result
+    }
+
+    public void addItem(string item) const {
+        i64 me = id
+        withData([me, item](ref Shared data) { data.parts[partIndexOf(ref data, me)].items.add(item) })
+    }
+
+    // The index of the item chosen, or -1 for none.
+    public void setSelected(i64 index) const {
+        i64 me = id
+        withData([me, index](ref Shared data) {
+            i64 p = partIndexOf(ref data, me)
+            if (index < -1 || index >= data.parts[p].items.len()) {
+                panic(format("the combo box has no item {}", index))
+            }
+            data.parts[p].selected = index
+        })
+    }
+
+    public i64 selected() const {
+        i64 me = id
+        i64 result = -1
+        withData([me, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, me)].selected })
+        ret result
+    }
+
+    // The item chosen, or "".
+    public string text() const {
+        i64 me = id
+        string result
+        withData([me, ref result](ref Shared data) {
+            i64 p = partIndexOf(ref data, me)
+            if (data.parts[p].selected >= 0) {
+                result = data.parts[p].items[data.parts[p].selected]
+            }
+        })
+        ret result
+    }
+
+    // The text shown without a choice.
+    public void setPlaceholder(string value) const {
+        i64 me = id
+        withData([me, value](ref Shared data) { data.parts[partIndexOf(ref data, me)].placeholder = value })
+    }
+
+    public string placeholder() const {
+        ret partText(id, true)
+    }
+
+    public void setPosition(i32 x, i32 y) const {
+        setPartBounds(id, x, y, -1, -1)
+    }
+
+    public void setSize(i32 width, i32 height) const {
+        setPartBounds(id, -1, -1, width, height)
+    }
+
+    public i32 x() const {
+        ret partBound(id, 0)
+    }
+
+    public i32 y() const {
+        ret partBound(id, 1)
+    }
+
+    public i32 width() const {
+        ret partBound(id, 2)
+    }
+
+    public i32 height() const {
+        ret partBound(id, 3)
+    }
+
+    public void setVisible(bool value) const {
+        setPartFlag(id, 0, value)
+    }
+
+    public bool visible() const {
+        ret partFlag(id, 0)
+    }
+
+    public void setEnabled(bool value) const {
+        setPartFlag(id, 1, value)
+    }
+
+    public bool enabled() const {
+        ret partFlag(id, 1)
+    }
+
+    // How it follows the edges of its window or of its group (D447).
+    public void setAnchor(Horizontal horizontal, Vertical vertical) const {
+        setPartAnchor(id, horizontal, vertical)
+    }
+
+    public Horizontal horizontalAnchor() const {
+        ret partHorizontal(id)
+    }
+
+    public Vertical verticalAnchor() const {
+        ret partVertical(id)
+    }
+}
+
+// An image in PNG, JPEG, BMP or GIF (D446), from a file or from bytes, fitted to
+// its box as its scale says. It is decoded on the thread that sets it, which
+// receives the errors.
+public struct ImageBox : Component {
+    i64 id
+
+    // Throws the errors of reading the file, and an Error if it is not an image.
+    public ImageBox(string file, i32 x, i32 y, i32 width, i32 height) {
+        id = newPart(kindImageBox, "", x, y, width, height)
+        loadImage(id, file)
+    }
+
+    i64 componentId() const {
+        ret id
+    }
+
+    // The image of a file, or none with "".
+    public void setFile(string path) const {
+        loadImage(id, path)
+    }
+
+    public string file() const {
+        ret partText(id, false)
+    }
+
+    // An image in memory, or none without bytes.
+    public void setBytes(list<u8> bytes) const {
+        setImage(id, "", bytes)
+    }
+
+    // The size of the image, in pixels.
+    public i32 imageWidth() const {
+        ret partBound(id, 4)
+    }
+
+    public i32 imageHeight() const {
+        ret partBound(id, 5)
+    }
+
+    public void setScale(Scale value) const {
+        i64 me = id
+        withData([me, value](ref Shared data) { data.parts[partIndexOf(ref data, me)].scale = value })
+    }
+
+    public Scale scale() const {
+        i64 me = id
+        Scale result = Scale.Fit
+        withData([me, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, me)].scale })
+        ret result
+    }
+
+    public void setPosition(i32 x, i32 y) const {
+        setPartBounds(id, x, y, -1, -1)
+    }
+
+    public void setSize(i32 width, i32 height) const {
+        setPartBounds(id, -1, -1, width, height)
+    }
+
+    public i32 x() const {
+        ret partBound(id, 0)
+    }
+
+    public i32 y() const {
+        ret partBound(id, 1)
+    }
+
+    public i32 width() const {
+        ret partBound(id, 2)
+    }
+
+    public i32 height() const {
+        ret partBound(id, 3)
+    }
+
+    public void setVisible(bool value) const {
+        setPartFlag(id, 0, value)
+    }
+
+    public bool visible() const {
+        ret partFlag(id, 0)
+    }
+
+    public void setEnabled(bool value) const {
+        setPartFlag(id, 1, value)
+    }
+
+    public bool enabled() const {
+        ret partFlag(id, 1)
+    }
+
+    // How it follows the edges of its window or of its group (D447).
+    public void setAnchor(Horizontal horizontal, Vertical vertical) const {
+        setPartAnchor(id, horizontal, vertical)
+    }
+
+    public Horizontal horizontalAnchor() const {
+        ret partHorizontal(id)
+    }
+
+    public Vertical verticalAnchor() const {
+        ret partVertical(id)
+    }
 }
 
 // ---- The data of the windows and of the components ----
@@ -460,36 +871,73 @@ struct WindowData {
     i64 hot       // the component under the mouse
     i64 held      // the component pressed with the mouse
     i64 dragging  // the text box whose text the mouse selects
+    i64 popup     // the combo box whose list is open
     u64 caretStart
+    list<i64> order  // the indices of its components, in the order they are drawn
 }
 
 const i32 kindLabel = 1
 const i32 kindButton = 2
 const i32 kindTextBox = 3
 const i32 kindCheckBox = 4
+const i32 kindGroup = 5
+const i32 kindComboBox = 6
+const i32 kindImageBox = 7
 
-// A component: its kind, its window once added, its properties, and for a text
-// box where its cursor and the other end of its selection are, as indices of
-// bytes, and how much its text is scrolled.
+// A component: its kind, its window and its group once added, its properties, for
+// a text box where its cursor and the other end of its selection are, as indices
+// of bytes, and how much its text is scrolled, the items of a combo box and the
+// image of an image box.
 struct PartData {
     i64 id
     i64 window
+    i64 parent  // its group, or 0
     i32 kind
-    string text
+    string text  // the file of an image box
     string placeholder
-    i32 x
+    i32 x  // now, from the top left corner of its parent (P40)
     i32 y
     i32 width
     i32 height
+    Horizontal horizontal
+    Vertical vertical
+    i32 baseX  // as set last, when its parent had the size below (P40)
+    i32 baseY
+    i32 baseWidth
+    i32 baseHeight
+    i32 parentWidth
+    i32 parentHeight
     bool visible = true
     bool enabled = true
     bool checked
     i64 caret
     i64 anchor
     f32 scroll
+    list<string> items
+    i64 selected = -1
+    i64 first      // the first item shown in the list
+    i64 highlight  // the item that the mouse or the keys point at in the list
+    addr pixels    // of an image, until the thread of the GUI makes its texture
+    i32 imageWidth
+    i32 imageHeight
+    bool imageChanged
+    Scale scale
+    addr texture
     list<addr> click   // func()
-    list<addr> change  // func(string) of a text box, func(bool) of a check box
+    list<addr> change  // func(string) of a text box, func(bool) of a check box, func(i64) of a combo box
     list<addr> enter   // func(string)
+
+    // Laid out by the thread of the GUI: its place in the content of the window,
+    // whether it and its groups are visible and enabled, and the rectangle of
+    // its groups that clips it.
+    f32 left
+    f32 top
+    bool shown
+    bool active
+    f32 clipLeft
+    f32 clipTop
+    f32 clipRight
+    f32 clipBottom
 }
 
 struct Shared {
@@ -555,6 +1003,10 @@ i64 newPart(i32 kind, string text, i32 x, i32 y, i32 w, i32 h) {
         part.y = y
         part.width = w
         part.height = h
+        part.baseX = x
+        part.baseY = y
+        part.baseWidth = w
+        part.baseHeight = h
         part.caret = text.len()
         part.anchor = part.caret
         data.parts.add(move part)
@@ -585,6 +1037,7 @@ string partText(i64 id, bool placeholder) {
 void setPartBounds(i64 id, i32 x, i32 y, i32 w, i32 h) {
     withData([id, x, y, w, h](ref Shared data) {
         i64 p = partIndexOf(ref data, id)
+        arrangeNow(ref data, p)
         if (x >= 0 || y >= 0) {
             data.parts[p].x = x
             data.parts[p].y = y
@@ -593,22 +1046,28 @@ void setPartBounds(i64 id, i32 x, i32 y, i32 w, i32 h) {
             data.parts[p].width = w
             data.parts[p].height = h
         }
+        rebase(ref data, p)
     })
 }
 
-// 0 x, 1 y, 2 width, 3 height.
+// 0 x, 1 y, 2 width, 3 height, 4 and 5 the width and the height of an image.
 i32 partBound(i64 id, i32 which) {
     i32 result = 0
     withData([id, which, ref result](ref Shared data) {
         i64 p = partIndexOf(ref data, id)
+        arrangeNow(ref data, p)
         if (which == 0) {
             result = data.parts[p].x
         } else if (which == 1) {
             result = data.parts[p].y
         } else if (which == 2) {
             result = data.parts[p].width
-        } else {
+        } else if (which == 3) {
             result = data.parts[p].height
+        } else if (which == 4) {
+            result = data.parts[p].imageWidth
+        } else {
+            result = data.parts[p].imageHeight
         }
     })
     ret result
@@ -651,6 +1110,162 @@ void addPartHandler(i64 id, i32 which, addr box) {
     })
 }
 
+// Puts a component in a window, or in a group with window 0.
+void addPart(i64 window, i64 group, i64 part) {
+    withData([window, group, part](ref Shared data) {
+        i64 p = partIndexOf(ref data, part)
+        if (data.parts[p].window != 0 || data.parts[p].parent != 0) {
+            panic("the component is already in a window or in a group")
+        }
+        i64 into = window
+        if (group != 0) {
+            for (i64 up = group; up != 0; up = data.parts[partIndexOf(ref data, up)].parent) {
+                if (up == part) {
+                    panic("a group cannot contain itself")
+                }
+            }
+            into = data.parts[partIndexOf(ref data, group)].window
+            data.parts[p].parent = group
+        } else {
+            indexOf(ref data, window)
+        }
+        data.parts[p].window = into
+        if (into != 0) {
+            placeIn(ref data.parts, part, into)
+        }
+        rebase(ref data, p)
+    })
+}
+
+// The components inside a group go in the window of the group.
+void placeIn(ref list<PartData> parts, i64 group, i64 window) {
+    for (i64 i = 0; i < parts.len(); i++) {
+        if (parts[i].parent == group) {
+            parts[i].window = window
+            placeIn(ref parts, parts[i].id, window)
+        }
+    }
+}
+
+// The position and the size of a component now, for the size of its parent now
+// (P40): what the thread of the GUI computes when it draws.
+void arrangeNow(ref Shared data, i64 p) {
+    i64 group = data.parts[p].parent
+    if (group != 0) {
+        i64 g = partIndexOf(ref data, group)
+        arrangeNow(ref data, g)
+        arrange(ref data.parts[p], data.parts[g].width, data.parts[g].height)
+    } else if (data.parts[p].window != 0) {
+        i64 i = indexOf(ref data, data.parts[p].window)
+        arrange(ref data.parts[p], data.windows[i].width, data.windows[i].height - i32(barHeight))
+    }
+}
+
+// The distances that the anchors keep are those of now (P40).
+void rebase(ref Shared data, i64 p) {
+    i32 w = 0
+    i32 h = 0
+    i64 group = data.parts[p].parent
+    if (group != 0) {
+        i64 g = partIndexOf(ref data, group)
+        arrangeNow(ref data, g)
+        w = data.parts[g].width
+        h = data.parts[g].height
+    } else if (data.parts[p].window != 0) {
+        i64 i = indexOf(ref data, data.parts[p].window)
+        w = data.windows[i].width
+        h = data.windows[i].height - i32(barHeight)
+    }
+    data.parts[p].baseX = data.parts[p].x
+    data.parts[p].baseY = data.parts[p].y
+    data.parts[p].baseWidth = data.parts[p].width
+    data.parts[p].baseHeight = data.parts[p].height
+    data.parts[p].parentWidth = w
+    data.parts[p].parentHeight = h
+}
+
+void setPartAnchor(i64 id, Horizontal horizontal, Vertical vertical) {
+    withData([id, horizontal, vertical](ref Shared data) {
+        i64 p = partIndexOf(ref data, id)
+        arrangeNow(ref data, p)
+        data.parts[p].horizontal = horizontal
+        data.parts[p].vertical = vertical
+        rebase(ref data, p)
+    })
+}
+
+Horizontal partHorizontal(i64 id) {
+    Horizontal result = Horizontal.Left
+    withData([id, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, id)].horizontal })
+    ret result
+}
+
+Vertical partVertical(i64 id) {
+    Vertical result = Vertical.Top
+    withData([id, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, id)].vertical })
+    ret result
+}
+
+void setComboItems(i64 id, list<string> items) {
+    withData([id, items](ref Shared data) {
+        i64 p = partIndexOf(ref data, id)
+        data.parts[p].items = items
+        data.parts[p].selected = -1
+        data.parts[p].first = 0
+        data.parts[p].highlight = 0
+    })
+}
+
+void loadImage(i64 id, string path) {
+    list<u8> bytes
+    if (path.len() > 0) {
+        bytes = fs.readBytes(path)
+        if (bytes.len() == 0) {
+            throw Error(format("cannot read the image {}: the file is empty", path))
+        }
+    }
+    setImage(id, path, bytes)
+}
+
+// Decodes an image on this thread, and gives its pixels to the thread of the GUI,
+// which makes its texture.
+void setImage(i64 id, string file, list<u8> bytes) {
+    addr none
+    addr pixels
+    i32 w = 0
+    i32 h = 0
+    if (bytes.len() > 0) {
+        addr data = alloc(bytes.len())
+        for (i64 i = 0; i < bytes.len(); i++) {
+            put<u8>(offset(data, i), bytes[i])
+        }
+        addr reason = alloc(128)
+        pixels = cromo_gui_image_decode(data, bytes.len(), ref w, ref h, reason, 128)
+        list<u8> why = cText(reason).bytes()
+        free(reason)
+        if (why.len() > 0) {
+            why[0] = lowerByte(why[0])  // stb_image starts with a capital
+        }
+        free(data)
+        if (pixels == none) {
+            string what = file.len() > 0 ? format("the image {}", file) : "the image"
+            throw Error(format("cannot read {}: {}", what, string(why)))
+        }
+    }
+    withData([id, file, pixels, w, h](ref Shared data) {
+        i64 p = partIndexOf(ref data, id)
+        addr none
+        if (data.parts[p].pixels != none) {
+            cromo_gui_image_free(data.parts[p].pixels)
+        }
+        data.parts[p].text = file
+        data.parts[p].pixels = pixels
+        data.parts[p].imageWidth = w
+        data.parts[p].imageHeight = h
+        data.parts[p].imageChanged = true
+    })
+}
+
 // ---- The window ----
 
 // A window (D430, D442): made with its title and its size in logical pixels,
@@ -675,18 +1290,9 @@ public struct Window {
     }
 
     // Puts a component in the window, and gives it back (D434): a component is in
-    // one window only.
+    // one window or in one group only.
     public T add<T : Component>(T component) const {
-        i64 me = id
-        i64 part = component.componentId()
-        withData([me, part](ref Shared data) {
-            indexOf(ref data, me)
-            i64 p = partIndexOf(ref data, part)
-            if (data.parts[p].window != 0) {
-                panic("the component is already in a window")
-            }
-            data.parts[p].window = me
-        })
+        addPart(id, 0, component.componentId())
         ret component
     }
 
@@ -952,8 +1558,11 @@ const f32 titleSize = 12
 const f32 bodySize = 14  // text-sm
 const f32 padding = 12   // of the text in a text box, px-3
 const f32 checkSide = 16
-const f32 corner = 7       // of the buttons and the text boxes
+const f32 corner = 7       // of the buttons, the text boxes and the combo boxes
 const f32 checkCorner = 4  // of the check boxes
+const f32 groupCorner = 10
+const f32 itemHeight = 32  // of the list of a combo box
+const i64 listRows = 8
 
 // The colors of the look (D443): the grays and the indigo of Tailwind, light and
 // dark, with buttons in a gradient and a border of a deeper color.
@@ -983,8 +1592,12 @@ struct Colors {
     u32 focus
     u32 selection
     u32 shadow       // 0xAARRGGBB, under the buttons
-    u32 inputShadow  // under the text boxes and the check boxes
+    u32 inputShadow  // under the text boxes, the check boxes and the groups
     u32 glow         // around the text box in focus
+    u32 card         // of the groups
+    u32 cardBorder
+    u32 item        // under the item that the mouse or the keys point at
+    u32 listShadow  // 0xAARRGGBB, under the list of a combo box
 }
 
 Colors colorsOf(bool dark) {
@@ -1017,6 +1630,10 @@ Colors colorsOf(bool dark) {
         c.shadow = 0x73000000
         c.inputShadow = 0x40000000
         c.glow = 0x596366F1
+        c.card = 0x161E2D
+        c.cardBorder = 0x273244
+        c.item = 0x2B2F5E
+        c.listShadow = 0x99000000
     } else {
         c.bar = 0xFFFFFF
         c.separator = 0xE5E7EB  // gray-200
@@ -1038,6 +1655,10 @@ Colors colorsOf(bool dark) {
         c.shadow = 0x30111827
         c.inputShadow = 0x14111827
         c.glow = 0x406366F1
+        c.card = 0xFFFFFF
+        c.cardBorder = 0xE5E7EB
+        c.item = 0xEEF2FF  // indigo-50
+        c.listShadow = 0x2E111827
     }
     ret c
 }
@@ -1083,6 +1704,28 @@ void clipTo(addr renderer, f32 x, f32 y, f32 w, f32 h) {
     clip[2] = i32(w)
     clip[3] = i32(h)
     SDL_SetRenderClipRect(renderer, variableAddress(clip))
+}
+
+// Drawing only inside the groups of a component.
+void clipPart(addr renderer, ref PartData part) {
+    clipTo(renderer, part.clipLeft, barHeight + part.clipTop, part.clipRight - part.clipLeft, part.clipBottom - part.clipTop)
+}
+
+// Drawing only inside a rectangle, and inside the groups of a component.
+void clipInside(addr renderer, ref PartData part, f32 x, f32 y, f32 w, f32 h) {
+    f32 left = most(x, part.clipLeft)
+    f32 top = most(y, barHeight + part.clipTop)
+    f32 right = least(x + w, part.clipRight)
+    f32 bottom = least(y + h, barHeight + part.clipBottom)
+    clipTo(renderer, left, top, most(right - left, 0), most(bottom - top, 0))
+}
+
+f32 least(f32 a, f32 b) {
+    ret a < b ? a : b
+}
+
+f32 most(f32 a, f32 b) {
+    ret a > b ? a : b
 }
 
 // A string of C, ended by a zero.
@@ -1135,6 +1778,7 @@ i32 prepare() {
             }
             if (window.closing && window.started && !window.notified) {
                 if (window.window != none) {
+                    freeTextures(ref window, ref data.parts)
                     shut(ref window)
                 }
                 window.notified = true
@@ -1260,6 +1904,17 @@ void apply(ref WindowData window) {
     }
 }
 
+// The textures of the images of a window, before its renderer is destroyed.
+void freeTextures(ref WindowData window, ref list<PartData> parts) {
+    addr none
+    for (ref PartData part in parts) {
+        if (part.window == window.id && part.texture != none) {
+            SDL_DestroyTexture(part.texture)
+            part.texture = none
+        }
+    }
+}
+
 void shut(ref WindowData window) {
     addr none
     cromo_gui_font_free(window.font)
@@ -1288,7 +1943,7 @@ i32 buttonAt(f32 x, f32 y, f32 width) {
 
 // A call of handlers, made under the lock and run after it.
 struct Call {
-    i32 kind  // 1 mouse move, 2 mouse down, 3 mouse up, 4 key, 5 resize, 6 click, 7 text, 8 check
+    i32 kind  // 1 mouse move, 2 mouse down, 3 mouse up, 4 key, 5 resize, 6 click, 7 text, 8 check, 9 choice
     list<addr> boxes
     Mouse mouse
     Key key
@@ -1296,6 +1951,7 @@ struct Call {
     i32 h
     string text
     bool value
+    i64 index
 }
 
 void handle(addr event) {
@@ -1364,6 +2020,13 @@ void dispatch(ref Call call) {
             } finally {
                 put<func(bool)>(box, move handler)
             }
+        } else if (call.kind == 9) {
+            func(i64) handler = take<func(i64)>(box)
+            try {
+                handler(call.index)
+            } finally {
+                put<func(i64)>(box, move handler)
+            }
         }
     }
 }
@@ -1381,6 +2044,7 @@ void route(ref WindowData window, ref list<PartData> parts, addr event, u32 kind
     if (kind >= 0x400 && kind <= 0x402) {  // the mouse: in logical pixels
         SDL_ConvertEventToRenderCoordinates(window.renderer, event)
     }
+    layout(ref window, ref parts)
     i32 w = 0
     i32 h = 0
     SDL_GetWindowSize(window.window, ref w, ref h)
@@ -1389,16 +2053,24 @@ void route(ref WindowData window, ref list<PartData> parts, addr event, u32 kind
         f32 x = take<f32>(offset(event, 28))
         f32 y = take<f32>(offset(event, 32))
         window.hovered = buttonAt(x, y, width)
-        i64 hot = y >= barHeight ? partAt(ref parts, window.id, x, y - barHeight) : -1
+        i64 hot = y >= barHeight ? partAt(ref window, ref parts, x, y - barHeight) : -1
+        i64 open = partNumber(ref parts, window.popup)
+        if (open >= 0 && inList(ref window, ref parts[open], x, y - barHeight)) {
+            hot = open
+            i64 item = itemAt(ref window, ref parts[open], x, y - barHeight)
+            if (item >= 0) {
+                parts[open].highlight = item
+            }
+        }
         i64 hotId = hot >= 0 ? parts[hot].id : 0
         if (hotId != window.hot) {
             window.hot = hotId
-            SDL_SetCursor(hot >= 0 && parts[hot].kind == kindTextBox && parts[hot].enabled ? beam : arrow)
+            SDL_SetCursor(hot >= 0 && hot != open && parts[hot].kind == kindTextBox && parts[hot].active ? beam : arrow)
         }
         if (window.dragging != 0) {
             i64 d = partNumber(ref parts, window.dragging)
             if (d >= 0) {
-                parts[d].caret = indexAt(window.body, parts[d].text, x - f32(parts[d].x) - padding + parts[d].scroll)
+                parts[d].caret = indexAt(window.body, parts[d].text, x - parts[d].left - padding + parts[d].scroll)
                 window.caretStart = SDL_GetTicksNS()
             }
         }
@@ -1429,6 +2101,16 @@ void route(ref WindowData window, ref list<PartData> parts, addr event, u32 kind
             call.mouse = mouseAt(x, y, button)
             calls.add(move call)
         }
+    } else if (kind == 0x403) {  // SDL_EVENT_MOUSE_WHEEL: it scrolls the list open
+        i64 open = partNumber(ref parts, window.popup)
+        if (open >= 0) {
+            i64 ticks = i64(take<i32>(offset(event, 48)))
+            if (take<u32>(offset(event, 32)) == 1) {  // SDL_MOUSEWHEEL_FLIPPED
+                ticks = -ticks
+            }
+            parts[open].first = parts[open].first - ticks
+            reveal(ref window, ref parts[open], false)
+        }
     } else if (kind == 0x20D) {  // SDL_EVENT_WINDOW_MOUSE_LEAVE
         window.hovered = -1
         window.pressed = -1
@@ -1437,6 +2119,7 @@ void route(ref WindowData window, ref list<PartData> parts, addr event, u32 kind
         window.focused = true
     } else if (kind == 0x20F) {  // FOCUS_LOST
         window.focused = false
+        window.popup = 0
     } else if (kind == 0x210) {  // CLOSE_REQUESTED, as Alt+F4
         window.closing = true
     } else if (kind == 0x209) {  // MINIMIZED
@@ -1471,7 +2154,7 @@ void route(ref WindowData window, ref list<PartData> parts, addr event, u32 kind
         }
     } else if (kind == 0x303) {  // SDL_EVENT_TEXT_INPUT, in UTF-8
         i64 f = partNumber(ref parts, window.focus)
-        if (f >= 0 && parts[f].kind == kindTextBox && parts[f].enabled) {
+        if (f >= 0 && parts[f].kind == kindTextBox && parts[f].active) {
             insert(ref parts[f], cText(take<addr>(offset(event, 24))))
             window.caretStart = SDL_GetTicksNS()
             changed(ref parts[f], ref calls)
@@ -1515,27 +2198,35 @@ i64 partNumber(ref list<PartData> parts, i64 id) {
     ret -1
 }
 
-// The component of a window at a point of its content, the last added on top.
-i64 partAt(ref list<PartData> parts, i64 window, f32 x, f32 y) {
-    for (i64 i = parts.len() - 1; i >= 0; i--) {
-        if (parts[i].window == window && parts[i].visible && inside(ref parts[i], x, y)) {
+// The component of a window at a point of its content: the last drawn is on top.
+i64 partAt(ref WindowData window, ref list<PartData> parts, f32 x, f32 y) {
+    for (i64 k = window.order.len() - 1; k >= 0; k--) {
+        i64 i = window.order[k]
+        if (parts[i].shown && inside(ref parts[i], x, y)) {
             ret i
         }
     }
     ret -1
 }
 
+// A point of the content on a component, and inside its groups.
 bool inside(ref PartData part, f32 x, f32 y) {
-    ret x >= f32(part.x) && x < f32(part.x + part.width) && y >= f32(part.y) && y < f32(part.y + part.height)
+    ret x >= part.left && x < part.left + f32(part.width) && y >= part.top && y < part.top + f32(part.height) &&
+        x >= part.clipLeft && x < part.clipRight && y >= part.clipTop && y < part.clipBottom
 }
 
 bool focusable(ref PartData part) {
-    ret part.kind != kindLabel && part.visible && part.enabled
+    bool takes = part.kind == kindButton || part.kind == kindTextBox || part.kind == kindCheckBox || part.kind == kindComboBox
+    ret takes && part.shown && part.active
 }
 
 // Gives the keyboard to a component, or to none with 0: a text box receives the
-// text of the keyboard, with its input method.
+// text of the keyboard, with its input method. The list of another combo box
+// closes.
 void focusTo(ref WindowData window, ref list<PartData> parts, i64 id) {
+    if (window.popup != id) {
+        window.popup = 0
+    }
     if (window.focus == id) {
         ret
     }
@@ -1556,12 +2247,13 @@ void focusTo(ref WindowData window, ref list<PartData> parts, i64 id) {
 void moveFocus(ref WindowData window, ref list<PartData> parts, i64 step) {
     list<i64> order
     i64 current = -1
-    for (ref PartData part in parts) {
-        if (part.window == window.id && focusable(ref part)) {
-            if (part.id == window.focus) {
+    for (i64 k = 0; k < window.order.len(); k++) {
+        i64 i = window.order[k]
+        if (focusable(ref parts[i])) {
+            if (parts[i].id == window.focus) {
                 current = order.len()
             }
-            order.add(part.id)
+            order.add(parts[i].id)
         }
     }
     if (order.len() == 0) {
@@ -1571,17 +2263,28 @@ void moveFocus(ref WindowData window, ref list<PartData> parts, i64 step) {
     focusTo(ref window, ref parts, order[next])
 }
 
+// With the list of a combo box open, a click outside it closes it and does nothing
+// else (P39); on an item, the release chooses it.
 void pressPart(ref WindowData window, ref list<PartData> parts, f32 x, f32 y) {
-    i64 p = partAt(ref parts, window.id, x, y)
+    i64 open = partNumber(ref parts, window.popup)
+    if (open >= 0) {
+        if (!inList(ref window, ref parts[open], x, y)) {
+            window.popup = 0
+        }
+        ret
+    }
+    i64 p = partAt(ref window, ref parts, x, y)
     focusTo(ref window, ref parts, p >= 0 && focusable(ref parts[p]) ? parts[p].id : 0)
-    if (p < 0 || !parts[p].enabled) {
+    if (p < 0 || !parts[p].active) {
         ret
     }
     window.held = parts[p].id
     if (parts[p].kind == kindTextBox) {
-        parts[p].caret = indexAt(window.body, parts[p].text, x - f32(parts[p].x) - padding + parts[p].scroll)
+        parts[p].caret = indexAt(window.body, parts[p].text, x - parts[p].left - padding + parts[p].scroll)
         parts[p].anchor = parts[p].caret
         window.dragging = parts[p].id
+    } else if (parts[p].kind == kindComboBox) {
+        openList(ref window, ref parts[p])
     }
 }
 
@@ -1589,9 +2292,169 @@ void releasePart(ref WindowData window, ref list<PartData> parts, f32 x, f32 y, 
     i64 p = partNumber(ref parts, window.held)
     window.held = 0
     window.dragging = 0
-    if (p >= 0 && parts[p].enabled && inside(ref parts[p], x, y)) {
+    i64 open = partNumber(ref parts, window.popup)
+    if (open >= 0) {
+        i64 item = itemAt(ref window, ref parts[open], x, y)
+        if (item >= 0) {
+            choose(ref parts[open], item, ref calls)
+            window.popup = 0
+        }
+        ret
+    }
+    if (p >= 0 && parts[p].active && inside(ref parts[p], x, y)) {
         activate(ref parts[p], ref calls)
     }
+}
+
+// ---- The list of a combo box (D445) ----
+
+// How many items the list shows: up to 8, and as many as fit below the combo box
+// or above it, where there is more room.
+i64 rowsOf(ref WindowData window, ref PartData box) {
+    f32 below = f32(window.height) - barHeight - box.top - f32(box.height) - 8
+    f32 above = box.top - 8
+    i64 fit = i64((most(below, above) - 8) / itemHeight)
+    i64 rows = box.items.len() < listRows ? box.items.len() : listRows
+    if (fit < rows) {
+        rows = fit < 1 ? 1 : fit
+    }
+    ret rows
+}
+
+// Where the list is, in the content: below the combo box, or above it when there
+// is no room below.
+Rect listOf(ref WindowData window, ref PartData box) {
+    f32 h = f32(rowsOf(ref window, ref box)) * itemHeight + 8
+    f32 top = box.top + f32(box.height) + 4
+    if (top + h > f32(window.height) - barHeight - 4 && box.top - 4 - h >= 4) {
+        top = box.top - 4 - h
+    }
+    ret Rect(box.left, top, f32(box.width), h)
+}
+
+bool inList(ref WindowData window, ref PartData box, f32 x, f32 y) {
+    Rect area = listOf(ref window, ref box)
+    ret x >= area.x && x < area.x + area.w && y >= area.y && y < area.y + area.h
+}
+
+// The item at a point of the content, or -1.
+i64 itemAt(ref WindowData window, ref PartData box, f32 x, f32 y) {
+    Rect area = listOf(ref window, ref box)
+    if (x < area.x || x >= area.x + area.w || y < area.y + 4 || y >= area.y + area.h - 4) {
+        ret -1
+    }
+    i64 item = box.first + i64((y - area.y - 4) / itemHeight)
+    ret item < box.items.len() ? item : -1
+}
+
+void openList(ref WindowData window, ref PartData box) {
+    if (box.items.len() == 0) {
+        ret
+    }
+    window.popup = box.id
+    box.highlight = box.selected >= 0 ? box.selected : 0
+    reveal(ref window, ref box, true)
+}
+
+// Scrolls the list so that the item pointed at is in it, with `follow`, and not
+// beyond its items.
+void reveal(ref WindowData window, ref PartData box, bool follow) {
+    i64 rows = rowsOf(ref window, ref box)
+    if (follow && box.highlight < box.first) {
+        box.first = box.highlight
+    }
+    if (follow && box.highlight >= box.first + rows) {
+        box.first = box.highlight - rows + 1
+    }
+    if (box.first > box.items.len() - rows) {
+        box.first = box.items.len() - rows
+    }
+    if (box.first < 0) {
+        box.first = 0
+    }
+}
+
+// The user chooses an item: the handlers of onChange are called when it changes.
+void choose(ref PartData box, i64 item, ref list<Call> calls) {
+    if (item == box.selected) {
+        ret
+    }
+    box.selected = item
+    Call call = callOf(9, box.change)
+    call.index = item
+    calls.add(move call)
+}
+
+// The next item after `from` that starts with a letter, or -1.
+i64 itemByLetter(ref PartData box, i64 code, i64 from) {
+    for (i64 k = 1; k <= box.items.len(); k++) {
+        i64 i = (from + k) % box.items.len()
+        list<u8> bytes = box.items[i].bytes()
+        if (bytes.len() > 0 && lowerByte(bytes[0]) == lowerByte(u8(code))) {
+            ret i
+        }
+    }
+    ret -1
+}
+
+u8 lowerByte(u8 b) {
+    ret b >= 65 && b <= 90 ? b + 32 : b
+}
+
+// The keys of a combo box (P39): false for those it does not use.
+bool comboKey(ref WindowData window, ref PartData box, Key key, ref list<Call> calls) {
+    i64 code = key.code
+    i64 n = box.items.len()
+    bool letter = !key.control && !key.alt && code > 32 && code < 127
+    if (window.popup == box.id) {
+        if (code == 27) {  // Esc
+            window.popup = 0
+        } else if (code == 13 || code == keyEnter || code == 32) {
+            if (box.highlight >= 0 && box.highlight < n) {
+                choose(ref box, box.highlight, ref calls)
+            }
+            window.popup = 0
+        } else if (code == keyUp && box.highlight > 0) {
+            box.highlight--
+        } else if (code == keyDown && box.highlight < n - 1) {
+            box.highlight++
+        } else if (code == keyHome) {
+            box.highlight = 0
+        } else if (code == keyEnd) {
+            box.highlight = n - 1
+        } else if (letter) {
+            i64 found = itemByLetter(ref box, code, box.highlight)
+            if (found >= 0) {
+                box.highlight = found
+            }
+        } else if (code != keyUp && code != keyDown) {
+            ret false
+        }
+        reveal(ref window, ref box, true)
+        ret true
+    }
+    if (code == 32 || code == 13 || code == keyEnter || (key.alt && code == keyDown)) {
+        openList(ref window, ref box)
+        ret true
+    }
+    i64 next = -1
+    if (code == keyUp) {
+        next = box.selected > 0 ? box.selected - 1 : 0
+    } else if (code == keyDown) {
+        next = box.selected < n - 1 ? box.selected + 1 : n - 1
+    } else if (code == keyHome) {
+        next = 0
+    } else if (code == keyEnd) {
+        next = n - 1
+    } else if (letter) {
+        next = itemByLetter(ref box, code, box.selected)
+    } else {
+        ret false
+    }
+    if (next >= 0 && next < n) {
+        choose(ref box, next, ref calls)
+    }
+    ret true
 }
 
 // A click, or Space: a button calls its handlers, a check box changes.
@@ -1613,12 +2476,15 @@ bool keyOfPart(ref WindowData window, ref list<PartData> parts, Key key, ref lis
         ret true
     }
     i64 f = partNumber(ref parts, window.focus)
-    if (f < 0 || !parts[f].enabled || !parts[f].visible) {
+    if (f < 0 || !parts[f].active || !parts[f].shown) {
         ret false
     }
     if (parts[f].kind == kindTextBox) {
         window.caretStart = SDL_GetTicksNS()
         ret edit(ref parts[f], key, ref calls)
+    }
+    if (parts[f].kind == kindComboBox) {
+        ret comboKey(ref window, ref parts[f], key, ref calls)
     }
     if (key.code == 32 || (key.code == 13 && parts[f].kind == kindButton)) {  // Space, Enter
         activate(ref parts[f], ref calls)
@@ -1632,6 +2498,8 @@ const i64 keyRight = 0x4000004F
 const i64 keyHome = 0x4000004A
 const i64 keyEnd = 0x4000004D
 const i64 keyEnter = 0x40000058  // of the numeric keypad
+const i64 keyUp = 0x40000052
+const i64 keyDown = 0x40000051
 
 // The editing of a text box: the characters come with the text of the keyboard.
 bool edit(ref PartData box, Key key, ref list<Call> calls) {
@@ -1765,6 +2633,98 @@ i64 indexAt(addr font, string s, f32 x) {
     ret s.len()
 }
 
+// ---- The layout: the groups (D444) and the anchors (D447, P40) ----
+
+// Where the components of a group go: its place in the content, its size, whether
+// it is shown and enabled, and the rectangle that clips them.
+struct Frame {
+    f32 left
+    f32 top
+    i32 width
+    i32 height
+    bool shown
+    bool active
+    f32 clipLeft
+    f32 clipTop
+    f32 clipRight
+    f32 clipBottom
+}
+
+// Places the components of a window in its content, each group before its
+// components, in the order they are drawn. The list of a combo box hidden or
+// disabled closes.
+void layout(ref WindowData window, ref list<PartData> parts) {
+    window.order.clear()
+    Frame content
+    content.width = window.width
+    content.height = window.height - i32(barHeight)
+    content.shown = true
+    content.active = true
+    content.clipRight = f32(content.width)
+    content.clipBottom = f32(content.height)
+    layoutIn(ref window, ref parts, 0, content)
+    i64 open = partNumber(ref parts, window.popup)
+    if (open < 0 || !parts[open].shown || !parts[open].active) {
+        window.popup = 0
+    }
+}
+
+void layoutIn(ref WindowData window, ref list<PartData> parts, i64 group, Frame frame) {
+    for (i64 i = 0; i < parts.len(); i++) {
+        if (parts[i].window != window.id || parts[i].parent != group) {
+            continue
+        }
+        arrange(ref parts[i], frame.width, frame.height)
+        parts[i].left = frame.left + f32(parts[i].x)
+        parts[i].top = frame.top + f32(parts[i].y)
+        parts[i].shown = frame.shown && parts[i].visible
+        parts[i].active = frame.active && parts[i].enabled
+        parts[i].clipLeft = frame.clipLeft
+        parts[i].clipTop = frame.clipTop
+        parts[i].clipRight = frame.clipRight
+        parts[i].clipBottom = frame.clipBottom
+        window.order.add(i)
+        if (parts[i].kind == kindGroup) {
+            Frame inner
+            inner.left = parts[i].left
+            inner.top = parts[i].top
+            inner.width = parts[i].width
+            inner.height = parts[i].height
+            inner.shown = parts[i].shown
+            inner.active = parts[i].active
+            inner.clipLeft = most(frame.clipLeft, parts[i].left)
+            inner.clipTop = most(frame.clipTop, parts[i].top)
+            inner.clipRight = least(frame.clipRight, parts[i].left + f32(parts[i].width))
+            inner.clipBottom = least(frame.clipBottom, parts[i].top + f32(parts[i].height))
+            layoutIn(ref window, ref parts, parts[i].id, inner)
+        }
+    }
+}
+
+// The position and the size of a component, for the size of its parent now.
+void arrange(ref PartData part, i32 width, i32 height) {
+    i32 dw = width - part.parentWidth
+    i32 dh = height - part.parentHeight
+    part.x = part.baseX
+    part.y = part.baseY
+    part.width = part.baseWidth
+    part.height = part.baseHeight
+    if (part.horizontal == Horizontal.Right) {
+        part.x = part.baseX + dw
+    } else if (part.horizontal == Horizontal.Stretch) {
+        part.width = part.baseWidth + dw > 0 ? part.baseWidth + dw : 0
+    } else if (part.horizontal == Horizontal.Center) {
+        part.x = part.baseX + dw / 2
+    }
+    if (part.vertical == Vertical.Bottom) {
+        part.y = part.baseY + dh
+    } else if (part.vertical == Vertical.Stretch) {
+        part.height = part.baseHeight + dh > 0 ? part.baseHeight + dh : 0
+    } else if (part.vertical == Vertical.Center) {
+        part.y = part.baseY + dh / 2
+    }
+}
+
 // ---- The drawing ----
 
 void draw() {
@@ -1794,11 +2754,18 @@ void drawWindow(ref WindowData window, ref list<PartData> parts) {
     addr r = window.renderer
     fill(r, c.content, 0, 0, width, height)
 
-    clipTo(r, 0, barHeight, width, height - barHeight)
-    for (ref PartData part in parts) {
-        if (part.window == window.id && part.visible) {
-            drawPart(ref window, ref part, ref c, width, height)
+    layout(ref window, ref parts)
+    for (i64 k = 0; k < window.order.len(); k++) {
+        i64 i = window.order[k]
+        if (parts[i].shown && parts[i].clipRight > parts[i].clipLeft && parts[i].clipBottom > parts[i].clipTop) {
+            clipPart(r, ref parts[i])
+            drawPart(ref window, ref parts[i], ref c)
         }
+    }
+    i64 open = partNumber(ref parts, window.popup)
+    if (open >= 0) {
+        clipTo(r, 0, barHeight, width, height - barHeight)
+        drawList(ref window, ref parts[open], ref c)
     }
     addr none
     SDL_SetRenderClipRect(r, none)
@@ -1838,17 +2805,17 @@ void drawWindow(ref WindowData window, ref list<PartData> parts) {
 
 // A component, in the look of D443: a soft shadow under it, buttons and check
 // boxes checked in a gradient with a line of light and a border of a deeper
-// color, a glow around the text box in focus and a ring of 2 pixels around the
-// other components in focus.
-void drawPart(ref WindowData window, ref PartData part, ref Colors c, f32 width, f32 height) {
+// color, a glow around the text box or the combo box in focus and a ring of 2
+// pixels around the other components in focus, the groups as cards.
+void drawPart(ref WindowData window, ref PartData part, ref Colors c) {
     addr r = window.renderer
     f32 d = window.density
-    f32 x = f32(part.x)
-    f32 y = barHeight + f32(part.y)
+    f32 x = part.left
+    f32 y = barHeight + part.top
     f32 w = f32(part.width)
     f32 h = f32(part.height)
     bool focused = window.focus == part.id && window.focused
-    bool on = part.enabled
+    bool on = part.active
     f32 ascent = 0
     f32 descent = 0
     f32 gap = 0
@@ -1876,12 +2843,7 @@ void drawPart(ref WindowData window, ref PartData part, ref Colors c, f32 width,
             cromo_gui_box(r, x - 4, y - 4, w + 8, h + 8, corner + 4, 2, d, 0, solid(c.focus, true))
         }
     } else if (part.kind == kindTextBox) {
-        if (focused) {
-            cromo_gui_shadow(r, x, y, w, h, corner, d, c.glow, 4, 0)
-        } else if (on) {
-            cromo_gui_shadow(r, x, y, w, h, corner, d, c.inputShadow, 2, 1)
-        }
-        cromo_gui_box(r, x, y, w, h, corner, focused ? 2 : 1, d, solid(c.input, on), solid(focused ? c.focus : c.inputBorder, on))
+        drawField(ref window, ref part, ref c, focused)
         f32 inner = w - 2 * padding
         f32 caretX = textWidth(window.body, part.text, part.caret)
         f32 total = textWidth(window.body, part.text, part.text.len())
@@ -1895,7 +2857,7 @@ void drawPart(ref WindowData window, ref PartData part, ref Colors c, f32 width,
             part.scroll = total > inner ? total - inner : 0
         }
         f32 left = x + padding - part.scroll
-        clipTo(r, x + 2, y + 2, w - 4, h - 4)
+        clipInside(r, ref part, x + 2, y + 2, w - 4, h - 4)
         if (part.caret != part.anchor) {
             i64 low = part.caret < part.anchor ? part.caret : part.anchor
             i64 high = part.caret < part.anchor ? part.anchor : part.caret
@@ -1912,7 +2874,7 @@ void drawPart(ref WindowData window, ref PartData part, ref Colors c, f32 width,
         if (focused && blink) {
             fill(r, c.focus, left + caretX, baseline - ascent, 1, ascent + descent)
         }
-        clipTo(r, 0, barHeight, width, height - barHeight)
+        clipPart(r, ref part)
     } else if (part.kind == kindCheckBox) {
         f32 top = y + (h - checkSide) / 2
         if (on) {
@@ -1930,5 +2892,135 @@ void drawPart(ref WindowData window, ref PartData part, ref Colors c, f32 width,
             cromo_gui_box(r, x - 4, top - 4, checkSide + 8, checkSide + 8, checkCorner + 4, 2, d, 0, solid(c.focus, true))
         }
         text(window.body, part.text, x + checkSide + 10, baseline, c.text, on)
+    } else if (part.kind == kindGroup) {
+        cromo_gui_shadow(r, x, y, w, h, groupCorner, d, c.inputShadow, 2, 1)
+        cromo_gui_box(r, x, y, w, h, groupCorner, 1, d, solid(c.card, true), solid(c.cardBorder, true))
+        clipInside(r, ref part, x + 1, y + 1, w - 2, h - 2)
+        text(window.strong, part.text, x + 16, y + 22 + (ascent - descent) / 2, c.text, on)
+        clipPart(r, ref part)
+    } else if (part.kind == kindComboBox) {
+        drawField(ref window, ref part, ref c, focused || window.popup == part.id)
+        clipInside(r, ref part, x + 2, y + 2, w - 34, h - 4)
+        if (part.selected >= 0 && part.selected < part.items.len()) {
+            text(window.body, part.items[part.selected], x + padding, baseline, c.text, on)
+        } else {
+            text(window.body, part.placeholder, x + padding, baseline, c.muted, on)
+        }
+        clipPart(r, ref part)
+        u32 arrow = on ? c.label : c.muted
+        cromo_gui_symbol(r, 5, x + w - 18, y + h / 2, d, red(arrow), green(arrow), blue(arrow))
+    } else if (part.kind == kindImageBox) {
+        drawImage(ref window, ref part)
     }
+}
+
+// The box of a text box or of a combo box: in focus, with a border of indigo and a
+// glow around it.
+void drawField(ref WindowData window, ref PartData part, ref Colors c, bool lit) {
+    addr r = window.renderer
+    f32 d = window.density
+    f32 x = part.left
+    f32 y = barHeight + part.top
+    f32 w = f32(part.width)
+    f32 h = f32(part.height)
+    bool on = part.active
+    if (lit) {
+        cromo_gui_shadow(r, x, y, w, h, corner, d, c.glow, 4, 0)
+    } else if (on) {
+        cromo_gui_shadow(r, x, y, w, h, corner, d, c.inputShadow, 2, 1)
+    }
+    cromo_gui_box(r, x, y, w, h, corner, lit ? 2 : 1, d, solid(c.input, on), solid(lit ? c.focus : c.inputBorder, on))
+}
+
+// The list of an open combo box, over the other components: the item pointed at
+// on a light background, the one chosen semibold with a mark, and a bar on the
+// right when it scrolls.
+void drawList(ref WindowData window, ref PartData box, ref Colors c) {
+    addr r = window.renderer
+    f32 d = window.density
+    Rect area = listOf(ref window, ref box)
+    f32 x = area.x
+    f32 y = barHeight + area.y
+    cromo_gui_shadow(r, x, y, area.w, area.h, corner, d, c.listShadow, 8, 4)
+    cromo_gui_box(r, x, y, area.w, area.h, corner, 1, d, solid(c.input, true), solid(c.inputBorder, true))
+    f32 ascent = 0
+    f32 descent = 0
+    f32 gap = 0
+    cromo_gui_font_metrics(window.body, ref ascent, ref descent, ref gap)
+    i64 rows = rowsOf(ref window, ref box)
+    bool scrolls = box.items.len() > rows
+    for (i64 row = 0; row < rows; row++) {
+        i64 item = box.first + row
+        f32 top = y + 4 + f32(row) * itemHeight
+        clipTo(r, x + 1, y + 1, area.w - 2, area.h - 2)
+        if (item == box.highlight) {
+            cromo_gui_box(r, x + 4, top, area.w - (scrolls ? 16 : 8), itemHeight, 5, 0, d, solid(c.item, true), 0)
+        }
+        bool chosen = item == box.selected
+        clipTo(r, x + 1, y + 1, area.w - 36, area.h - 2)
+        text(chosen ? window.strong : window.body, box.items[item], x + 12, top + itemHeight / 2 + (ascent - descent) / 2, c.text, true)
+        if (chosen) {
+            clipTo(r, x + 1, y + 1, area.w - 2, area.h - 2)
+            cromo_gui_symbol(r, 4, x + area.w - (scrolls ? 30 : 22), top + itemHeight / 2, d, red(c.focus), green(c.focus),
+                blue(c.focus))
+        }
+    }
+    if (scrolls) {
+        f32 track = area.h - 8
+        f32 thumb = track * f32(rows) / f32(box.items.len())
+        f32 at = y + 4 + (track - thumb) * f32(box.first) / f32(box.items.len() - rows)
+        clipTo(r, x + 1, y + 1, area.w - 2, area.h - 2)
+        cromo_gui_box(r, x + area.w - 8, at, 4, thumb, 2, 0, d, solid(c.checkBorder, true), 0)
+    }
+}
+
+// An image: its texture is made from its pixels the first time it is drawn after
+// it is set, and its pixels are freed.
+void drawImage(ref WindowData window, ref PartData part) {
+    addr r = window.renderer
+    addr none
+    if (part.imageChanged) {
+        if (part.texture != none) {
+            SDL_DestroyTexture(part.texture)
+            part.texture = none
+        }
+        if (part.pixels != none) {
+            part.texture = SDL_CreateTexture(r, 0x16762004, 0, part.imageWidth, part.imageHeight)  // RGBA32, static
+            if (part.texture != none) {
+                SDL_SetTextureBlendMode(part.texture, 1)
+                SDL_UpdateTexture(part.texture, none, part.pixels, part.imageWidth * 4)
+            }
+            cromo_gui_image_free(part.pixels)
+            part.pixels = none
+        }
+        part.imageChanged = false
+    }
+    if (part.texture == none) {
+        ret
+    }
+    f32 x = part.left
+    f32 y = barHeight + part.top
+    f32 w = f32(part.width)
+    f32 h = f32(part.height)
+    f32 iw = f32(part.imageWidth)
+    f32 ih = f32(part.imageHeight)
+    f32 dw = w
+    f32 dh = h
+    if (part.scale == Scale.Fit) {
+        f32 k = least(w / iw, h / ih)
+        dw = iw * k
+        dh = ih * k
+    } else if (part.scale == Scale.Fill) {
+        f32 k = most(w / iw, h / ih)
+        dw = iw * k
+        dh = ih * k
+    } else if (part.scale == Scale.Center) {
+        dw = iw
+        dh = ih
+    }
+    Rect target = Rect(x + (w - dw) / 2, y + (h - dh) / 2, dw, dh)
+    clipInside(r, ref part, x, y, w, h)
+    SDL_SetTextureAlphaMod(part.texture, part.active ? 255 : 128)
+    SDL_RenderTexture(r, part.texture, none, ref target)
+    clipPart(r, ref part)
 }

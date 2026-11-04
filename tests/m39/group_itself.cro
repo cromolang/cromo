@@ -1,0 +1,12 @@
+// A group cannot contain itself, nor a group that contains it (P39).
+// target: windows linux-x86_64
+// expect-exit: 101
+// expect-stderr: panic: a group cannot contain itself
+import std.gui
+
+i32 main() {
+    gui.GroupBox outer = gui.GroupBox("outer", 0, 0, 300, 200)
+    gui.GroupBox inner = outer.add(gui.GroupBox("inner", 10, 40, 200, 100))
+    inner.add(outer)
+    ret 0
+}

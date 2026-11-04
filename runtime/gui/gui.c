@@ -1,10 +1,11 @@
 // The part of std.gui in C (D441): the hit test of SDL, which takes a function of
 // C; the text, with stb_truetype and the fonts of Inter in fonts.S (D433, D440);
-// the symbols of the buttons of the title bar (D431) and of the check boxes; the
-// boxes with rounded corners of the components (D439); and what the end of main
-// waits for (D442). Without the C library and without the headers of SDL, as the
-// rest of the runtime: the functions of SDL are declared here, and stb_truetype
-// takes its mathematics from SDL.
+// the symbols of the buttons of the title bar (D431), of the check boxes and of
+// the combo boxes; the boxes with rounded corners of the components (D439), their
+// shadows and their gradients (D443); and what the end of main waits for (D442).
+// Without the C library and without the headers of SDL, as the rest of the
+// runtime: the functions of SDL are declared here, and stb_truetype takes its
+// mathematics from SDL. The images are in image.c (D446).
 
 typedef unsigned char u8;
 typedef unsigned int u32;
@@ -336,7 +337,6 @@ void cromo_gui_text(void* data, const u8* text, i64 length, f32 x, f32 y, u8 r, 
 // lines one logical pixel wide, in a square of 10, rasterized at the pixels of
 // the display with their coverage, so that the diagonals of close are smooth.
 
-#define SYMBOLS 4
 
 typedef struct Symbol {
     struct Symbol* next;
@@ -365,7 +365,8 @@ static f32 distance(const Segment* s, f32 x, f32 y) {
 }
 
 static void* drawSymbol(void* renderer, i32 kind, f32 density, i32* size) {
-    i32 line = (i32)SDL_floor((kind == 4 ? 1.75 : 1) * density + 0.5);  // the mark of a check box is bolder
+    // The mark of a check box and the arrow of a combo box are bolder.
+    i32 line = (i32)SDL_floor((kind == 4 ? 1.75 : kind == 5 ? 1.5 : 1) * density + 0.5);
     if (line < 1) line = 1;
     i32 extent = (i32)SDL_floor(10 * density + 0.5);  // the side of the square, in pixels
     i32 margin = line + 1;
@@ -397,10 +398,14 @@ static void* drawSymbol(void* renderer, i32 kind, f32 density, i32* size) {
     } else if (kind == 3) {  // close: two diagonals
         segments[count++] = (Segment){a, a, z, z};
         segments[count++] = (Segment){z, a, a, z};
-    } else {  // check: the mark of a check box
+    } else if (kind == 4) {  // check: the mark of a check box
         f32 d = z - a;
         segments[count++] = (Segment){a + 0.05f * d, a + 0.55f * d, a + 0.35f * d, a + 0.85f * d};
         segments[count++] = (Segment){a + 0.35f * d, a + 0.85f * d, a + 0.95f * d, a + 0.15f * d};
+    } else {  // the arrow down of a combo box
+        f32 d = z - a;
+        segments[count++] = (Segment){a + 0.15f * d, a + 0.35f * d, a + 0.5f * d, a + 0.7f * d};
+        segments[count++] = (Segment){a + 0.5f * d, a + 0.7f * d, a + 0.85f * d, a + 0.35f * d};
     }
     u8* pixels = SDL_malloc((size_t)n * n * 4);
     if (!pixels) return 0;
@@ -430,7 +435,7 @@ static void* drawSymbol(void* renderer, i32 kind, f32 density, i32* size) {
 }
 
 // A symbol centered at (x, y), in logical pixels: 0 minimize, 1 maximize, 2 restore,
-// 3 close, 4 the mark of a check box.
+// 3 close, 4 the mark of a check box, 5 the arrow of a combo box.
 void cromo_gui_symbol(void* renderer, i32 kind, f32 x, f32 y, f32 density, u8 r, u8 g, u8 b) {
     Symbol* symbol = symbols;
     while (symbol && !(symbol->renderer == renderer && symbol->kind == kind && symbol->density == density)) {

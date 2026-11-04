@@ -1,0 +1,50 @@
+// The images in PNG, JPEG, BMP and GIF, decoded by stb_image (D446), from a file
+// or from bytes; a file that is not an image, or that is missing, throws (P39).
+// target: windows linux-x86_64
+// program-env: SDL_VIDEO_DRIVER=offscreen
+// program-env: IMAGES={dir}/images
+// expect-output: tiny.png 3x2
+// expect-output: tiny.jpg 3x2
+// expect-output: tiny.bmp 3x2
+// expect-output: tiny.gif 3x2
+// expect-output: from bytes: 3x2, file ''
+// expect-output: none: 0x0
+// expect-output: not an image: cannot read the image not_an_image.png: image not of any known type, or corrupt
+// expect-output: missing: the error of the file
+// expect-output: scale Fit true, then Fill true
+import std.fs
+import std.gui
+import std.os
+import std.time
+
+i32 main() {
+    string folder = os.env("IMAGES")
+    gui.Window w = gui.Window("images", 400, 300)
+    gui.ImageBox image = w.add(gui.ImageBox("", 10, 10, 100, 100))
+    for (string name in ["tiny.png", "tiny.jpg", "tiny.bmp", "tiny.gif"]) {
+        image.setFile(format("{}/{}", folder, name))
+        println("{} {}x{}", name, image.imageWidth(), image.imageHeight())
+    }
+    w.start()
+    image.setBytes(fs.readBytes(format("{}/tiny.png", folder)))
+    time.msleep(50)
+    println("from bytes: {}x{}, file '{}'", image.imageWidth(), image.imageHeight(), image.file())
+    image.setFile("")
+    time.msleep(50)
+    println("none: {}x{}", image.imageWidth(), image.imageHeight())
+    try {
+        image.setFile(format("{}/not_an_image.png", folder))
+    } catch (Exception e) {
+        println("not an image: {}", e.message().replace(format("{}/", folder), ""))
+    }
+    try {
+        image.setFile(format("{}/missing.png", folder))
+    } catch (Exception e) {
+        println("missing: {}", e.message().contains("missing.png") ? "the error of the file" : e.message())
+    }
+    gui.Scale before = image.scale()
+    image.setScale(gui.Scale.Fill)
+    println("scale Fit {}, then Fill {}", before == gui.Scale.Fit, image.scale() == gui.Scale.Fill)
+    w.close()
+    ret 0
+}

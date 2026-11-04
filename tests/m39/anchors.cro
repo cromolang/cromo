@@ -1,0 +1,58 @@
+// The anchors (D447, P40): when the window grows by 100 by 60 pixels, each
+// component keeps its distances from the edges it is anchored to, in the window
+// or in its group; a position set later counts from the size of then.
+// target: windows linux-x86_64
+// program-env: SDL_VIDEO_DRIVER=offscreen
+// expect-output: before: 10,10 100x30
+// expect-output: left top 10,10 100x30
+// expect-output: right bottom 390,320 100x30
+// expect-output: stretch both 10,10 480x380
+// expect-output: center 200,195 100x30
+// expect-output: in the group, right 230,40 50x20
+// expect-output: group stretched 10,10 380x200, its button 140,40 140x20
+// expect-output: anchors Right true, Bottom true
+// expect-output: moved after: 20,20, then smaller: 20,20 80x30
+import std.gui
+import std.time
+
+i32 main() {
+    gui.Window w = gui.Window("anchors", 400, 335)  // a content of 400 by 300
+    gui.Button plain = w.add(gui.Button("plain", 10, 10, 100, 30))
+    gui.Button corner = w.add(gui.Button("corner", 290, 260, 100, 30))
+    corner.setAnchor(gui.Horizontal.Right, gui.Vertical.Bottom)
+    gui.Button all = w.add(gui.Button("all", 10, 10, 380, 320))
+    all.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Stretch)
+    gui.Button middle = w.add(gui.Button("middle", 150, 165, 100, 30))
+    middle.setAnchor(gui.Horizontal.Center, gui.Vertical.Center)
+    gui.GroupBox fixed = w.add(gui.GroupBox("fixed", 10, 10, 300, 200))
+    gui.Button inFixed = fixed.add(gui.Button("in fixed", 230, 40, 50, 20))
+    inFixed.setAnchor(gui.Horizontal.Right, gui.Vertical.Top)
+    gui.GroupBox wide = w.add(gui.GroupBox("wide", 10, 10, 280, 200))
+    wide.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Top)
+    gui.Button inWide = wide.add(gui.Button("in wide", 140, 40, 40, 20))
+    inWide.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Top)
+    println("before: {},{} {}x{}", plain.x(), plain.y(), plain.width(), plain.height())
+    w.start()
+    w.setSize(500, 395)
+    time.msleep(100)
+    println("left top {},{} {}x{}", plain.x(), plain.y(), plain.width(), plain.height())
+    println("right bottom {},{} {}x{}", corner.x(), corner.y(), corner.width(), corner.height())
+    println("stretch both {},{} {}x{}", all.x(), all.y(), all.width(), all.height())
+    println("center {},{} {}x{}", middle.x(), middle.y(), middle.width(), middle.height())
+    println("in the group, right {},{} {}x{}", inFixed.x(), inFixed.y(), inFixed.width(), inFixed.height())
+    println("group stretched {},{} {}x{}, its button {},{} {}x{}", wide.x(), wide.y(), wide.width(), wide.height(), inWide.x(),
+            inWide.y(), inWide.width(), inWide.height())
+    println("anchors Right {}, Bottom {}", corner.horizontalAnchor() == gui.Horizontal.Right,
+            corner.verticalAnchor() == gui.Vertical.Bottom)
+    // A position set now keeps its distances from the size of now: the window
+    // shrinks back by 20 by 0, and the button anchored to both edges loses 20.
+    all.setPosition(20, 20)
+    all.setSize(100, 30)
+    time.msleep(50)
+    print("moved after: {},{}, ", all.x(), all.y())
+    w.setSize(480, 395)
+    time.msleep(100)
+    println("then smaller: {},{} {}x{}", all.x(), all.y(), all.width(), all.height())
+    w.close()
+    ret 0
+}
