@@ -1055,6 +1055,256 @@ public struct IconBox : Component {
     }
 }
 
+// A container that draws nothing (D451): its components take their positions
+// from its top left corner, as in a group. A page of a navigation bar is one.
+public struct Panel : Component {
+    i64 id
+
+    public Panel(i32 x, i32 y, i32 width, i32 height) {
+        id = newPart(kindPanel, "", x, y, width, height)
+    }
+
+    i64 componentId() const {
+        ret id
+    }
+
+    // Puts a component in the panel, and gives it back.
+    public T add<T : Component>(T component) const {
+        addPart(0, id, component.componentId())
+        ret component
+    }
+
+    public void setPosition(i32 x, i32 y) const {
+        setPartBounds(id, x, y, -1, -1)
+    }
+
+    public void setSize(i32 width, i32 height) const {
+        setPartBounds(id, -1, -1, width, height)
+    }
+
+    public i32 x() const {
+        ret partBound(id, 0)
+    }
+
+    public i32 y() const {
+        ret partBound(id, 1)
+    }
+
+    public i32 width() const {
+        ret partBound(id, 2)
+    }
+
+    public i32 height() const {
+        ret partBound(id, 3)
+    }
+
+    public void setVisible(bool value) const {
+        setPartFlag(id, 0, value)
+    }
+
+    public bool visible() const {
+        ret partFlag(id, 0)
+    }
+
+    public void setEnabled(bool value) const {
+        setPartFlag(id, 1, value)
+    }
+
+    public bool enabled() const {
+        ret partFlag(id, 1)
+    }
+
+    // How it follows the edges of its window or of its group (D447).
+    public void setAnchor(Horizontal horizontal, Vertical vertical) const {
+        setPartAnchor(id, horizontal, vertical)
+    }
+
+    public Horizontal horizontalAnchor() const {
+        ret partHorizontal(id)
+    }
+
+    public Vertical verticalAnchor() const {
+        ret partVertical(id)
+    }
+}
+
+// The bar at the top of an app (D450, P42): its title, an icon on the left, as a
+// back arrow or a menu, and icons of actions on the right. Put in a window, it
+// takes the top of the content, the whole width.
+public struct AppBar : Component {
+    i64 id
+
+    public AppBar(string title) {
+        id = newPart(kindAppBar, title, 0, 0, 0, i32(appBarHeight))
+    }
+
+    i64 componentId() const {
+        ret id
+    }
+
+    public void setTitle(string value) const {
+        setPartText(id, value)
+    }
+
+    public string title() const {
+        ret partText(id, false)
+    }
+
+    // The icon on the left, None for none, and what a click on it does.
+    public void setNavigation(Icon value) const {
+        setPartIcon(id, value)
+    }
+
+    public Icon navigation() const {
+        ret partIcon(id)
+    }
+
+    public void onNavigation(move func() handler) const {
+        addr box = alloc(sizeOf<func()>())
+        put<func()>(box, move handler)
+        addPartHandler(id, 0, box)
+    }
+
+    // An icon on the right, the first added on the right edge, and what a click on
+    // it does.
+    public void addAction(Icon icon, move func() handler) const {
+        addr box = alloc(sizeOf<func()>())
+        put<func()>(box, move handler)
+        i64 me = id
+        withData([me, icon, box](ref Shared data) {
+            i64 p = partIndexOf(ref data, me)
+            data.parts[p].icons.add(icon)
+            data.parts[p].actions.add(box)
+        })
+    }
+
+    public i32 x() const {
+        ret partBound(id, 0)
+    }
+
+    public i32 y() const {
+        ret partBound(id, 1)
+    }
+
+    public i32 width() const {
+        ret partBound(id, 2)
+    }
+
+    public i32 height() const {
+        ret partBound(id, 3)
+    }
+
+    public void setVisible(bool value) const {
+        setPartFlag(id, 0, value)
+    }
+
+    public bool visible() const {
+        ret partFlag(id, 0)
+    }
+
+    public void setEnabled(bool value) const {
+        setPartFlag(id, 1, value)
+    }
+
+    public bool enabled() const {
+        ret partFlag(id, 1)
+    }
+}
+
+// The bar at the bottom of an app (D450, D451, P42): its items, an icon and a text
+// each, choose the page of the app that is shown. A window has one, given by
+// Window.navigationBar.
+public struct NavigationBar : Component {
+    i64 id
+
+    NavigationBar(i64 number) {
+        id = number
+    }
+
+    i64 componentId() const {
+        ret id
+    }
+
+    // Adds an item, and gives back its page, with the room between the bars.
+    public Panel addPage(string text, Icon icon) const {
+        i64 me = id
+        i64 made = 0
+        withData([me, text, icon, ref made](ref Shared data) {
+            i64 p = partIndexOf(ref data, me)
+            made = makePart(ref data, kindPanel, "", 0, 0, 0, 0)
+            i64 page = partIndexOf(ref data, made)
+            data.parts[page].page = data.parts[p].items.len()
+            data.parts[page].bar = me
+            data.parts[page].window = data.parts[p].window
+            data.parts[p].items.add(text)
+            data.parts[p].icons.add(icon)
+            data.parts[p].pages.add(made)
+            arrangeNow(ref data, page)
+        })
+        Panel page
+        page.id = made
+        ret page
+    }
+
+    // The item chosen, from 0, whose page is shown.
+    public void setSelected(i64 index) const {
+        i64 me = id
+        withData([me, index](ref Shared data) {
+            i64 p = partIndexOf(ref data, me)
+            if (index < 0 || index >= data.parts[p].items.len()) {
+                panic(format("the navigation bar has no item {}", index))
+            }
+            data.parts[p].selected = index
+        })
+    }
+
+    public i64 selected() const {
+        i64 me = id
+        i64 result = 0
+        withData([me, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, me)].selected })
+        ret result
+    }
+
+    // When the user chooses an item.
+    public void onChange(move func(i64) handler) const {
+        addr box = alloc(sizeOf<func(i64)>())
+        put<func(i64)>(box, move handler)
+        addPartHandler(id, 1, box)
+    }
+
+    public i32 x() const {
+        ret partBound(id, 0)
+    }
+
+    public i32 y() const {
+        ret partBound(id, 1)
+    }
+
+    public i32 width() const {
+        ret partBound(id, 2)
+    }
+
+    public i32 height() const {
+        ret partBound(id, 3)
+    }
+
+    public void setVisible(bool value) const {
+        setPartFlag(id, 0, value)
+    }
+
+    public bool visible() const {
+        ret partFlag(id, 0)
+    }
+
+    public void setEnabled(bool value) const {
+        setPartFlag(id, 1, value)
+    }
+
+    public bool enabled() const {
+        ret partFlag(id, 1)
+    }
+}
+
 // ---- The data of the windows and of the components ----
 
 struct Rect {
@@ -1102,9 +1352,11 @@ struct WindowData {
     addr window
     addr renderer
     addr chrome
-    addr font    // of the title
-    addr body    // of the components
-    addr strong  // of the buttons, semibold
+    addr font     // of the title
+    addr body     // of the components
+    addr strong   // of the buttons, semibold
+    addr heading  // of the title of an app bar, semibold
+    addr caption  // of the items of a navigation bar, semibold
     u32 sdlId
     f32 density = 1
     i32 hovered = -1  // the button of the title bar under the mouse
@@ -1112,11 +1364,15 @@ struct WindowData {
     bool focused = true
     bool maximized
     bool minimized
-    i64 focus     // the component with the keyboard, or 0
-    i64 hot       // the component under the mouse
-    i64 held      // the component pressed with the mouse
-    i64 dragging  // the text box whose text the mouse selects
-    i64 popup     // the combo box whose list is open
+    i64 focus          // the component with the keyboard, or 0
+    i64 hot            // the component under the mouse
+    i64 held           // the component pressed with the mouse
+    i64 dragging       // the text box whose text the mouse selects
+    i64 popup          // the combo box whose list is open
+    i64 appBar         // its bar at the top, or 0
+    i64 navigation     // its bar at the bottom, or 0
+    i64 hotItem = -1   // the item of a bar under the mouse
+    i64 heldItem = -1  // the item of a bar pressed
     u64 caretStart
     list<i64> order  // the indices of its components, in the order they are drawn
 }
@@ -1129,6 +1385,9 @@ const i32 kindGroup = 5
 const i32 kindComboBox = 6
 const i32 kindImageBox = 7
 const i32 kindIconBox = 8
+const i32 kindPanel = 9
+const i32 kindAppBar = 10
+const i32 kindNavigation = 11
 
 // A component: its kind, its window and its group once added, its properties, for
 // a text box where its cursor and the other end of its selection are, as indices
@@ -1169,10 +1428,15 @@ struct PartData {
     bool imageChanged
     Scale scale
     addr texture
-    Icon icon          // of an icon box, or of a button
-    list<addr> click   // func()
-    list<addr> change  // func(string) of a text box, func(bool) of a check box, func(i64) of a combo box
-    list<addr> enter   // func(string)
+    Icon icon           // of an icon box, of a button, or on the left of an app bar
+    list<Icon> icons    // of the actions of an app bar, of the items of a navigation bar
+    list<addr> actions  // func(), of the actions of an app bar
+    list<i64> pages     // of the items of a navigation bar
+    i64 page = -1       // of a page, its item in its navigation bar
+    i64 bar             // of a page, its navigation bar
+    list<addr> click    // func()
+    list<addr> change   // func(string) of a text box, func(bool) of a check box, func(i64) of a combo box
+    list<addr> enter    // func(string)
 
     // Laid out by the thread of the GUI: its place in the content of the window,
     // whether it and its groups are visible and enabled, and the rectangle of
@@ -1240,26 +1504,29 @@ i64 partIndexOf(ref Shared data, i64 id) {
 
 i64 newPart(i32 kind, string text, i32 x, i32 y, i32 w, i32 h) {
     i64 made = 0
-    withData([ref made, kind, text, x, y, w, h](ref Shared data) {
-        data.next++
-        PartData part
-        part.id = data.next
-        part.kind = kind
-        part.text = text
-        part.x = x
-        part.y = y
-        part.width = w
-        part.height = h
-        part.baseX = x
-        part.baseY = y
-        part.baseWidth = w
-        part.baseHeight = h
-        part.caret = text.len()
-        part.anchor = part.caret
-        data.parts.add(move part)
-        made = data.next
-    })
+    withData([ref made, kind, text, x, y, w, h](ref Shared data) { made = makePart(ref data, kind, text, x, y, w, h) })
     ret made
+}
+
+// A new component, under the lock.
+i64 makePart(ref Shared data, i32 kind, string text, i32 x, i32 y, i32 w, i32 h) {
+    data.next++
+    PartData part
+    part.id = data.next
+    part.kind = kind
+    part.text = text
+    part.x = x
+    part.y = y
+    part.width = w
+    part.height = h
+    part.baseX = x
+    part.baseY = y
+    part.baseWidth = w
+    part.baseHeight = h
+    part.caret = text.len()
+    part.anchor = part.caret
+    data.parts.add(move part)
+    ret data.next
 }
 
 void setPartText(i64 id, string value) {
@@ -1365,6 +1632,9 @@ void addPart(i64 window, i64 group, i64 part) {
             panic("the component is already in a window or in a group")
         }
         i64 into = window
+        if (data.parts[p].kind == kindAppBar && group != 0) {
+            panic("an app bar is put in a window")
+        }
         if (group != 0) {
             for (i64 up = group; up != 0; up = data.parts[partIndexOf(ref data, up)].parent) {
                 if (up == part) {
@@ -1374,7 +1644,15 @@ void addPart(i64 window, i64 group, i64 part) {
             into = data.parts[partIndexOf(ref data, group)].window
             data.parts[p].parent = group
         } else {
-            indexOf(ref data, window)
+            i64 i = indexOf(ref data, window)
+            if (data.parts[p].kind == kindAppBar) {
+                if (data.windows[i].appBar != 0) {
+                    panic("the window has an app bar already")
+                }
+                data.windows[i].appBar = part
+                data.parts[p].width = data.windows[i].width
+                data.parts[p].horizontal = Horizontal.Stretch
+            }
         }
         data.parts[p].window = into
         if (into != 0) {
@@ -1398,7 +1676,10 @@ void placeIn(ref list<PartData> parts, i64 group, i64 window) {
 // (P40): what the thread of the GUI computes when it draws.
 void arrangeNow(ref Shared data, i64 p) {
     i64 group = data.parts[p].parent
-    if (group != 0) {
+    if (data.parts[p].page >= 0 && data.parts[p].window != 0) {
+        i64 i = indexOf(ref data, data.parts[p].window)
+        placePage(ref data.parts[p], ref data.windows[i])
+    } else if (group != 0) {
         i64 g = partIndexOf(ref data, group)
         arrangeNow(ref data, g)
         arrange(ref data.parts[p], data.parts[g].width, data.parts[g].height)
@@ -1406,6 +1687,20 @@ void arrangeNow(ref Shared data, i64 p) {
         i64 i = indexOf(ref data, data.parts[p].window)
         arrange(ref data.parts[p], data.windows[i].width, data.windows[i].height - i32(barHeight))
     }
+}
+
+// A page takes the room between the bars of its window (P42).
+void placePage(ref PartData page, ref WindowData window) {
+    i32 top = window.appBar != 0 ? i32(appBarHeight) : 0
+    i32 bottom = window.height - i32(barHeight) - i32(navigationHeight)
+    page.x = 0
+    page.y = top
+    page.width = window.width
+    page.height = bottom > top ? bottom - top : 0
+    page.baseX = page.x
+    page.baseY = page.y
+    page.baseWidth = page.width
+    page.baseHeight = page.height
 }
 
 // The distances that the anchors keep are those of now (P40).
@@ -1551,6 +1846,29 @@ public struct Window {
     public T add<T : Component>(T component) const {
         addPart(id, 0, component.componentId())
         ret component
+    }
+
+    // The bar at the bottom of the window, made the first time (P42).
+    public NavigationBar navigationBar() const {
+        i64 me = id
+        i64 made = 0
+        withData([me, ref made](ref Shared data) {
+            i64 i = indexOf(ref data, me)
+            if (data.windows[i].navigation == 0) {
+                i32 content = data.windows[i].height - i32(barHeight)
+                i64 bar = makePart(ref data, kindNavigation, "", 0, content - i32(navigationHeight), data.windows[i].width,
+                    i32(navigationHeight))
+                i64 p = partIndexOf(ref data, bar)
+                data.parts[p].window = me
+                data.parts[p].selected = 0
+                data.parts[p].horizontal = Horizontal.Stretch
+                data.parts[p].vertical = Vertical.Bottom
+                rebase(ref data, p)
+                data.windows[i].navigation = bar
+            }
+            made = data.windows[i].navigation
+        })
+        ret NavigationBar(made)
     }
 
     public void setTitle(string text) const {
@@ -1821,6 +2139,10 @@ const f32 groupCorner = 8
 const f32 itemHeight = 26  // of the list of a combo box
 const i64 listRows = 8
 const f32 buttonIcon = 18  // the size of the icon of a button
+const f32 appBarHeight = 56
+const f32 navigationHeight = 64
+const f32 headingSize = 18  // of the title of an app bar
+const f32 captionSize = 12  // of the items of a navigation bar
 
 // The colors of the look (D443): the grays and the indigo of Tailwind, light and
 // dark, with buttons in a gradient and a border of a deeper color.
@@ -1856,6 +2178,7 @@ struct Colors {
     u32 cardBorder
     u32 item        // under the item that the mouse or the keys point at
     u32 listShadow  // 0xAARRGGBB, under the list of a combo box
+    u32 accent      // the icon and the text of the item chosen of a navigation bar
 }
 
 Colors colorsOf(bool dark) {
@@ -1892,6 +2215,7 @@ Colors colorsOf(bool dark) {
         c.cardBorder = 0x273244
         c.item = 0x2B2F5E
         c.listShadow = 0x99000000
+        c.accent = 0xA5B4FC  // indigo-300
     } else {
         c.bar = 0xFFFFFF
         c.separator = 0xE5E7EB  // gray-200
@@ -1917,6 +2241,7 @@ Colors colorsOf(bool dark) {
         c.cardBorder = 0xE5E7EB
         c.item = 0xEEF2FF  // indigo-50
         c.listShadow = 0x2E111827
+        c.accent = 0x4F46E5  // indigo-600
     }
     ret c
 }
@@ -2130,10 +2455,14 @@ void setDensity(ref WindowData window) {
         cromo_gui_font_free(window.font)
         cromo_gui_font_free(window.body)
         cromo_gui_font_free(window.strong)
+        cromo_gui_font_free(window.heading)
+        cromo_gui_font_free(window.caption)
     }
     window.font = cromo_gui_font(window.renderer, 0, titleSize, density)
     window.body = cromo_gui_font(window.renderer, 0, bodySize, density)
     window.strong = cromo_gui_font(window.renderer, 1, bodySize, density)
+    window.heading = cromo_gui_font(window.renderer, 1, headingSize, density)
+    window.caption = cromo_gui_font(window.renderer, 1, captionSize, density)
 }
 
 void apply(ref WindowData window) {
@@ -2178,9 +2507,13 @@ void shut(ref WindowData window) {
     cromo_gui_font_free(window.font)
     cromo_gui_font_free(window.body)
     cromo_gui_font_free(window.strong)
+    cromo_gui_font_free(window.heading)
+    cromo_gui_font_free(window.caption)
     window.font = none
     window.body = none
     window.strong = none
+    window.heading = none
+    window.caption = none
     cromo_gui_symbols_free(window.renderer)
     cromo_gui_boxes_free(window.renderer)
     cromo_gui_icons_free(window.renderer)
@@ -2322,6 +2655,7 @@ void route(ref WindowData window, ref list<PartData> parts, addr event, u32 kind
             }
         }
         i64 hotId = hot >= 0 ? parts[hot].id : 0
+        window.hotItem = hot >= 0 && hot != open ? barItemAt(ref parts[hot], x, y - barHeight) : -1
         if (hotId != window.hot) {
             window.hot = hotId
             SDL_SetCursor(hot >= 0 && hot != open && parts[hot].kind == kindTextBox && parts[hot].active ? beam : arrow)
@@ -2544,6 +2878,8 @@ void pressPart(ref WindowData window, ref list<PartData> parts, f32 x, f32 y) {
         window.dragging = parts[p].id
     } else if (parts[p].kind == kindComboBox) {
         openList(ref window, ref parts[p])
+    } else if (parts[p].kind == kindAppBar || parts[p].kind == kindNavigation) {
+        window.heldItem = barItemAt(ref parts[p], x, y)
     }
 }
 
@@ -2560,8 +2896,65 @@ void releasePart(ref WindowData window, ref list<PartData> parts, f32 x, f32 y, 
         }
         ret
     }
+    i64 item = window.heldItem
+    window.heldItem = -1
     if (p >= 0 && parts[p].active && inside(ref parts[p], x, y)) {
-        activate(ref parts[p], ref calls)
+        if (parts[p].kind == kindAppBar || parts[p].kind == kindNavigation) {
+            if (item >= 0 && barItemAt(ref parts[p], x, y) == item) {
+                chooseItem(ref window, ref parts, p, item, ref calls)
+            }
+        } else {
+            activate(ref parts[p], ref calls)
+        }
+    }
+}
+
+// ---- The bars of the apps (D450, D451) ----
+
+// The item of a bar at a point of the content, or -1: on an app bar 0 for the icon
+// on the left and from 1 its actions, from the right; on a navigation bar its
+// items, from the left.
+i64 barItemAt(ref PartData bar, f32 x, f32 y) {
+    if (bar.kind == kindAppBar) {
+        f32 middle = bar.top + appBarHeight / 2
+        if (y < middle - 20 || y >= middle + 20) {
+            ret -1
+        }
+        if (bar.icon != Icon.None && x >= bar.left + 8 && x < bar.left + 48) {
+            ret 0
+        }
+        for (i64 k = 0; k < bar.icons.len(); k++) {
+            f32 center = bar.left + f32(bar.width) - 28 - 44 * f32(k)
+            if (x >= center - 20 && x < center + 20) {
+                ret k + 1
+            }
+        }
+        ret -1
+    }
+    if (bar.kind == kindNavigation && bar.items.len() > 0 && bar.width > 0) {
+        i64 item = i64((x - bar.left) * f32(bar.items.len()) / f32(bar.width))
+        ret item >= 0 && item < bar.items.len() ? item : -1
+    }
+    ret -1
+}
+
+// A click on an item of a bar: an icon of an app bar calls its handlers, an item of
+// a navigation bar shows its page.
+void chooseItem(ref WindowData window, ref list<PartData> parts, i64 p, i64 item, ref list<Call> calls) {
+    if (parts[p].kind == kindAppBar) {
+        if (item == 0) {
+            calls.add(callOf(6, parts[p].click))
+        } else {
+            list<addr> boxes
+            boxes.add(parts[p].actions[item - 1])
+            calls.add(callOf(6, boxes))
+        }
+    } else if (item != parts[p].selected) {
+        parts[p].selected = item
+        focusTo(ref window, ref parts, 0)
+        Call call = callOf(9, parts[p].change)
+        call.index = item
+        calls.add(move call)
     }
 }
 
@@ -2933,17 +3326,24 @@ void layoutIn(ref WindowData window, ref list<PartData> parts, i64 group, Frame 
         if (parts[i].window != window.id || parts[i].parent != group) {
             continue
         }
-        arrange(ref parts[i], frame.width, frame.height)
+        bool hidden = false
+        if (parts[i].page >= 0) {
+            placePage(ref parts[i], ref window)
+            i64 bar = partNumber(ref parts, parts[i].bar)
+            hidden = bar < 0 || parts[bar].selected != parts[i].page || !parts[bar].visible
+        } else {
+            arrange(ref parts[i], frame.width, frame.height)
+        }
         parts[i].left = frame.left + f32(parts[i].x)
         parts[i].top = frame.top + f32(parts[i].y)
-        parts[i].shown = frame.shown && parts[i].visible
+        parts[i].shown = frame.shown && parts[i].visible && !hidden
         parts[i].active = frame.active && parts[i].enabled
         parts[i].clipLeft = frame.clipLeft
         parts[i].clipTop = frame.clipTop
         parts[i].clipRight = frame.clipRight
         parts[i].clipBottom = frame.clipBottom
         window.order.add(i)
-        if (parts[i].kind == kindGroup) {
+        if (parts[i].kind == kindGroup || parts[i].kind == kindPanel) {
             Frame inner
             inner.left = parts[i].left
             inner.top = parts[i].top
@@ -3179,6 +3579,80 @@ void drawPart(ref WindowData window, ref PartData part, ref Colors c) {
         drawImage(ref window, ref part)
     } else if (part.kind == kindIconBox) {
         drawIcon(r, part.icon, x + w / 2, y + h / 2, least(w, h), d, c.label, on)
+    } else if (part.kind == kindAppBar) {
+        drawAppBar(ref window, ref part, ref c)
+    } else if (part.kind == kindNavigation) {
+        drawNavigation(ref window, ref part, ref c)
+    }
+}
+
+// The round background of an icon of a bar under the mouse, or pressed.
+void drawHover(ref WindowData window, ref PartData bar, ref Colors c, i64 item, f32 x, f32 y, f32 w, f32 h, f32 radius) {
+    if (window.hot == bar.id && window.hotItem == item && bar.active) {
+        u32 back = window.held == bar.id && window.heldItem == item ? c.pressed : c.hover
+        cromo_gui_box(window.renderer, x, y, w, h, radius, 0, window.density, solid(back, true), 0)
+    }
+}
+
+// An app bar: its background, a line under it, the icon on the left, the title
+// semibold, and the actions from the right edge.
+void drawAppBar(ref WindowData window, ref PartData bar, ref Colors c) {
+    addr r = window.renderer
+    f32 d = window.density
+    f32 x = bar.left
+    f32 y = barHeight + bar.top
+    f32 w = f32(bar.width)
+    f32 h = f32(bar.height)
+    bool on = bar.active
+    fill(r, c.bar, x, y, w, h)
+    fill(r, c.separator, x, y + h - 1, w, 1)
+    f32 middle = y + h / 2
+    f32 left = x + 16
+    if (bar.icon != Icon.None) {
+        drawHover(ref window, ref bar, ref c, 0, x + 8, middle - 20, 40, 40, 20)
+        drawIcon(r, bar.icon, x + 28, middle, 24, d, c.title, on)
+        left = x + 60
+    }
+    f32 ascent = 0
+    f32 descent = 0
+    f32 gap = 0
+    cromo_gui_font_metrics(window.heading, ref ascent, ref descent, ref gap)
+    f32 right = x + w - 8 - 44 * f32(bar.icons.len())
+    clipInside(r, ref bar, left, y, right - left, h)
+    text(window.heading, bar.text, left, middle + (ascent - descent) / 2, c.text, on)
+    clipPart(r, ref bar)
+    for (i64 k = 0; k < bar.icons.len(); k++) {
+        f32 center = x + w - 28 - 44 * f32(k)
+        drawHover(ref window, ref bar, ref c, k + 1, center - 20, middle - 20, 40, 40, 20)
+        drawIcon(r, bar.icons[k], center, middle, 24, d, c.title, on)
+    }
+}
+
+// A navigation bar: its background, a line over it, and its items, the one chosen
+// with a pill behind its icon and in the color of the accent, as in Material 3.
+void drawNavigation(ref WindowData window, ref PartData bar, ref Colors c) {
+    addr r = window.renderer
+    f32 d = window.density
+    f32 x = bar.left
+    f32 y = barHeight + bar.top
+    f32 w = f32(bar.width)
+    f32 h = f32(bar.height)
+    bool on = bar.active
+    fill(r, c.bar, x, y, w, h)
+    fill(r, c.separator, x, y, w, 1)
+    i64 n = bar.items.len()
+    for (i64 k = 0; k < n; k++) {
+        f32 center = x + w * (f32(k) + 0.5) / f32(n)
+        bool chosen = k == bar.selected
+        if (chosen) {
+            cromo_gui_box(r, center - 28, y + 8, 56, 28, 14, 0, d, solid(c.item, on), 0)
+        } else {
+            drawHover(ref window, ref bar, ref c, k, center - 28, y + 8, 56, 28, 14)
+        }
+        u32 color = chosen ? c.accent : c.label
+        drawIcon(r, bar.icons[k], center, y + 22, 22, d, color, on)
+        f32 size = textWidth(window.caption, bar.items[k], bar.items[k].len())
+        text(window.caption, bar.items[k], center - size / 2, y + 53, color, on)
     }
 }
 

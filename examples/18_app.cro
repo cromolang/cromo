@@ -1,0 +1,68 @@
+// Example 18: an app as those of a phone, with the bar at the top, the bar of the
+// pages at the bottom and the icons of Lucide.
+//
+// Decided: the icons of Lucide as the cases of gui.Icon (D448, D449), the bars of
+//          the apps (D450), the pages of a navigation bar (D451)
+// Draft:   the names of the components and of their methods (P39, P41, P42)
+import std.gui
+
+// A row of a list: an icon, a name and a line under it, and the time on the right.
+void row(gui.Panel page, i32 y, gui.Icon icon, string name, string line, string time) {
+    page.add(gui.IconBox(icon, 16, y + 8, 24, 24))
+    page.add(gui.Label(name, 56, y, 220, 20))
+    gui.Label second = page.add(gui.Label(line, 56, y + 20, 260, 20))
+    second.setEnabled(false)  // the lighter color
+    gui.Label when = page.add(gui.Label(time, 312, y, 60, 20))
+    when.setAnchor(gui.Horizontal.Right, gui.Vertical.Top)
+}
+
+[[window]]
+i32 main() {
+    gui.Window w = gui.Window("Example 18", 390, 760)
+    gui.AppBar top = w.add(gui.AppBar("Inbox"))
+    top.setNavigation(gui.Icon.Menu)
+    top.addAction(gui.Icon.EllipsisVertical, []() { })
+    top.addAction(gui.Icon.Search, []() { })
+
+    gui.NavigationBar pages = w.navigationBar()
+    gui.Panel inbox = pages.addPage("Inbox", gui.Icon.Inbox)
+    row(inbox, 16, gui.Icon.User, "Ada Lovelace", "The notes on the engine", "10:42")
+    row(inbox, 72, gui.Icon.User, "Charles Babbage", "The plans of the machine", "09:15")
+    row(inbox, 128, gui.Icon.Users, "The Society", "The meeting of Thursday", "Mon")
+    row(inbox, 184, gui.Icon.Bell, "Reminder", "Send the letters", "Sun")
+    gui.Button write = inbox.add(gui.Button("Write", 262, 560, 112, 40))
+    write.setIcon(gui.Icon.Pencil)
+    write.setAnchor(gui.Horizontal.Right, gui.Vertical.Bottom)
+
+    gui.Panel people = pages.addPage("Contacts", gui.Icon.Users)
+    gui.TextBox search = people.add(gui.TextBox("", 16, 16, 358, 32))
+    search.setPlaceholder("Search the contacts")
+    search.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Top)
+    row(people, 64, gui.Icon.User, "Ada Lovelace", "ada@example.com", "")
+    row(people, 120, gui.Icon.User, "Charles Babbage", "charles@example.com", "")
+
+    gui.Panel today = pages.addPage("Calendar", gui.Icon.Calendar)
+    row(today, 16, gui.Icon.Clock, "10:00", "The meeting of the Society", "")
+    row(today, 72, gui.Icon.MapPin, "15:30", "The visit to the workshop", "")
+
+    gui.Panel settings = pages.addPage("Settings", gui.Icon.Settings)
+    settings.add(gui.Label("Theme", 16, 16, 200, 20))
+    gui.ComboBox theme = settings.add(gui.ComboBox(["System", "Light", "Dark"], 16, 40, 358, 32))
+    theme.setSelected(0)
+    theme.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Top)
+    gui.CheckBox notify = settings.add(gui.CheckBox("Notifications", 16, 88, 300, 24))
+    notify.setChecked(true)
+    settings.add(gui.CheckBox("Sync on mobile data", 16, 120, 300, 24))
+    gui.Button out = settings.add(gui.Button("Log out", 16, 168, 140, 36))
+    out.setIcon(gui.Icon.LogOut)
+
+    // The title follows the page, the theme the combo box.
+    list<string> titles = ["Inbox", "Contacts", "Calendar", "Settings"]
+    pages.onChange([top, move titles](i64 index) { top.setTitle(titles[index]) })
+    theme.onChange([w](i64 index) {
+        w.setTheme(index == 1 ? gui.Theme.Light : index == 2 ? gui.Theme.Dark : gui.Theme.System)
+    })
+    out.onClick([w]() { w.close() })
+    w.start()
+    ret 0
+}

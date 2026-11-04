@@ -1,0 +1,44 @@
+// The bars of the apps (D450, D451, P42): an app bar at the top of the content, the
+// navigation bar of the window at the bottom, and the pages in the room between,
+// which follow the window when it is resized.
+// target: windows linux-x86_64
+// program-env: SDL_VIDEO_DRIVER=offscreen
+// expect-output: app bar 'Inbox' at 0,0 size 400x56, navigation Menu true
+// expect-output: navigation bar at 0,236 size 400x64, the same: true
+// expect-output: pages at 0,56 size 400x180 and 0,56 size 400x180, selected 0
+// expect-output: a label in the page at 16,16
+// expect-output: selected 1
+// expect-output: resized: app bar 500 wide, navigation bar at 0,296 size 500x64, page 500x240
+import std.gui
+import std.time
+
+i32 main() {
+    gui.Window w = gui.Window("bars", 400, 335)  // a content of 400 by 300
+    gui.AppBar top = w.add(gui.AppBar("Inbox"))
+    top.setNavigation(gui.Icon.Menu)
+    top.onNavigation([]() { println("menu") })
+    top.addAction(gui.Icon.Search, []() { println("search") })
+    gui.NavigationBar bar = w.navigationBar()
+    gui.Panel home = bar.addPage("Home", gui.Icon.House)
+    gui.Panel settings = bar.addPage("Settings", gui.Icon.Settings)
+    gui.Label welcome = home.add(gui.Label("Welcome", 16, 16, 200, 20))
+    println("app bar '{}' at {},{} size {}x{}, navigation Menu {}", top.title(), top.x(), top.y(), top.width(), top.height(),
+            top.navigation() == gui.Icon.Menu)
+    gui.NavigationBar again = w.navigationBar()
+    println("navigation bar at {},{} size {}x{}, the same: {}", bar.x(), bar.y(), bar.width(), bar.height(),
+            again.y() == bar.y() && again.selected() == bar.selected())
+    println("pages at {},{} size {}x{} and {},{} size {}x{}, selected {}", home.x(), home.y(), home.width(), home.height(),
+            settings.x(), settings.y(), settings.width(), settings.height(), bar.selected())
+    println("a label in the page at {},{}", welcome.x(), welcome.y())
+    bar.onChange([](i64 index) { println("changed {}", index) })
+    w.start()
+    time.msleep(50)
+    bar.setSelected(1)
+    println("selected {}", bar.selected())
+    w.setSize(500, 395)
+    time.msleep(50)
+    println("resized: app bar {} wide, navigation bar at {},{} size {}x{}, page {}x{}", top.width(), bar.x(), bar.y(), bar.width(),
+            bar.height(), home.width(), home.height())
+    w.close()
+    ret 0
+}

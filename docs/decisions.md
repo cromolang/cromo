@@ -2231,7 +2231,7 @@ A component keeps the distances from the edges of its parent, the content of the
 ### P42. The bars and the pages (D450, D451)
 - `gui.AppBar(title)`, put in a window with `w.add(...)`, takes the top of the content, the whole width and 56 pixels; `setTitle` and `title`; `setNavigation(icon)` with `onNavigation(func())`, the icon on the left, as a back arrow or a menu; `addAction(icon, func())`, an icon on the right, the first added on the right edge.
 - `w.navigationBar()` gives the navigation bar of the window, made the first time: a window has at most one, and a struct has no constructor without arguments (D69). It takes the bottom of the content, the whole width and 64 pixels. `addPage(text, icon)` adds an item and gives back its page, a `gui.Panel`, with the room between the bars; `setSelected(i64)` and `selected()`, 0 at the start; `onChange(func(i64))` when the user chooses an item.
-- `gui.Panel(x, y, width, height)` contains components as a `GroupBox`, without drawing anything; a page is anchored to the four edges.
+- `gui.Panel(x, y, width, height)` contains components as a `GroupBox`, without drawing anything; a page takes the room between the bars, and follows the window. The components of a page that is not shown do not take the mouse nor the keyboard.
 - The item chosen has its icon and its text in indigo, with a pill of indigo-50 behind the icon, as in Material 3.
 ---
 

@@ -1052,6 +1052,7 @@ i32 main() {
 - A `GroupBox` contains components, with their positions from its top left corner, and moves, hides and disables them with it (D444); a `ComboBox` chooses among its items, with a list that opens over the other components (D445); an `ImageBox` shows an image in PNG, JPEG, BMP or GIF (D446).
 - A component is anchored to the edges of its window or of its group, `c.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Bottom)`, and follows them when they move, as in WinForms (D447).
 - The icons are those of Lucide, the cases of `gui.Icon`, as `gui.Icon.Mail` (D448, D449): an `IconBox` shows one, and a `Button` can have one before its text, or alone.
+- For the apps, an `AppBar` at the top of the content, with its title, an icon on the left and actions on the right, and the `NavigationBar` of the window at the bottom, whose items show each a page, a `Panel` (D450, D451).
 
 ```cromo
 // draft: the names of the components and of their methods (P37)

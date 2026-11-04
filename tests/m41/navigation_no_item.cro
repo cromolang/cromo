@@ -1,0 +1,14 @@
+// The item chosen of a navigation bar is one of its items (P42).
+// target: windows linux-x86_64
+// expect-exit: 101
+// expect-stderr: panic: the navigation bar has no item 2
+import std.gui
+
+i32 main() {
+    gui.Window w = gui.Window("w", 300, 400)
+    gui.NavigationBar bar = w.navigationBar()
+    bar.addPage("Home", gui.Icon.House)
+    bar.addPage("Settings", gui.Icon.Settings)
+    bar.setSelected(2)
+    ret 0
+}

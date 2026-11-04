@@ -1,0 +1,12 @@
+// An app bar is put in a window (P42).
+// target: windows linux-x86_64
+// expect-exit: 101
+// expect-stderr: panic: an app bar is put in a window
+import std.gui
+
+i32 main() {
+    gui.Window w = gui.Window("w", 300, 200)
+    gui.GroupBox group = w.add(gui.GroupBox("group", 0, 0, 300, 200))
+    group.add(gui.AppBar("title"))
+    ret 0
+}

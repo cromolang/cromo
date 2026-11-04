@@ -1,0 +1,12 @@
+// A window has one app bar (P42).
+// target: windows linux-x86_64
+// expect-exit: 101
+// expect-stderr: panic: the window has an app bar already
+import std.gui
+
+i32 main() {
+    gui.Window w = gui.Window("w", 300, 200)
+    w.add(gui.AppBar("one"))
+    w.add(gui.AppBar("two"))
+    ret 0
+}
