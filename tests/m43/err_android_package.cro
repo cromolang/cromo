@@ -1,0 +1,6 @@
+// The package of an app has at least two names, each starting with a letter (D455).
+// expect-error: the package of an app is names of letters, digits and _, each starting with a letter, joined by dots, as org.example.mail (D455)
+[[android("mail", "Mail")]]
+i32 main() {
+    ret 0
+}

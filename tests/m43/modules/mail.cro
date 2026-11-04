@@ -1,0 +1,6 @@
+// The app of the test apk.cro, with its package, its name and its icon (D455).
+[[android("org.example.mail", "Mail")]]
+i32 main() {
+    println("Mail")
+    ret 0
+}

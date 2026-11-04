@@ -3,7 +3,8 @@
 import unsafe
 
 extern "cromo" {
-    void cromo_pause()  // in assembly: the hint of a loop that waits for another thread
+    void cromo_pause()                                    // in assembly: the hint of a loop that waits for another thread
+    i32 cromo_app_write(i64 stream, addr data, i64 size)  // the log of an app of Android (P44)
 }
 
 // ---- The heap (D98) ----
@@ -182,6 +183,9 @@ void unlockHeap() {
 // The bytes of a buffer on the standard output (1) or error (2). With nowhere to
 // write, the text is lost, as on Windows.
 void writeRaw(i64 stream, addr data, i64 size) {
+    if (cromo_app_write(stream, data, size) != 0) {
+        ret
+    }
     i64 descriptor = 1
     if (stream == 2) {
         descriptor = 2

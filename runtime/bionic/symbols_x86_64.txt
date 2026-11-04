@@ -1103,6 +1103,7 @@ libc.so LIBC func 0 wprintf
 libc.so LIBC func 0 write
 libc.so LIBC func 0 writev
 libc.so LIBC func 0 wscanf
+libc.so LIBC object 8 environ
 libc.so LIBC_DEPRECATED func 0 __system_property_wait_any
 libc.so LIBC_N func 0 __fread_chk
 libc.so LIBC_N func 0 __fwrite_chk

@@ -379,6 +379,70 @@ else()
   message(STATUS "WSL not found: lib/linux will have no libSDL3.a (D429)")
 endif()
 
+# For Android (D452, D453): SDL compiled with the NDK as libSDL3.so for each
+# architecture, which its activity loads with the program, and its classes of Java
+# compiled once into classes.dex, with javac and d8 of the SDK, for the APKs
+# that cromo writes. Without the NDK, or without the SDK and Java, there are none.
+set(CROMO_ANDROID_NDK "" CACHE PATH "The NDK of Android, for libSDL3.so")
+set(CROMO_ANDROID_SDK "" CACHE PATH "The SDK of Android, for classes.dex")
+set(CROMO_JAVA_HOME "$ENV{JAVA_HOME}" CACHE PATH "The JDK, for classes.dex")
+if(CROMO_ANDROID_NDK AND EXISTS "${CROMO_ANDROID_NDK}/build/cmake/android.toolchain.cmake")
+  foreach(arch arm64 x86_64)
+    if(arch STREQUAL "arm64")
+      set(abi arm64-v8a)
+    else()
+      set(abi x86_64)
+    endif()
+    ExternalProject_Add(sdl_android_${arch}
+      SOURCE_DIR "${CMAKE_SOURCE_DIR}/third_party/SDL"
+      BINARY_DIR "${CROMO_SDL_DIR}/android_${arch}"
+      CMAKE_GENERATOR Ninja
+      CMAKE_ARGS
+        -DCMAKE_BUILD_TYPE=MinSizeRel
+        "-DCMAKE_TOOLCHAIN_FILE=${CROMO_ANDROID_NDK}/build/cmake/android.toolchain.cmake"
+        -DANDROID_ABI=${abi} -DANDROID_PLATFORM=android-26 -DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON
+        -DSDL_SHARED=ON -DSDL_STATIC=OFF -DSDL_TEST_LIBRARY=OFF -DSDL_TESTS=OFF -DSDL_EXAMPLES=OFF -DSDL_INSTALL=OFF
+      BUILD_ALWAYS ON
+      INSTALL_COMMAND ""
+      BUILD_BYPRODUCTS "${CROMO_SDL_DIR}/android_${arch}/libSDL3.so")
+    list(APPEND CROMO_SDL_FILES "${CROMO_SDL_DIR}/android_${arch}/libSDL3.so")
+    # Without the debugging information that the NDK always adds, as Gradle strips it.
+    list(APPEND CROMO_SDL_PLACE COMMAND "${CMAKE_COMMAND}" -E make_directory "${CROMO_LIB_DIR}/android_${arch}"
+         COMMAND "${CROMO_LLVM_ROOT}/bin/llvm-strip.exe" --strip-unneeded -o "${CROMO_LIB_DIR}/android_${arch}/libSDL3.so"
+                 "${CROMO_SDL_DIR}/android_${arch}/libSDL3.so")
+  endforeach()
+else()
+  message(STATUS "No NDK in CROMO_ANDROID_NDK: lib/android_* will have no libSDL3.so (D452)")
+endif()
+file(GLOB CROMO_SDL_JAVA CONFIGURE_DEPENDS
+     "${CMAKE_SOURCE_DIR}/third_party/SDL/android-project/app/src/main/java/org/libsdl/app/*.java")
+file(GLOB CROMO_ANDROID_PLATFORMS LIST_DIRECTORIES true "${CROMO_ANDROID_SDK}/platforms/android-*")
+file(GLOB CROMO_ANDROID_D8 "${CROMO_ANDROID_SDK}/build-tools/*/d8.bat")
+list(SORT CROMO_ANDROID_PLATFORMS COMPARE NATURAL)
+list(SORT CROMO_ANDROID_D8 COMPARE NATURAL)
+list(FILTER CROMO_ANDROID_D8 EXCLUDE REGEX "-rc")
+if(CROMO_ANDROID_SDK AND CROMO_ANDROID_PLATFORMS AND CROMO_ANDROID_D8 AND EXISTS "${CROMO_JAVA_HOME}/bin/javac.exe")
+  list(GET CROMO_ANDROID_PLATFORMS -1 platform)
+  list(GET CROMO_ANDROID_D8 -1 d8)
+  set(classes "${CROMO_SDL_DIR}/android_classes")
+  add_custom_command(
+    OUTPUT "${CROMO_SDL_DIR}/classes.dex"
+    COMMAND "${CMAKE_COMMAND}" -E rm -rf "${classes}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${classes}"
+    COMMAND "${CROMO_JAVA_HOME}/bin/javac.exe" -nowarn -encoding UTF-8 --release 11 -classpath "${platform}/android.jar"
+            -d "${classes}" ${CROMO_SDL_JAVA}
+    COMMAND "${CROMO_JAVA_HOME}/bin/jar.exe" cf "${CROMO_SDL_DIR}/android_classes.jar" -C "${classes}" .
+    COMMAND "${d8}" --release --min-api 26 --lib "${platform}/android.jar" --output "${CROMO_SDL_DIR}"
+            "${CROMO_SDL_DIR}/android_classes.jar"
+    DEPENDS ${CROMO_SDL_JAVA}
+    COMMENT "Compiling the classes of Java of SDL into classes.dex")
+  list(APPEND CROMO_SDL_FILES "${CROMO_SDL_DIR}/classes.dex")
+  list(APPEND CROMO_SDL_PLACE COMMAND "${CMAKE_COMMAND}" -E make_directory "${CROMO_LIB_DIR}/android"
+       COMMAND "${CMAKE_COMMAND}" -E copy "${CROMO_SDL_DIR}/classes.dex" "${CROMO_LIB_DIR}/android")
+else()
+  message(STATUS "No SDK in CROMO_ANDROID_SDK or no JDK: lib/android will have no classes.dex (D453)")
+endif()
+
 file(GLOB CROMO_STD_MODULES CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/library/std/*.cro")
 # The programs of cromo written in Cromo, as cromo update (D403).
 file(GLOB CROMO_TOOLS CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/library/tools/*.cro")

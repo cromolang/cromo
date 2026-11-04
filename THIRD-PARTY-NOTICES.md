@@ -40,7 +40,7 @@ Dual-licensed under CC0 1.0 or the 2-clause BSD license. Its license is in `lice
 
 ## SDL
 
-The programs that use the windows of the library contain SDL 3.4: <https://libsdl.org>.
+The programs that use the windows of the library, and the apps for Android, contain SDL 3.4: <https://libsdl.org>.
 
 Licensed under the zlib license. Its license is in `licenses/sdl.txt` (`third_party/SDL/LICENSE.txt` in the repository).
 

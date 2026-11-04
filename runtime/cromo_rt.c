@@ -277,7 +277,21 @@ static NORETURN void exitProcess(i32 code) { ExitProcess((u32)code); }
 
 #else
 
+#ifndef CROMO_BIONIC
+// Outside an app of Android the output goes to its descriptor (runtime_linux.cro).
+i32 cromo_app_write(i64 stream, const u8* data, i64 size) {
+    (void)stream;
+    (void)data;
+    (void)size;
+    return 0;
+}
+#endif
+
 static void writeRaw(const u8* data, u32 size) {
+#ifdef CROMO_BIONIC
+    i32 cromo_app_write(i64 stream, const u8* data, i64 size);
+    if (cromo_app_write(2, data, size)) return;
+#endif
     while (size > 0) {
         i64 written = systemCall(SYS_write, 2, (i64)data, size, 0, 0, 0);
         if (written == -EINTR) continue;
@@ -287,10 +301,22 @@ static void writeRaw(const u8* data, u32 size) {
     }
 }
 
-#ifdef CROMO_PTHREADS
+#if defined(CROMO_BIONIC)
 
-// With glibc (D428) and Bionic (P43), exit() of the C library: the C libraries
-// write what is left in their buffers, and their functions of atexit run.
+// With Bionic (P43), exit() of the C library, as with glibc; in an app (P44), the
+// end that runtime/bionic.c gives.
+NORETURN void exit(i32 code);
+extern i32 cromo_app;
+NORETURN void cromo_app_exit(i32 code);
+static NORETURN void exitProcess(i32 code) {
+    if (cromo_app) cromo_app_exit(code);
+    exit(code);
+}
+
+#elif defined(CROMO_PTHREADS)
+
+// With glibc (D428), exit() of the C library: the C libraries write what is left
+// in their buffers, and their functions of atexit run.
 NORETURN void exit(i32 code);
 static NORETURN void exitProcess(i32 code) { exit(code); }
 

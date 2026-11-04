@@ -68,6 +68,7 @@ powershell -ExecutionPolicy Bypass -File tests\run-tests.ps1 -Flags '--release' 
 ```
 
 - `-Flags` passes options to every compilation; with `--target linux` the programs run in the default distribution of WSL, or in the one given with `-Distro`. With `--target linux-arm64` they run there with `qemu-aarch64-static`, of the package `qemu-user-static` (`sudo apt install qemu-user-static`).
+- The APKs of Android (D453) need `lib/android_<architecture>/libSDL3.so` and `lib/android/classes.dex`, which the build makes when it is given the NDK and the SDK of Android, with a JDK in `JAVA_HOME`: `build.ps1 -AndroidNdk C:\software\android-ndk-r27 -AndroidSdk C:\software\android_sdk`, or `ANDROID_NDK_HOME` and `ANDROID_HOME`; CMake remembers them. Without them `cromo build --target android` says what is missing.
 - With `--target android-x86_64` or `android-arm64` the programs run on the device or the emulator that adb sees: an emulator of the SDK of Android, started before, as `emulator -avd <name> -no-window`, with an image for x86_64, which runs those for ARM64 too. adb is given with `-Adb <path>`, or found in `ANDROID_HOME`, `ANDROID_SDK_ROOT` or the `PATH`.
 - `-Cromo <path>` tests another `cromo`, such as the one for Linux: `-Cromo tools\cromo-wsl.cmd -Flags '--target linux'`.
 - The runner builds a few C libraries for the tests of `tests\m8` with the clang of LLVM (`-LlvmRoot` if it is elsewhere).

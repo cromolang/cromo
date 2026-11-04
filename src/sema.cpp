@@ -1500,6 +1500,7 @@ private:
         for (FunctionDecl& function : module_.functions) {
             readCold(function);
             readWindow(function);
+            readAndroid(function);
             if (function.attributes.empty()) continue;
             if (function.attributes[0].name == "export") {
                 readExport(function);
@@ -1618,6 +1619,52 @@ private:
         }
     }
 
+    // `[[android("org.example.mail", "Mail")]] i32 main()` (D455): the package and the
+    // name of the app of Android. Like [[window]], it is taken out of the list.
+    void readAndroid(FunctionDecl& function) {
+        std::vector<Attribute>& attributes = function.attributes;
+        for (auto it = attributes.begin(); it != attributes.end();) {
+            if (it->name != "android") {
+                ++it;
+                continue;
+            }
+            auto main = modules_[0].functions.find("main");
+            if (main == modules_[0].functions.end() || main->second != &function) {
+                diag_->error(it->loc, "[[android]] is only for main of the program, whose app it names (D455)");
+            } else if (it->args.size() != 2 || !it->args[0].isText || !it->args[1].isText || it->args[1].text.empty()) {
+                diag_->error(it->loc, "[[android]] takes the package and the name of the app, as "
+                                      "[[android(\"org.example.mail\", \"Mail\")]] (D455)");
+            } else if (!isAndroidPackage(it->args[0].text)) {
+                diag_->error(it->args[0].loc, "the package of an app is names of letters, digits and _, each starting with a "
+                                              "letter, joined by dots, as org.example.mail (D455)");
+            } else if (!function.androidPackage.empty()) {
+                diag_->error(it->loc, "main already has [[android]] (D455)");
+            } else {
+                function.androidPackage = it->args[0].text;
+                function.androidName = it->args[1].text;
+            }
+            it = attributes.erase(it);
+        }
+    }
+
+    // At least two names, as Android wants: org.example.mail.
+    static bool isAndroidPackage(const std::string& text) {
+        size_t names = 0;
+        size_t start = 0;
+        for (;;) {
+            size_t end = text.find('.', start);
+            std::string name = text.substr(start, end == std::string::npos ? std::string::npos : end - start);
+            if (name.empty() || !std::isalpha(static_cast<unsigned char>(name[0]))) return false;
+            for (char c : name) {
+                if (!std::isalnum(static_cast<unsigned char>(c)) && c != '_') return false;
+            }
+            ++names;
+            if (end == std::string::npos) break;
+            start = end + 1;
+        }
+        return names >= 2;
+    }
+
     // `[[test]] void name()` (D349): what cromo test runs.
     void readTestAttribute(FunctionDecl& function) {
         for (const Attribute& attribute : function.attributes) {
@@ -1626,7 +1673,9 @@ private:
                                                 std::string(isUnsafe(function.loc)
                                                                 ? ", [[export(\"name\")]] (D395) or [[cold]] (D398)"
                                                                 : "") +
-                                                std::string(function.name == "main" ? ", and main [[window]] (D426)" : ""));
+                                                std::string(function.name == "main"
+                                                                ? ", and main [[window]] (D426) or [[android(...)]] (D455)"
+                                                                : ""));
                 return;
             }
         }

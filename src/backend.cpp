@@ -519,11 +519,30 @@ bool linkWindows(const std::string& objectPath, const std::string& tablePath, co
 // An executable for Android (P43): position independent, for the dynamic loader of
 // Android, with the stubs of Bionic before the runtime, as for glibc. Its
 // segments are aligned to 16 KB, the pages of the newer devices.
+//
+// The program of an app (P44) is libmain.so, which exports only SDL_main of the
+// runtime: the activity of SDL calls it after loading libSDL3.so.
 bool linkAndroid(const std::string& objectPath, const std::string& tablePath, const std::string& runtimePath,
-                 const BackendOptions& options, std::string& error) {
-    std::vector<std::string> args = {"ld.lld", "-o", options.outputPath, "-e", "_start", "-pie",
-                                     "--dynamic-linker=/system/bin/linker64", "-z", "max-page-size=16384",
-                                     "--eh-frame-hdr", objectPath, tablePath};
+                 const BackendOptions& options, std::vector<std::string>& temporaries, std::string& error) {
+    std::vector<std::string> args = {"ld.lld", "-o", options.outputPath, "-z", "max-page-size=16384", "--eh-frame-hdr"};
+    if (options.sharedLibrary) {
+        std::string script = options.outputPath + ".map";
+        temporaries.push_back(script);
+        std::error_code ec;
+        llvm::raw_fd_ostream out(script, ec, llvm::sys::fs::OF_Text);
+        if (ec) {
+            error = "cannot write " + script + ": " + ec.message();
+            return false;
+        }
+        out << "{\n  global: SDL_main;\n  local: *;\n};\n";
+        out.close();
+        for (const char* arg : {"-shared", "-soname", "libmain.so", "--no-undefined", "--version-script"}) args.push_back(arg);
+        args.push_back(script);
+    } else {
+        for (const char* arg : {"-e", "_start", "-pie", "--dynamic-linker=/system/bin/linker64"}) args.push_back(arg);
+    }
+    args.push_back(objectPath);
+    args.push_back(tablePath);
     if (!options.debugInfo) args.push_back("--strip-debug");
     for (const std::string& archive : options.archives) args.push_back(archive);
     args.push_back("--as-needed");
@@ -608,7 +627,7 @@ bool buildExecutable(const std::string& irText, const std::string& moduleName, c
     module->setDataLayout(machine->createDataLayout());
     if (isAndroid(options.target)) {
         module->setPICLevel(llvm::PICLevel::BigPIC);
-        if (!options.objectOnly) module->setPIELevel(llvm::PIELevel::Large);
+        if (!options.objectOnly && !options.sharedLibrary) module->setPIELevel(llvm::PIELevel::Large);
     }
 
     std::string verifyMessages;
@@ -640,7 +659,7 @@ bool buildExecutable(const std::string& irText, const std::string& moduleName, c
     }
 
     std::vector<std::string> temporaries;
-    bool linked = isAndroid(options.target) ? linkAndroid(objectPath, tablePath, runtimePath, options, error)
+    bool linked = isAndroid(options.target) ? linkAndroid(objectPath, tablePath, runtimePath, options, temporaries, error)
                   : linux                   ? linkLinux(objectPath, tablePath, runtimePath, options, error)
                                             : linkWindows(objectPath, tablePath, runtimePath, options, temporaries, error);
     for (const std::string& path : temporaries) llvm::sys::fs::remove(path);

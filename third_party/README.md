@@ -17,8 +17,9 @@ their sources, headers and licenses are kept here.
 From mbedTLS: `include/mbedtls`, `include/psa` and the `.c` and `.h` files of
 `library`. From Monocypher: `src/monocypher.c`, `src/monocypher.h` and Ed25519, in
 `src/optional/monocypher-ed25519.c` and `.h`. From SDL: `CMakeLists.txt`, `cmake`,
-`include`, `src`, `wayland-protocols`, `LICENSE.txt` and `REVISION.txt`, without the
-tests, the examples, the documents and the projects of the IDEs; SDL is built with
+`include`, `src`, `wayland-protocols`, `LICENSE.txt` and `REVISION.txt`, and the classes
+of Java of its activity for Android, `android-project/app/src/main/java` (D452), without
+the tests, the examples, the documents and the projects of the IDEs; SDL is built with
 its CMake, not with the clang of the runtime (`runtime/sdl`). From Inter:
 `extras/ttf/Inter-Regular.ttf`, `extras/ttf/Inter-SemiBold.ttf` and `LICENSE.txt`. From
 Lucide: `LICENSE`, and `lucide-icons.ttf`, the icons of `std.gui` taken from

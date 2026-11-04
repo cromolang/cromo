@@ -549,6 +549,8 @@ struct FunctionDecl {
     bool isExported = false;            // set by sema: called by C with its name, in symbol (D395)
     bool isCold = false;                // set by sema: [[cold]], it runs rarely (D398)
     bool isWindow = false;              // set by sema: [[window]] on main, without a console (D426)
+    std::string androidPackage;         // set by sema: [[android("org.example.mail", "Mail")]] on main (D455)
+    std::string androidName;
 
     // Set by sema.
     std::string symbol;           // its name in the IR, with its module in front

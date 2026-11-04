@@ -2109,7 +2109,6 @@ gui.Panel settings = bar.addPage("Settings", gui.Icon.Settings)
 *2026-11-04.* `[[android("org.example.mail", "Mail")]]` on `main` gives the package of the app and its name; without it the package is `org.cromo.` and the name of the file, and the name is that of the file. The icon is `<name>.png` or `main.png` next to the file with `main`, as the icon of Windows (D425).
 
 ```cromo
-// draft: the syntax of the attribute
 [[android("org.example.mail", "Mail")]]
 i32 main() {
     ...
@@ -2260,6 +2259,14 @@ A component keeps the distances from the edges of its parent, the content of the
 - An executable starts from `_start` of the runtime, which calls `__libc_init` of Bionic; libmain.so from `SDL_main`. The library of Cromo uses the files of Linux, with the system calls that the filter of Android lets through; what Android has elsewhere, as the shell in `/system/bin/sh`, is chosen when the program runs.
 - The standard output and error of an app go to the log of Android (logcat), with the tag of the app.
 - SDL is built with the NDK as libSDL3.so for each architecture, in `lib/android-arm64` and `lib/android-x86_64`, with the stubs of Bionic and the runtime. The tests run with `-Flags '--target android-x86_64'` on an emulator through adb.
+
+### P44. The APK (D453, D455)
+- `cromo build --target android app.cro` writes `app.apk`: it compiles the program twice, for ARM64 and for x86-64, as `libmain.so`, which exports only `SDL_main`, then runs `lib/tools/apk.cro`, written in Cromo as `cromo update` (D403), which writes and signs the APK.
+- The APK has the manifest, `classes.dex` with the classes of Java of SDL, the table of the resources and the icon when there is one, and `lib/arm64-v8a` and `lib/x86_64` with `libSDL3.so` and `libmain.so`. All the files are stored, the libraries aligned to 16 KB, so that Android maps them without extracting them, for the devices with pages of 4 KB and of 16 KB.
+- The manifest has the version 1 and "1.0", the activity of SDL as the launcher, with the theme `Theme.Material.NoActionBar.Fullscreen` and the changes of the configuration that SDL handles itself, `singleInstance`, OpenGL ES 2, and no permission. Without `[[android]]`, the package is `org.cromo.` and the name of the file, lowercase, with `_` for the other characters.
+- The signature is of scheme v2 only, which Android has from 7.0, with a key of P-256 and a certificate signed by itself, `CN=Android Debug`, as the SDK of Android does: both are made the first time in `~/.cromo/android`, and kept, so that an app installed can be updated by the next build.
+- In an app the standard output and error go to the log of Android, a line at a time, with the package as tag and the priorities INFO and ERROR. When `main` ends on the thread of SDL, `SDL_main` returns and SDL ends the activity; an exit from another thread ends the process.
+- `cromo` needs `lib/android_<architecture>/libSDL3.so` and `lib/android/classes.dex`, which the build makes with the NDK and with the SDK and Java: `build.ps1 -AndroidNdk <folder> -AndroidSdk <folder>`.
 ---
 
 ## Open

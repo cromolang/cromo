@@ -1,0 +1,742 @@
+// The APK of an app for Android (D452-D455, P44): cromo build --target android
+// compiles this program with the library of its version and runs it with what the
+// app has, libmain.so and libSDL3.so of each architecture and the classes of Java
+// of SDL. It writes the manifest in the binary XML of Android, the table of the
+// resources with the icon, the archive with the files stored and the libraries
+// aligned to 16 KB, which Android maps without extracting them, and the signature
+// of scheme v2 with the key for debugging of the user, in ~/.cromo/android, made
+// the first time.
+//   apk <apk> <package> <name> <icon.png or -> <path in the APK>=<file>...
+import std.crypto
+import std.fs
+import std.os
+import unsafe
+
+extern "cromo" {
+    addr cromo_crypto_key_read(i32 isPrivate, addr data, i64 size)
+    i64 cromo_crypto_key_sign(addr key, i32 hash, addr data, i64 size, addr signature, i64 capacity)
+    void cromo_crypto_key_free(addr key)
+    i64 cromo_crypto_key_generate(addr out, i64 capacity)
+    i64 cromo_crypto_key_public(addr key, addr out, i64 capacity)
+    i64 cromo_crypto_key_certificate(addr key, addr subject, addr from, addr to, addr out, i64 capacity)
+}
+
+const i64 minimumSdk = 26  // D454
+const i64 targetSdk = 35
+const i64 iconResource = 0x7F010000  // drawable/icon, the first resource of the app
+
+i32 main(list<string> args) {
+    if (args.len() < 5) {
+        println("usage: apk <apk> <package> <name> <icon.png or -> <path in the APK>=<file>...")
+        ret 2
+    }
+    bool icon = args[4] != "-"
+    list<Entry> entries
+    entries.add(Entry("AndroidManifest.xml", manifest(args[2], args[3], icon)))
+    if (icon) {
+        entries.add(Entry("resources.arsc", resources(args[2])))
+        entries.add(Entry("res/drawable/icon.png", fs.readBytes(args[4])))
+    }
+    for (i64 i = 5; i < args.len(); i++) {
+        i64 equals = args[i].find("=")
+        entries.add(Entry(args[i].slice(0, equals), fs.readBytes(args[i].slice(equals + 1, args[i].len()))))
+    }
+    fs.writeBytes(args[1], sign(archive(entries), debugSigner()))
+    ret 0
+}
+
+// ---- Bytes ----
+
+void put8(ref list<u8> out, i64 value) {
+    out.add(u8(value & 0xFF))
+}
+
+void put16(ref list<u8> out, i64 value) {
+    put8(ref out, value)
+    put8(ref out, value >> 8)
+}
+
+void put32(ref list<u8> out, i64 value) {
+    put16(ref out, value)
+    put16(ref out, value >> 16)
+}
+
+void put64(ref list<u8> out, i64 value) {
+    put32(ref out, value)
+    put32(ref out, value >> 32)
+}
+
+void putBytes(ref list<u8> out, list<u8> bytes) {
+    out.reserve(out.len() + bytes.len())
+    for (u8 b in bytes) {
+        out.add(b)
+    }
+}
+
+void set32(ref list<u8> out, i64 at, i64 value) {
+    for (i64 i = 0; i < 4; i++) {
+        out[at + i] = u8((value >> (8 * i)) & 0xFF)
+    }
+}
+
+i64 get32(list<u8> bytes, i64 at) {
+    ret i64(bytes[at]) | i64(bytes[at + 1]) << 8 | i64(bytes[at + 2]) << 16 | i64(bytes[at + 3]) << 24
+}
+
+// The bytes with their size before them, in 32 bits, as the signatures want them.
+list<u8> prefixed(list<u8> bytes) {
+    list<u8> out
+    put32(ref out, bytes.len())
+    putBytes(ref out, bytes)
+    ret out
+}
+
+list<u8> slice(list<u8> bytes, i64 from, i64 to) {
+    list<u8> out
+    out.reserve(to - from)
+    for (i64 i = from; i < to; i++) {
+        out.add(bytes[i])
+    }
+    ret out
+}
+
+// The units of UTF-16 of a text, for the strings of Android.
+list<i64> utf16(string text) {
+    list<u8> bytes = text.bytes()
+    list<i64> units
+    for (i64 i = 0; i < bytes.len();) {
+        i64 b = i64(bytes[i])
+        i64 code = b
+        i64 more = 0
+        if (b >= 0xF0) {
+            code = b & 0x07
+            more = 3
+        } else if (b >= 0xE0) {
+            code = b & 0x0F
+            more = 2
+        } else if (b >= 0xC0) {
+            code = b & 0x1F
+            more = 1
+        }
+        i++
+        for (; more > 0 && i < bytes.len(); more--) {
+            code = code << 6 | (i64(bytes[i]) & 0x3F)
+            i++
+        }
+        if (code >= 0x10000) {
+            code = code - 0x10000
+            units.add(0xD800 | code >> 10)
+            units.add(0xDC00 | (code & 0x3FF))
+        } else {
+            units.add(code)
+        }
+    }
+    ret units
+}
+
+// ---- The binary XML and the resources of Android ----
+
+// A pool of strings in UTF-16, the chunk RES_STRING_POOL_TYPE.
+list<u8> stringPool(list<string> strings) {
+    list<u8> data
+    list<i64> offsets
+    for (string s in strings) {
+        offsets.add(data.len())
+        list<i64> units = utf16(s)
+        put16(ref data, units.len())
+        for (i64 unit in units) {
+            put16(ref data, unit)
+        }
+        put16(ref data, 0)
+    }
+    for (data.len() % 4 != 0) {
+        data.add(0)
+    }
+    i64 header = 28
+    list<u8> out
+    put16(ref out, 0x0001)
+    put16(ref out, header)
+    put32(ref out, header + 4 * strings.len() + data.len())
+    put32(ref out, strings.len())
+    put32(ref out, 0)  // styles
+    put32(ref out, 0)  // flags: UTF-16
+    put32(ref out, header + 4 * strings.len())
+    put32(ref out, 0)
+    for (i64 offset in offsets) {
+        put32(ref out, offset)
+    }
+    putBytes(ref out, data)
+    ret out
+}
+
+// The types of a value (Res_value).
+const i64 typeReference = 0x01
+const i64 typeString = 0x03
+const i64 typeDecimal = 0x10
+const i64 typeHexadecimal = 0x11
+const i64 typeBoolean = 0x12
+
+// An attribute of an element: those of android have the number of their resource.
+struct Attribute {
+    string name
+    i64 resource
+    i64 kind
+    string text
+    i64 value
+
+    Attribute(string attributeName, i64 attributeResource, i64 valueKind, string valueText, i64 number) {
+        name = attributeName
+        resource = attributeResource
+        kind = valueKind
+        text = valueText
+        value = number
+    }
+}
+
+Attribute textAttribute(string name, i64 resource, string value) {
+    ret Attribute(name, resource, typeString, value, 0)
+}
+
+Attribute numberAttribute(string name, i64 resource, i64 kind, i64 value) {
+    ret Attribute(name, resource, kind, "", value)
+}
+
+// The start of an element with its attributes, or its end without them.
+struct Node {
+    bool start
+    string name
+    list<Attribute> attributes
+}
+
+Node open(string name, list<Attribute> attributes) {
+    Node node
+    node.start = true
+    node.name = name
+    node.attributes = attributes
+    ret node
+}
+
+Node close(string name) {
+    Node node
+    node.name = name
+    ret node
+}
+
+// The manifest: the activity of SDL, which loads libSDL3.so and libmain.so, as
+// the one of the project of SDL for Android, without its permissions.
+list<u8> manifest(string package, string label, bool icon) {
+    list<Node> nodes
+    nodes.add(open("manifest", [numberAttribute("versionCode", 0x0101021B, typeDecimal, 1),
+        textAttribute("versionName", 0x0101021C, "1.0"), textAttribute("package", 0, package)]))
+    nodes.add(open("uses-sdk", [numberAttribute("minSdkVersion", 0x0101020C, typeDecimal, minimumSdk),
+        numberAttribute("targetSdkVersion", 0x01010270, typeDecimal, targetSdk)]))
+    nodes.add(close("uses-sdk"))
+    nodes.add(open("uses-feature", [numberAttribute("glEsVersion", 0x01010281, typeHexadecimal, 0x20000)]))
+    nodes.add(close("uses-feature"))
+    list<Attribute> application = [textAttribute("label", 0x01010001, label),
+        numberAttribute("hasCode", 0x0101000C, typeBoolean, -1),
+        numberAttribute("hardwareAccelerated", 0x010102D3, typeBoolean, -1),
+        numberAttribute("extractNativeLibs", 0x010104EA, typeBoolean, 0)]
+    if (icon) {
+        application.add(numberAttribute("icon", 0x01010002, typeReference, iconResource))
+    }
+    nodes.add(open("application", application))
+    // The changes of the configuration that SDL handles without a new activity.
+    i64 changes = 0x5000AFF4
+    nodes.add(open("activity", [textAttribute("name", 0x01010003, "org.libsdl.app.SDLActivity"),
+        textAttribute("label", 0x01010001, label), numberAttribute("exported", 0x01010010, typeBoolean, -1),
+        numberAttribute("launchMode", 0x0101001D, typeDecimal, 3),  // singleInstance
+        numberAttribute("configChanges", 0x0101001F, typeHexadecimal, changes),
+        numberAttribute("theme", 0x01010000, typeReference, 0x0103022F)]))  // Theme.Material.NoActionBar.Fullscreen
+    list<Attribute> none
+    nodes.add(open("intent-filter", none))
+    nodes.add(open("action", [textAttribute("name", 0x01010003, "android.intent.action.MAIN")]))
+    nodes.add(close("action"))
+    nodes.add(open("category", [textAttribute("name", 0x01010003, "android.intent.category.LAUNCHER")]))
+    nodes.add(close("category"))
+    nodes.add(close("intent-filter"))
+    nodes.add(close("activity"))
+    nodes.add(close("application"))
+    nodes.add(close("manifest"))
+    ret binaryXml(nodes)
+}
+
+i64 indexOf(ref list<string> strings, string text) {
+    for (i64 i = 0; i < strings.len(); i++) {
+        if (strings[i] == text) {
+            ret i
+        }
+    }
+    strings.add(text)
+    ret strings.len() - 1
+}
+
+// The binary XML of Android: the strings, the names of the attributes of android
+// first with the map of their resources, then the namespace and the elements, each
+// with its attributes in the order of their resources, as the system reads them.
+list<u8> binaryXml(list<Node> nodes) {
+    list<string> strings
+    list<i64> resources
+    for (i64 n = 0; n < nodes.len(); n++) {
+        for (i64 a = 0; a < nodes[n].attributes.len(); a++) {
+            if (nodes[n].attributes[a].resource != 0 && indexOf(ref strings, nodes[n].attributes[a].name) == resources.len()) {
+                resources.add(nodes[n].attributes[a].resource)
+            }
+        }
+    }
+    i64 prefix = indexOf(ref strings, "android")
+    i64 uri = indexOf(ref strings, "http://schemas.android.com/apk/res/android")
+    list<u8> body
+    put16(ref body, 0x0100)  // the start of the namespace
+    put16(ref body, 16)
+    put32(ref body, 24)
+    put32(ref body, 1)
+    put32(ref body, 0xFFFFFFFF)
+    put32(ref body, prefix)
+    put32(ref body, uri)
+    for (i64 n = 0; n < nodes.len(); n++) {
+        i64 name = indexOf(ref strings, nodes[n].name)
+        if (!nodes[n].start) {
+            put16(ref body, 0x0103)
+            put16(ref body, 16)
+            put32(ref body, 24)
+            put32(ref body, 1)
+            put32(ref body, 0xFFFFFFFF)
+            put32(ref body, 0xFFFFFFFF)
+            put32(ref body, name)
+            continue
+        }
+        list<Attribute> sorted = sortedAttributes(nodes[n].attributes)
+        put16(ref body, 0x0102)
+        put16(ref body, 16)
+        put32(ref body, 36 + 20 * sorted.len())
+        put32(ref body, 1)
+        put32(ref body, 0xFFFFFFFF)
+        put32(ref body, 0xFFFFFFFF)
+        put32(ref body, name)
+        put16(ref body, 20)
+        put16(ref body, 20)
+        put16(ref body, sorted.len())
+        put16(ref body, 0)
+        put16(ref body, 0)
+        put16(ref body, 0)
+        for (ref Attribute attribute in sorted) {
+            put32(ref body, attribute.resource != 0 ? uri : 0xFFFFFFFF)
+            put32(ref body, indexOf(ref strings, attribute.name))
+            i64 data = attribute.value
+            if (attribute.kind == typeString) {
+                data = indexOf(ref strings, attribute.text)
+                put32(ref body, data)
+            } else {
+                put32(ref body, 0xFFFFFFFF)
+            }
+            put16(ref body, 8)
+            put8(ref body, 0)
+            put8(ref body, attribute.kind)
+            put32(ref body, data)
+        }
+    }
+    put16(ref body, 0x0101)  // the end of the namespace
+    put16(ref body, 16)
+    put32(ref body, 24)
+    put32(ref body, 1)
+    put32(ref body, 0xFFFFFFFF)
+    put32(ref body, prefix)
+    put32(ref body, uri)
+
+    list<u8> pool = stringPool(strings)
+    list<u8> out
+    put16(ref out, 0x0003)
+    put16(ref out, 8)
+    put32(ref out, 8 + pool.len() + 8 + 4 * resources.len() + body.len())
+    putBytes(ref out, pool)
+    put16(ref out, 0x0180)  // the map of the resources
+    put16(ref out, 8)
+    put32(ref out, 8 + 4 * resources.len())
+    for (i64 resource in resources) {
+        put32(ref out, resource)
+    }
+    putBytes(ref out, body)
+    ret out
+}
+
+list<Attribute> sortedAttributes(list<Attribute> attributes) {
+    list<Attribute> sorted = attributes.copy()
+    for (i64 i = 1; i < sorted.len(); i++) {
+        for (i64 j = i; j > 0 && sorted[j - 1].resource > sorted[j].resource; j--) {
+            Attribute moved = sorted.remove(j)
+            sorted.insert(j - 1, move moved)
+        }
+    }
+    ret sorted
+}
+
+// The table of the resources of the app: only drawable/icon, the file
+// res/drawable/icon.png, for every configuration.
+list<u8> resources(string package) {
+    list<u8> values = stringPool(["res/drawable/icon.png"])
+    list<u8> types = stringPool(["drawable"])
+    list<u8> keys = stringPool(["icon"])
+
+    list<u8> specification  // ResTable_typeSpec
+    put16(ref specification, 0x0202)
+    put16(ref specification, 16)
+    put32(ref specification, 16 + 4)
+    put8(ref specification, 1)  // the type 1, drawable
+    put8(ref specification, 0)
+    put16(ref specification, 0)
+    put32(ref specification, 1)  // one entry
+    put32(ref specification, 0)  // the same in every configuration
+
+    i64 header = 8 + 1 + 1 + 2 + 4 + 4 + 64  // with the default ResTable_config of 64 bytes
+    list<u8> type                            // ResTable_type
+    put16(ref type, 0x0201)
+    put16(ref type, header)
+    put32(ref type, header + 4 + 8 + 8)
+    put8(ref type, 1)
+    put8(ref type, 0)
+    put16(ref type, 0)
+    put32(ref type, 1)
+    put32(ref type, header + 4)  // where the entries start
+    put32(ref type, 64)          // the size of the configuration, all of it 0
+    for (i64 i = 4; i < 64; i++) {
+        put8(ref type, 0)
+    }
+    put32(ref type, 0)  // the offset of the entry
+    put16(ref type, 8)  // ResTable_entry: its size, its flags, its key
+    put16(ref type, 0)
+    put32(ref type, 0)
+    put16(ref type, 8)  // Res_value: the string 0 of the values
+    put8(ref type, 0)
+    put8(ref type, typeString)
+    put32(ref type, 0)
+
+    i64 packageHeader = 288
+    list<u8> chunk  // ResTable_package
+    put16(ref chunk, 0x0200)
+    put16(ref chunk, packageHeader)
+    put32(ref chunk, packageHeader + types.len() + keys.len() + specification.len() + type.len())
+    put32(ref chunk, 0x7F)
+    list<i64> name = utf16(package)
+    for (i64 i = 0; i < 128; i++) {
+        put16(ref chunk, i < name.len() && i < 127 ? name[i] : 0)
+    }
+    put32(ref chunk, packageHeader)  // the strings of the types
+    put32(ref chunk, 1)
+    put32(ref chunk, packageHeader + types.len())  // the strings of the keys
+    put32(ref chunk, 1)
+    put32(ref chunk, 0)
+    putBytes(ref chunk, types)
+    putBytes(ref chunk, keys)
+    putBytes(ref chunk, specification)
+    putBytes(ref chunk, type)
+
+    list<u8> out  // ResTable_header
+    put16(ref out, 0x0002)
+    put16(ref out, 12)
+    put32(ref out, 12 + values.len() + chunk.len())
+    put32(ref out, 1)
+    putBytes(ref out, values)
+    putBytes(ref out, chunk)
+    ret out
+}
+
+// ---- The archive ----
+
+struct Entry {
+    string name
+    list<u8> data
+
+    Entry(string path, list<u8> bytes) {
+        name = path
+        data = bytes
+    }
+}
+
+list<i64> crcTable() {
+    list<i64> table
+    for (i64 n = 0; n < 256; n++) {
+        i64 c = n
+        for (i64 k = 0; k < 8; k++) {
+            c = (c & 1) != 0 ? 0xEDB88320 ^ (c >> 1) : c >> 1
+        }
+        table.add(c)
+    }
+    ret table
+}
+
+i64 crc32(ref list<i64> table, list<u8> data) {
+    i64 c = 0xFFFFFFFF
+    for (u8 b in data) {
+        c = table[(c ^ i64(b)) & 0xFF] ^ (c >> 8)
+    }
+    ret c ^ 0xFFFFFFFF
+}
+
+// A ZIP with every file stored: the data of the libraries start at a multiple of
+// 16 KB, the others of 4 bytes, as zipalign aligns them, with zeros in the extra
+// field of their local header.
+list<u8> archive(list<Entry> entries) {
+    list<i64> table = crcTable()
+    list<u8> out
+    list<u8> central
+    for (i64 e = 0; e < entries.len(); e++) {
+        list<u8> name = entries[e].name.bytes()
+        i64 size = entries[e].data.len()
+        i64 crc = crc32(ref table, entries[e].data)
+        i64 offset = out.len()
+        i64 alignment = entries[e].name.endsWith(".so") ? 16384 : 4
+        i64 start = offset + 30 + name.len()
+        i64 padding = (alignment - start % alignment) % alignment
+        put32(ref out, 0x04034B50)
+        put16(ref out, 10)  // the version needed
+        put16(ref out, 0)   // the flags
+        put16(ref out, 0)   // stored
+        put16(ref out, 0)   // the time and the date: 1980-01-01
+        put16(ref out, 0x21)
+        put32(ref out, crc)
+        put32(ref out, size)
+        put32(ref out, size)
+        put16(ref out, name.len())
+        put16(ref out, padding)
+        putBytes(ref out, name)
+        for (i64 i = 0; i < padding; i++) {
+            out.add(0)
+        }
+        putBytes(ref out, entries[e].data)
+
+        put32(ref central, 0x02014B50)
+        put16(ref central, 10)
+        put16(ref central, 10)
+        put16(ref central, 0)
+        put16(ref central, 0)
+        put16(ref central, 0)
+        put16(ref central, 0x21)
+        put32(ref central, crc)
+        put32(ref central, size)
+        put32(ref central, size)
+        put16(ref central, name.len())
+        put16(ref central, 0)
+        put16(ref central, 0)
+        put16(ref central, 0)
+        put16(ref central, 0)
+        put32(ref central, 0)
+        put32(ref central, offset)
+        putBytes(ref central, name)
+    }
+    i64 directory = out.len()
+    putBytes(ref out, central)
+    put32(ref out, 0x06054B50)
+    put16(ref out, 0)
+    put16(ref out, 0)
+    put16(ref out, entries.len())
+    put16(ref out, entries.len())
+    put32(ref out, central.len())
+    put32(ref out, directory)
+    put16(ref out, 0)
+    ret out
+}
+
+// ---- The signature of scheme v2 ----
+
+// The key for debugging and its certificate, made the first time, as the SDK of
+// Android makes its own.
+struct Signer {
+    list<u8> key
+    list<u8> certificate
+}
+
+string home() {
+    string name = os.name() == "windows" ? "USERPROFILE" : "HOME"
+    string folder = os.env(name)
+    if (folder.len() == 0) {
+        throw Error(format("{} is not set: there is no ~/.cromo for the key of the APKs", name))
+    }
+    ret folder
+}
+
+addr raw(list<u8> bytes) {
+    addr data = alloc(bytes.len() + 1)
+    for (i64 i = 0; i < bytes.len(); i++) {
+        put<u8>(offset(data, i), bytes[i])
+    }
+    put<u8>(offset(data, bytes.len()), 0)
+    ret data
+}
+
+list<u8> fromRaw(addr data, i64 size) {
+    list<u8> bytes
+    bytes.reserve(size)
+    for (i64 i = 0; i < size; i++) {
+        bytes.add(copyAt<u8>(offset(data, i)))
+    }
+    ret bytes
+}
+
+addr readKey(list<u8> der) {
+    addr data = raw(der)
+    addr key = cromo_crypto_key_read(1, data, der.len())
+    free(data)
+    addr none
+    if (key == none) {
+        throw Error("cannot read the key for debugging of the APKs in ~/.cromo/android")
+    }
+    ret key
+}
+
+Signer debugSigner() {
+    string folder = fs.joinPath(fs.joinPath(home(), ".cromo"), "android")
+    string keyPath = fs.joinPath(folder, "debug-key.der")
+    string certificatePath = fs.joinPath(folder, "debug-certificate.der")
+    if (!fs.isFile(keyPath) || !fs.isFile(certificatePath)) {
+        addr out = alloc(4096)
+        i64 size = cromo_crypto_key_generate(out, 4096)
+        if (size < 0) {
+            free(out)
+            throw Error("cannot make a key for debugging for the APKs")
+        }
+        list<u8> key = fromRaw(out, size)
+        addr handle = readKey(key)
+        addr subject = raw("CN=Android Debug,O=Android,C=US".bytes())
+        addr from = raw("20260101000000".bytes())
+        addr to = raw("20560101000000".bytes())
+        size = cromo_crypto_key_certificate(handle, subject, from, to, out, 4096)
+        free(subject)
+        free(from)
+        free(to)
+        cromo_crypto_key_free(handle)
+        if (size < 0) {
+            free(out)
+            throw Error("cannot make the certificate of the key for debugging of the APKs")
+        }
+        list<u8> certificate = fromRaw(out, size)
+        free(out)
+        fs.createFolders(folder)
+        fs.writeBytes(keyPath, key)
+        fs.writeBytes(certificatePath, certificate)
+    }
+    Signer signer
+    signer.key = fs.readBytes(keyPath)
+    signer.certificate = fs.readBytes(certificatePath)
+    ret signer
+}
+
+// An integer of DER, positive, from its bytes in big endian.
+list<u8> derInteger(list<u8> bytes) {
+    i64 first = 0
+    for (first < bytes.len() - 1 && bytes[first] == 0) {
+        first++
+    }
+    list<u8> value
+    if (bytes[first] >= 0x80) {
+        value.add(0)
+    }
+    putBytes(ref value, slice(bytes, first, bytes.len()))
+    list<u8> out
+    out.add(0x02)
+    out.add(u8(value.len()))
+    putBytes(ref out, value)
+    ret out
+}
+
+// The signature of ECDSA in DER, from r and s side by side.
+list<u8> derSignature(list<u8> raw) {
+    i64 half = raw.len() / 2
+    list<u8> both = derInteger(slice(raw, 0, half))
+    putBytes(ref both, derInteger(slice(raw, half, raw.len())))
+    list<u8> out
+    out.add(0x30)
+    out.add(u8(both.len()))
+    putBytes(ref out, both)
+    ret out
+}
+
+// The digest of the contents of scheme v2: each part in chunks of 1 MB, each chunk
+// hashed with 0xA5 and its size before it, then the hashes with 0x5A and their
+// number.
+list<u8> contentDigest(list<list<u8>> parts) {
+    list<u8> all
+    put8(ref all, 0x5A)
+    i64 count = 0
+    list<u8> hashes
+    for (i64 p = 0; p < parts.len(); p++) {
+        for (i64 at = 0; at < parts[p].len(); at += 1048576) {
+            i64 end = at + 1048576 < parts[p].len() ? at + 1048576 : parts[p].len()
+            list<u8> chunk
+            chunk.reserve(end - at + 5)
+            put8(ref chunk, 0xA5)
+            put32(ref chunk, end - at)
+            for (i64 i = at; i < end; i++) {
+                chunk.add(parts[p][i])
+            }
+            putBytes(ref hashes, crypto.sha256(chunk))
+            count++
+        }
+    }
+    put32(ref all, count)
+    putBytes(ref all, hashes)
+    ret crypto.sha256(all)
+}
+
+// The APK signed: the block of the signatures goes between the files and the
+// central directory, whose offset in the end of the archive moves after it.
+list<u8> sign(list<u8> zip, Signer signer) {
+    i64 end = zip.len() - 22
+    i64 directory = get32(zip, end + 16)
+    list<list<u8>> parts
+    parts.add(slice(zip, 0, directory))
+    parts.add(slice(zip, directory, end))
+    parts.add(slice(zip, end, zip.len()))
+    i64 algorithm = 0x0201  // ECDSA with SHA-256
+    list<u8> digest = contentDigest(parts)
+
+    addr key = readKey(signer.key)
+    addr out = alloc(1024)
+    i64 size = cromo_crypto_key_public(key, out, 1024)
+    list<u8> publicKey = fromRaw(out, size < 0 ? 0 : size)
+
+    list<u8> digestEntry
+    put32(ref digestEntry, algorithm)
+    putBytes(ref digestEntry, prefixed(digest))
+    list<u8> signedData = prefixed(prefixed(digestEntry))
+    putBytes(ref signedData, prefixed(prefixed(signer.certificate)))
+    list<u8> attributes  // none
+    putBytes(ref signedData, prefixed(attributes))
+
+    addr data = raw(signedData)
+    size = cromo_crypto_key_sign(key, i32(crypto.Hash.Sha256), data, signedData.len(), out, 1024)
+    free(data)
+    cromo_crypto_key_free(key)
+    if (size < 0 || publicKey.len() == 0) {
+        free(out)
+        throw Error("cannot sign the APK with the key for debugging")
+    }
+    list<u8> signature = derSignature(fromRaw(out, size))
+    free(out)
+
+    list<u8> signatureEntry
+    put32(ref signatureEntry, algorithm)
+    putBytes(ref signatureEntry, prefixed(signature))
+    list<u8> signerBytes = prefixed(signedData)
+    putBytes(ref signerBytes, prefixed(prefixed(signatureEntry)))
+    putBytes(ref signerBytes, prefixed(publicKey))
+    list<u8> value = prefixed(prefixed(signerBytes))
+
+    list<u8> pair
+    put64(ref pair, 4 + value.len())
+    put32(ref pair, 0x7109871A)  // the ID of scheme v2
+    putBytes(ref pair, value)
+    list<u8> block
+    put64(ref block, pair.len() + 8 + 16)
+    putBytes(ref block, pair)
+    put64(ref block, pair.len() + 8 + 16)
+    putBytes(ref block, "APK Sig Block 42".bytes())
+
+    list<u8> apk = parts[0]
+    putBytes(ref apk, block)
+    putBytes(ref apk, parts[1])
+    list<u8> last = parts[2]
+    set32(ref last, 16, directory + block.len())
+    putBytes(ref apk, last)
+    ret apk
+}

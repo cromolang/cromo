@@ -14,6 +14,7 @@
 #include <llvm/Config/llvm-config.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <cstring>
 #include <deque>
@@ -83,6 +84,9 @@ struct Compilation {
     bool checkNames = false;  // --check-names: only the names of the modules, for the pilot (D423)
     std::vector<std::string> filters;  // cromo test: the names of the tests to run (D352)
     std::vector<std::string> tests;    // cromo test: the names of the tests, by their number
+    bool apk = false;  // --target android: the APK with both architectures (D453)
+    std::string androidPackage;  // of [[android(...)]] on main (D455)
+    std::string androidName;
 };
 
 // Compiles the program and writes the executable. Returns the exit code of cromo.
@@ -146,6 +150,12 @@ int build(Compilation& compilation) {
     if (options.target == cromo::Target::Linux && !cromo::callsTheCLibrary(options.archives, options.glibc, failure)) {
         std::fprintf(stderr, "cromo: %s\n", failure.c_str());  // D428
         return 1;
+    }
+    for (const cromo::FunctionDecl& function : module.functions) {
+        if (!function.androidPackage.empty()) {  // D455
+            compilation.androidPackage = function.androidPackage;
+            compilation.androidName = function.androidName;
+        }
     }
     if (options.target == cromo::Target::Windows && !tests && !compilation.runtime) {
         for (const cromo::FunctionDecl& function : module.functions) {
@@ -211,13 +221,17 @@ bool readOptions(const std::vector<std::string>& args, size_t first, size_t last
                 options.target = cromo::Target::Linux;
             } else if (target == "linux-arm64") {
                 options.target = cromo::Target::LinuxArm64;
+            } else if (target == "android" && !run && !test) {  // D453: the APK
+                options.target = cromo::Target::AndroidArm64;
+                compilation.apk = true;
             } else if (target == "android-arm64") {  // P43
                 options.target = cromo::Target::AndroidArm64;
             } else if (target == "android-x86_64") {
                 options.target = cromo::Target::AndroidX64;
             } else {
                 std::fprintf(stderr,
-                             "cromo: unknown target: %s (windows, linux, linux-arm64, android-arm64 or android-x86_64)\n",
+                             "cromo: unknown target: %s (windows, linux, linux-arm64, android, android-arm64 or "
+                             "android-x86_64)\n",
                              target.c_str());
                 return false;
             }
@@ -262,11 +276,12 @@ bool readOptions(const std::vector<std::string>& args, size_t first, size_t last
         compilation.inputPath = "main.cro";
         if (options.outputPath.empty()) {
             std::string folder = fs::current_path(ec).filename().string();
-            options.outputPath = (folder.empty() ? std::string("main") : folder) + (windows ? ".exe" : "");
+            options.outputPath = (folder.empty() ? std::string("main") : folder) + (compilation.apk ? ".apk" : windows ? ".exe" : "");
         }
     }
     if (options.outputPath.empty()) {
-        options.outputPath = fs::path(compilation.inputPath).replace_extension(windows ? ".exe" : "").string();
+        const char* extension = compilation.apk ? ".apk" : windows ? ".exe" : "";
+        options.outputPath = fs::path(compilation.inputPath).replace_extension(extension).string();
     }
     return true;
 }
@@ -654,6 +669,86 @@ void runTests(const fs::path& exe, std::vector<TestRun>& runs) {
 
 #endif
 
+// D453: the APK of an app. libmain.so of the program for each architecture, then
+// lib/tools/apk.cro writes and signs the APK with them, libSDL3.so of lib/ and the
+// classes of Java of SDL, the package and the name of [[android(...)]], or those
+// of the name of the file, and the icon next to it (D455).
+int buildApk(Compilation& compilation) {
+    std::error_code ec;
+#ifdef _WIN32
+    std::string id = std::to_string(GetCurrentProcessId());
+#else
+    std::string id = std::to_string(getpid());
+#endif
+    fs::path folder = fs::temp_directory_path(ec) / ("cromo-apk-" + id);
+    fs::path source(compilation.inputPath);
+    std::string output = fs::absolute(compilation.options.outputPath, ec).string();
+    std::vector<std::string> entries;
+    fs::path dex = cromo::libraryFolder() / "android" / "classes.dex";
+    if (!fs::is_regular_file(dex, ec)) {
+        std::fprintf(stderr, "cromo: the library has no %s: this cromo was built without the SDK of Android (D453)\n",
+                     dex.string().c_str());
+        return 1;
+    }
+    entries.push_back("classes.dex=" + dex.string());
+    for (cromo::Target target : {cromo::Target::AndroidArm64, cromo::Target::AndroidX64}) {
+        const char* abi = target == cromo::Target::AndroidArm64 ? "arm64-v8a" : "x86_64";
+        fs::path sdl = cromo::runtimeLibraryPath(target).parent_path() / "libSDL3.so";
+        if (!fs::is_regular_file(sdl, ec)) {
+            std::fprintf(stderr, "cromo: the library has no %s: this cromo was built without the NDK (D453)\n",
+                         sdl.string().c_str());
+            fs::remove_all(folder, ec);
+            return 1;
+        }
+        fs::create_directories(folder / abi, ec);
+        Compilation part = compilation;
+        part.apk = false;
+        part.options.target = target;
+        part.options.sharedLibrary = true;
+        part.options.outputPath = (folder / abi / "libmain.so").string();
+        int code = build(part);
+        if (code != 0) {
+            fs::remove_all(folder, ec);
+            return code;
+        }
+        compilation.androidPackage = part.androidPackage;
+        compilation.androidName = part.androidName;
+        entries.push_back(std::string("lib/") + abi + "/libSDL3.so=" + sdl.string());
+        entries.push_back(std::string("lib/") + abi + "/libmain.so=" + part.options.outputPath);
+    }
+    std::string stem = source.stem().string();
+    std::string package = compilation.androidPackage;
+    if (package.empty()) {  // org.cromo. and the name of the file, as a name of Java
+        std::string name;
+        for (char c : stem) name += std::isalnum(static_cast<unsigned char>(c)) ? static_cast<char>(std::tolower(c)) : '_';
+        if (name.empty() || !std::isalpha(static_cast<unsigned char>(name[0]))) name = "app" + name;
+        package = "org.cromo." + name;
+    }
+    std::string name = compilation.androidName.empty() ? stem : compilation.androidName;
+    std::string icon = "-";
+    for (const fs::path& candidate : {fs::path(source).replace_extension(".png"), source.parent_path() / "main.png"}) {
+        if (fs::is_regular_file(candidate, ec)) {
+            icon = fs::absolute(candidate, ec).string();
+            break;
+        }
+    }
+
+    Compilation tool;
+    tool.inputPath = cromo::libraryFile("tools/apk.cro").string();
+    tool.options.outputPath = "apk";
+    std::vector<std::string> args = {output, package, name, icon};
+    args.insert(args.end(), entries.begin(), entries.end());
+#ifdef _WIN32
+    std::vector<std::wstring> programArgs;
+    for (const std::string& arg : args) programArgs.push_back(fs::path(arg).wstring());  // in the code page, as narrow()
+#else
+    std::vector<std::string> programArgs = args;
+#endif
+    int code = run(tool, programArgs);
+    fs::remove_all(folder, ec);
+    return code;
+}
+
 // D349-D352: builds the tests of the program in a temporary folder, runs each in
 // its own process and says which failed. Returns 0 when all passed.
 int testCommand(Compilation& compilation) {
@@ -772,7 +867,7 @@ int main(int argc, char** argv) {
     compilation.codegen.tests = command == "test";
     if (!readOptions(args, 2, separator, isRun, compilation)) return 2;
     if (compilation.codegen.tests) return testCommand(compilation);
-    if (!isRun) return build(compilation);
+    if (!isRun) return compilation.apk ? buildApk(compilation) : build(compilation);
 
 #ifdef _WIN32
     std::vector<std::wstring> programArgs;

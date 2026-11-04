@@ -1,5 +1,5 @@
 // cromo-flags: --target mac
-// expect-error: cromo: unknown target: mac (windows, linux, linux-arm64, android-arm64 or android-x86_64)
+// expect-error: cromo: unknown target: mac (windows, linux, linux-arm64, android, android-arm64 or android-x86_64)
 // The systems are Windows, Linux, Linux on ARM64 and Android (D142, D144, D406, P43).
 i32 main() {
     ret 0

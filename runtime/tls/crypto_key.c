@@ -15,6 +15,7 @@
 #include "mbedtls/pk.h"
 #include "mbedtls/psa_util.h"
 #include "mbedtls/rsa.h"
+#include "mbedtls/x509_crt.h"
 #include "glue.h"
 
 // The kinds of key, for the library.
@@ -141,4 +142,64 @@ int64_t cromo_crypto_key_sign(void* key, int32_t hash, const uint8_t* data, int6
 void cromo_crypto_key_free(void* key) {
     mbedtls_pk_free(key);
     cromo_free(key);
+}
+
+// ---- The key that signs the APKs (D453) ----
+//
+// The tool that writes an APK (lib/tools/apk.cro) makes once a key of P-256 and a
+// certificate of X.509 signed by the key itself, as the key for debugging of the
+// SDK of Android, and keeps them; the DER is written at the end of the buffer by
+// mbedTLS, and moved here to its start.
+
+static int64_t moveToStart(uint8_t* out, int64_t capacity, int written) {
+    if (written <= 0) return -1;
+    memmove(out, out + capacity - written, (size_t)written);
+    return written;
+}
+
+// A new key of P-256, in the DER of SEC 1: its size, or -1.
+int64_t cromo_crypto_key_generate(uint8_t* out, int64_t capacity) {
+    if (!cromo_tls_setup()) return -1;
+    mbedtls_pk_context key;
+    mbedtls_pk_init(&key);
+    int64_t size = -1;
+    if (mbedtls_pk_setup(&key, mbedtls_pk_info_from_type(MBEDTLS_PK_ECKEY)) == 0 &&
+        mbedtls_ecp_gen_key(MBEDTLS_ECP_DP_SECP256R1, mbedtls_pk_ec(key), mbedtls_psa_get_random,
+                            MBEDTLS_PSA_RANDOM_STATE) == 0) {
+        size = moveToStart(out, capacity, mbedtls_pk_write_key_der(&key, out, (size_t)capacity));
+    }
+    mbedtls_pk_free(&key);
+    return size;
+}
+
+// The public part of a key, in the DER of SubjectPublicKeyInfo: its size, or -1.
+int64_t cromo_crypto_key_public(void* key, uint8_t* out, int64_t capacity) {
+    return moveToStart(out, capacity, mbedtls_pk_write_pubkey_der(key, out, (size_t)capacity));
+}
+
+// A certificate in DER of `subject`, as "CN=Android Debug,O=Android,C=US", signed
+// by the key itself with SHA-256, valid from `from` to `to`, as "20260101000000":
+// its size, or -1.
+int64_t cromo_crypto_key_certificate(void* key, const char* subject, const char* from, const char* to, uint8_t* out,
+                                     int64_t capacity) {
+    uint8_t serial[8];
+    if (cromo_crypto_random(serial, sizeof serial) != 0) return -1;
+    serial[0] = (uint8_t)((serial[0] & 0x7F) | 0x40);  // positive, of 8 bytes
+    mbedtls_x509write_cert certificate;
+    mbedtls_x509write_crt_init(&certificate);
+    mbedtls_x509write_crt_set_version(&certificate, MBEDTLS_X509_CRT_VERSION_3);
+    mbedtls_x509write_crt_set_md_alg(&certificate, MBEDTLS_MD_SHA256);
+    mbedtls_x509write_crt_set_subject_key(&certificate, key);
+    mbedtls_x509write_crt_set_issuer_key(&certificate, key);
+    int64_t size = -1;
+    if (mbedtls_x509write_crt_set_subject_name(&certificate, subject) == 0 &&
+        mbedtls_x509write_crt_set_issuer_name(&certificate, subject) == 0 &&
+        mbedtls_x509write_crt_set_serial_raw(&certificate, serial, sizeof serial) == 0 &&
+        mbedtls_x509write_crt_set_validity(&certificate, from, to) == 0) {
+        size = moveToStart(out, capacity,
+                           mbedtls_x509write_crt_der(&certificate, out, (size_t)capacity, mbedtls_psa_get_random,
+                                                     MBEDTLS_PSA_RANDOM_STATE));
+    }
+    mbedtls_x509write_crt_free(&certificate);
+    return size;
 }
