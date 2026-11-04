@@ -1556,12 +1556,12 @@ const f32 buttonWidth = 46
 const f32 edgeWidth = 6
 const f32 titleSize = 12
 const f32 bodySize = 14  // text-sm
-const f32 padding = 12   // of the text in a text box, px-3
+const f32 padding = 8    // of the text in a text box and in a combo box
 const f32 checkSide = 16
 const f32 corner = 7       // of the buttons, the text boxes and the combo boxes
 const f32 checkCorner = 4  // of the check boxes
-const f32 groupCorner = 10
-const f32 itemHeight = 32  // of the list of a combo box
+const f32 groupCorner = 8
+const f32 itemHeight = 26  // of the list of a combo box
 const i64 listRows = 8
 
 // The colors of the look (D443): the grays and the indigo of Tailwind, light and
@@ -2313,7 +2313,7 @@ void releasePart(ref WindowData window, ref list<PartData> parts, f32 x, f32 y, 
 i64 rowsOf(ref WindowData window, ref PartData box) {
     f32 below = f32(window.height) - barHeight - box.top - f32(box.height) - 8
     f32 above = box.top - 8
-    i64 fit = i64((most(below, above) - 8) / itemHeight)
+    i64 fit = i64((most(below, above) - 6) / itemHeight)
     i64 rows = box.items.len() < listRows ? box.items.len() : listRows
     if (fit < rows) {
         rows = fit < 1 ? 1 : fit
@@ -2324,10 +2324,10 @@ i64 rowsOf(ref WindowData window, ref PartData box) {
 // Where the list is, in the content: below the combo box, or above it when there
 // is no room below.
 Rect listOf(ref WindowData window, ref PartData box) {
-    f32 h = f32(rowsOf(ref window, ref box)) * itemHeight + 8
-    f32 top = box.top + f32(box.height) + 4
-    if (top + h > f32(window.height) - barHeight - 4 && box.top - 4 - h >= 4) {
-        top = box.top - 4 - h
+    f32 h = f32(rowsOf(ref window, ref box)) * itemHeight + 6
+    f32 top = box.top + f32(box.height) + 3
+    if (top + h > f32(window.height) - barHeight - 4 && box.top - 3 - h >= 4) {
+        top = box.top - 3 - h
     }
     ret Rect(box.left, top, f32(box.width), h)
 }
@@ -2340,10 +2340,10 @@ bool inList(ref WindowData window, ref PartData box, f32 x, f32 y) {
 // The item at a point of the content, or -1.
 i64 itemAt(ref WindowData window, ref PartData box, f32 x, f32 y) {
     Rect area = listOf(ref window, ref box)
-    if (x < area.x || x >= area.x + area.w || y < area.y + 4 || y >= area.y + area.h - 4) {
+    if (x < area.x || x >= area.x + area.w || y < area.y + 3 || y >= area.y + area.h - 3) {
         ret -1
     }
-    i64 item = box.first + i64((y - area.y - 4) / itemHeight)
+    i64 item = box.first + i64((y - area.y - 3) / itemHeight)
     ret item < box.items.len() ? item : -1
 }
 
@@ -2840,7 +2840,7 @@ void drawPart(ref WindowData window, ref PartData part, ref Colors c) {
         f32 size = textWidth(window.strong, part.text, part.text.len())
         text(window.strong, part.text, x + (w - size) / 2, baseline, c.buttonText, on)
         if (focused) {
-            cromo_gui_box(r, x - 4, y - 4, w + 8, h + 8, corner + 4, 2, d, 0, solid(c.focus, true))
+            cromo_gui_box(r, x - 3, y - 3, w + 6, h + 6, corner + 3, 2, d, 0, solid(c.focus, true))
         }
     } else if (part.kind == kindTextBox) {
         drawField(ref window, ref part, ref c, focused)
@@ -2889,18 +2889,18 @@ void drawPart(ref WindowData window, ref PartData part, ref Colors c) {
             cromo_gui_box(r, x, top, checkSide, checkSide, checkCorner, 1, d, solid(c.check, on), solid(c.checkBorder, on))
         }
         if (focused) {
-            cromo_gui_box(r, x - 4, top - 4, checkSide + 8, checkSide + 8, checkCorner + 4, 2, d, 0, solid(c.focus, true))
+            cromo_gui_box(r, x - 3, top - 3, checkSide + 6, checkSide + 6, checkCorner + 3, 2, d, 0, solid(c.focus, true))
         }
-        text(window.body, part.text, x + checkSide + 10, baseline, c.text, on)
+        text(window.body, part.text, x + checkSide + 8, baseline, c.text, on)
     } else if (part.kind == kindGroup) {
         cromo_gui_shadow(r, x, y, w, h, groupCorner, d, c.inputShadow, 2, 1)
         cromo_gui_box(r, x, y, w, h, groupCorner, 1, d, solid(c.card, true), solid(c.cardBorder, true))
         clipInside(r, ref part, x + 1, y + 1, w - 2, h - 2)
-        text(window.strong, part.text, x + 16, y + 22 + (ascent - descent) / 2, c.text, on)
+        text(window.strong, part.text, x + 12, y + 17 + (ascent - descent) / 2, c.text, on)
         clipPart(r, ref part)
     } else if (part.kind == kindComboBox) {
         drawField(ref window, ref part, ref c, focused || window.popup == part.id)
-        clipInside(r, ref part, x + 2, y + 2, w - 34, h - 4)
+        clipInside(r, ref part, x + 2, y + 2, w - 28, h - 4)
         if (part.selected >= 0 && part.selected < part.items.len()) {
             text(window.body, part.items[part.selected], x + padding, baseline, c.text, on)
         } else {
@@ -2908,7 +2908,7 @@ void drawPart(ref WindowData window, ref PartData part, ref Colors c) {
         }
         clipPart(r, ref part)
         u32 arrow = on ? c.label : c.muted
-        cromo_gui_symbol(r, 5, x + w - 18, y + h / 2, d, red(arrow), green(arrow), blue(arrow))
+        cromo_gui_symbol(r, 5, x + w - 14, y + h / 2, d, red(arrow), green(arrow), blue(arrow))
     } else if (part.kind == kindImageBox) {
         drawImage(ref window, ref part)
     }
@@ -2951,26 +2951,27 @@ void drawList(ref WindowData window, ref PartData box, ref Colors c) {
     bool scrolls = box.items.len() > rows
     for (i64 row = 0; row < rows; row++) {
         i64 item = box.first + row
-        f32 top = y + 4 + f32(row) * itemHeight
+        f32 top = y + 3 + f32(row) * itemHeight
         clipTo(r, x + 1, y + 1, area.w - 2, area.h - 2)
         if (item == box.highlight) {
-            cromo_gui_box(r, x + 4, top, area.w - (scrolls ? 16 : 8), itemHeight, 5, 0, d, solid(c.item, true), 0)
+            cromo_gui_box(r, x + 3, top, area.w - (scrolls ? 14 : 6), itemHeight, 5, 0, d, solid(c.item, true), 0)
         }
         bool chosen = item == box.selected
-        clipTo(r, x + 1, y + 1, area.w - 36, area.h - 2)
-        text(chosen ? window.strong : window.body, box.items[item], x + 12, top + itemHeight / 2 + (ascent - descent) / 2, c.text, true)
+        clipTo(r, x + 1, y + 1, area.w - 30, area.h - 2)
+        text(chosen ? window.strong : window.body, box.items[item], x + padding, top + itemHeight / 2 + (ascent - descent) / 2, c.text,
+            true)
         if (chosen) {
             clipTo(r, x + 1, y + 1, area.w - 2, area.h - 2)
-            cromo_gui_symbol(r, 4, x + area.w - (scrolls ? 30 : 22), top + itemHeight / 2, d, red(c.focus), green(c.focus),
+            cromo_gui_symbol(r, 4, x + area.w - (scrolls ? 26 : 18), top + itemHeight / 2, d, red(c.focus), green(c.focus),
                 blue(c.focus))
         }
     }
     if (scrolls) {
-        f32 track = area.h - 8
+        f32 track = area.h - 6
         f32 thumb = track * f32(rows) / f32(box.items.len())
-        f32 at = y + 4 + (track - thumb) * f32(box.first) / f32(box.items.len() - rows)
+        f32 at = y + 3 + (track - thumb) * f32(box.first) / f32(box.items.len() - rows)
         clipTo(r, x + 1, y + 1, area.w - 2, area.h - 2)
-        cromo_gui_box(r, x + area.w - 8, at, 4, thumb, 2, 0, d, solid(c.checkBorder, true), 0)
+        cromo_gui_box(r, x + area.w - 7, at, 4, thumb, 2, 0, d, solid(c.checkBorder, true), 0)
     }
 }
 

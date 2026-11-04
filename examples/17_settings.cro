@@ -10,34 +10,34 @@ import std.gui
 
 [[window]]
 i32 main(list<string> args) {
-    gui.Window w = gui.Window("Example 17", 720, 440)
+    gui.Window w = gui.Window("Example 17", 640, 370)
 
     // The components of a group take their positions from its top left corner.
-    gui.GroupBox account = w.add(gui.GroupBox("Account", 20, 20, 330, 250))
-    account.add(gui.Label("Name", 16, 48, 200, 20))
-    gui.TextBox name = account.add(gui.TextBox("", 16, 72, 298, 32))
+    gui.GroupBox account = w.add(gui.GroupBox("Account", 12, 12, 300, 200))
+    account.add(gui.Label("Name", 12, 34, 200, 18))
+    gui.TextBox name = account.add(gui.TextBox("", 12, 54, 276, 28))
     name.setPlaceholder("Your name")
-    account.add(gui.Label("Role", 16, 116, 200, 20))
-    gui.ComboBox role = account.add(gui.ComboBox(["Administrator", "Developer", "Designer", "Viewer"], 16, 140, 298, 32))
+    account.add(gui.Label("Role", 12, 90, 200, 18))
+    gui.ComboBox role = account.add(gui.ComboBox(["Administrator", "Developer", "Designer", "Viewer"], 12, 110, 276, 28))
     role.setPlaceholder("Choose a role")
-    gui.CheckBox news = account.add(gui.CheckBox("Send me the news", 16, 196, 260, 24))
+    gui.CheckBox news = account.add(gui.CheckBox("Send me the news", 12, 154, 260, 22))
 
     // The preview grows with the window, and its image with it.
-    gui.GroupBox preview = w.add(gui.GroupBox("Preview", 370, 20, 330, 250))
+    gui.GroupBox preview = w.add(gui.GroupBox("Preview", 324, 12, 304, 200))
     preview.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Stretch)
     if (args.len() > 1) {
-        gui.ImageBox picture = preview.add(gui.ImageBox(args[1], 16, 48, 298, 186))
+        gui.ImageBox picture = preview.add(gui.ImageBox(args[1], 12, 34, 280, 154))
         picture.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Stretch)
     } else {
-        preview.add(gui.Label("No image: give its path to the program.", 16, 48, 298, 20))
+        preview.add(gui.Label("No image: give its path to the program.", 12, 34, 280, 18))
     }
 
     // The buttons stay in the bottom right corner, the status in the bottom left.
-    gui.Label status = w.add(gui.Label("", 20, 362, 400, 20))
+    gui.Label status = w.add(gui.Label("", 12, 299, 400, 18))
     status.setAnchor(gui.Horizontal.Left, gui.Vertical.Bottom)
-    gui.Button save = w.add(gui.Button("Save", 496, 355, 96, 34))
+    gui.Button save = w.add(gui.Button("Save", 452, 293, 82, 30))
     save.setAnchor(gui.Horizontal.Right, gui.Vertical.Bottom)
-    gui.Button quit = w.add(gui.Button("Quit", 604, 355, 96, 34))
+    gui.Button quit = w.add(gui.Button("Quit", 546, 293, 82, 30))
     quit.setAnchor(gui.Horizontal.Right, gui.Vertical.Bottom)
 
     role.onChange([news](i64 index) { news.setEnabled(index != 3) })  // no news for the viewers
