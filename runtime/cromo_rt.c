@@ -11,6 +11,10 @@ typedef int i32;
 typedef unsigned long long u64;
 typedef long long i64;
 
+#if defined(CROMO_GLIBC) || defined(CROMO_BIONIC)
+#define CROMO_PTHREADS
+#endif
+
 #define NORETURN __attribute__((noreturn))
 
 void* memcpy(void* dest, const void* src, u64 count);  // in mem_x64.S and mem_arm64.S
@@ -283,10 +287,10 @@ static void writeRaw(const u8* data, u32 size) {
     }
 }
 
-#ifdef CROMO_GLIBC
+#ifdef CROMO_PTHREADS
 
-// With glibc (D428), exit() of glibc: the C libraries write what is left in their
-// buffers, and their functions of atexit run.
+// With glibc (D428) and Bionic (P43), exit() of the C library: the C libraries
+// write what is left in their buffers, and their functions of atexit run.
 NORETURN void exit(i32 code);
 static NORETURN void exitProcess(i32 code) { exit(code); }
 
@@ -937,7 +941,7 @@ typedef struct {
     i32 tid;  // the kernel clears it, and wakes its futex, when the thread ends
     u8* stack;
     ThreadBlock block;
-#ifdef CROMO_GLIBC
+#ifdef CROMO_PTHREADS
     u64 pthread;  // pthread_t
 #endif
 #endif
@@ -947,13 +951,25 @@ typedef struct {
 // With glibc (D428) the register of the thread is that of glibc: the block of a
 // thread is a variable of the thread, 0 in the main thread.
 static __thread ThreadBlock* threadBlock;
+static void setThreadBlock(ThreadBlock* block) { threadBlock = block; }
+#endif
+
+#ifdef CROMO_BIONIC
+// With Bionic (P43) the register is that of Bionic too, which has the variables of
+// the threads of ELF only from API 29: the block is a key of pthread, made when the
+// runtime starts, 0 in the main thread.
+int pthread_key_create(i32* key, void (*destructor)(void*));
+void* pthread_getspecific(i32 key);
+int pthread_setspecific(i32 key, const void* value);
+static i32 threadKey;
+static void setThreadBlock(ThreadBlock* block) { pthread_setspecific(threadKey, block); }
 #endif
 
 static void crashStack(ThreadRecord* thread);
 
 static void runThread(ThreadRecord* thread) {
-#ifdef CROMO_GLIBC
-    threadBlock = &thread->block;
+#ifdef CROMO_PTHREADS
+    setThreadBlock(&thread->block);
 #endif
     crashStack(thread);
     thread->head.code(thread->head.env, thread->head.raised);
@@ -997,11 +1013,12 @@ static void freeSystemThread(ThreadRecord* thread) { CloseHandle(thread->handle)
 // VM, FS, FILES, SIGHAND, THREAD, SYSVSEM, SETTLS, PARENT_SETTID, CHILD_CLEARTID
 #define CLONE_FLAGS 0x3D0F00
 
-#ifdef CROMO_GLIBC
+#ifdef CROMO_PTHREADS
 
-// With glibc the threads are those of glibc, which the C libraries can use.
+// With glibc and Bionic the threads are those of the C library, which the C
+// libraries can use.
 typedef struct {
-    u64 words[7];  // pthread_attr_t of x86-64, 56 bytes
+    u64 words[7];  // pthread_attr_t of glibc on x86-64 and of Bionic on 64 bits, 56 bytes
 } ThreadAttributes;
 int pthread_attr_init(ThreadAttributes* attributes);
 int pthread_attr_setstack(ThreadAttributes* attributes, void* stack, u64 size);
@@ -1009,9 +1026,13 @@ int pthread_attr_destroy(ThreadAttributes* attributes);
 int pthread_create(u64* thread, const ThreadAttributes* attributes, void* (*start)(void*), void* argument);
 int pthread_join(u64 thread, void** result);
 
-// A stack trace stops in start_thread of glibc, which has no rules in the
-// executable: the label of the bottom of a thread is not reached.
+// A stack trace stops in the start of a thread of the C library, which has no rules
+// in the executable: the label of the bottom of a thread is not reached.
+#ifdef __aarch64__
+__asm__(".text\n.globl cromo_thread_bottom\ncromo_thread_bottom:\n\tbrk #0\n");
+#else
 __asm__(".text\n.globl cromo_thread_bottom\ncromo_thread_bottom:\n\tud2\n");
+#endif
 
 static void* threadEntry(void* argument) {
     runThread(argument);
@@ -1097,7 +1118,7 @@ static void startSystemThread(ThreadRecord* thread) {
     systemCall(SYS_mprotect, stack, (i64)pageSize, 0, 0, 0, 0);
     systemCall(SYS_mprotect, stack + (i64)pageSize + CRASH_STACK, (i64)pageSize, 0, 0, 0, 0);
     thread->block.self = &thread->block;
-#ifdef CROMO_GLIBC
+#ifdef CROMO_PTHREADS
     ThreadAttributes attributes;
     pthread_attr_init(&attributes);
     u64 bottom = 2 * pageSize + CRASH_STACK;
@@ -1111,7 +1132,7 @@ static void startSystemThread(ThreadRecord* thread) {
 }
 
 static void waitSystemThread(ThreadRecord* thread) {
-#ifdef CROMO_GLIBC
+#ifdef CROMO_PTHREADS
     pthread_join(thread->pthread, 0);
 #else
     for (;;) {
@@ -1293,6 +1314,9 @@ static void readSystem(void) {
 
 // Called first by cromo_start (codegen.cpp).
 void cromo_runtime_start(void) {
+#ifdef CROMO_BIONIC
+    pthread_key_create(&threadKey, 0);
+#endif
 #ifndef _WIN32
     readSystem();
 #endif
@@ -1478,10 +1502,15 @@ static Worker* currentWorker(void) {
 
 #else
 
-#ifdef CROMO_GLIBC
+#if defined(CROMO_GLIBC)
 // Read again at every call: after a switch, a task can continue on another thread.
 static __attribute__((noinline)) Worker* currentWorker(void) {
     ThreadBlock* block = *(ThreadBlock* volatile*)&threadBlock;
+    return block ? block->worker : 0;
+}
+#elif defined(CROMO_BIONIC)
+static __attribute__((noinline)) Worker* currentWorker(void) {
+    ThreadBlock* block = pthread_getspecific(threadKey);
     return block ? block->worker : 0;
 }
 #else

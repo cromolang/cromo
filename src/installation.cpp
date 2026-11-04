@@ -57,9 +57,13 @@ fs::path runtimeLibraryPath(Target target) {
     switch (target) {
         case Target::Linux: return libraryFolder() / "linux" / "libcromo_rt.a";
         case Target::LinuxArm64: return libraryFolder() / "linux_arm64" / "libcromo_rt.a";  // P24
+        case Target::AndroidArm64: return libraryFolder() / "android_arm64" / "libcromo_rt.a";  // P43
+        case Target::AndroidX64: return libraryFolder() / "android_x86_64" / "libcromo_rt.a";
         default: return libraryFolder() / "windows" / "cromo_rt.lib";
     }
 }
+
+fs::path bionicFolder(Target target) { return runtimeLibraryPath(target).parent_path() / "bionic"; }
 
 fs::path glibcRuntimePath() { return libraryFolder() / "linux" / "libcromo_rt_glibc.a"; }
 

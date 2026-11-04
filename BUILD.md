@@ -63,10 +63,12 @@ powershell -ExecutionPolicy Bypass -File tests\run-tests.ps1                    
 powershell -ExecutionPolicy Bypass -File tests\run-tests.ps1 -Filter m18                # only those whose path contains m18
 powershell -ExecutionPolicy Bypass -File tests\run-tests.ps1 -Flags '--target linux'    # compiled for Linux, run in WSL
 powershell -ExecutionPolicy Bypass -File tests\run-tests.ps1 -Flags '--target linux-arm64'  # for Linux ARM64, run in WSL with qemu
+powershell -ExecutionPolicy Bypass -File tests\run-tests.ps1 -Flags '--target android-x86_64'  # for Android, on an emulator, through adb
 powershell -ExecutionPolicy Bypass -File tests\run-tests.ps1 -Flags '--release'         # optimized
 ```
 
 - `-Flags` passes options to every compilation; with `--target linux` the programs run in the default distribution of WSL, or in the one given with `-Distro`. With `--target linux-arm64` they run there with `qemu-aarch64-static`, of the package `qemu-user-static` (`sudo apt install qemu-user-static`).
+- With `--target android-x86_64` or `android-arm64` the programs run on the device or the emulator that adb sees: an emulator of the SDK of Android, started before, as `emulator -avd <name> -no-window`, with an image for x86_64, which runs those for ARM64 too. adb is given with `-Adb <path>`, or found in `ANDROID_HOME`, `ANDROID_SDK_ROOT` or the `PATH`.
 - `-Cromo <path>` tests another `cromo`, such as the one for Linux: `-Cromo tools\cromo-wsl.cmd -Flags '--target linux'`.
 - The runner builds a few C libraries for the tests of `tests\m8` with the clang of LLVM (`-LlvmRoot` if it is elsewhere).
 - Some antivirus programs quarantine the small executables that the tests write in `tests\out\`; if a test fails because its executable cannot be opened, exclude that folder from the scan.

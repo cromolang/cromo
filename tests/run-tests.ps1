@@ -19,8 +19,9 @@
 #   // expect-error: text           text that must appear among the compiler errors
 #   // expect-warning: text         text that must appear among the compiler warnings
 #   // target: windows              the test is only for those systems: windows, linux, which
-#                                  is also linux-arm64, only linux-arm64 (D406), or only
-#                                  linux-x86_64, as glibc (D428); several with spaces
+#                                  is also linux-arm64 and Android, only linux-arm64 (D406),
+#                                  only linux-x86_64, as glibc (D428), or only android; several
+#                                  with spaces
 #   // program-arg: text           an argument of the program (repeatable, exact)
 #   // program-env: NAME=value     a variable of the environment of the program
 #   // program-input: text         a line of the standard input of the program (repeatable)
@@ -34,14 +35,17 @@
 #   -Flags '--target linux' compiles for Linux and runs the programs in WSL (D142),
 #   with -Distro to choose the distribution instead of the default one; with
 #   '--target linux-arm64' they run there with qemu-aarch64-static, of the package
-#   qemu-user-static (D405)
+#   qemu-user-static (D405); with '--target android-x86_64' or 'android-arm64' they
+#   run on the device or the emulator that adb sees, with -Adb or the adb of
+#   ANDROID_HOME, ANDROID_SDK_ROOT or the PATH (P43)
 # The C libraries in m8\native are built first with the clang of LLVM (D136).
 param(
     [string]$Cromo = (Join-Path $PSScriptRoot '..\build\cromo.exe'),
     [string]$Filter = '',
     [string]$Flags = '',
     [string]$LlvmRoot = 'C:\software\llvm-23.1.4',
-    [string]$Distro = ''
+    [string]$Distro = '',
+    [string]$Adb = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -80,9 +84,15 @@ function Get-Target([string[]]$Options) {
     $target
 }
 
-# The same static library for Linux (D143), for the architecture of the tests.
-$triple = if ((Get-Target ($Flags -split '\s+')) -eq 'linux-arm64') { 'aarch64-unknown-linux-gnu' } else { 'x86_64-unknown-linux-gnu' }
-Invoke-Tool 'clang.exe' ($cflags + @("--target=$triple", '-fno-pic', "$native\scale.c", '-o', "$out\scale.o"))
+# The same static library for Linux (D143), for the architecture of the tests;
+# position independent for Android (P43).
+$triple, $pic = switch (Get-Target ($Flags -split '\s+')) {
+    'linux-arm64' { 'aarch64-unknown-linux-gnu', '-fno-pic' }
+    'android-arm64' { 'aarch64-linux-android26', '-fPIC' }
+    'android-x86_64' { 'x86_64-linux-android26', '-fPIC' }
+    default { 'x86_64-unknown-linux-gnu', '-fno-pic' }
+}
+Invoke-Tool 'clang.exe' ($cflags + @("--target=$triple", $pic, "$native\scale.c", '-o', "$out\scale.o"))
 Remove-Item -Force -ErrorAction SilentlyContinue "$modules\libscale.a"
 Invoke-Tool 'llvm-ar.exe' @('rcs', "$modules\libscale.a", "$out\scale.o")
 
@@ -121,6 +131,43 @@ function Invoke-Linux([string]$Path, [string[]]$Arguments, [hashtable]$Environme
     $emulator = @()
     if ($Arm64) { $emulator = @('qemu-aarch64-static') }
     Invoke-Program 'wsl.exe' ($options + @('-e') + $variables + $emulator + @((ConvertTo-LinuxPath $Path)) + $Arguments) $StandardInput
+}
+
+# A program for Android runs on the device that adb sees (P43), in a folder of
+# /data/local/tmp with the files of its test, pushed once; the command goes to the
+# shell of Android with each word in single quotes. adb gives back the exit code.
+$deviceRoot = '/data/local/tmp/cromo-tests'
+$pushedFolders = @{}
+function Find-Adb {
+    if ($Adb) { return $Adb }
+    foreach ($sdk in @($env:ANDROID_HOME, $env:ANDROID_SDK_ROOT, (Join-Path $env:LOCALAPPDATA 'Android\Sdk'))) {
+        if ($sdk -and (Test-Path "$sdk\platform-tools\adb.exe")) { return "$sdk\platform-tools\adb.exe" }
+    }
+    $command = Get-Command adb -ErrorAction SilentlyContinue
+    if ($command) { return $command.Source }
+    throw 'adb not found: give -Adb, or set ANDROID_HOME (P43)'
+}
+function ConvertTo-ShellWord([string]$Text) { "'" + ($Text -replace "'", "'\''") + "'" }
+function Get-DeviceFolder([string]$Folder) {
+    $relative = $Folder.Substring($PSScriptRoot.Length).TrimStart('\') -replace '\\', '/'
+    $remote = if ($relative) { "$deviceRoot/$relative" } else { $deviceRoot }
+    if (-not $pushedFolders.ContainsKey($remote)) {
+        Invoke-Program $script:adbPath @('shell', "mkdir -p $(ConvertTo-ShellWord $remote)") | Out-Null
+        Invoke-Program $script:adbPath @('push', "$Folder\.", $remote) | Out-Null
+        $pushedFolders[$remote] = $true
+    }
+    $remote
+}
+function Invoke-Android([string]$Path, [string[]]$Arguments, [hashtable]$Environment, [string]$Folder, [byte[]]$StandardInput = $null) {
+    $remote = "$deviceRoot/bin/" + (Split-Path -Leaf $Path)
+    $pushed = Invoke-Program $script:adbPath @('push', $Path, $remote)
+    if ($pushed.Code -ne 0) { throw "adb push failed: $($pushed.Err)" }
+    $line = "cd $(ConvertTo-ShellWord $Folder) && chmod 755 $(ConvertTo-ShellWord $remote) && "
+    if ($Environment.Count -gt 0) {
+        $line += 'env ' + (($Environment.GetEnumerator() | ForEach-Object { ConvertTo-ShellWord "$($_.Key)=$($_.Value)" }) -join ' ') + ' '
+    }
+    $line += (@($remote) + $Arguments | ForEach-Object { ConvertTo-ShellWord $_ }) -join ' '
+    Invoke-Program $script:adbPath @('shell', $line) $StandardInput
 }
 
 # Writes an argument in a command line so that the program reads it back as it
@@ -174,6 +221,12 @@ function Invoke-Program([string]$Path, [string[]]$Arguments, [byte[]]$StandardIn
 $passed = 0
 $failed = 0
 $skipped = 0
+if ((Get-Target ($Flags -split '\s+')) -like 'android*') {
+    $script:adbPath = Find-Adb
+    $state = Invoke-Program $script:adbPath @('get-state')
+    if ($state.Code -ne 0) { throw "no Android device for adb: start an emulator ($($state.Err.Trim()))" }
+    Invoke-Program $script:adbPath @('shell', "rm -rf $deviceRoot && mkdir -p $deviceRoot/bin") | Out-Null
+}
 foreach ($test in Get-ChildItem $PSScriptRoot -Recurse -Filter *.cro | Sort-Object FullName) {
     $name = $test.FullName.Substring($PSScriptRoot.Length + 1)
     $folders = $name -split '\\'
@@ -211,13 +264,18 @@ foreach ($test in Get-ChildItem $PSScriptRoot -Recurse -Filter *.cro | Sort-Obje
     }
     $target = Get-Target $compileFlags
     $linux = $target -like 'linux*'
-    $chosen = $only | Where-Object { $_ -eq $target -or ($_ -eq 'linux' -and $linux) -or ($_ -eq 'linux-x86_64' -and $target -eq 'linux') }
+    $android = $target -like 'android*'
+    $chosen = $only | Where-Object {
+        $_ -eq $target -or ($_ -eq 'linux' -and ($linux -or $android)) -or ($_ -eq 'linux-x86_64' -and $target -eq 'linux') -or
+        ($_ -eq 'android' -and $android)
+    }
     if ($only -and -not $chosen) {
         $skipped++
         continue
     }
     $folder = $test.DirectoryName
     if ($linux) { $folder = ConvertTo-LinuxPath $folder }
+    if ($android) { $folder = Get-DeviceFolder $folder }
     $port = ''
     if (@($programEnv.Values | Where-Object { $_.Contains('{port}') }).Count -gt 0) {
         # A port free now, for a server of the test that the programs it starts reach.
@@ -230,7 +288,7 @@ foreach ($test in Get-ChildItem $PSScriptRoot -Recurse -Filter *.cro | Sort-Obje
         $programEnv[$key] = $programEnv[$key].Replace('{dir}', $folder).Replace('{cromo}', $Cromo).Replace('{port}', $port)
     }
 
-    $exe = Join-Path $out ($test.BaseName + $(if ($linux) { '' } else { '.exe' }))
+    $exe = Join-Path $out ($test.BaseName + $(if ($linux -or $android) { '' } else { '.exe' }))
     if ($command -eq 'run') {
         # cromo run compiles and runs: its result is the one of the program (D156).
         $compile = Invoke-Program $Cromo (@('run') + $compileFlags + @($test.FullName, '--') + $programArgs)
@@ -259,6 +317,9 @@ foreach ($test in Get-ChildItem $PSScriptRoot -Recurse -Filter *.cro | Sort-Obje
         } elseif ($linux) {
             $run = Invoke-Linux $exe $programArgs $programEnv -Arm64:($target -eq 'linux-arm64') -StandardInput $programInput
             # Linux keeps only the lowest byte of the exit code (D145).
+            if ($null -ne $expectExit) { $expectExit = $expectExit -band 0xFF }
+        } elseif ($android) {
+            $run = Invoke-Android $exe $programArgs $programEnv $folder $programInput
             if ($null -ne $expectExit) { $expectExit = $expectExit -band 0xFF }
         } else {
             $run = Invoke-Program $exe $programArgs $programInput $programEnv

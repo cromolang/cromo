@@ -63,8 +63,8 @@ void printUsage(FILE* out) {
         "options of build and run:\n"
         "  -o <file>    name of the executable (build; default: the source name, or the folder\n"
         "               without a file, with .exe for Windows)\n"
-        "  --target     the system of the executable: windows, linux or linux-arm64 (build;\n"
-        "               default: the one cromo runs on)\n"
+        "  --target     the system of the executable: windows, linux, linux-arm64, android-arm64\n"
+        "               or android-x86_64 (build; default: the one cromo runs on)\n"
         "  --release    no overflow checks: integers wrap around (default: debug, with checks)\n"
         "  -O<n>        optimization level (default: -O2)\n"
         "  --emit-ir    print the generated LLVM IR instead of producing the executable (build)\n",
@@ -211,8 +211,14 @@ bool readOptions(const std::vector<std::string>& args, size_t first, size_t last
                 options.target = cromo::Target::Linux;
             } else if (target == "linux-arm64") {
                 options.target = cromo::Target::LinuxArm64;
+            } else if (target == "android-arm64") {  // P43
+                options.target = cromo::Target::AndroidArm64;
+            } else if (target == "android-x86_64") {
+                options.target = cromo::Target::AndroidX64;
             } else {
-                std::fprintf(stderr, "cromo: unknown target: %s (windows, linux or linux-arm64)\n", target.c_str());
+                std::fprintf(stderr,
+                             "cromo: unknown target: %s (windows, linux, linux-arm64, android-arm64 or android-x86_64)\n",
+                             target.c_str());
                 return false;
             }
         } else if (arg == "--release") {

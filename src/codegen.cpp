@@ -2578,7 +2578,7 @@ private:
                 inst(result + " = call i64 " + fn + "(" + args + ")");
                 return {result, i64};
             }
-            if (options_.target == Target::LinuxArm64) {  // the number in x8, the result in x0 (D405)
+            if (isArm64(options_.target)) {  // the number in x8, the result in x0 (D405)
                 inst(result + " = call i64 asm sideeffect \"svc #0\", \"={x0},{x8},{x0},{x1},{x2},{x3},{x4},{x5},~{memory}\"(" +
                      args + ")");
                 return {result, i64};

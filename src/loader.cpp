@@ -47,7 +47,7 @@ const char* const kSystemSuffixes[] = {"_windows", "_linux"};
 const char* const kArchSuffixes[] = {"_x86_64", "_arm64"};  // P23
 
 std::string systemSuffix(Target target) { return isLinux(target) ? "_linux" : "_windows"; }
-std::string archSuffix(Target target) { return target == Target::LinuxArm64 ? "_arm64" : "_x86_64"; }
+std::string archSuffix(Target target) { return isArm64(target) ? "_arm64" : "_x86_64"; }
 
 // The suffixes of the files that join a module for `target`, in the order they
 // are read.

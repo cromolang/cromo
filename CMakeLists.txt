@@ -252,10 +252,75 @@ add_custom_command(
   DEPENDS "${CROMO_RT_DIR}/cromo_rt_linux_arm64.o" "${CROMO_RT_DIR}/mem_arm64_linux.o"
           "${CROMO_RT_DIR}/runtime_cromo_linux_arm64.o" ${CROMO_TLS_ARM64_OBJECTS} "${CROMO_RT_DIR}/tls_linux_arm64.rsp"
   COMMENT "Archiving the Cromo runtime for Linux on ARM64")
+
+# ---- Android (D452, P43) ----
+# The runtime for Bionic, of API 26 (D454), on ARM64 and on x86-64: position
+# independent, as the programs of Android, with CROMO_BIONIC and runtime/bionic.c,
+# and the stubs of the libraries of Bionic, written from
+# runtime/bionic/symbols_<architecture>.txt.
+set(CROMO_ANDROID_ARCHIVES)
+foreach(arch arm64 x86_64)
+  if(arch STREQUAL "arm64")
+    set(triple aarch64-linux-android26)
+    set(mem mem_arm64)
+    set(extra -moutline-atomics)  # D407
+  else()
+    set(triple x86_64-linux-android26)
+    set(mem mem_x64)
+    set(extra)
+  endif()
+  set(base --target=${triple} -ffreestanding -fno-builtin -nostdlib -O2 -fno-stack-protector -fPIC -DCROMO_BIONIC ${extra})
+  cromo_tls_objects(tls_android_${arch} "${base}" tls_objects)
+  set(dir "${CROMO_RT_DIR}/android_${arch}")
+  file(MAKE_DIRECTORY "${dir}")
+  add_custom_command(
+    OUTPUT "${dir}/cromo_rt.o"
+    COMMAND "${CROMO_CLANG}" ${base} -fasynchronous-unwind-tables -Wall -Wextra -c "${CMAKE_SOURCE_DIR}/runtime/cromo_rt.c"
+            -o "${dir}/cromo_rt.o"
+    DEPENDS runtime/cromo_rt.c
+    COMMENT "Compiling the Cromo runtime for Android on ${arch}")
+  add_custom_command(
+    OUTPUT "${dir}/bionic.o"
+    COMMAND "${CROMO_CLANG}" ${base} -Wall -Wextra -c "${CMAKE_SOURCE_DIR}/runtime/bionic.c" -o "${dir}/bionic.o"
+    DEPENDS runtime/bionic.c
+    COMMENT "Compiling the start for Android on ${arch}")
+  add_custom_command(
+    OUTPUT "${dir}/${mem}.o"
+    COMMAND "${CROMO_CLANG}" --target=${triple} -fPIC -DCROMO_BIONIC -c "${CMAKE_SOURCE_DIR}/runtime/${mem}.S" -o "${dir}/${mem}.o"
+    DEPENDS runtime/${mem}.S
+    COMMENT "Assembling the Cromo runtime for Android on ${arch}")
+  add_custom_command(
+    OUTPUT "${dir}/libcromo_rt.a"
+    COMMAND "${CMAKE_COMMAND}" -E rm -f "${dir}/libcromo_rt.a"
+    COMMAND "${CROMO_LLVM_AR}" rcs "${dir}/libcromo_rt.a" "${dir}/cromo_rt.o" "${dir}/bionic.o" "${dir}/${mem}.o"
+            "${dir}/runtime_cromo.o" "@${CROMO_RT_DIR}/tls_android_${arch}.rsp"
+    DEPENDS "${dir}/cromo_rt.o" "${dir}/bionic.o" "${dir}/${mem}.o" "${dir}/runtime_cromo.o" ${tls_objects}
+            "${CROMO_RT_DIR}/tls_android_${arch}.rsp"
+    COMMENT "Archiving the Cromo runtime for Android on ${arch}")
+  set(stubs libc.so libm.so libdl.so liblog.so)
+  list(TRANSFORM stubs PREPEND "${dir}/bionic/" OUTPUT_VARIABLE stub_files)
+  add_custom_command(
+    OUTPUT ${stub_files}
+    COMMAND "${CMAKE_COMMAND}" "-DSYMBOLS=${CMAKE_SOURCE_DIR}/runtime/bionic/symbols_${arch}.txt" "-DOUT=${dir}/bionic"
+            "-DCLANG=${CROMO_CLANG}" "-DLLD=${CROMO_LLVM_ROOT}/bin/ld.lld.exe" "-DTRIPLE=${triple}"
+            -P "${CMAKE_SOURCE_DIR}/runtime/glibc/stubs.cmake"
+    DEPENDS runtime/bionic/symbols_${arch}.txt runtime/glibc/stubs.cmake
+    COMMENT "Writing the stubs of Bionic for ${arch}")
+  list(APPEND CROMO_ANDROID_ARCHIVES "${dir}/libcromo_rt.a" ${stub_files})
+  set("CROMO_ANDROID_STUBS_${arch}" ${stub_files})
+endforeach()
+
 # ---- lib/ of the build, as in the archive (D237) ----
 # cromo reads the library and the runtime from lib/: next to its folder bin/ in
 # an archive, inside its folder in a build. Here they change at the next build.
 set(CROMO_LIB_DIR "${CMAKE_BINARY_DIR}/lib")
+set(CROMO_ANDROID_PLACE)
+foreach(arch arm64 x86_64)
+  list(APPEND CROMO_ANDROID_PLACE
+       COMMAND "${CMAKE_COMMAND}" -E make_directory "${CROMO_LIB_DIR}/android_${arch}/bionic"
+       COMMAND "${CMAKE_COMMAND}" -E copy "${CROMO_RT_DIR}/android_${arch}/libcromo_rt.a" "${CROMO_LIB_DIR}/android_${arch}"
+       COMMAND "${CMAKE_COMMAND}" -E copy ${CROMO_ANDROID_STUBS_${arch}} "${CROMO_LIB_DIR}/android_${arch}/bionic")
+endforeach()
 
 # ---- SDL3 (D429) ----
 # For Windows, compiled from third_party/SDL with the clang of LLVM, without the C
@@ -348,6 +413,13 @@ add_custom_command(
   COMMAND cromo build --runtime --target linux-arm64 -o "${CROMO_RT_DIR}/runtime_cromo_linux_arm64.o"
   DEPENDS cromo "${CROMO_RT_DIR}/library.stamp"
   COMMENT "Compiling the runtime written in Cromo for Linux on ARM64")
+foreach(arch arm64 x86_64)
+  add_custom_command(
+    OUTPUT "${CROMO_RT_DIR}/android_${arch}/runtime_cromo.o"
+    COMMAND cromo build --runtime --target android-${arch} -o "${CROMO_RT_DIR}/android_${arch}/runtime_cromo.o"
+    DEPENDS cromo "${CROMO_RT_DIR}/library.stamp"
+    COMMENT "Compiling the runtime written in Cromo for Android on ${arch}")
+endforeach()
 add_custom_command(
   OUTPUT "${CROMO_RT_DIR}/runtime.stamp"
   COMMAND "${CMAKE_COMMAND}" -E copy "${CROMO_RT_DIR}/cromo_rt.lib" "${CROMO_LIB_DIR}/windows"
@@ -356,9 +428,11 @@ add_custom_command(
   COMMAND "${CMAKE_COMMAND}" -E copy "${CROMO_RT_DIR}/libcromo_rt_glibc.a" "${CROMO_LIB_DIR}/linux"
   COMMAND "${CMAKE_COMMAND}" -E copy ${CROMO_GLIBC_STUB_FILES} "${CROMO_LIB_DIR}/linux/glibc"
   ${CROMO_SDL_PLACE}
+  ${CROMO_ANDROID_PLACE}
   COMMAND "${CMAKE_COMMAND}" -E touch "${CROMO_RT_DIR}/runtime.stamp"
   DEPENDS "${CROMO_RT_DIR}/cromo_rt.lib" "${CROMO_RT_DIR}/libcromo_rt.a" "${CROMO_RT_DIR}/libcromo_rt_arm64.a"
-          "${CROMO_RT_DIR}/libcromo_rt_glibc.a" ${CROMO_GLIBC_STUB_FILES} ${CROMO_SDL_FILES} "${CROMO_RT_DIR}/library.stamp"
+          "${CROMO_RT_DIR}/libcromo_rt_glibc.a" ${CROMO_GLIBC_STUB_FILES} ${CROMO_SDL_FILES} ${CROMO_ANDROID_ARCHIVES}
+          "${CROMO_RT_DIR}/library.stamp"
   COMMENT "Placing the runtime in lib/")
 add_custom_target(cromo_runtime ALL DEPENDS "${CROMO_RT_DIR}/runtime.stamp")
 

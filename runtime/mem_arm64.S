@@ -121,7 +121,9 @@ bcmp:
 //
 // The register tpidr_el0 of every thread points to its block in the runtime,
 // which says whether it is a worker of the tasks (D269): for the main thread, it
-// is set here, before anything else.
+// is set here, before anything else. With Bionic (P43) the register is that of
+// Bionic, and _start gives the stack to cromo_bionic_start of runtime/bionic.c, as
+// crtbegin_dynamic.o of the NDK.
     .globl _start
     .p2align 4
 _start:
@@ -130,10 +132,14 @@ _start:
     mov x0, sp
     adrp x1, cromo_initial_stack
     str x0, [x1, :lo12:cromo_initial_stack]
+#ifdef CROMO_BIONIC
+    bl cromo_bionic_start
+#else
     adrp x0, cromo_main_block
     add x0, x0, :lo12:cromo_main_block
     msr tpidr_el0, x0
     bl cromo_start
+#endif
     brk #0
 
 // void cromo_switch(void** save, void* next): leaves the stack of the caller,

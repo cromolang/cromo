@@ -243,11 +243,19 @@ bcmp:
 # With glibc (D428), fs is that of glibc, and _start calls __libc_start_main as
 # the crt1.o of glibc does: with the main and the constructors of runtime/glibc.c,
 # the function of the dynamic loader to call at the exit, from rdx, and the end of
-# the stack.
+# the stack. With Bionic (P43), fs is that of Bionic, and _start gives the stack
+# to cromo_bionic_start of runtime/bionic.c, as crtbegin_dynamic.o of the NDK.
     .globl _start
     .p2align 4
 _start:
-#ifdef CROMO_GLIBC
+#if defined(CROMO_BIONIC)
+    xor ebp, ebp
+    mov qword ptr [rip + cromo_initial_stack], rsp
+    mov rdi, rsp
+    and rsp, -16
+    call cromo_bionic_start
+    ud2
+#elif defined(CROMO_GLIBC)
     xor ebp, ebp
     mov qword ptr [rip + cromo_initial_stack], rsp
     mov r9, rdx

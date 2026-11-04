@@ -2096,6 +2096,26 @@ home.add(gui.Label("Welcome", 16, 16, 200, 20))
 gui.Panel settings = bar.addPage("Settings", gui.Icon.Settings)
 ```
 
+### D452. Android, on ARM64 and x86-64
+*2026-11-04.* Cromo makes the apps of Android for arm64-v8a, the phones, and for x86_64, the emulators on a PC and the Chromebooks. The Activity of SDL (D429) loads libSDL3.so and the program, libmain.so, whose `main` is its `SDL_main`; SDL 3.4 runs on Android from version 5.
+
+### D453. `cromo` writes the APK
+*2026-11-04.* `cromo build --target android` writes the APK by itself: the manifest in the binary XML of Android, the classes of Java of SDL compiled once into `classes.dex` and kept in `lib/`, the libraries of both architectures, the zip aligned, and the signature of scheme v2 with a key for debugging that `cromo` makes the first time. Who writes an app installs neither the SDK of Android nor Java (D237). The bundles of Google Play (AAB) and the keys of release come later.
+
+### D454. Android 8 at least
+*2026-11-04.* The apps run from Android 8, API 26 (minSdk), about 97% of the devices in use, which has AAudio and the functions of Bionic that the runtime needs; they target API 35, as SDL 3.4.
+
+### D455. The identity of an app
+*2026-11-04.* `[[android("org.example.mail", "Mail")]]` on `main` gives the package of the app and its name; without it the package is `org.cromo.` and the name of the file, and the name is that of the file. The icon is `<name>.png` or `main.png` next to the file with `main`, as the icon of Windows (D425).
+
+```cromo
+// draft: the syntax of the attribute
+[[android("org.example.mail", "Mail")]]
+i32 main() {
+    ...
+}
+```
+
 ---
 
 ## Proposed
@@ -2233,6 +2253,13 @@ A component keeps the distances from the edges of its parent, the content of the
 - `w.navigationBar()` gives the navigation bar of the window, made the first time: a window has at most one, and a struct has no constructor without arguments (D69). It takes the bottom of the content, the whole width and 64 pixels. `addPage(text, icon)` adds an item and gives back its page, a `gui.Panel`, with the room between the bars; `setSelected(i64)` and `selected()`, 0 at the start; `onChange(func(i64))` when the user chooses an item.
 - `gui.Panel(x, y, width, height)` contains components as a `GroupBox`, without drawing anything; a page takes the room between the bars, and follows the window. The components of a page that is not shown do not take the mouse nor the keyboard.
 - The item chosen has its icon and its text in indigo, with a pill of indigo-50 behind the icon, as in Material 3.
+
+### P43. How a program runs on Android (D452)
+- `--target android-arm64` and `android-x86_64` compile one architecture, for the triple `aarch64-linux-android26` or `x86_64-linux-android26`, with position independent code: an executable for the dynamic loader of Android, `/system/bin/linker64`, which runs with `adb shell` and serves the tests. `--target android` (M43) makes the APK, with the program as libmain.so for both architectures.
+- The runtime runs in the mode of Bionic, as in that of glibc (D428): its threads are those of pthread, which Bionic and SDL know, and the block of a thread is a key of pthread, since Bionic has the variables of the threads of ELF only from API 29. The functions of Bionic are linked from stubs made by the build, as those of glibc, from the names of the libraries of API 26 of the NDK.
+- An executable starts from `_start` of the runtime, which calls `__libc_init` of Bionic; libmain.so from `SDL_main`. The library of Cromo uses the files of Linux, with the system calls that the filter of Android lets through; what Android has elsewhere, as the shell in `/system/bin/sh`, is chosen when the program runs.
+- The standard output and error of an app go to the log of Android (logcat), with the tag of the app.
+- SDL is built with the NDK as libSDL3.so for each architecture, in `lib/android-arm64` and `lib/android-x86_64`, with the stubs of Bionic and the runtime. The tests run with `-Flags '--target android-x86_64'` on an emulator through adb.
 ---
 
 ## Open

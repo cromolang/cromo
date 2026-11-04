@@ -516,6 +516,23 @@ bool linkWindows(const std::string& objectPath, const std::string& tablePath, co
     return runLld(args, error);
 }
 
+// An executable for Android (P43): position independent, for the dynamic loader of
+// Android, with the stubs of Bionic before the runtime, as for glibc. Its
+// segments are aligned to 16 KB, the pages of the newer devices.
+bool linkAndroid(const std::string& objectPath, const std::string& tablePath, const std::string& runtimePath,
+                 const BackendOptions& options, std::string& error) {
+    std::vector<std::string> args = {"ld.lld", "-o", options.outputPath, "-e", "_start", "-pie",
+                                     "--dynamic-linker=/system/bin/linker64", "-z", "max-page-size=16384",
+                                     "--eh-frame-hdr", objectPath, tablePath};
+    if (!options.debugInfo) args.push_back("--strip-debug");
+    for (const std::string& archive : options.archives) args.push_back(archive);
+    args.push_back("--as-needed");
+    for (const char* stub : kBionicLibraries) args.push_back((bionicFolder(options.target) / stub).string());
+    args.push_back("--no-as-needed");
+    args.push_back(runtimePath);
+    return runLld(args, error);
+}
+
 // A static executable at a fixed address, without the dynamic loader (D142, D145).
 // The static libraries of the extern blocks come before the runtime, because
 // their C code can call memcpy and the other functions of mem_x64.S.
@@ -576,16 +593,23 @@ bool buildExecutable(const std::string& irText, const std::string& moduleName, c
                                                                  : llvm::CodeGenOptLevel::Default;
     // ARM64: ARMv8.0, whose atomics call the functions of mem_arm64.S, which use
     // LSE when the processor has it (D407).
-    bool arm64 = options.target == Target::LinuxArm64;
+    bool arm64 = isArm64(options.target);
+    // Android: position independent code, as its executables and libraries (P43).
+    std::optional<llvm::Reloc::Model> relocation;
+    if (isAndroid(options.target)) relocation = llvm::Reloc::PIC_;
     std::unique_ptr<llvm::TargetMachine> machine(target->createTargetMachine(triple, arm64 ? "generic" : "x86-64",
                                                                              arm64 ? "+outline-atomics" : "", targetOptions,
-                                                                             std::nullopt, std::nullopt, codegenLevel));
+                                                                             relocation, std::nullopt, codegenLevel));
     if (!machine) {
         error = "cannot create the target machine for " + triple.str();
         return false;
     }
     module->setTargetTriple(triple);
     module->setDataLayout(machine->createDataLayout());
+    if (isAndroid(options.target)) {
+        module->setPICLevel(llvm::PICLevel::BigPIC);
+        if (!options.objectOnly) module->setPIELevel(llvm::PIELevel::Large);
+    }
 
     std::string verifyMessages;
     llvm::raw_string_ostream verifyStream(verifyMessages);
@@ -616,8 +640,9 @@ bool buildExecutable(const std::string& irText, const std::string& moduleName, c
     }
 
     std::vector<std::string> temporaries;
-    bool linked = linux ? linkLinux(objectPath, tablePath, runtimePath, options, error)
-                        : linkWindows(objectPath, tablePath, runtimePath, options, temporaries, error);
+    bool linked = isAndroid(options.target) ? linkAndroid(objectPath, tablePath, runtimePath, options, error)
+                  : linux                   ? linkLinux(objectPath, tablePath, runtimePath, options, error)
+                                            : linkWindows(objectPath, tablePath, runtimePath, options, temporaries, error);
     for (const std::string& path : temporaries) llvm::sys::fs::remove(path);
     llvm::sys::fs::remove(tablePath);
     if (!options.keepObject) llvm::sys::fs::remove(objectPath);

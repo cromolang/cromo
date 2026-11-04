@@ -317,6 +317,19 @@ mbedtls_ms_time_t mbedtls_ms_time(void) {
 // For the protection of the random numbers of mbedTLS after a fork.
 int getpid(void) { return (int)cromo_system_call(SYS_getpid, 0, 0, 0, 0, 0, 0); }
 
+#ifdef CROMO_BIONIC
+
+// On Android the filter of the system calls of API 26 and 27 stops getrandom, which
+// Bionic has from API 28: arc4random_buf of Bionic takes the same entropy (P43).
+void arc4random_buf(void* buffer, size_t size);
+
+int32_t cromo_crypto_random(uint8_t* out, int64_t size) {
+    arc4random_buf(out, (size_t)size);
+    return 0;
+}
+
+#else
+
 int32_t cromo_crypto_random(uint8_t* out, int64_t size) {
     while (size > 0) {
         int64_t part = size > 0x2000000 ? 0x2000000 : size;
@@ -328,6 +341,8 @@ int32_t cromo_crypto_random(uint8_t* out, int64_t size) {
     }
     return 0;
 }
+
+#endif
 
 #endif
 

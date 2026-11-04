@@ -227,13 +227,18 @@ static int windowsTrusts(const Session* session) {
 #define SYS_openat 56
 #define SYS_read 63
 #define SYS_close 57
+#define SYS_getdents64 61
+#define O_DIRECTORY 0x4000
 #else
 #define SYS_openat 257
 #define SYS_read 0
 #define SYS_close 3
+#define SYS_getdents64 217
+#define O_DIRECTORY 0x10000
 #endif
 #define AT_FDCWD -100
 #define O_CLOEXEC 0x80000
+#define DT_REG 8
 #define EINTR 4
 
 static uint8_t* readFile(const char* path, int64_t* size) {
@@ -267,6 +272,39 @@ static int loadFile(const char* path) {
     return countRoots();
 }
 
+// Each file of a folder that is a certificate, as those of Android, which has one
+// for each file (P43).
+static int loadFolder(const char* folder) {
+    int64_t file = cromo_system_call(SYS_openat, AT_FDCWD, (int64_t)folder, O_CLOEXEC | O_DIRECTORY, 0, 0, 0);
+    if (file < 0) return 0;
+    char path[512];
+    uint8_t entries[4096] __attribute__((aligned(8)));
+    for (;;) {
+        int64_t read = cromo_system_call(SYS_getdents64, file, (int64_t)entries, sizeof entries, 0, 0, 0);
+        if (read == -EINTR) continue;
+        if (read <= 0) break;
+        // struct linux_dirent64: inode, offset, its length at 16, its type at 18, its name at 19.
+        for (int64_t at = 0; at < read;) {
+            uint16_t length = (uint16_t)(entries[at + 16] | entries[at + 17] << 8);
+            const char* name = (const char*)entries + at + 19;
+            if (entries[at + 18] == DT_REG && name[0] != '.') {
+                cromo_snprintf(path, sizeof path, "%s/%s", folder, name);
+                loadFile(path);
+            }
+            at += length;
+        }
+    }
+    cromo_system_call(SYS_close, file, 0, 0, 0, 0, 0);
+    return countRoots();
+}
+
+// The folders of Android: that of the updates of Conscrypt from Android 14, and
+// that of the system.
+static const char* const folders[] = {
+    "/apex/com.android.conscrypt/cacerts",
+    "/system/etc/security/cacerts",
+};
+
 // The files of the distributions, as Go looks for them.
 static const char* const bundles[] = {
     "/etc/ssl/certs/ca-certificates.crt",                 // Debian, Ubuntu, Arch
@@ -292,6 +330,9 @@ static void loadRoots(void) {
     }
     for (size_t i = 0; i < sizeof bundles / sizeof bundles[0]; ++i) {
         if (loadFile(bundles[i])) return;
+    }
+    for (size_t i = 0; i < sizeof folders / sizeof folders[0]; ++i) {
+        if (loadFolder(folders[i])) return;
     }
     cromo_snprintf(rootsProblem, sizeof rootsProblem, "the system has no file of root certificates, as %s", bundles[0]);
 }

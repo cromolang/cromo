@@ -1,6 +1,6 @@
 // fs.makeExecutable on Linux (P18): a script written with the permissions 0644
 // cannot run, and runs after it; in /tmp, since the files of /mnt/c of WSL can all
-// be run.
+// be run. Android (P43) has its shell in /system/bin and no /tmp.
 // target: linux
 // program-env: OUT=/tmp/cromo-fs-executable
 // expect-output: before: refused
@@ -10,11 +10,12 @@ import std.os
 import std.process
 
 i32 main() {
-    string out = os.env("OUT")
+    bool android = fs.exists("/system/bin/sh")
+    string out = android ? "/data/local/tmp/cromo-fs-executable" : os.env("OUT")
     fs.removeAll(out)
     fs.createFolders(out)
     string script = fs.joinPath(out, "script")
-    fs.writeText(script, "#!/bin/sh\necho ran\n")
+    fs.writeText(script, format("#!{}\necho ran\n", android ? "/system/bin/sh" : "/bin/sh"))
     list<string> none
     try {
         process.run(script, none)

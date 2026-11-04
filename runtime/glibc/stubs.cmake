@@ -1,9 +1,19 @@
-# The stubs of glibc for the linker (D428): for each library of symbols.txt, a
-# shared library with its soname, its functions and its variables with their
-# sizes, each with its default version, and no code that runs. An executable
-# linked with them loads the real libraries of the system.
-#   cmake -DSYMBOLS=<symbols.txt> -DOUT=<folder> -DCLANG=<clang> -DLLD=<ld.lld> -P stubs.cmake
+# The stubs of glibc for the linker (D428), and those of Bionic (P43): for each
+# library of the list, a shared library with its soname, its functions and its
+# variables with their sizes, each with its default version, or without one when
+# the list has -, and no code that runs. A program linked with them loads the
+# real libraries of the system.
+#   cmake -DSYMBOLS=<symbols.txt> -DOUT=<folder> -DCLANG=<clang> -DLLD=<ld.lld>
+#         [-DTRIPLE=<triple>] -P stubs.cmake
 cmake_minimum_required(VERSION 3.16)
+if(NOT TRIPLE)
+  set(TRIPLE x86_64-unknown-linux-gnu)
+endif()
+if(TRIPLE MATCHES "^aarch64")
+  set(TRAP "brk #0")
+else()
+  set(TRAP "ud2")
+endif()
 file(MAKE_DIRECTORY "${OUT}")
 file(STRINGS "${SYMBOLS}" lines REGEX "^[^#]")
 set(libraries)
@@ -25,7 +35,7 @@ foreach(line IN LISTS lines)
     set(bind ".weak")
   endif()
   if(kind MATCHES "func$")
-    string(APPEND "text_${library}" "    ${bind} ${name}\n    .type ${name}, @function\n${name}:\n    ud2\n")
+    string(APPEND "text_${library}" "    ${bind} ${name}\n    .type ${name}, @function\n${name}:\n    ${TRAP}\n")
   else()
     string(APPEND "data_${library}"
            "    ${bind} ${name}\n    .type ${name}, @object\n    .size ${name}, ${size}\n    .p2align 3\n${name}:\n    .zero ${size}\n")
@@ -40,18 +50,24 @@ endforeach()
 foreach(library IN LISTS libraries)
   set(script "")
   foreach(version IN LISTS "versions_${library}")
-    string(APPEND script "${version} {\n  global:${names_${library}_${version}}\n};\n")
+    if(NOT version STREQUAL "-")
+      string(APPEND script "${version} {\n  global:${names_${library}_${version}}\n};\n")
+    endif()
   endforeach()
+  set(versions)
+  if(NOT script STREQUAL "")
+    set(versions --version-script "${OUT}/${library}.map")
+  endif()
   file(WRITE "${OUT}/${library}.s" "${text_${library}}${data_${library}}    .section .note.GNU-stack, \"\", @progbits\n")
   file(WRITE "${OUT}/${library}.map" "${script}")
   execute_process(
-    COMMAND "${CLANG}" --target=x86_64-unknown-linux-gnu -c "${OUT}/${library}.s" -o "${OUT}/${library}.o"
+    COMMAND "${CLANG}" "--target=${TRIPLE}" -c "${OUT}/${library}.s" -o "${OUT}/${library}.o"
     RESULT_VARIABLE failed)
   if(failed)
     message(FATAL_ERROR "cannot assemble the stub of ${library}")
   endif()
   execute_process(
-    COMMAND "${LLD}" -shared -soname "${library}" --version-script "${OUT}/${library}.map" -o "${OUT}/${library}"
+    COMMAND "${LLD}" -shared -soname "${library}" ${versions} -o "${OUT}/${library}"
             "${OUT}/${library}.o"
     RESULT_VARIABLE failed)
   if(failed)
