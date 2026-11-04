@@ -151,7 +151,13 @@ Libraries findLibraries(const Module& module, const std::deque<SourceFile>& sour
             std::string file = "lib" + use.name + ".a";
             auto folder = std::find_if(use.folders.begin(), use.folders.end(),
                                        [&](const fs::path& f) { return isFile(f / file); });
-            if (folder != use.folders.end()) {
+            // On Android a library can be shared, as libSDL3.so, which goes in the APK (P44).
+            std::string shared = "lib" + use.name + ".so";
+            auto sharedFolder = std::find_if(use.folders.begin(), use.folders.end(),
+                                             [&](const fs::path& f) { return isFile(f / shared); });
+            if (folder == use.folders.end() && isAndroid(target) && sharedFolder != use.folders.end()) {
+                libraries.archives.push_back((*sharedFolder / shared).string());
+            } else if (folder != use.folders.end()) {
                 libraries.archives.push_back((*folder / file).string());
             } else if (use.folders.size() == 1 && use.folders[0] == runtimeLibraryPath(target).parent_path()) {
                 // A module of the library, as std.gui on ARM64, which has no SDL yet (P31).

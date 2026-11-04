@@ -2115,6 +2115,18 @@ i32 main() {
 }
 ```
 
+### D456. The window of an app takes the safe area
+*2026-11-04.* On Android the window of `std.gui` fills the screen without a title bar (D450), and its content is the area that the bars of the system leave free: the status bar at the top and that of the gestures at the bottom stay visible, over the color of the background of the app, with their icons light or dark as the theme (D432).
+
+### D457. The back key
+*2026-11-04.* The back key, or the gesture, closes the window, and so the app, as in the other apps; with `w.onBack(handler)` the program decides instead, as going back to the page before.
+
+### D458. The app turns with the phone
+*2026-11-04.* An app follows the orientation of the device: when it turns, the window changes its size, and the anchors (D447) move the components, as when a window is resized on the desktop.
+
+### D459. One window on Android
+*2026-11-04.* An app has one window, at full screen: `start()` of a second is a panic, with a message that says so. The pages of an app are those of its navigation bar (D451), or panels shown and hidden.
+
 ---
 
 ## Proposed
@@ -2267,6 +2279,13 @@ A component keeps the distances from the edges of its parent, the content of the
 - The signature is of scheme v2 only, which Android has from 7.0, with a key of P-256 and a certificate signed by itself, `CN=Android Debug`, as the SDK of Android does: both are made the first time in `~/.cromo/android`, and kept, so that an app installed can be updated by the next build.
 - In an app the standard output and error go to the log of Android, a line at a time, with the package as tag and the priorities INFO and ERROR. When `main` ends on the thread of SDL, `SDL_main` returns and SDL ends the activity; an exit from another thread ends the process.
 - `cromo` needs `lib/android_<architecture>/libSDL3.so` and `lib/android/classes.dex`, which the build makes with the NDK and with the SDK and Java: `build.ps1 -AndroidNdk <folder> -AndroidSdk <folder>`.
+
+### P45. `std.gui` on a phone (D456-D459)
+- `w.onBack(func())` takes the back key; on the desktop the handlers are kept and never called.
+- On Android the window has the size of the screen less the bars of the system, whatever its size in the program; `setSize`, `minimize`, `maximize` and `setResizable` do nothing there. The components are anchored as on the desktop: those added for a size of 390 by 760 move and stretch with their anchors to that of the phone.
+- The activity is `org.cromo.CromoActivity`, that of SDL with one command more: `std.gui` gives it the color of its bars, white or gray-900, when the window opens and when its theme changes, and it colors the bars of the system with it, their icons dark on the light one. Before that, the theme of the APK has the same colors for the day and the night of the system.
+- A finger leaves no component under the mouse when it is lifted, so that a button does not stay lit.
+- When the renderer loses its textures, as an app that comes back from the background can, they are made again: the fonts, the symbols, the boxes, the icons and the images, whose pixels stay for this.
 ---
 
 ## Open

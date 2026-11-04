@@ -52,6 +52,9 @@ extern "SDL3" {
     bool SDL_SetClipboardText(addr text)
     addr SDL_GetClipboardText()
     void SDL_free(addr memory)
+    addr SDL_GetPlatform()
+    bool SDL_SetHint(addr name, addr value)
+    bool SDL_GetWindowSafeArea(addr window, addr rect)
     addr SDL_CreateSystemCursor(u32 kind)
     bool SDL_SetCursor(addr cursor)
     addr SDL_CreateTexture(addr renderer, u32 format, i32 access, i32 w, i32 h)
@@ -83,6 +86,7 @@ extern "cromo" {
     void cromo_gui_image_free(addr pixels)
     void cromo_gui_icon(addr renderer, i32 code, f32 x, f32 y, f32 size, f32 density, u8 r, u8 g, u8 b, u8 alpha)
     void cromo_gui_icons_free(addr renderer)
+    void cromo_gui_system_bars(u32 rgb, bool light)
 }
 
 // ---- The public types ----
@@ -1347,6 +1351,13 @@ struct WindowData {
     list<addr> keyDown
     list<addr> resize
     list<addr> close
+    list<addr> back   // the back key of Android (D457)
+    bool phone        // on Android: without a title bar, the content in the safe area (D456)
+    f32 originX       // where the content starts in the window, in logical pixels
+    f32 originY = 35  // under the title bar
+    f32 insetRight    // what the bars of the system cover on Android
+    f32 insetBottom
+    i32 systemBars = -1  // the theme of the bars of the system on Android: 0 light, 1 dark
 
     // The thread of the GUI.
     addr window
@@ -1672,6 +1683,21 @@ void placeIn(ref list<PartData> parts, i64 group, i64 window) {
     }
 }
 
+// Whether the program runs on Android (D452), where the window has no title bar.
+bool onAndroid() {
+    ret cText(SDL_GetPlatform()) == "Android"
+}
+
+// The size of the content of a window in logical pixels: under the title bar, or
+// in the safe area on Android (D456).
+i32 contentWidth(WindowData window) {
+    ret window.width - i32(window.originX + window.insetRight)
+}
+
+i32 contentHeight(WindowData window) {
+    ret window.height - i32(window.originY + window.insetBottom)
+}
+
 // The position and the size of a component now, for the size of its parent now
 // (P40): what the thread of the GUI computes when it draws.
 void arrangeNow(ref Shared data, i64 p) {
@@ -1685,17 +1711,17 @@ void arrangeNow(ref Shared data, i64 p) {
         arrange(ref data.parts[p], data.parts[g].width, data.parts[g].height)
     } else if (data.parts[p].window != 0) {
         i64 i = indexOf(ref data, data.parts[p].window)
-        arrange(ref data.parts[p], data.windows[i].width, data.windows[i].height - i32(barHeight))
+        arrange(ref data.parts[p], contentWidth(data.windows[i]), contentHeight(data.windows[i]))
     }
 }
 
 // A page takes the room between the bars of its window (P42).
 void placePage(ref PartData page, ref WindowData window) {
     i32 top = window.appBar != 0 ? i32(appBarHeight) : 0
-    i32 bottom = window.height - i32(barHeight) - i32(navigationHeight)
+    i32 bottom = contentHeight(window) - i32(navigationHeight)
     page.x = 0
     page.y = top
-    page.width = window.width
+    page.width = contentWidth(window)
     page.height = bottom > top ? bottom - top : 0
     page.baseX = page.x
     page.baseY = page.y
@@ -1715,8 +1741,8 @@ void rebase(ref Shared data, i64 p) {
         h = data.parts[g].height
     } else if (data.parts[p].window != 0) {
         i64 i = indexOf(ref data, data.parts[p].window)
-        w = data.windows[i].width
-        h = data.windows[i].height - i32(barHeight)
+        w = contentWidth(data.windows[i])
+        h = contentHeight(data.windows[i])
     }
     data.parts[p].baseX = data.parts[p].x
     data.parts[p].baseY = data.parts[p].y
@@ -1835,6 +1861,10 @@ public struct Window {
             window.title = text
             window.width = w
             window.height = h
+            if (onAndroid()) {
+                window.phone = true
+                window.originY = 0
+            }
             data.windows.add(move window)
             made = data.next
         })
@@ -1855,8 +1885,8 @@ public struct Window {
         withData([me, ref made](ref Shared data) {
             i64 i = indexOf(ref data, me)
             if (data.windows[i].navigation == 0) {
-                i32 content = data.windows[i].height - i32(barHeight)
-                i64 bar = makePart(ref data, kindNavigation, "", 0, content - i32(navigationHeight), data.windows[i].width,
+                i32 content = contentHeight(data.windows[i])
+                i64 bar = makePart(ref data, kindNavigation, "", 0, content - i32(navigationHeight), contentWidth(data.windows[i]),
                     i32(navigationHeight))
                 i64 p = partIndexOf(ref data, bar)
                 data.parts[p].window = me
@@ -1998,6 +2028,13 @@ public struct Window {
             if (data.windows[i].started) {
                 panic("the window is already started")
             }
+            if (data.windows[i].phone) {
+                for (i64 other = 0; other < data.windows.len(); other++) {
+                    if (other != i && data.windows[other].started) {
+                        panic("an app of Android has one window: this is a second one (D459)")
+                    }
+                }
+            }
             data.windows[i].started = true
             if (!data.running) {
                 data.running = true
@@ -2065,6 +2102,15 @@ public struct Window {
         put<func(i32, i32)>(box, move handler)
         i64 me = id
         withData([me, box](ref Shared data) { data.windows[indexOf(ref data, me)].resize.add(box) })
+    }
+
+    // The back key of Android, or its gesture (D457): without handlers it closes the
+    // window, and so the app.
+    public void onBack(move func() handler) const {
+        addr box = alloc(sizeOf<func()>())
+        put<func()>(box, move handler)
+        i64 me = id
+        withData([me, box](ref Shared data) { data.windows[indexOf(ref data, me)].back.add(box) })
     }
 
     // After the window is closed.
@@ -2291,15 +2337,15 @@ void clipTo(addr renderer, f32 x, f32 y, f32 w, f32 h) {
 
 // Drawing only inside the groups of a component.
 void clipPart(addr renderer, ref PartData part) {
-    clipTo(renderer, part.clipLeft, barHeight + part.clipTop, part.clipRight - part.clipLeft, part.clipBottom - part.clipTop)
+    clipTo(renderer, part.clipLeft, part.clipTop, part.clipRight - part.clipLeft, part.clipBottom - part.clipTop)
 }
 
 // Drawing only inside a rectangle, and inside the groups of a component.
 void clipInside(addr renderer, ref PartData part, f32 x, f32 y, f32 w, f32 h) {
     f32 left = most(x, part.clipLeft)
-    f32 top = most(y, barHeight + part.clipTop)
+    f32 top = most(y, part.clipTop)
     f32 right = least(x + w, part.clipRight)
-    f32 bottom = least(y + h, barHeight + part.clipBottom)
+    f32 bottom = least(y + h, part.clipBottom)
     clipTo(renderer, left, top, most(right - left, 0), most(bottom - top, 0))
 }
 
@@ -2321,6 +2367,9 @@ string cText(addr text) {
 }
 
 void run() {
+    // On Android the back key comes to std.gui (D457), and the app turns (D458).
+    SDL_SetHint("SDL_ANDROID_TRAP_BACK_BUTTON".cstring(), "1".cstring())
+    SDL_SetHint("SDL_ORIENTATIONS".cstring(), "LandscapeLeft LandscapeRight Portrait PortraitUpsideDown".cstring())
     if (!SDL_Init(0x20)) {  // SDL_INIT_VIDEO
         panic(format("cannot start the windows: {}", cText(SDL_GetError())))
     }
@@ -2414,7 +2463,9 @@ void open(ref WindowData window) {
         scale = 1
     }
     u64 flags = 0x10 | 0x2000  // SDL_WINDOW_BORDERLESS, SDL_WINDOW_HIGH_PIXEL_DENSITY
-    if (window.resizable) {
+    if (window.phone) {
+        flags = 0x20 | 0x2000  // the whole screen, which turns
+    } else if (window.resizable) {
         flags = flags | 0x20
     }
     if (window.show == 1) {
@@ -2433,12 +2484,54 @@ void open(ref WindowData window) {
     }
     SDL_SetRenderDrawBlendMode(window.renderer, 1)  // SDL_BLENDMODE_BLEND
     window.sdlId = SDL_GetWindowID(window.window)
-    window.chrome = cromo_gui_chrome(window.window)
+    if (!window.phone) {
+        window.chrome = cromo_gui_chrome(window.window)
+    }
     setDensity(ref window)
+    readSafeArea(ref window)
     window.titleChanged = false
     window.sizeChanged = false
     window.resizableChanged = false
     window.showChanged = false
+}
+
+// On Android, the size of the screen and the area that the bars of the system leave
+// free (D456).
+i32[4] safeArea  // the SDL_Rect of SDL_GetWindowSafeArea
+
+void readSafeArea(ref WindowData window) {
+    if (!window.phone) {
+        ret
+    }
+    i32 w = 0
+    i32 h = 0
+    SDL_GetWindowSize(window.window, ref w, ref h)
+    f32 scale = toWindow(ref window)
+    window.width = i32(f32(w) / scale + 0.5)
+    window.height = i32(f32(h) / scale + 0.5)
+    if (SDL_GetWindowSafeArea(window.window, variableAddress(safeArea))) {
+        window.originX = f32(safeArea[0]) / scale
+        window.originY = f32(safeArea[1]) / scale
+        window.insetRight = f32(w - safeArea[0] - safeArea[2]) / scale
+        window.insetBottom = f32(h - safeArea[1] - safeArea[3]) / scale
+    }
+}
+
+// The renderer lost its textures, as on Android when an app comes back: they are
+// made again when they are drawn.
+void resetTextures(ref WindowData window, ref list<PartData> parts) {
+    cromo_gui_symbols_free(window.renderer)
+    cromo_gui_boxes_free(window.renderer)
+    cromo_gui_icons_free(window.renderer)
+    setDensity(ref window)
+    addr none
+    for (ref PartData part in parts) {
+        if (part.window == window.id && part.texture != none) {
+            SDL_DestroyTexture(part.texture)
+            part.texture = none
+            part.imageChanged = true
+        }
+    }
 }
 
 // The scale of the display: the renderer draws in logical pixels, and the fonts
@@ -2465,10 +2558,16 @@ void setDensity(ref WindowData window) {
     window.caption = cromo_gui_font(window.renderer, 1, captionSize, density)
 }
 
+// On Android the window keeps the screen: its size and its state do not change (P45).
 void apply(ref WindowData window) {
     if (window.titleChanged) {
         SDL_SetWindowTitle(window.window, window.title.cstring())
         window.titleChanged = false
+    }
+    if (window.phone) {
+        window.sizeChanged = false
+        window.resizableChanged = false
+        window.showChanged = false
     }
     if (window.sizeChanged) {
         f32 scale = toWindow(ref window)
@@ -2644,18 +2743,18 @@ void route(ref WindowData window, ref list<PartData> parts, addr event, u32 kind
     if (kind == 0x400) {  // SDL_EVENT_MOUSE_MOTION
         f32 x = take<f32>(offset(event, 28))
         f32 y = take<f32>(offset(event, 32))
-        window.hovered = buttonAt(x, y, width)
-        i64 hot = y >= barHeight ? partAt(ref window, ref parts, x, y - barHeight) : -1
+        window.hovered = window.phone ? -1 : buttonAt(x, y, width)
+        i64 hot = y >= window.originY ? partAt(ref window, ref parts, x, y) : -1
         i64 open = partNumber(ref parts, window.popup)
-        if (open >= 0 && inList(ref window, ref parts[open], x, y - barHeight)) {
+        if (open >= 0 && inList(ref window, ref parts[open], x, y)) {
             hot = open
-            i64 item = itemAt(ref window, ref parts[open], x, y - barHeight)
+            i64 item = itemAt(ref window, ref parts[open], x, y)
             if (item >= 0) {
                 parts[open].highlight = item
             }
         }
         i64 hotId = hot >= 0 ? parts[hot].id : 0
-        window.hotItem = hot >= 0 && hot != open ? barItemAt(ref parts[hot], x, y - barHeight) : -1
+        window.hotItem = hot >= 0 && hot != open ? barItemAt(ref parts[hot], x, y) : -1
         if (hotId != window.hot) {
             window.hot = hotId
             SDL_SetCursor(hot >= 0 && hot != open && parts[hot].kind == kindTextBox && parts[hot].active ? beam : arrow)
@@ -2667,16 +2766,16 @@ void route(ref WindowData window, ref list<PartData> parts, addr event, u32 kind
                 window.caretStart = SDL_GetTicksNS()
             }
         }
-        if (y >= barHeight) {
+        if (y >= window.originY) {
             Call call = callOf(1, window.mouseMove)
-            call.mouse = mouseAt(x, y, 0)
+            call.mouse = mouseAt(ref window, x, y, 0)
             calls.add(move call)
         }
     } else if (kind == 0x401 || kind == 0x402) {  // SDL_EVENT_MOUSE_BUTTON_DOWN, _UP
         f32 x = take<f32>(offset(event, 28))
         f32 y = take<f32>(offset(event, 32))
         i32 button = i32(take<u8>(offset(event, 24)))
-        i32 on = buttonAt(x, y, width)
+        i32 on = window.phone ? -1 : buttonAt(x, y, width)
         if (kind == 0x401 && button == 1 && on >= 0) {
             window.pressed = on
         } else if (kind == 0x402 && window.pressed >= 0) {
@@ -2684,14 +2783,18 @@ void route(ref WindowData window, ref list<PartData> parts, addr event, u32 kind
                 press(ref window, on)
             }
             window.pressed = -1
-        } else if (y >= barHeight) {
+        } else if (y >= window.originY) {
             if (kind == 0x401 && button == 1) {
-                pressPart(ref window, ref parts, x, y - barHeight)
+                pressPart(ref window, ref parts, x, y)
             } else if (kind == 0x402 && button == 1) {
-                releasePart(ref window, ref parts, x, y - barHeight, ref calls)
+                releasePart(ref window, ref parts, x, y, ref calls)
+                if (take<u32>(offset(event, 20)) == 0xFFFFFFFF) {  // a finger, which leaves no component under it
+                    window.hot = 0
+                    window.hotItem = -1
+                }
             }
             Call call = callOf(kind == 0x401 ? 2 : 3, kind == 0x401 ? window.mouseDown : window.mouseUp)
-            call.mouse = mouseAt(x, y, button)
+            call.mouse = mouseAt(ref window, x, y, button)
             calls.add(move call)
         }
     } else if (kind == 0x403) {  // SDL_EVENT_MOUSE_WHEEL: it scrolls the list open
@@ -2725,6 +2828,11 @@ void route(ref WindowData window, ref list<PartData> parts, addr event, u32 kind
         window.minimized = false
     } else if (kind == 0x214) {  // DISPLAY_SCALE_CHANGED
         setDensity(ref window)
+        readSafeArea(ref window)
+    } else if (kind == 0x215) {  // SAFE_AREA_CHANGED
+        readSafeArea(ref window)
+    } else if (kind == 0x2000 || kind == 0x2001) {  // SDL_EVENT_RENDER_TARGETS_RESET, _DEVICE_RESET
+        resetTextures(ref window, ref parts)
     } else if (kind == 0x206) {  // RESIZED, in the coordinates of the window
         f32 scale = toWindow(ref window)
         window.width = i32(f32(take<i32>(offset(event, 20))) / scale + 0.5)
@@ -2740,7 +2848,13 @@ void route(ref WindowData window, ref list<PartData> parts, addr event, u32 kind
         key.shift = (modifiers & 0x3) != 0
         key.control = (modifiers & 0xC0) != 0
         key.alt = (modifiers & 0x300) != 0
-        if (!keyOfPart(ref window, ref parts, key, ref calls)) {
+        if (window.phone && key.code == keyBack) {  // D457
+            if (window.back.len() > 0) {
+                calls.add(callOf(6, window.back))
+            } else {
+                window.closing = true
+            }
+        } else if (!keyOfPart(ref window, ref parts, key, ref calls)) {
             Call call = callOf(4, window.keyDown)
             call.key = key
             calls.add(move call)
@@ -2755,10 +2869,11 @@ void route(ref WindowData window, ref list<PartData> parts, addr event, u32 kind
     }
 }
 
-Mouse mouseAt(f32 x, f32 y, i32 button) {
+// The mouse from the top left corner of the content (D438).
+Mouse mouseAt(ref WindowData window, f32 x, f32 y, i32 button) {
     Mouse m
-    m.x = x
-    m.y = y - barHeight
+    m.x = x - window.originX
+    m.y = y - window.originY
     m.button = button
     ret m
 }
@@ -2963,8 +3078,8 @@ void chooseItem(ref WindowData window, ref list<PartData> parts, i64 p, i64 item
 // How many items the list shows: up to 8, and as many as fit below the combo box
 // or above it, where there is more room.
 i64 rowsOf(ref WindowData window, ref PartData box) {
-    f32 below = f32(window.height) - barHeight - box.top - f32(box.height) - 8
-    f32 above = box.top - 8
+    f32 below = window.originY + f32(contentHeight(window)) - box.top - f32(box.height) - 8
+    f32 above = box.top - window.originY - 8
     i64 fit = i64((most(below, above) - 6) / itemHeight)
     i64 rows = box.items.len() < listRows ? box.items.len() : listRows
     if (fit < rows) {
@@ -2978,7 +3093,7 @@ i64 rowsOf(ref WindowData window, ref PartData box) {
 Rect listOf(ref WindowData window, ref PartData box) {
     f32 h = f32(rowsOf(ref window, ref box)) * itemHeight + 6
     f32 top = box.top + f32(box.height) + 3
-    if (top + h > f32(window.height) - barHeight - 4 && box.top - 3 - h >= 4) {
+    if (top + h > window.originY + f32(contentHeight(window)) - 4 && box.top - 3 - h >= window.originY + 4) {
         top = box.top - 3 - h
     }
     ret Rect(box.left, top, f32(box.width), h)
@@ -3151,6 +3266,7 @@ const i64 keyHome = 0x4000004A
 const i64 keyEnd = 0x4000004D
 const i64 keyEnter = 0x40000058  // of the numeric keypad
 const i64 keyUp = 0x40000052
+const i64 keyBack = 0x4000011A  // SDLK_AC_BACK, of Android
 const i64 keyDown = 0x40000051
 
 // The editing of a text box: the characters come with the text of the keyboard.
@@ -3308,12 +3424,16 @@ struct Frame {
 void layout(ref WindowData window, ref list<PartData> parts) {
     window.order.clear()
     Frame content
-    content.width = window.width
-    content.height = window.height - i32(barHeight)
+    content.left = window.originX
+    content.top = window.originY
+    content.width = contentWidth(window)
+    content.height = contentHeight(window)
     content.shown = true
     content.active = true
-    content.clipRight = f32(content.width)
-    content.clipBottom = f32(content.height)
+    content.clipLeft = content.left
+    content.clipTop = content.top
+    content.clipRight = content.left + f32(content.width)
+    content.clipBottom = content.top + f32(content.height)
     layoutIn(ref window, ref parts, 0, content)
     i64 open = partNumber(ref parts, window.popup)
     if (open < 0 || !parts[open].shown || !parts[open].active) {
@@ -3406,12 +3526,24 @@ void drawWindow(ref WindowData window, ref list<PartData> parts) {
     f32 scale = toWindow(ref window)
     f32 width = f32(w) / scale
     f32 height = f32(h) / scale
-    cromo_gui_chrome_size(window.chrome, barHeight * scale, 3 * buttonWidth * scale, edgeWidth * scale, window.resizable)
+    if (window.phone) {
+        readSafeArea(ref window)
+    } else {
+        cromo_gui_chrome_size(window.chrome, barHeight * scale, 3 * buttonWidth * scale, edgeWidth * scale, window.resizable)
+    }
     window.maximized = (SDL_GetWindowFlags(window.window) & 0x80) != 0
     bool dark = window.theme == Theme.Dark || (window.theme == Theme.System && SDL_GetSystemTheme() == 2)
     Colors c = colorsOf(dark)
     addr r = window.renderer
     fill(r, c.content, 0, 0, width, height)
+    if (window.phone) {  // the bars of the system of the color of the bars of the app (D456)
+        fill(r, c.bar, 0, 0, width, window.originY)
+        fill(r, c.bar, 0, height - window.insetBottom, width, window.insetBottom)
+        if (window.systemBars != (dark ? 1 : 0)) {
+            window.systemBars = dark ? 1 : 0
+            cromo_gui_system_bars(c.bar, !dark)
+        }
+    }
 
     layout(ref window, ref parts)
     for (i64 k = 0; k < window.order.len(); k++) {
@@ -3423,12 +3555,21 @@ void drawWindow(ref WindowData window, ref list<PartData> parts) {
     }
     i64 open = partNumber(ref parts, window.popup)
     if (open >= 0) {
-        clipTo(r, 0, barHeight, width, height - barHeight)
+        clipTo(r, window.originX, window.originY, f32(contentWidth(window)), f32(contentHeight(window)))
         drawList(ref window, ref parts[open], ref c)
     }
     addr none
     SDL_SetRenderClipRect(r, none)
+    if (!window.phone) {
+        drawTitleBar(ref window, ref c, width, height)
+    }
+    SDL_RenderPresent(r)
+}
 
+// The title bar, its title and its buttons, and a line at the edges when the
+// window is not maximized (D431).
+void drawTitleBar(ref WindowData window, ref Colors c, f32 width, f32 height) {
+    addr r = window.renderer
     fill(r, c.bar, 0, 0, width, barHeight)
     u32 title = window.focused ? c.title : c.inactive
     f32 ascent = 0
@@ -3459,7 +3600,6 @@ void drawWindow(ref WindowData window, ref list<PartData> parts) {
         Rect edge = Rect(0, 0, width, height)
         SDL_RenderRect(r, ref edge)
     }
-    SDL_RenderPresent(r)
 }
 
 // A component, in the look of D443: a soft shadow under it, buttons and check
@@ -3470,7 +3610,7 @@ void drawPart(ref WindowData window, ref PartData part, ref Colors c) {
     addr r = window.renderer
     f32 d = window.density
     f32 x = part.left
-    f32 y = barHeight + part.top
+    f32 y = part.top
     f32 w = f32(part.width)
     f32 h = f32(part.height)
     bool focused = window.focus == part.id && window.focused
@@ -3600,7 +3740,7 @@ void drawAppBar(ref WindowData window, ref PartData bar, ref Colors c) {
     addr r = window.renderer
     f32 d = window.density
     f32 x = bar.left
-    f32 y = barHeight + bar.top
+    f32 y = bar.top
     f32 w = f32(bar.width)
     f32 h = f32(bar.height)
     bool on = bar.active
@@ -3634,7 +3774,7 @@ void drawNavigation(ref WindowData window, ref PartData bar, ref Colors c) {
     addr r = window.renderer
     f32 d = window.density
     f32 x = bar.left
-    f32 y = barHeight + bar.top
+    f32 y = bar.top
     f32 w = f32(bar.width)
     f32 h = f32(bar.height)
     bool on = bar.active
@@ -3669,7 +3809,7 @@ void drawField(ref WindowData window, ref PartData part, ref Colors c, bool lit)
     addr r = window.renderer
     f32 d = window.density
     f32 x = part.left
-    f32 y = barHeight + part.top
+    f32 y = part.top
     f32 w = f32(part.width)
     f32 h = f32(part.height)
     bool on = part.active
@@ -3689,7 +3829,7 @@ void drawList(ref WindowData window, ref PartData box, ref Colors c) {
     f32 d = window.density
     Rect area = listOf(ref window, ref box)
     f32 x = area.x
-    f32 y = barHeight + area.y
+    f32 y = area.y
     cromo_gui_shadow(r, x, y, area.w, area.h, corner, d, c.listShadow, 8, 4)
     cromo_gui_box(r, x, y, area.w, area.h, corner, 1, d, solid(c.input, true), solid(c.inputBorder, true))
     f32 ascent = 0
@@ -3725,7 +3865,7 @@ void drawList(ref WindowData window, ref PartData box, ref Colors c) {
 }
 
 // An image: its texture is made from its pixels the first time it is drawn after
-// it is set, and its pixels are freed.
+// it is set; the pixels stay, for when the renderer loses its textures.
 void drawImage(ref WindowData window, ref PartData part) {
     addr r = window.renderer
     addr none
@@ -3740,8 +3880,6 @@ void drawImage(ref WindowData window, ref PartData part) {
                 SDL_SetTextureBlendMode(part.texture, 1)
                 SDL_UpdateTexture(part.texture, none, part.pixels, part.imageWidth * 4)
             }
-            cromo_gui_image_free(part.pixels)
-            part.pixels = none
         }
         part.imageChanged = false
     }
@@ -3749,7 +3887,7 @@ void drawImage(ref WindowData window, ref PartData part) {
         ret
     }
     f32 x = part.left
-    f32 y = barHeight + part.top
+    f32 y = part.top
     f32 w = f32(part.width)
     f32 h = f32(part.height)
     f32 iw = f32(part.imageWidth)

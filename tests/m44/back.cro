@@ -1,0 +1,18 @@
+// The handlers of the back key of Android (D457): on the desktop the window keeps
+// them without a back key, and it has its title bar and its size.
+// target: windows linux-x86_64
+// program-env: SDL_VIDEO_DRIVER=offscreen
+// expect-output: window 400x300, closed true
+import std.gui
+import std.time
+
+i32 main() {
+    gui.Window w = gui.Window("back", 400, 300)
+    w.onBack([w]() { w.close() })
+    w.start()
+    time.msleep(50)
+    w.close()
+    w.wait()
+    println("window {}x{}, closed {}", w.width(), w.height(), w.closed())
+    ret 0
+}

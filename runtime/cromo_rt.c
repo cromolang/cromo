@@ -277,6 +277,20 @@ static NORETURN void exitProcess(i32 code) { ExitProcess((u32)code); }
 
 #else
 
+// A new process for std.process (D307), a copy of this one: clone with SIGCHLD and
+// the same stack, as fork. On Android, fork of Bionic, which runs the handlers of
+// pthread_atfork, as the translators of ARM64 on x86-64 want: the pid, or -errno.
+#ifdef CROMO_BIONIC
+i32 fork(void);
+i32* __errno(void);
+i64 cromo_fork(void) {
+    i32 pid = fork();
+    return pid < 0 ? -(i64)*__errno() : pid;
+}
+#else
+i64 cromo_fork(void) { return systemCall(SYS_clone, 17, 0, 0, 0, 0, 0); }
+#endif
+
 #ifndef CROMO_BIONIC
 // Outside an app of Android the output goes to its descriptor (runtime_linux.cro).
 i32 cromo_app_write(i64 stream, const u8* data, i64 size) {

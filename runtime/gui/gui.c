@@ -753,6 +753,24 @@ void cromo_gui_boxes_free(void* renderer) {
     }
 }
 
+// ---- The bars of the system on Android (D456) ----
+//
+// The activity of Cromo (runtime/android) colors them with the color of the bars of
+// std.gui, their icons dark when it is light. Elsewhere there is nothing to do.
+
+#ifdef __ANDROID__
+_Bool SDL_SendAndroidMessage(u32 command, i32 param);
+#endif
+
+void cromo_gui_system_bars(u32 rgb, _Bool light) {
+#ifdef __ANDROID__
+    SDL_SendAndroidMessage(0x8001, (i32)((rgb & 0xFFFFFF) | (light ? 0x1000000u : 0)));
+#else
+    (void)rgb;
+    (void)light;
+#endif
+}
+
 // ---- The end of main (D442) ----
 //
 // The runtime calls cromo_at_main_end, when it is set, before the program ends:

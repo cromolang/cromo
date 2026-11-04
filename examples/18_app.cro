@@ -2,8 +2,11 @@
 // pages at the bottom and the icons of Lucide.
 //
 // Decided: the icons of Lucide as the cases of gui.Icon (D448, D449), the bars of
-//          the apps (D450), the pages of a navigation bar (D451)
-// Draft:   the names of the components and of their methods (P39, P41, P42)
+//          the apps (D450), the pages of a navigation bar (D451), the window of
+//          an app of Android and its back key (D456, D457)
+// Draft:   the names of the components and of their methods (P39, P41, P42, P45)
+//
+// cromo build --target android 18_app.cro writes 18_app.apk (D453).
 import std.gui
 
 // A row of a list: an icon, a name and a line under it, and the time on the right.
@@ -17,6 +20,7 @@ void row(gui.Panel page, i32 y, gui.Icon icon, string name, string line, string 
 }
 
 [[window]]
+[[android("org.cromo.examples.mail", "Mail")]]
 i32 main() {
     gui.Window w = gui.Window("Example 18", 390, 760)
     gui.AppBar top = w.add(gui.AppBar("Inbox"))
@@ -56,9 +60,18 @@ i32 main() {
     gui.Button out = settings.add(gui.Button("Log out", 16, 168, 140, 36))
     out.setIcon(gui.Icon.LogOut)
 
-    // The title follows the page, the theme the combo box.
+    // The title follows the page, the theme the combo box. On Android the back key
+    // goes back to the inbox, and from there it closes the app (D457).
     list<string> titles = ["Inbox", "Contacts", "Calendar", "Settings"]
     pages.onChange([top, move titles](i64 index) { top.setTitle(titles[index]) })
+    w.onBack([w, pages, top]() {
+        if (pages.selected() == 0) {
+            w.close()
+        } else {
+            pages.setSelected(0)
+            top.setTitle("Inbox")
+        }
+    })
     theme.onChange([w](i64 index) {
         w.setTheme(index == 1 ? gui.Theme.Light : index == 2 ? gui.Theme.Dark : gui.Theme.System)
     })

@@ -5,6 +5,10 @@
 import std.os
 import unsafe
 
+extern "cromo" {
+    i64 cromo_fork()  // the fork of the runtime: on Android that of Bionic
+}
+
 void launch(ref Process p, string program, list<string> args, bool errors) {
     string path = findProgram(program)
     if (path.len() == 0) {
@@ -56,7 +60,7 @@ void launch(ref Process p, string program, list<string> args, bool errors) {
         put<u8>(offset(defaultAction, i), 0)
     }
 
-    i64 pid = systemCall(i64(Call.Clone), 17, 0, 0, 0, 0, 0)  // fork: SIGCHLD, the same stack
+    i64 pid = cromo_fork()
     if (pid == 0) {
         // The child: its standard descriptors, SIGPIPE as by default, the program.
         systemCall(i64(Call.Dup3), childInput, 0, 0, 0, 0, 0)

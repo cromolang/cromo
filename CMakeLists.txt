@@ -289,13 +289,24 @@ foreach(arch arm64 x86_64)
     COMMAND "${CROMO_CLANG}" --target=${triple} -fPIC -DCROMO_BIONIC -c "${CMAKE_SOURCE_DIR}/runtime/${mem}.S" -o "${dir}/${mem}.o"
     DEPENDS runtime/${mem}.S
     COMMENT "Assembling the Cromo runtime for Android on ${arch}")
+  # The part of std.gui in C (D441), as for Linux (M44).
+  add_custom_command(
+    OUTPUT "${dir}/gui.o" "${dir}/gui_fonts.o" "${dir}/gui_image.o"
+    COMMAND "${CROMO_CLANG}" ${base} -Wall -Wextra "-I${CMAKE_SOURCE_DIR}/third_party/stb" -c
+            "${CMAKE_SOURCE_DIR}/runtime/gui/gui.c" -o "${dir}/gui.o"
+    COMMAND "${CROMO_CLANG}" --target=${triple} "-I${CMAKE_SOURCE_DIR}/third_party/inter" "-I${CMAKE_SOURCE_DIR}/third_party/lucide"
+            -c "${CMAKE_SOURCE_DIR}/runtime/gui/fonts.S" -o "${dir}/gui_fonts.o"
+    COMMAND "${CROMO_CLANG}" ${base} ${CROMO_GUI_IMAGE_FLAGS} -c "${CMAKE_SOURCE_DIR}/runtime/gui/image.c" -o "${dir}/gui_image.o"
+    DEPENDS ${CROMO_GUI_SOURCES} ${CROMO_GUI_IMAGE_SOURCES}
+    COMMENT "Compiling the part of std.gui in C for Android on ${arch}")
   add_custom_command(
     OUTPUT "${dir}/libcromo_rt.a"
     COMMAND "${CMAKE_COMMAND}" -E rm -f "${dir}/libcromo_rt.a"
     COMMAND "${CROMO_LLVM_AR}" rcs "${dir}/libcromo_rt.a" "${dir}/cromo_rt.o" "${dir}/bionic.o" "${dir}/${mem}.o"
-            "${dir}/runtime_cromo.o" "@${CROMO_RT_DIR}/tls_android_${arch}.rsp"
-    DEPENDS "${dir}/cromo_rt.o" "${dir}/bionic.o" "${dir}/${mem}.o" "${dir}/runtime_cromo.o" ${tls_objects}
-            "${CROMO_RT_DIR}/tls_android_${arch}.rsp"
+            "${dir}/runtime_cromo.o" "${dir}/gui.o" "${dir}/gui_fonts.o" "${dir}/gui_image.o"
+            "@${CROMO_RT_DIR}/tls_android_${arch}.rsp"
+    DEPENDS "${dir}/cromo_rt.o" "${dir}/bionic.o" "${dir}/${mem}.o" "${dir}/runtime_cromo.o" "${dir}/gui.o" "${dir}/gui_fonts.o"
+            "${dir}/gui_image.o" ${tls_objects} "${CROMO_RT_DIR}/tls_android_${arch}.rsp"
     COMMENT "Archiving the Cromo runtime for Android on ${arch}")
   set(stubs libc.so libm.so libdl.so liblog.so)
   list(TRANSFORM stubs PREPEND "${dir}/bionic/" OUTPUT_VARIABLE stub_files)
@@ -382,7 +393,7 @@ endif()
 # For Android (D452, D453): SDL compiled with the NDK as libSDL3.so for each
 # architecture, which its activity loads with the program, and its classes of Java
 # compiled once into classes.dex, with javac and d8 of the SDK, for the APKs
-# that cromo writes. Without the NDK, or without the SDK and Java, there are none.
+# that cromo writes, with the activity of Cromo (runtime/android). Without the NDK, or without the SDK and Java, there are none.
 set(CROMO_ANDROID_NDK "" CACHE PATH "The NDK of Android, for libSDL3.so")
 set(CROMO_ANDROID_SDK "" CACHE PATH "The SDK of Android, for classes.dex")
 set(CROMO_JAVA_HOME "$ENV{JAVA_HOME}" CACHE PATH "The JDK, for classes.dex")
@@ -415,7 +426,8 @@ else()
   message(STATUS "No NDK in CROMO_ANDROID_NDK: lib/android_* will have no libSDL3.so (D452)")
 endif()
 file(GLOB CROMO_SDL_JAVA CONFIGURE_DEPENDS
-     "${CMAKE_SOURCE_DIR}/third_party/SDL/android-project/app/src/main/java/org/libsdl/app/*.java")
+     "${CMAKE_SOURCE_DIR}/third_party/SDL/android-project/app/src/main/java/org/libsdl/app/*.java"
+     "${CMAKE_SOURCE_DIR}/runtime/android/org/cromo/*.java")
 file(GLOB CROMO_ANDROID_PLATFORMS LIST_DIRECTORIES true "${CROMO_ANDROID_SDK}/platforms/android-*")
 file(GLOB CROMO_ANDROID_D8 "${CROMO_ANDROID_SDK}/build-tools/*/d8.bat")
 list(SORT CROMO_ANDROID_PLATFORMS COMPARE NATURAL)

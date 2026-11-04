@@ -1,7 +1,8 @@
 // cromo build --target android (D453, D455, P44): the APK of an app, with the
 // manifest, the table of the resources with the icon, the classes of SDL, libSDL3.so
 // and libmain.so of both architectures, stored and aligned to 16 KB, and the block
-// of the signature of scheme v2 before the central directory.
+// of the signature of scheme v2 before the central directory. The activity is
+// that of Cromo (D456).
 // target: windows
 // program-env: CROMO={cromo}
 // program-env: APP={dir}/modules/mail.cro
@@ -16,6 +17,7 @@
 // expect-output: lib/x86_64/libSDL3.so aligned
 // expect-output: lib/x86_64/libmain.so aligned
 // expect-output: the package and the name in the manifest: true true
+// expect-output: the activity of Cromo: true
 // expect-output: the signature before the central directory: true
 import std.fs
 import std.os
@@ -74,6 +76,7 @@ i32 main() {
     list<u8> manifest = entries[0].data
     println("the package and the name in the manifest: {} {}", find(manifest, utf16("org.example.mail")) >= 0,
             find(manifest, utf16("Mail")) >= 0)
+    println("the activity of Cromo: {}", find(manifest, utf16("org.cromo.CromoActivity")) >= 0)
     i64 directory = at32(apk, apk.len() - 22 + 16)
     i64 magic = find(apk, "APK Sig Block 42".bytes())
     println("the signature before the central directory: {}", magic >= 0 && magic + 16 == directory)

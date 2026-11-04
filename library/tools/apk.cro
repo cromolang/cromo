@@ -23,7 +23,8 @@ extern "cromo" {
 
 const i64 minimumSdk = 26  // D454
 const i64 targetSdk = 35
-const i64 iconResource = 0x7F010000  // drawable/icon, the first resource of the app
+const i64 themeResource = 0x7F010000  // style/AppTheme, the first resource of the app
+const i64 iconResource = 0x7F020000   // drawable/icon
 
 i32 main(list<string> args) {
     if (args.len() < 5) {
@@ -33,8 +34,8 @@ i32 main(list<string> args) {
     bool icon = args[4] != "-"
     list<Entry> entries
     entries.add(Entry("AndroidManifest.xml", manifest(args[2], args[3], icon)))
+    entries.add(Entry("resources.arsc", resources(args[2], icon)))
     if (icon) {
-        entries.add(Entry("resources.arsc", resources(args[2])))
         entries.add(Entry("res/drawable/icon.png", fs.readBytes(args[4])))
     }
     for (i64 i = 5; i < args.len(); i++) {
@@ -222,8 +223,8 @@ Node close(string name) {
     ret node
 }
 
-// The manifest: the activity of SDL, which loads libSDL3.so and libmain.so, as
-// the one of the project of SDL for Android, without its permissions.
+// The manifest: the activity of Cromo, that of SDL, which loads libSDL3.so and
+// libmain.so, as in the project of SDL for Android, without its permissions.
 list<u8> manifest(string package, string label, bool icon) {
     list<Node> nodes
     nodes.add(open("manifest", [numberAttribute("versionCode", 0x0101021B, typeDecimal, 1),
@@ -233,21 +234,23 @@ list<u8> manifest(string package, string label, bool icon) {
     nodes.add(close("uses-sdk"))
     nodes.add(open("uses-feature", [numberAttribute("glEsVersion", 0x01010281, typeHexadecimal, 0x20000)]))
     nodes.add(close("uses-feature"))
+    // The back key comes to the activity as on Android 12 (D457).
     list<Attribute> application = [textAttribute("label", 0x01010001, label),
         numberAttribute("hasCode", 0x0101000C, typeBoolean, -1),
         numberAttribute("hardwareAccelerated", 0x010102D3, typeBoolean, -1),
-        numberAttribute("extractNativeLibs", 0x010104EA, typeBoolean, 0)]
+        numberAttribute("extractNativeLibs", 0x010104EA, typeBoolean, 0),
+        numberAttribute("enableOnBackInvokedCallback", 0x0101066C, typeBoolean, 0)]
     if (icon) {
         application.add(numberAttribute("icon", 0x01010002, typeReference, iconResource))
     }
     nodes.add(open("application", application))
     // The changes of the configuration that SDL handles without a new activity.
     i64 changes = 0x5000AFF4
-    nodes.add(open("activity", [textAttribute("name", 0x01010003, "org.libsdl.app.SDLActivity"),
+    nodes.add(open("activity", [textAttribute("name", 0x01010003, "org.cromo.CromoActivity"),
         textAttribute("label", 0x01010001, label), numberAttribute("exported", 0x01010010, typeBoolean, -1),
         numberAttribute("launchMode", 0x0101001D, typeDecimal, 3),  // singleInstance
         numberAttribute("configChanges", 0x0101001F, typeHexadecimal, changes),
-        numberAttribute("theme", 0x01010000, typeReference, 0x0103022F)]))  // Theme.Material.NoActionBar.Fullscreen
+        numberAttribute("theme", 0x01010000, typeReference, themeResource)]))
     list<Attribute> none
     nodes.add(open("intent-filter", none))
     nodes.add(open("action", [textAttribute("name", 0x01010003, "android.intent.action.MAIN")]))
@@ -371,65 +374,135 @@ list<Attribute> sortedAttributes(list<Attribute> attributes) {
     ret sorted
 }
 
-// The table of the resources of the app: only drawable/icon, the file
-// res/drawable/icon.png, for every configuration.
-list<u8> resources(string package) {
-    list<u8> values = stringPool(["res/drawable/icon.png"])
-    list<u8> types = stringPool(["drawable"])
-    list<u8> keys = stringPool(["icon"])
-
-    list<u8> specification  // ResTable_typeSpec
-    put16(ref specification, 0x0202)
-    put16(ref specification, 16)
-    put32(ref specification, 16 + 4)
-    put8(ref specification, 1)  // the type 1, drawable
-    put8(ref specification, 0)
-    put16(ref specification, 0)
-    put32(ref specification, 1)  // one entry
-    put32(ref specification, 0)  // the same in every configuration
-
-    i64 header = 8 + 1 + 1 + 2 + 4 + 4 + 64  // with the default ResTable_config of 64 bytes
-    list<u8> type                            // ResTable_type
-    put16(ref type, 0x0201)
-    put16(ref type, header)
-    put32(ref type, header + 4 + 8 + 8)
-    put8(ref type, 1)
-    put8(ref type, 0)
-    put16(ref type, 0)
-    put32(ref type, 1)
-    put32(ref type, header + 4)  // where the entries start
-    put32(ref type, 64)          // the size of the configuration, all of it 0
-    for (i64 i = 4; i < 64; i++) {
-        put8(ref type, 0)
+// The specification of a type of resources, ResTable_typeSpec: for each entry the
+// parts of the configuration in which it changes.
+list<u8> typeSpecification(i64 id, list<i64> changes) {
+    list<u8> out
+    put16(ref out, 0x0202)
+    put16(ref out, 16)
+    put32(ref out, 16 + 4 * changes.len())
+    put8(ref out, id)
+    put8(ref out, 0)
+    put16(ref out, 0)
+    put32(ref out, changes.len())
+    for (i64 change in changes) {
+        put32(ref out, change)
     }
-    put32(ref type, 0)  // the offset of the entry
-    put16(ref type, 8)  // ResTable_entry: its size, its flags, its key
-    put16(ref type, 0)
-    put32(ref type, 0)
-    put16(ref type, 8)  // Res_value: the string 0 of the values
-    put8(ref type, 0)
-    put8(ref type, typeString)
-    put32(ref type, 0)
+    ret out
+}
+
+// A type of resources for a configuration, ResTable_type, with one entry: the
+// configuration is of 64 bytes, all 0 for the default one, or with the mode of the
+// night, UI_MODE_NIGHT_YES from Android 2.2, as aapt2 writes values-night.
+list<u8> typeChunk(i64 id, bool night, list<u8> entry) {
+    i64 header = 8 + 1 + 1 + 2 + 4 + 4 + 64
+    list<u8> out
+    put16(ref out, 0x0201)
+    put16(ref out, header)
+    put32(ref out, header + 4 + entry.len())
+    put8(ref out, id)
+    put8(ref out, 0)
+    put16(ref out, 0)
+    put32(ref out, 1)
+    put32(ref out, header + 4)  // where the entries start
+    list<u8> configuration
+    put32(ref configuration, 64)
+    for (configuration.len() < 64) {
+        configuration.add(0)
+    }
+    if (night) {
+        configuration[24] = 8     // sdkVersion
+        configuration[29] = 0x20  // uiMode
+    }
+    putBytes(ref out, configuration)
+    put32(ref out, 0)  // the offset of the entry
+    putBytes(ref out, entry)
+    ret out
+}
+
+const i64 typeColor = 0x1C  // TYPE_INT_COLOR_ARGB8
+
+void item(ref list<u8> out, i64 attribute, i64 kind, i64 value) {
+    put32(ref out, attribute)
+    put16(ref out, 8)
+    put8(ref out, 0)
+    put8(ref out, kind)
+    put32(ref out, value)
+}
+
+// The theme AppTheme, a ResTable_map_entry: the day and night theme of the device
+// without a title and an action bar, with the bars of the system of the color of
+// those of std.gui and their icons dark by day, light by night (D456). Its items
+// are in the order of their resources.
+list<u8> theme(bool night) {
+    i64 bar = night ? 0xFF111827 : 0xFFFFFFFF         // gray-900 or white
+    i64 background = night ? 0xFF111827 : 0xFFF3F4F6  // gray-100
+    list<u8> out
+    put16(ref out, 16)
+    put16(ref out, 1)           // FLAG_COMPLEX
+    put32(ref out, 0)           // the key AppTheme
+    put32(ref out, 0x010302E3)  // Theme.DeviceDefault.DayNight
+    put32(ref out, 7)
+    item(ref out, 0x01010054, typeColor, background)        // windowBackground
+    item(ref out, 0x01010056, typeBoolean, -1)              // windowNoTitle
+    item(ref out, 0x010102CD, typeBoolean, 0)               // windowActionBar
+    item(ref out, 0x01010451, typeColor, bar)               // statusBarColor
+    item(ref out, 0x01010452, typeColor, bar)               // navigationBarColor
+    item(ref out, 0x010104E0, typeBoolean, night ? 0 : -1)  // windowLightStatusBar
+    item(ref out, 0x0101056C, typeBoolean, night ? 0 : -1)  // windowLightNavigationBar
+    ret out
+}
+
+// The table of the resources of the app: style/AppTheme, the theme of the
+// activity, for the day and for the night; and drawable/icon, the file
+// res/drawable/icon.png, when there is one.
+list<u8> resources(string package, bool icon) {
+    list<string> files
+    list<string> typeNames = ["style"]
+    list<string> keyNames = ["AppTheme"]
+    if (icon) {
+        files.add("res/drawable/icon.png")
+        typeNames.add("drawable")
+        keyNames.add("icon")
+    }
+    list<u8> values = stringPool(files)
+    list<u8> types = stringPool(typeNames)
+    list<u8> keys = stringPool(keyNames)
+
+    list<u8> chunks = typeSpecification(1, [0x1400])  // ACONFIGURATION_UI_MODE and _VERSION
+    putBytes(ref chunks, typeChunk(1, false, theme(false)))
+    putBytes(ref chunks, typeChunk(1, true, theme(true)))
+    if (icon) {
+        list<u8> drawable  // ResTable_entry and Res_value: the string 0 of the values
+        put16(ref drawable, 8)
+        put16(ref drawable, 0)
+        put32(ref drawable, 1)  // the key icon
+        put16(ref drawable, 8)
+        put8(ref drawable, 0)
+        put8(ref drawable, typeString)
+        put32(ref drawable, 0)
+        putBytes(ref chunks, typeSpecification(2, [0]))
+        putBytes(ref chunks, typeChunk(2, false, drawable))
+    }
 
     i64 packageHeader = 288
     list<u8> chunk  // ResTable_package
     put16(ref chunk, 0x0200)
     put16(ref chunk, packageHeader)
-    put32(ref chunk, packageHeader + types.len() + keys.len() + specification.len() + type.len())
+    put32(ref chunk, packageHeader + types.len() + keys.len() + chunks.len())
     put32(ref chunk, 0x7F)
     list<i64> name = utf16(package)
     for (i64 i = 0; i < 128; i++) {
         put16(ref chunk, i < name.len() && i < 127 ? name[i] : 0)
     }
     put32(ref chunk, packageHeader)  // the strings of the types
-    put32(ref chunk, 1)
+    put32(ref chunk, typeNames.len())
     put32(ref chunk, packageHeader + types.len())  // the strings of the keys
-    put32(ref chunk, 1)
+    put32(ref chunk, keyNames.len())
     put32(ref chunk, 0)
     putBytes(ref chunk, types)
     putBytes(ref chunk, keys)
-    putBytes(ref chunk, specification)
-    putBytes(ref chunk, type)
+    putBytes(ref chunk, chunks)
 
     list<u8> out  // ResTable_header
     put16(ref out, 0x0002)
