@@ -1078,6 +1078,15 @@ public struct Panel : Component {
         ret component
     }
 
+    // How far the panel is scrolled, in logical pixels from the top (D460).
+    public i32 scrollY() const {
+        ret i32(partScroll(id))
+    }
+
+    public void scrollTo(i32 y) const {
+        setPartScroll(id, f32(y))
+    }
+
     public void setPosition(i32 x, i32 y) const {
         setPartBounds(id, x, y, -1, -1)
     }
@@ -1309,6 +1318,176 @@ public struct NavigationBar : Component {
     }
 }
 
+// A list of items (D461, D462), each a row with an icon, a title, a line under it
+// and a text on the right, all optional: only the rows that are seen are drawn,
+// and the list scrolls as a panel. The item chosen stays lit; a click, a touch or
+// the keys choose an item and call the handlers of onChoose with its index.
+public struct ListView : Component {
+    i64 id
+
+    public ListView(i32 x, i32 y, i32 width, i32 height) {
+        id = newPart(kindListView, "", x, y, width, height)
+    }
+
+    i64 componentId() const {
+        ret id
+    }
+
+    // Icon.None and "" for what the item does not have.
+    public void addItem(Icon icon, string title, string subtitle, string detail) const {
+        i64 me = id
+        withData([me, icon, title, subtitle, detail](ref Shared data) {
+            i64 p = partIndexOf(ref data, me)
+            data.parts[p].icons.add(icon)
+            data.parts[p].items.add(title)
+            data.parts[p].subtitles.add(subtitle)
+            data.parts[p].details.add(detail)
+        })
+    }
+
+    public void setItem(i64 index, Icon icon, string title, string subtitle, string detail) const {
+        i64 me = id
+        withData([me, index, icon, title, subtitle, detail](ref Shared data) {
+            i64 p = listIndex(ref data, me, index)
+            data.parts[p].icons[index] = icon
+            data.parts[p].items[index] = title
+            data.parts[p].subtitles[index] = subtitle
+            data.parts[p].details[index] = detail
+        })
+    }
+
+    public void removeItem(i64 index) const {
+        i64 me = id
+        withData([me, index](ref Shared data) {
+            i64 p = listIndex(ref data, me, index)
+            data.parts[p].icons.remove(index)
+            data.parts[p].items.remove(index)
+            data.parts[p].subtitles.remove(index)
+            data.parts[p].details.remove(index)
+            if (data.parts[p].selected == index) {
+                data.parts[p].selected = -1
+            } else if (data.parts[p].selected > index) {
+                data.parts[p].selected--
+            }
+        })
+    }
+
+    public void clear() const {
+        i64 me = id
+        withData([me](ref Shared data) {
+            i64 p = partIndexOf(ref data, me)
+            data.parts[p].icons.clear()
+            data.parts[p].items.clear()
+            data.parts[p].subtitles.clear()
+            data.parts[p].details.clear()
+            data.parts[p].selected = -1
+            data.parts[p].offsetY = 0
+        })
+    }
+
+    public i64 count() const {
+        i64 me = id
+        i64 result = 0
+        withData([me, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, me)].items.len() })
+        ret result
+    }
+
+    public string itemTitle(i64 index) const {
+        i64 me = id
+        string result
+        withData([me, index, ref result](ref Shared data) { result = data.parts[listIndex(ref data, me, index)].items[index] })
+        ret result
+    }
+
+    // The item chosen, or -1 for none.
+    public void setSelected(i64 index) const {
+        i64 me = id
+        withData([me, index](ref Shared data) {
+            i64 p = partIndexOf(ref data, me)
+            if (index != -1) {
+                listIndex(ref data, me, index)
+            }
+            data.parts[p].selected = index
+        })
+    }
+
+    public i64 selected() const {
+        i64 me = id
+        i64 result = -1
+        withData([me, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, me)].selected })
+        ret result
+    }
+
+    // When the user chooses an item.
+    public void onChoose(move func(i64) handler) const {
+        addr box = alloc(sizeOf<func(i64)>())
+        put<func(i64)>(box, move handler)
+        addPartHandler(id, 1, box)
+    }
+
+    // Scrolls the list so that the item is seen.
+    public void scrollTo(i64 index) const {
+        i64 me = id
+        withData([me, index](ref Shared data) {
+            i64 p = listIndex(ref data, me, index)
+            showRow(ref data.parts[p], index)
+        })
+    }
+
+    public void setPosition(i32 x, i32 y) const {
+        setPartBounds(id, x, y, -1, -1)
+    }
+
+    public void setSize(i32 width, i32 height) const {
+        setPartBounds(id, -1, -1, width, height)
+    }
+
+    public i32 x() const {
+        ret partBound(id, 0)
+    }
+
+    public i32 y() const {
+        ret partBound(id, 1)
+    }
+
+    public i32 width() const {
+        ret partBound(id, 2)
+    }
+
+    public i32 height() const {
+        ret partBound(id, 3)
+    }
+
+    public void setVisible(bool value) const {
+        setPartFlag(id, 0, value)
+    }
+
+    public bool visible() const {
+        ret partFlag(id, 0)
+    }
+
+    public void setEnabled(bool value) const {
+        setPartFlag(id, 1, value)
+    }
+
+    public bool enabled() const {
+        ret partFlag(id, 1)
+    }
+
+    // How it follows the edges of its window or of its group (D447).
+    public void setAnchor(Horizontal horizontal, Vertical vertical) const {
+        setPartAnchor(id, horizontal, vertical)
+    }
+
+    public Horizontal horizontalAnchor() const {
+        ret partHorizontal(id)
+    }
+
+    public Vertical verticalAnchor() const {
+        ret partVertical(id)
+    }
+}
+
 // ---- The data of the windows and of the components ----
 
 struct Rect {
@@ -1382,8 +1561,17 @@ struct WindowData {
     i64 popup          // the combo box whose list is open
     i64 appBar         // its bar at the top, or 0
     i64 navigation     // its bar at the bottom, or 0
-    i64 hotItem = -1   // the item of a bar under the mouse
-    i64 heldItem = -1  // the item of a bar pressed
+    i64 hotItem = -1   // the item of a bar or the row of a list under the mouse
+    i64 heldItem = -1  // the item of a bar or the row of a list pressed
+    i64 scrolling      // the panel or the list that a finger or the mouse on its bar scrolls
+    bool scrollBar     // the mouse drags its bar
+    bool dragMoved     // the finger moved more than 8 pixels
+    f32 dragStart
+    f32 dragY
+    u64 dragTime
+    u64 lastFrame
+    f32 pointerX = -1  // the mouse, -1 when it is out of the window
+    f32 pointerY = -1
     u64 caretStart
     list<i64> order  // the indices of its components, in the order they are drawn
 }
@@ -1399,6 +1587,7 @@ const i32 kindIconBox = 8
 const i32 kindPanel = 9
 const i32 kindAppBar = 10
 const i32 kindNavigation = 11
+const i32 kindListView = 12
 
 // A component: its kind, its window and its group once added, its properties, for
 // a text box where its cursor and the other end of its selection are, as indices
@@ -1439,15 +1628,21 @@ struct PartData {
     bool imageChanged
     Scale scale
     addr texture
-    Icon icon           // of an icon box, of a button, or on the left of an app bar
-    list<Icon> icons    // of the actions of an app bar, of the items of a navigation bar
-    list<addr> actions  // func(), of the actions of an app bar
-    list<i64> pages     // of the items of a navigation bar
-    i64 page = -1       // of a page, its item in its navigation bar
-    i64 bar             // of a page, its navigation bar
-    list<addr> click    // func()
-    list<addr> change   // func(string) of a text box, func(bool) of a check box, func(i64) of a combo box
-    list<addr> enter    // func(string)
+    Icon icon               // of an icon box, of a button, or on the left of an app bar
+    list<Icon> icons        // of the actions of an app bar, of the items of a navigation bar
+    list<addr> actions      // func(), of the actions of an app bar
+    list<i64> pages         // of the items of a navigation bar
+    i64 page = -1           // of a page, its item in its navigation bar
+    list<string> subtitles  // of the items of a list
+    list<string> details
+    f32 offsetY        // how far a panel or a list is scrolled (D460)
+    f32 content        // the height of what it has
+    f32 velocity       // in logical pixels each second, after a finger leaves it
+    u64 scrollShown    // when it scrolled last, for its bar
+    i64 bar            // of a page, its navigation bar
+    list<addr> click   // func()
+    list<addr> change  // func(string) of a text box, func(bool) of a check box, func(i64) of a combo box or a list
+    list<addr> enter   // func(string)
 
     // Laid out by the thread of the GUI: its place in the content of the window,
     // whether it and its groups are visible and enabled, and the rectangle of
@@ -1752,6 +1947,29 @@ void rebase(ref Shared data, i64 p) {
     data.parts[p].parentHeight = h
 }
 
+// The index of a list with its item, or a panic if it has no such item.
+i64 listIndex(ref Shared data, i64 id, i64 index) {
+    i64 p = partIndexOf(ref data, id)
+    if (index < 0 || index >= data.parts[p].items.len()) {
+        panic(format("the list has no item {}", index))
+    }
+    ret p
+}
+
+f32 partScroll(i64 id) {
+    f32 result = 0
+    withData([id, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, id)].offsetY })
+    ret result
+}
+
+void setPartScroll(i64 id, f32 y) {
+    withData([id, y](ref Shared data) {
+        i64 p = partIndexOf(ref data, id)
+        data.parts[p].offsetY = y
+        data.parts[p].velocity = 0
+    })
+}
+
 void setPartAnchor(i64 id, Horizontal horizontal, Vertical vertical) {
     withData([id, horizontal, vertical](ref Shared data) {
         i64 p = partIndexOf(ref data, id)
@@ -1861,10 +2079,9 @@ public struct Window {
             window.title = text
             window.width = w
             window.height = h
-            if (onAndroid()) {
-                window.phone = true
-                window.originY = 0
-            }
+            // On Android the components are added for the content that the window
+            // would have on the desktop, and their anchors follow the phone (D456).
+            window.phone = onAndroid()
             data.windows.add(move window)
             made = data.next
         })
@@ -2189,6 +2406,8 @@ const f32 appBarHeight = 56
 const f32 navigationHeight = 64
 const f32 headingSize = 18  // of the title of an app bar
 const f32 captionSize = 12  // of the items of a navigation bar
+const f32 rowHeight = 56    // of the items of a list
+const f32 wheelStep = 48    // what a step of the wheel scrolls
 
 // The colors of the look (D443): the grays and the indigo of Tailwind, light and
 // dark, with buttons in a gradient and a border of a deeper color.
@@ -2732,7 +2951,7 @@ Call callOf(i32 kind, list<addr> boxes) {
 // An event of a window: the title bar handles its own, the components theirs, and
 // the others go to the handlers of the program, in `calls`.
 void route(ref WindowData window, ref list<PartData> parts, addr event, u32 kind, ref list<Call> calls) {
-    if (kind >= 0x400 && kind <= 0x402) {  // the mouse: in logical pixels
+    if (kind >= 0x400 && kind <= 0x403) {  // the mouse: in logical pixels
         SDL_ConvertEventToRenderCoordinates(window.renderer, event)
     }
     layout(ref window, ref parts)
@@ -2744,7 +2963,10 @@ void route(ref WindowData window, ref list<PartData> parts, addr event, u32 kind
         f32 x = take<f32>(offset(event, 28))
         f32 y = take<f32>(offset(event, 32))
         window.hovered = window.phone ? -1 : buttonAt(x, y, width)
-        i64 hot = y >= window.originY ? partAt(ref window, ref parts, x, y) : -1
+        window.pointerX = x
+        window.pointerY = y
+        dragScroll(ref window, ref parts, y)
+        i64 hot = y >= window.originY && !window.dragMoved ? partAt(ref window, ref parts, x, y) : -1
         i64 open = partNumber(ref parts, window.popup)
         if (open >= 0 && inList(ref window, ref parts[open], x, y)) {
             hot = open
@@ -2784,11 +3006,20 @@ void route(ref WindowData window, ref list<PartData> parts, addr event, u32 kind
             }
             window.pressed = -1
         } else if (y >= window.originY) {
+            bool finger = take<u32>(offset(event, 20)) == 0xFFFFFFFF  // SDL_TOUCH_MOUSEID
             if (kind == 0x401 && button == 1) {
-                pressPart(ref window, ref parts, x, y)
+                if (!startScroll(ref window, ref parts, x, y, finger)) {
+                    pressPart(ref window, ref parts, x, y)
+                }
             } else if (kind == 0x402 && button == 1) {
-                releasePart(ref window, ref parts, x, y, ref calls)
-                if (take<u32>(offset(event, 20)) == 0xFFFFFFFF) {  // a finger, which leaves no component under it
+                if (endScroll(ref window, ref parts)) {
+                    window.held = 0
+                    window.heldItem = -1
+                    window.dragging = 0
+                } else {
+                    releasePart(ref window, ref parts, x, y, ref calls)
+                }
+                if (finger) {  // a finger leaves no component under it
                     window.hot = 0
                     window.hotItem = -1
                 }
@@ -2797,20 +3028,27 @@ void route(ref WindowData window, ref list<PartData> parts, addr event, u32 kind
             call.mouse = mouseAt(ref window, x, y, button)
             calls.add(move call)
         }
-    } else if (kind == 0x403) {  // SDL_EVENT_MOUSE_WHEEL: it scrolls the list open
+    } else if (kind == 0x403) {                           // SDL_EVENT_MOUSE_WHEEL: the list open, or a panel or a list
+        bool flipped = take<u32>(offset(event, 32)) == 1  // SDL_MOUSEWHEEL_FLIPPED
         i64 open = partNumber(ref parts, window.popup)
         if (open >= 0) {
             i64 ticks = i64(take<i32>(offset(event, 48)))
-            if (take<u32>(offset(event, 32)) == 1) {  // SDL_MOUSEWHEEL_FLIPPED
-                ticks = -ticks
-            }
-            parts[open].first = parts[open].first - ticks
+            parts[open].first = parts[open].first - (flipped ? -ticks : ticks)
             reveal(ref window, ref parts[open], false)
+        } else {
+            i64 s = scrollerAt(ref window, ref parts, take<f32>(offset(event, 36)), take<f32>(offset(event, 40)))
+            if (s >= 0) {
+                f32 steps = take<f32>(offset(event, 28))
+                parts[s].velocity = 0
+                scrollBy(ref parts[s], -(flipped ? -steps : steps) * wheelStep)
+            }
         }
     } else if (kind == 0x20D) {  // SDL_EVENT_WINDOW_MOUSE_LEAVE
         window.hovered = -1
         window.pressed = -1
         window.hot = 0
+        window.pointerX = -1
+        window.pointerY = -1
     } else if (kind == 0x20E) {  // FOCUS_GAINED
         window.focused = true
     } else if (kind == 0x20F) {  // FOCUS_LOST
@@ -2924,7 +3162,8 @@ bool inside(ref PartData part, f32 x, f32 y) {
 }
 
 bool focusable(ref PartData part) {
-    bool takes = part.kind == kindButton || part.kind == kindTextBox || part.kind == kindCheckBox || part.kind == kindComboBox
+    bool takes = part.kind == kindButton || part.kind == kindTextBox || part.kind == kindCheckBox || part.kind == kindComboBox ||
+        part.kind == kindListView
     ret takes && part.shown && part.active
 }
 
@@ -2993,7 +3232,7 @@ void pressPart(ref WindowData window, ref list<PartData> parts, f32 x, f32 y) {
         window.dragging = parts[p].id
     } else if (parts[p].kind == kindComboBox) {
         openList(ref window, ref parts[p])
-    } else if (parts[p].kind == kindAppBar || parts[p].kind == kindNavigation) {
+    } else if (parts[p].kind == kindAppBar || parts[p].kind == kindNavigation || parts[p].kind == kindListView) {
         window.heldItem = barItemAt(ref parts[p], x, y)
     }
 }
@@ -3014,7 +3253,11 @@ void releasePart(ref WindowData window, ref list<PartData> parts, f32 x, f32 y, 
     i64 item = window.heldItem
     window.heldItem = -1
     if (p >= 0 && parts[p].active && inside(ref parts[p], x, y)) {
-        if (parts[p].kind == kindAppBar || parts[p].kind == kindNavigation) {
+        if (parts[p].kind == kindListView) {
+            if (item >= 0 && rowAt(ref parts[p], y) == item) {
+                chooseRow(ref parts[p], item, ref calls)
+            }
+        } else if (parts[p].kind == kindAppBar || parts[p].kind == kindNavigation) {
             if (item >= 0 && barItemAt(ref parts[p], x, y) == item) {
                 chooseItem(ref window, ref parts, p, item, ref calls)
             }
@@ -3022,6 +3265,156 @@ void releasePart(ref WindowData window, ref list<PartData> parts, f32 x, f32 y, 
             activate(ref parts[p], ref calls)
         }
     }
+}
+
+// ---- Scrolling (D460, P46) ----
+
+// The panel or the list that scrolls under a point, the innermost, or -1.
+i64 scrollerAt(ref WindowData window, ref list<PartData> parts, f32 x, f32 y) {
+    for (i64 k = window.order.len() - 1; k >= 0; k--) {
+        i64 i = window.order[k]
+        if (parts[i].shown && scrolls(ref parts[i]) && inside(ref parts[i], x, y)) {
+            ret i
+        }
+    }
+    ret -1
+}
+
+// A finger on a panel or a list that scrolls may scroll it; the mouse scrolls it
+// with its bar, on the right edge. True when the press is taken here.
+bool startScroll(ref WindowData window, ref list<PartData> parts, f32 x, f32 y, bool finger) {
+    i64 s = scrollerAt(ref window, ref parts, x, y)
+    if (s < 0 || window.popup != 0) {
+        ret false
+    }
+    parts[s].velocity = 0
+    bool bar = !finger && x >= parts[s].left + f32(parts[s].width) - 10
+    if (!finger && !bar) {
+        ret false
+    }
+    window.scrolling = parts[s].id
+    window.scrollBar = bar
+    window.dragMoved = false
+    window.dragStart = y
+    window.dragY = y
+    window.dragTime = SDL_GetTicksNS()
+    ret bar
+}
+
+// The mouse moved with a finger, or with the bar held: the content follows, once
+// the finger moved more than 8 pixels, and then the press is let go.
+void dragScroll(ref WindowData window, ref list<PartData> parts, f32 y) {
+    i64 s = partNumber(ref parts, window.scrolling)
+    if (s < 0) {
+        ret
+    }
+    u64 now = SDL_GetTicksNS()
+    f32 seconds = f32(now - window.dragTime) / 1000000000
+    if (window.scrollBar) {
+        scrollBy(ref parts[s], (y - window.dragY) * parts[s].content / f32(parts[s].height))
+    } else {
+        if (!window.dragMoved && (y - window.dragStart > 8 || window.dragStart - y > 8)) {
+            window.dragMoved = true
+            window.held = 0
+            window.heldItem = -1
+            window.dragging = 0
+            window.hot = 0
+            window.popup = 0
+        }
+        if (window.dragMoved) {
+            scrollBy(ref parts[s], window.dragY - y)
+            if (seconds > 0) {
+                parts[s].velocity = parts[s].velocity * 0.2 + (window.dragY - y) / seconds * 0.8
+            }
+        }
+    }
+    window.dragY = y
+    window.dragTime = now
+}
+
+// The finger or the mouse let go: the content goes on with its speed after a
+// finger. True when it scrolled, and so nothing is clicked.
+bool endScroll(ref WindowData window, ref list<PartData> parts) {
+    i64 s = partNumber(ref parts, window.scrolling)
+    bool moved = window.dragMoved || window.scrollBar
+    if (s >= 0 && (!window.dragMoved || SDL_GetTicksNS() - window.dragTime > 100000000)) {
+        parts[s].velocity = 0  // a finger that stopped before it left
+    }
+    window.scrolling = 0
+    window.scrollBar = false
+    window.dragMoved = false
+    ret moved
+}
+
+// At each frame the panels and the lists that a finger left go on, slowing down.
+void glide(ref WindowData window, ref list<PartData> parts) {
+    u64 now = SDL_GetTicksNS()
+    f32 seconds = window.lastFrame == 0 ? 0 : f32(now - window.lastFrame) / 1000000000
+    window.lastFrame = now
+    if (seconds > 0.05) {
+        seconds = 0.05
+    }
+    for (ref PartData part in parts) {
+        if (part.window == window.id && part.velocity != 0 && part.id != window.scrolling) {
+            scrollBy(ref part, part.velocity * seconds)
+            part.velocity = part.velocity * (1 - least(1, seconds * 3))
+            if (part.velocity < 20 && part.velocity > -20) {
+                part.velocity = 0
+            }
+        }
+    }
+}
+
+// The row of a list at a point of the window, or -1.
+i64 rowAt(ref PartData view, f32 y) {
+    i64 row = i64((y - view.top + view.offsetY) / rowHeight)
+    ret row >= 0 && row < view.items.len() ? row : -1
+}
+
+// Scrolls a list so that a row is seen.
+void showRow(ref PartData view, i64 row) {
+    f32 top = f32(row) * rowHeight
+    view.velocity = 0
+    if (top < view.offsetY) {
+        scrollBy(ref view, top - view.offsetY)
+    } else if (top + rowHeight > view.offsetY + f32(view.height)) {
+        scrollBy(ref view, top + rowHeight - f32(view.height) - view.offsetY)
+    }
+}
+
+// The keys of a list (P46): false for those it does not use.
+bool listKey(ref PartData view, Key key, ref list<Call> calls) {
+    i64 n = view.items.len()
+    i64 page = i64(f32(view.height) / rowHeight)
+    i64 next = view.selected
+    if (key.code == keyUp) {
+        next = view.selected > 0 ? view.selected - 1 : 0
+    } else if (key.code == keyDown) {
+        next = view.selected < n - 1 ? view.selected + 1 : n - 1
+    } else if (key.code == keyHome) {
+        next = 0
+    } else if (key.code == keyEnd) {
+        next = n - 1
+    } else if (key.code == keyPageUp) {
+        next = view.selected - page > 0 ? view.selected - page : 0
+    } else if (key.code == keyPageDown) {
+        next = view.selected + page < n - 1 ? view.selected + page : n - 1
+    } else {
+        ret false
+    }
+    if (next >= 0 && next < n) {
+        chooseRow(ref view, next, ref calls)
+    }
+    ret true
+}
+
+// An item of a list chosen: it stays lit, and the handlers are called (D462).
+void chooseRow(ref PartData view, i64 row, ref list<Call> calls) {
+    view.selected = row
+    showRow(ref view, row)
+    Call call = callOf(9, view.change)
+    call.index = row
+    calls.add(move call)
 }
 
 // ---- The bars of the apps (D450, D451) ----
@@ -3045,6 +3438,9 @@ i64 barItemAt(ref PartData bar, f32 x, f32 y) {
             }
         }
         ret -1
+    }
+    if (bar.kind == kindListView) {
+        ret rowAt(ref bar, y)
     }
     if (bar.kind == kindNavigation && bar.items.len() > 0 && bar.width > 0) {
         i64 item = i64((x - bar.left) * f32(bar.items.len()) / f32(bar.width))
@@ -3253,6 +3649,9 @@ bool keyOfPart(ref WindowData window, ref list<PartData> parts, Key key, ref lis
     if (parts[f].kind == kindComboBox) {
         ret comboKey(ref window, ref parts[f], key, ref calls)
     }
+    if (parts[f].kind == kindListView) {
+        ret listKey(ref parts[f], key, ref calls)
+    }
     if (key.code == 32 || (key.code == 13 && parts[f].kind == kindButton)) {  // Space, Enter
         activate(ref parts[f], ref calls)
         ret true
@@ -3267,6 +3666,8 @@ const i64 keyEnd = 0x4000004D
 const i64 keyEnter = 0x40000058  // of the numeric keypad
 const i64 keyUp = 0x40000052
 const i64 keyBack = 0x4000011A  // SDLK_AC_BACK, of Android
+const i64 keyPageUp = 0x4000004B
+const i64 keyPageDown = 0x4000004E
 const i64 keyDown = 0x40000051
 
 // The editing of a text box: the characters come with the text of the keyboard.
@@ -3416,6 +3817,7 @@ struct Frame {
     f32 clipTop
     f32 clipRight
     f32 clipBottom
+    f32 scrolled  // how far its panel is scrolled
 }
 
 // Places the components of a window in its content, each group before its
@@ -3456,6 +3858,9 @@ void layoutIn(ref WindowData window, ref list<PartData> parts, i64 group, Frame 
         }
         parts[i].left = frame.left + f32(parts[i].x)
         parts[i].top = frame.top + f32(parts[i].y)
+        if (parts[i].vertical != Vertical.Top) {  // it follows the height seen, and stays (P46)
+            parts[i].top = parts[i].top + frame.scrolled
+        }
         parts[i].shown = frame.shown && parts[i].visible && !hidden
         parts[i].active = frame.active && parts[i].enabled
         parts[i].clipLeft = frame.clipLeft
@@ -3463,10 +3868,20 @@ void layoutIn(ref WindowData window, ref list<PartData> parts, i64 group, Frame 
         parts[i].clipRight = frame.clipRight
         parts[i].clipBottom = frame.clipBottom
         window.order.add(i)
+        if (parts[i].kind == kindListView) {
+            parts[i].content = f32(parts[i].items.len()) * rowHeight
+            clampScroll(ref parts[i])
+        }
         if (parts[i].kind == kindGroup || parts[i].kind == kindPanel) {
             Frame inner
             inner.left = parts[i].left
             inner.top = parts[i].top
+            if (parts[i].kind == kindPanel) {  // D460
+                parts[i].content = contentOf(ref parts, window.id, parts[i].id, parts[i].width, parts[i].height)
+                clampScroll(ref parts[i])
+                inner.top = parts[i].top - parts[i].offsetY
+                inner.scrolled = parts[i].offsetY
+            }
             inner.width = parts[i].width
             inner.height = parts[i].height
             inner.shown = parts[i].shown
@@ -3478,6 +3893,47 @@ void layoutIn(ref WindowData window, ref list<PartData> parts, i64 group, Frame 
             layoutIn(ref window, ref parts, parts[i].id, inner)
         }
     }
+}
+
+// The height of what a panel has: its components visible anchored at the top,
+// arranged for its size, and 16 pixels under the lowest when it ends below the
+// panel (P46). The others follow the height seen.
+f32 contentOf(ref list<PartData> parts, i64 window, i64 panel, i32 width, i32 height) {
+    f32 bottom = 0
+    for (i64 i = 0; i < parts.len(); i++) {
+        if (parts[i].window == window && parts[i].parent == panel && parts[i].visible && parts[i].vertical == Vertical.Top) {
+            arrange(ref parts[i], width, height)
+            bottom = most(bottom, f32(parts[i].y + parts[i].height))
+        }
+    }
+    ret bottom > f32(height) ? bottom + 16 : bottom
+}
+
+// A panel or a list is scrolled from 0 to its content less its height.
+void clampScroll(ref PartData part) {
+    f32 most = part.content - f32(part.height)
+    if (part.offsetY > most) {
+        part.offsetY = most
+        part.velocity = 0
+    }
+    if (part.offsetY < 0) {
+        part.offsetY = 0
+        part.velocity = 0
+    }
+}
+
+// Scrolls a panel or a list, and shows its bar for a while.
+void scrollBy(ref PartData part, f32 delta) {
+    f32 before = part.offsetY
+    part.offsetY = part.offsetY + delta
+    clampScroll(ref part)
+    if (part.offsetY != before) {
+        part.scrollShown = SDL_GetTicksNS()
+    }
+}
+
+bool scrolls(ref PartData part) {
+    ret (part.kind == kindPanel || part.kind == kindListView) && part.content > f32(part.height)
 }
 
 // The position and the size of a component, for the size of its parent now.
@@ -3545,12 +4001,23 @@ void drawWindow(ref WindowData window, ref list<PartData> parts) {
         }
     }
 
+    glide(ref window, ref parts)
     layout(ref window, ref parts)
     for (i64 k = 0; k < window.order.len(); k++) {
         i64 i = window.order[k]
         if (parts[i].shown && parts[i].clipRight > parts[i].clipLeft && parts[i].clipBottom > parts[i].clipTop) {
             clipPart(r, ref parts[i])
             drawPart(ref window, ref parts[i], ref c)
+        }
+    }
+    u64 now = SDL_GetTicksNS()
+    for (i64 k = 0; k < window.order.len(); k++) {  // the bars of what scrolls, over its components
+        i64 i = window.order[k]
+        bool seen = now - parts[i].scrollShown < 1000000000 || window.scrolling == parts[i].id ||
+            !window.phone && inside(ref parts[i], window.pointerX, window.pointerY)
+        if (parts[i].shown && scrolls(ref parts[i]) && seen) {
+            clipPart(r, ref parts[i])
+            drawScrollBar(ref window, ref parts[i], ref c)
         }
     }
     i64 open = partNumber(ref parts, window.popup)
@@ -3719,10 +4186,80 @@ void drawPart(ref WindowData window, ref PartData part, ref Colors c) {
         drawImage(ref window, ref part)
     } else if (part.kind == kindIconBox) {
         drawIcon(r, part.icon, x + w / 2, y + h / 2, least(w, h), d, c.label, on)
+    } else if (part.kind == kindListView) {
+        drawListView(ref window, ref part, ref c)
     } else if (part.kind == kindAppBar) {
         drawAppBar(ref window, ref part, ref c)
     } else if (part.kind == kindNavigation) {
         drawNavigation(ref window, ref part, ref c)
+    }
+}
+
+// The thin bar on the right of a panel or of a list that scrolls, while it moves and
+// while the mouse is over it, wider while it is dragged.
+void drawScrollBar(ref WindowData window, ref PartData part, ref Colors c) {
+    f32 h = f32(part.height)
+    f32 thumb = most(24, h * h / part.content)
+    f32 at = part.top + (h - thumb) * part.offsetY / (part.content - h)
+    bool held = window.scrolling == part.id && window.scrollBar
+    f32 w = held ? 6 : 4
+    cromo_gui_box(window.renderer, part.left + f32(part.width) - w - 3, at + 2, w, thumb - 4, w / 2, 0, window.density,
+        solid(c.checkBorder, true), 0)
+}
+
+// A list: its rows that are seen, each with its icon, its title and the line under
+// it, its text on the right, and a line under the row; the item chosen on the color
+// of the pills, with a bar of the accent when the list has the keyboard.
+void drawListView(ref WindowData window, ref PartData view, ref Colors c) {
+    addr r = window.renderer
+    f32 d = window.density
+    f32 x = view.left
+    f32 w = f32(view.width)
+    bool on = view.active
+    bool focused = window.focus == view.id && window.focused
+    f32 ascent = 0
+    f32 descent = 0
+    f32 gap = 0
+    cromo_gui_font_metrics(window.body, ref ascent, ref descent, ref gap)
+    f32 middle = (ascent - descent) / 2
+    f32 bottom = view.top + f32(view.height)
+    clipInside(r, ref view, x, view.top, w, f32(view.height))
+    for (i64 row = i64(view.offsetY / rowHeight); row < view.items.len(); row++) {
+        f32 top = view.top + f32(row) * rowHeight - view.offsetY
+        if (top >= bottom) {
+            break
+        }
+        if (row == view.selected) {
+            fill(r, c.item, x, top, w, rowHeight)
+            if (focused) {
+                fill(r, c.focus, x, top, 3, rowHeight)
+            }
+        } else if (window.hot == view.id && window.hotItem == row && on) {
+            fill(r, c.hover, x, top, w, rowHeight)
+        }
+        f32 left = x + 16
+        if (view.icons[row] != Icon.None) {
+            drawIcon(r, view.icons[row], x + 28, top + rowHeight / 2, 24, d, c.label, on)
+            left = x + 56
+        }
+        f32 right = x + w - 16
+        bool two = view.subtitles[row].len() > 0
+        f32 titleLine = two ? top + 20 + middle : top + rowHeight / 2 + middle
+        if (view.details[row].len() > 0) {
+            f32 size = textWidth(window.body, view.details[row], view.details[row].len())
+            text(window.body, view.details[row], right - size, titleLine, c.muted, on)
+            right = right - size - 12
+        }
+        f32 seen = most(top, view.top)
+        clipInside(r, ref view, left, seen, right - left, least(top + rowHeight, bottom) - seen)
+        text(window.body, view.items[row], left, titleLine, c.text, on)
+        if (two) {
+            text(window.body, view.subtitles[row], left, top + 40 + middle, c.muted, on)
+        }
+        clipInside(r, ref view, x, view.top, w, f32(view.height))
+        if (row + 1 < view.items.len()) {
+            fill(r, c.separator, left, top + rowHeight - 1, x + w - left, 1)
+        }
     }
 }
 

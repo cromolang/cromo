@@ -2127,6 +2127,22 @@ i32 main() {
 ### D459. One window on Android
 *2026-11-04.* An app has one window, at full screen: `start()` of a second is a panic, with a message that says so. The pages of an app are those of its navigation bar (D451), or panels shown and hidden.
 
+### D460. A panel scrolls
+*2026-11-04.* A `gui.Panel`, and so each page of a navigation bar, scrolls up and down when its components go beyond its bottom edge: with a finger, with the wheel of the mouse and with a thin bar on its right. There is nothing to write for it. A `GroupBox` stays a card that does not scroll.
+
+### D461. The list: `gui.ListView`
+*2026-11-04.* A list of items, each a row with the layout of Material: an icon, a title, a line under it and a text on the right, as a time, each of them optional. Only the rows that are seen are drawn, so that a list can have thousands of items, and it scrolls as a panel (D460).
+
+```cromo
+// draft: the names of the API are not decided
+gui.ListView inbox = page.add(gui.ListView(0, 0, 390, 600))
+inbox.addItem(gui.Icon.User, "Ada Lovelace", "The notes on the engine", "10:42")
+inbox.onChoose([](i64 index) { println("chosen {}", index) })
+```
+
+### D462. The item chosen stays lit
+*2026-11-04.* A list has one item chosen, or none, which stays lit, as in the lists of the desktop; a click or a touch chooses an item and calls the handlers.
+
 ---
 
 ## Proposed
@@ -2286,6 +2302,12 @@ A component keeps the distances from the edges of its parent, the content of the
 - The activity is `org.cromo.CromoActivity`, that of SDL with one command more: `std.gui` gives it the color of its bars, white or gray-900, when the window opens and when its theme changes, and it colors the bars of the system with it, their icons dark on the light one. Before that, the theme of the APK has the same colors for the day and the night of the system.
 - A finger leaves no component under the mouse when it is lifted, so that a button does not stay lit.
 - When the renderer loses its textures, as an app that comes back from the background can, they are made again: the fonts, the symbols, the boxes, the icons and the images, whose pixels stay for this.
+
+### P46. Scrolling and the lists (D460-D462)
+- A panel scrolls when the lowest of its components visible anchored at the top ends below its height: its content is that height plus 16 pixels. The components anchored at the bottom, stretched or centered follow the height that is seen and stay where they are while the others scroll, as the floating button of Material: so a list that fills a page does not make the page scroll, and a button at the bottom stays over the list. `scrollY()` and `scrollTo(i32)` read and set how far it is scrolled.
+- A finger that moves more than 8 pixels scrolls the panel or the list under it and leaves what it pressed, and when it is lifted the content goes on with its speed, slowing down. The mouse scrolls with the wheel, 48 pixels for each step, and by dragging the bar, which is shown while the content moves, for a second after, and when the mouse is over it; a click on the content does not scroll it. A panel in a panel scrolls first.
+- `gui.ListView(x, y, width, height)`: `addItem(icon, title, subtitle, detail)`, `gui.Icon.None` and `""` for what an item does not have; `setItem(index, ...)`, `removeItem(index)`, `clear()`, `count()`, `itemTitle(index)`; `setSelected(i64)` and `selected()`, -1 for none, the default; `onChoose(func(i64))` with the index, when the user chooses an item; `scrollTo(index)`, which shows that item. The rows are 56 pixels high, with a line between them; the item chosen is on the light indigo of the pills (D443).
+- A list takes the keyboard as a button: Up and Down choose the previous and the next item, Home and End the first and the last, Page Up and Page Down by a page, and the list scrolls to show the item chosen.
 ---
 
 ## Open

@@ -1,0 +1,13 @@
+// The items of a list are those it has (P46).
+// target: windows linux-x86_64
+// expect-exit: 101
+// expect-stderr: panic: the list has no item 3
+import std.gui
+
+i32 main() {
+    gui.Window w = gui.Window("w", 300, 400)
+    gui.ListView names = w.add(gui.ListView(0, 0, 300, 365))
+    names.addItem(gui.Icon.None, "one", "", "")
+    names.setSelected(3)
+    ret 0
+}

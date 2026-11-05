@@ -1,0 +1,47 @@
+// The list (D461, D462, P46): its items with their icon, title, line under it and
+// text on the right, the item chosen, which follows the items removed, and clear.
+// target: windows linux-x86_64
+// program-env: SDL_VIDEO_DRIVER=offscreen
+// expect-output: 3 items, the second 'Charles Babbage', none chosen: true
+// expect-output: chosen 2
+// expect-output: after removing the first: 2 items, chosen 1, the first 'Charles Babbage'
+// expect-output: after removing the chosen: chosen -1
+// expect-output: set: 'Reminder'
+// expect-output: 1000 items, chosen 999
+// expect-output: cleared: 0 items, chosen -1
+import std.gui
+import std.time
+
+i32 main() {
+    gui.Window w = gui.Window("lists", 400, 335)
+    gui.ListView inbox = w.add(gui.ListView(0, 0, 400, 300))
+    inbox.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Stretch)
+    inbox.addItem(gui.Icon.User, "Ada Lovelace", "The notes on the engine", "10:42")
+    inbox.addItem(gui.Icon.User, "Charles Babbage", "The plans of the machine", "09:15")
+    inbox.addItem(gui.Icon.None, "The Society", "", "")
+    inbox.onChoose([](i64 index) { println("chose {}", index) })
+    println("{} items, the second '{}', none chosen: {}", inbox.count(), inbox.itemTitle(1), inbox.selected() == -1)
+    w.start()
+    time.msleep(50)
+    inbox.setSelected(2)
+    println("chosen {}", inbox.selected())
+    inbox.removeItem(0)
+    println("after removing the first: {} items, chosen {}, the first '{}'", inbox.count(), inbox.selected(), inbox.itemTitle(0))
+    inbox.removeItem(1)
+    println("after removing the chosen: chosen {}", inbox.selected())
+    inbox.setItem(0, gui.Icon.Bell, "Reminder", "Send the letters", "Sun")
+    println("set: '{}'", inbox.itemTitle(0))
+    inbox.clear()
+    for (i64 i = 0; i < 1000; i++) {
+        inbox.addItem(gui.Icon.Mail, format("Message {}", i), "", "")
+    }
+    inbox.setSelected(999)
+    inbox.scrollTo(999)
+    time.msleep(50)
+    println("{} items, chosen {}", inbox.count(), inbox.selected())
+    inbox.clear()
+    println("cleared: {} items, chosen {}", inbox.count(), inbox.selected())
+    w.close()
+    w.wait()
+    ret 0
+}

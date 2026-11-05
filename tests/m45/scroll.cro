@@ -1,0 +1,43 @@
+// A panel scrolls (D460, P46): its content ends 16 pixels under its lowest component
+// anchored at the top, those anchored at the bottom follow the height seen, and
+// scrollTo stays between 0 and the content less the height.
+// target: windows linux-x86_64
+// program-env: SDL_VIDEO_DRIVER=offscreen
+// expect-output: scrolled 0
+// expect-output: scrolled 120
+// expect-output: scrolled 336
+// expect-output: scrolled 0
+// expect-output: a panel that fits: scrolled 0
+import std.gui
+import std.time
+
+i32 main() {
+    gui.Window w = gui.Window("scroll", 400, 335)  // a content of 400 by 300
+    gui.Panel panel = w.add(gui.Panel(0, 0, 400, 180))
+    panel.add(gui.Label("top", 16, 16, 200, 20))
+    panel.add(gui.Label("bottom", 16, 480, 200, 20))  // the content is 516 high
+    gui.Button floating = panel.add(gui.Button("Write", 280, 130, 100, 40))
+    floating.setAnchor(gui.Horizontal.Right, gui.Vertical.Bottom)
+    gui.Panel fits = w.add(gui.Panel(0, 200, 400, 100))
+    fits.add(gui.Label("one", 16, 16, 200, 20))
+    gui.Button bottom = fits.add(gui.Button("OK", 16, 60, 100, 40))  // anchored at the bottom: no scrolling
+    bottom.setAnchor(gui.Horizontal.Left, gui.Vertical.Bottom)
+    w.start()
+    time.msleep(50)
+    println("scrolled {}", panel.scrollY())
+    panel.scrollTo(120)
+    time.msleep(50)
+    println("scrolled {}", panel.scrollY())
+    panel.scrollTo(1000)
+    time.msleep(50)
+    println("scrolled {}", panel.scrollY())
+    panel.scrollTo(-50)
+    time.msleep(50)
+    println("scrolled {}", panel.scrollY())
+    fits.scrollTo(30)
+    time.msleep(50)
+    println("a panel that fits: scrolled {}", fits.scrollY())
+    w.close()
+    w.wait()
+    ret 0
+}

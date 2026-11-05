@@ -1,22 +1,26 @@
 // Example 18: an app as those of a phone, with the bar at the top, the bar of the
-// pages at the bottom and the icons of Lucide.
+// pages at the bottom, the icons of Lucide and lists that scroll.
 //
 // Decided: the icons of Lucide as the cases of gui.Icon (D448, D449), the bars of
 //          the apps (D450), the pages of a navigation bar (D451), the window of
-//          an app of Android and its back key (D456, D457)
-// Draft:   the names of the components and of their methods (P39, P41, P42, P45)
+//          an app of Android and its back key (D456, D457), the panels that
+//          scroll (D460), the lists and their item chosen (D461, D462)
+// Draft:   the names of the components and of their methods (P39, P41, P42, P45,
+//          P46)
 //
 // cromo build --target android 18_app.cro writes 18_app.apk (D453).
 import std.gui
 
-// A row of a list: an icon, a name and a line under it, and the time on the right.
-void row(gui.Panel page, i32 y, gui.Icon icon, string name, string line, string time) {
-    page.add(gui.IconBox(icon, 16, y + 8, 24, 24))
-    page.add(gui.Label(name, 56, y, 220, 20))
-    gui.Label second = page.add(gui.Label(line, 56, y + 20, 260, 20))
-    second.setEnabled(false)  // the lighter color
-    gui.Label when = page.add(gui.Label(time, 312, y, 60, 20))
-    when.setAnchor(gui.Horizontal.Right, gui.Vertical.Top)
+// The contacts whose name has the text searched.
+void showContacts(gui.ListView people, string searched) {
+    list<string> names = ["Ada Lovelace", "Charles Babbage", "Mary Somerville", "Michael Faraday", "John Herschel",
+        "Augustus De Morgan", "Charles Wheatstone", "Isambard Brunel", "George Boole", "Florence Nightingale"]
+    people.clear()
+    for (i64 i = 0; i < names.len(); i++) {
+        if (names[i].lower().contains(searched.lower())) {
+            people.addItem(gui.Icon.User, names[i], format("{}@example.com", names[i].lower().split(" ")[0]), "")
+        }
+    }
 }
 
 [[window]]
@@ -29,25 +33,37 @@ i32 main() {
     top.addAction(gui.Icon.Search, []() { })
 
     gui.NavigationBar pages = w.navigationBar()
+    // Each page fills the room between the two bars, 390 by 605 here: the lists
+    // follow it, and the button stays at the bottom while the list scrolls.
     gui.Panel inbox = pages.addPage("Inbox", gui.Icon.Inbox)
-    row(inbox, 16, gui.Icon.User, "Ada Lovelace", "The notes on the engine", "10:42")
-    row(inbox, 72, gui.Icon.User, "Charles Babbage", "The plans of the machine", "09:15")
-    row(inbox, 128, gui.Icon.Users, "The Society", "The meeting of Thursday", "Mon")
-    row(inbox, 184, gui.Icon.Bell, "Reminder", "Send the letters", "Sun")
-    gui.Button write = inbox.add(gui.Button("Write", 262, 560, 112, 40))
+    gui.ListView messages = inbox.add(gui.ListView(0, 0, 390, 605))
+    messages.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Stretch)
+    messages.addItem(gui.Icon.User, "Ada Lovelace", "The notes on the engine", "10:42")
+    messages.addItem(gui.Icon.User, "Charles Babbage", "The plans of the machine", "09:15")
+    messages.addItem(gui.Icon.Users, "The Society", "The meeting of Thursday", "Mon")
+    messages.addItem(gui.Icon.Bell, "Reminder", "Send the letters", "Sun")
+    for (i64 day = 2; day <= 30; day++) {
+        messages.addItem(gui.Icon.Mail, "The workshop", format("The report of day {}", day), format("Oct {}", day))
+    }
+    messages.onChoose([messages](i64 index) { println("open '{}'", messages.itemTitle(index)) })
+    gui.Button write = inbox.add(gui.Button("Write", 262, 549, 112, 40))
     write.setIcon(gui.Icon.Pencil)
     write.setAnchor(gui.Horizontal.Right, gui.Vertical.Bottom)
 
-    gui.Panel people = pages.addPage("Contacts", gui.Icon.Users)
-    gui.TextBox search = people.add(gui.TextBox("", 16, 16, 358, 32))
+    gui.Panel contacts = pages.addPage("Contacts", gui.Icon.Users)
+    gui.TextBox search = contacts.add(gui.TextBox("", 16, 16, 358, 32))
     search.setPlaceholder("Search the contacts")
     search.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Top)
-    row(people, 64, gui.Icon.User, "Ada Lovelace", "ada@example.com", "")
-    row(people, 120, gui.Icon.User, "Charles Babbage", "charles@example.com", "")
+    gui.ListView people = contacts.add(gui.ListView(0, 64, 390, 541))
+    people.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Stretch)
+    showContacts(people, "")
+    search.onChange([people](string text) { showContacts(people, text) })
 
     gui.Panel today = pages.addPage("Calendar", gui.Icon.Calendar)
-    row(today, 16, gui.Icon.Clock, "10:00", "The meeting of the Society", "")
-    row(today, 72, gui.Icon.MapPin, "15:30", "The visit to the workshop", "")
+    gui.ListView events = today.add(gui.ListView(0, 0, 390, 605))
+    events.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Stretch)
+    events.addItem(gui.Icon.Clock, "10:00", "The meeting of the Society", "")
+    events.addItem(gui.Icon.MapPin, "15:30", "The visit to the workshop", "")
 
     gui.Panel settings = pages.addPage("Settings", gui.Icon.Settings)
     settings.add(gui.Label("Theme", 16, 16, 200, 20))

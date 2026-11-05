@@ -1053,6 +1053,7 @@ i32 main() {
 - A component is anchored to the edges of its window or of its group, `c.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Bottom)`, and follows them when they move, as in WinForms (D447).
 - The icons are those of Lucide, the cases of `gui.Icon`, as `gui.Icon.Mail` (D448, D449): an `IconBox` shows one, and a `Button` can have one before its text, or alone.
 - For the apps, an `AppBar` at the top of the content, with its title, an icon on the left and actions on the right, and the `NavigationBar` of the window at the bottom, whose items show each a page, a `Panel` (D450, D451).
+- A `Panel`, and so a page, scrolls when its components go beyond its bottom edge, with a finger, the wheel or its bar (D460); a `ListView` shows a list of items, each a row with an icon, a title, a line under it and a text on the right, draws only the rows that are seen and keeps its item chosen lit (D461, D462).
 - `cromo build --target android app.cro` writes the APK of an app for Android (D452-D455), named by `[[android("org.example.mail", "Mail")]]` on `main`. There its one window fills the screen within the bars of the system, turns with the phone, and closes with the back key, unless `w.onBack(...)` handles it (D456-D459).
 
 ```cromo
@@ -1061,6 +1062,12 @@ gui.TextBox name = w.add(gui.TextBox("", 24, 48, 300, 28))
 gui.Label answer = w.add(gui.Label("", 24, 92, 300, 20))
 gui.Button greet = w.add(gui.Button("Greet", 24, 136, 100, 28))
 greet.onClick([name, answer]() { answer.setText(format("Hello, {}", name.text())) })
+
+// draft: the names of the methods of the list (P46)
+gui.ListView inbox = page.add(gui.ListView(0, 0, 390, 605))
+inbox.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Stretch)
+inbox.addItem(gui.Icon.User, "Ada Lovelace", "The notes on the engine", "10:42")
+inbox.onChoose([inbox](i64 index) { println("open '{}'", inbox.itemTitle(index)) })
 
 // draft: the groups, the combo boxes and the anchors (P39, P40)
 gui.GroupBox account = w.add(gui.GroupBox("Account", 20, 20, 330, 200))
