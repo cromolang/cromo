@@ -1,0 +1,10 @@
+// The minimum of a slider is not above its maximum (P48).
+// target: windows linux-x86_64
+// expect-exit: 101
+// expect-stderr: panic: the minimum of the slider, 10, is above its maximum, 5
+import std.gui
+
+i32 main() {
+    gui.Slider wrong = gui.Slider(10, 5, 0, 0, 200, 32)
+    ret 0
+}

@@ -2152,6 +2152,30 @@ inbox.onChoose([](i64 index) { println("chosen {}", index) })
 ### D465. The device of `cromo run`
 *2026-11-04.* With one device connected, `cromo run --target android` uses it; with more than one it stops, lists them, and the variable `ANDROID_SERIAL`, which `adb` knows, chooses one. `cromo` has no option for it.
 
+### D466. `Switch` and `Slider`
+*2026-11-05.* Two components more. A `gui.Switch` is on or off, as a check box with the look of the switches of the phones. A `gui.Slider` chooses an integer between a minimum and a maximum, as a volume or a quantity: a value with decimals comes from dividing it, which is simpler to explain than a step of `f64` and its rounding.
+
+### D467. The dialogs are inside the window
+*2026-11-05.* A `gui.Dialog` is a card with a title, components and buttons at the bottom, drawn over the content of its window, with the rest darkened and out of reach until it closes. Esc, or the back key on Android, closes it. It is the same on the desktop and on a phone, which has one window (D459), so there is one behavior to explain.
+
+```cromo
+// draft: the names of the API are not decided
+gui.Dialog ask = gui.Dialog("Delete the message?", 320, 160)
+ask.add(gui.Label("It cannot be recovered.", 0, 0, 272, 20))
+ask.addButton("Cancel", [ask]() { ask.close() })
+ask.addButton("Delete", [ask, inbox]() {
+    inbox.removeItem(inbox.selected())
+    ask.close()
+})
+w.showDialog(ask)
+```
+
+### D468. The snackbar
+*2026-11-05.* A short message at the bottom of the window that goes away by itself after a few seconds, as the snackbar of Material, with an action on its right if the program gives one, as "Undo" after a message is deleted.
+
+### D469. The images of the lists are round
+*2026-11-05.* An item of a `ListView` can have an image in place of its icon: a circle of 40 pixels, as the photos of the contacts in the apps of mail and of messages.
+
 ---
 
 ## Proposed
@@ -2323,6 +2347,15 @@ A component keeps the distances from the edges of its parent, the content of the
 - The app is installed with `adb install -r`, stopped if it was running, and started with `am start -W`; its output is the log of its process, read with `adb logcat`: the lines of its tag, the name of the package, go to the standard output, INFO, and to the standard error, ERROR, as the app wrote them (P44).
 - When the program ends, the runtime writes its exit code in the log, with the tag `cromo-exit`: `cromo run` ends with it. An app that ends without it, as one that crashes, ends `cromo run` with 1 and the fatal lines of its process.
 - The arguments after `--` are an error: an app of Android has none.
+
+### P48. The switches, the sliders, the dialogs and the snackbar (D466-D469)
+- `gui.Switch(text, x, y, width, height)`: the text on the left and the switch at the right edge, as in the settings of the phones; `setChecked`, `checked` and `onChange(func(bool))`, a click or Space as for a check box. The knob slides in 150 ms.
+- `gui.Slider(minimum, maximum, x, y, width, height)`, with `i64` values: `setValue`, which keeps the value between the two, `value`, and `onChange(func(i64))`, called while the knob is dragged. A click on the track moves the knob there; Left and Down take 1, Right and Up add 1, Page Up and Page Down a tenth of the range, Home and End the minimum and the maximum. A minimum above the maximum is a panic.
+- `gui.Dialog(title, width, height)`, the size of the card: `add` puts components in its body, with their positions from the top left corner of the body, under the title; `addButton(text, func())` puts a button at the bottom right, in the order of the calls, the last indigo, the others white with a border. `w.showDialog(d)` opens it at the center of the content, at most as large as the content less 32 pixels, and its components follow their anchors; its buttons are as wide as their text and 32 pixels, at least 72. `d.close()` closes it, and `d.onClose(func())` is called whenever it closes, also with Esc or the back key. A window shows one dialog at a time: a second one while the first is open is a panic. The focus goes to the first component of the dialog that takes it, and comes back when it closes.
+- The ring of the focus shows after a key, as `:focus-visible` of the browsers: a click or a touch gives the focus without it, so that a dialog opened with a touch, or the button that has the focus back after it, is not ringed; a text box keeps its glow while it has the focus.
+- `w.showSnackbar(text)` and `w.showSnackbarAction(text, action, func())`: at the bottom of the content, above the navigation bar, for 4 seconds, gray-800 with the text white and the action indigo-300; a new one takes the place of the one shown, and the action hides it after calling the handler.
+- A `ListView` has also `insertItem(index, icon, title, subtitle, detail)`, which keeps the item chosen, and `itemIcon`, `itemSubtitle` and `itemDetail`, as `itemTitle`: so a program can put back an item removed, as the action "Undo" of a snackbar does.
+- `setItemImage(index, file)` of a `ListView`, `""` to remove it: the image is read and decoded by the thread that calls it, as that of an `ImageBox`, cut to the square at its center and made round; the text of a row with an image starts at 72 pixels.
 ---
 
 ## Open

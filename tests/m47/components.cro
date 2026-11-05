@@ -1,0 +1,84 @@
+// The switches and the sliders (D466, P48), a dialog shown and closed (D467), the
+// snackbar (D468) and the round images of a list (D469), with frames drawn while
+// they are shown.
+// target: windows linux-x86_64
+// program-env: SDL_VIDEO_DRIVER=offscreen
+// program-env: IMAGES={dir}/../m39/images
+// expect-output: switch false, then true
+// expect-output: slider 80 from 80 to 150, then 150 and 80, then 100
+// expect-output: inserted: 3 items, the second 'Two' 'line' 'now' Bell true, chosen 2
+// expect-output: dialog 'Delete?' shown false
+// expect-output: shown true
+// expect-output: closed by the program
+// expect-output: shown false
+// expect-output: snackbars shown
+// expect-output: images set, and removed
+// expect-output: not an image: cannot read the image not_an_image.png: image not of any known type, or corrupt
+import std.gui
+import std.os
+import std.time
+
+i32 main() {
+    gui.Window w = gui.Window("components", 400, 335)
+    gui.Switch wifi = w.add(gui.Switch("Wi-Fi", 16, 16, 300, 32))
+    print("switch {}", wifi.checked())
+    wifi.setChecked(true)
+    println(", then {}", wifi.checked())
+
+    gui.Slider volume = w.add(gui.Slider(80, 150, 16, 56, 300, 32))
+    print("slider {} from {} to {}", volume.value(), volume.minimum(), volume.maximum())
+    volume.setValue(400)
+    print(", then {}", volume.value())
+    volume.setValue(-3)
+    print(" and {}", volume.value())
+    volume.setValue(100)
+    println(", then {}", volume.value())
+
+    gui.ListView people = w.add(gui.ListView(0, 100, 400, 200))
+    people.addItem(gui.Icon.User, "One", "", "")
+    people.addItem(gui.Icon.User, "Three", "", "")
+    people.setSelected(1)
+    people.insertItem(1, gui.Icon.Bell, "Two", "line", "now")
+    println("inserted: {} items, the second '{}' '{}' '{}' Bell {}, chosen {}", people.count(), people.itemTitle(1),
+            people.itemSubtitle(1), people.itemDetail(1), people.itemIcon(1) == gui.Icon.Bell, people.selected())
+
+    gui.Dialog ask = gui.Dialog("Delete?", 320, 160)
+    ask.add(gui.Label("It cannot be undone.", 0, 0, 272, 20))
+    gui.TextBox reason = ask.add(gui.TextBox("", 0, 28, 272, 32))
+    ask.addButton("Cancel", [ask]() { ask.close() })
+    ask.addButton("Delete", [ask]() { ask.close() })
+    ask.onClose([]() { println("closed by the program") })
+    println("dialog '{}' shown {}", ask.title(), ask.shown())
+
+    w.start()
+    time.msleep(50)
+    w.showDialog(ask)
+    time.msleep(50)
+    println("shown {}", ask.shown())
+    ask.close()
+    time.msleep(100)
+    println("shown {}", ask.shown())
+
+    w.showSnackbar("Saved")
+    time.msleep(50)
+    w.showSnackbarAction("Message deleted", "Undo", [people]() { people.removeItem(0) })
+    time.msleep(50)
+    println("snackbars shown")
+
+    string folder = os.env("IMAGES")
+    people.setItemImage(0, format("{}/tiny.png", folder))
+    people.setItemImage(1, format("{}/tiny.jpg", folder))
+    time.msleep(50)
+    people.setItemImage(0, "")
+    people.removeItem(1)
+    time.msleep(50)
+    println("images set, and removed")
+    try {
+        people.setItemImage(0, format("{}/not_an_image.png", folder))
+    } catch (Error e) {
+        println("not an image: {}", e.message().replace(folder + "/", ""))
+    }
+    w.close()
+    w.wait()
+    ret 0
+}

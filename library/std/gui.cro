@@ -84,6 +84,7 @@ extern "cromo" {
     void cromo_gui_wait_at_end()
     addr cromo_gui_image_decode(addr bytes, i64 size, ref i32 width, ref i32 height, addr reason, i64 room)
     void cromo_gui_image_free(addr pixels)
+    addr cromo_gui_image_round(addr pixels, i32 width, i32 height, i32 size)
     void cromo_gui_icon(addr renderer, i32 code, f32 x, f32 y, f32 size, f32 density, u8 r, u8 g, u8 b, u8 alpha)
     void cromo_gui_icons_free(addr renderer)
     void cromo_gui_system_bars(u32 rgb, bool light)
@@ -1342,6 +1343,31 @@ public struct ListView : Component {
             data.parts[p].items.add(title)
             data.parts[p].subtitles.add(subtitle)
             data.parts[p].details.add(detail)
+            addr none
+            data.parts[p].images.add(none)
+            data.parts[p].textures.add(none)
+        })
+    }
+
+    // An item before the one at index, or at the end with count(): the item chosen
+    // stays the same.
+    public void insertItem(i64 index, Icon icon, string title, string subtitle, string detail) const {
+        i64 me = id
+        withData([me, index, icon, title, subtitle, detail](ref Shared data) {
+            i64 p = partIndexOf(ref data, me)
+            if (index < 0 || index > data.parts[p].items.len()) {
+                panic(format("the list has no place {}", index))
+            }
+            data.parts[p].icons.insert(index, icon)
+            data.parts[p].items.insert(index, title)
+            data.parts[p].subtitles.insert(index, subtitle)
+            data.parts[p].details.insert(index, detail)
+            addr none
+            data.parts[p].images.insert(index, none)
+            data.parts[p].textures.insert(index, none)
+            if (data.parts[p].selected >= index) {
+                data.parts[p].selected++
+            }
         })
     }
 
@@ -1364,6 +1390,9 @@ public struct ListView : Component {
             data.parts[p].items.remove(index)
             data.parts[p].subtitles.remove(index)
             data.parts[p].details.remove(index)
+            dropImage(ref data.parts[p], index)
+            data.parts[p].images.remove(index)
+            data.parts[p].textures.remove(index)
             if (data.parts[p].selected == index) {
                 data.parts[p].selected = -1
             } else if (data.parts[p].selected > index) {
@@ -1380,6 +1409,11 @@ public struct ListView : Component {
             data.parts[p].items.clear()
             data.parts[p].subtitles.clear()
             data.parts[p].details.clear()
+            for (i64 i = 0; i < data.parts[p].images.len(); i++) {
+                dropImage(ref data.parts[p], i)
+            }
+            data.parts[p].images.clear()
+            data.parts[p].textures.clear()
             data.parts[p].selected = -1
             data.parts[p].offsetY = 0
         })
@@ -1396,6 +1430,27 @@ public struct ListView : Component {
         i64 me = id
         string result
         withData([me, index, ref result](ref Shared data) { result = data.parts[listIndex(ref data, me, index)].items[index] })
+        ret result
+    }
+
+    public string itemSubtitle(i64 index) const {
+        i64 me = id
+        string result
+        withData([me, index, ref result](ref Shared data) { result = data.parts[listIndex(ref data, me, index)].subtitles[index] })
+        ret result
+    }
+
+    public string itemDetail(i64 index) const {
+        i64 me = id
+        string result
+        withData([me, index, ref result](ref Shared data) { result = data.parts[listIndex(ref data, me, index)].details[index] })
+        ret result
+    }
+
+    public Icon itemIcon(i64 index) const {
+        i64 me = id
+        Icon result = Icon.None
+        withData([me, index, ref result](ref Shared data) { result = data.parts[listIndex(ref data, me, index)].icons[index] })
         ret result
     }
 
@@ -1423,6 +1478,25 @@ public struct ListView : Component {
         addr box = alloc(sizeOf<func(i64)>())
         put<func(i64)>(box, move handler)
         addPartHandler(id, 1, box)
+    }
+
+    // A round image in place of the icon of an item (D469), "" for none: read and
+    // decoded by this thread, as that of an image box.
+    public void setItemImage(i64 index, string file) const {
+        i64 me = id
+        addr pixels
+        if (file.len() > 0) {
+            i32 w = 0
+            i32 h = 0
+            addr whole = decodeImage(file, fs.readBytes(file), ref w, ref h)
+            pixels = cromo_gui_image_round(whole, w, h, avatarPixels)
+            cromo_gui_image_free(whole)
+        }
+        withData([me, index, pixels](ref Shared data) {
+            i64 p = listIndex(ref data, me, index)
+            dropImage(ref data.parts[p], index)
+            data.parts[p].images[index] = pixels
+        })
     }
 
     // Scrolls the list so that the item is seen.
@@ -1485,6 +1559,302 @@ public struct ListView : Component {
 
     public Vertical verticalAnchor() const {
         ret partVertical(id)
+    }
+}
+
+// A switch (D466), on or off, with its text on the left and the switch at the right
+// edge: a click or Space changes it, and its handlers of onChange receive the new
+// state.
+public struct Switch : Component {
+    i64 id
+
+    public Switch(string text, i32 x, i32 y, i32 width, i32 height) {
+        id = newPart(kindSwitch, text, x, y, width, height)
+    }
+
+    i64 componentId() const {
+        ret id
+    }
+
+    public void onChange(move func(bool) handler) const {
+        addr box = alloc(sizeOf<func(bool)>())
+        put<func(bool)>(box, move handler)
+        addPartHandler(id, 1, box)
+    }
+
+    public void setChecked(bool value) const {
+        setPartFlag(id, 2, value)
+    }
+
+    public bool checked() const {
+        ret partFlag(id, 2)
+    }
+
+    public void setText(string value) const {
+        setPartText(id, value)
+    }
+
+    public string text() const {
+        ret partText(id, false)
+    }
+
+    public void setPosition(i32 x, i32 y) const {
+        setPartBounds(id, x, y, -1, -1)
+    }
+
+    public void setSize(i32 width, i32 height) const {
+        setPartBounds(id, -1, -1, width, height)
+    }
+
+    public i32 x() const {
+        ret partBound(id, 0)
+    }
+
+    public i32 y() const {
+        ret partBound(id, 1)
+    }
+
+    public i32 width() const {
+        ret partBound(id, 2)
+    }
+
+    public i32 height() const {
+        ret partBound(id, 3)
+    }
+
+    public void setVisible(bool value) const {
+        setPartFlag(id, 0, value)
+    }
+
+    public bool visible() const {
+        ret partFlag(id, 0)
+    }
+
+    public void setEnabled(bool value) const {
+        setPartFlag(id, 1, value)
+    }
+
+    public bool enabled() const {
+        ret partFlag(id, 1)
+    }
+
+    // How it follows the edges of its window or of its group (D447).
+    public void setAnchor(Horizontal horizontal, Vertical vertical) const {
+        setPartAnchor(id, horizontal, vertical)
+    }
+
+    public Horizontal horizontalAnchor() const {
+        ret partHorizontal(id)
+    }
+
+    public Vertical verticalAnchor() const {
+        ret partVertical(id)
+    }
+}
+
+// A slider (D466): an integer between a minimum and a maximum, chosen by dragging
+// its knob, by a click on its track or with the keys; its handlers of onChange
+// receive the new value, also while the knob is dragged.
+public struct Slider : Component {
+    i64 id
+
+    public Slider(i64 minimum, i64 maximum, i32 x, i32 y, i32 width, i32 height) {
+        if (minimum > maximum) {
+            panic(format("the minimum of the slider, {}, is above its maximum, {}", minimum, maximum))
+        }
+        id = newPart(kindSlider, "", x, y, width, height)
+        i64 me = id
+        withData([me, minimum, maximum](ref Shared data) {
+            i64 p = partIndexOf(ref data, me)
+            data.parts[p].minimum = minimum
+            data.parts[p].maximum = maximum
+            data.parts[p].value = minimum
+        })
+    }
+
+    i64 componentId() const {
+        ret id
+    }
+
+    public void onChange(move func(i64) handler) const {
+        addr box = alloc(sizeOf<func(i64)>())
+        put<func(i64)>(box, move handler)
+        addPartHandler(id, 1, box)
+    }
+
+    // The value, kept between the minimum and the maximum.
+    public void setValue(i64 value) const {
+        i64 me = id
+        withData([me, value](ref Shared data) {
+            i64 p = partIndexOf(ref data, me)
+            i64 low = data.parts[p].minimum
+            i64 high = data.parts[p].maximum
+            data.parts[p].value = value < low ? low : value > high ? high : value
+        })
+    }
+
+    public i64 value() const {
+        i64 me = id
+        i64 result = 0
+        withData([me, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, me)].value })
+        ret result
+    }
+
+    public i64 minimum() const {
+        i64 me = id
+        i64 result = 0
+        withData([me, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, me)].minimum })
+        ret result
+    }
+
+    public i64 maximum() const {
+        i64 me = id
+        i64 result = 0
+        withData([me, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, me)].maximum })
+        ret result
+    }
+
+    public void setPosition(i32 x, i32 y) const {
+        setPartBounds(id, x, y, -1, -1)
+    }
+
+    public void setSize(i32 width, i32 height) const {
+        setPartBounds(id, -1, -1, width, height)
+    }
+
+    public i32 x() const {
+        ret partBound(id, 0)
+    }
+
+    public i32 y() const {
+        ret partBound(id, 1)
+    }
+
+    public i32 width() const {
+        ret partBound(id, 2)
+    }
+
+    public i32 height() const {
+        ret partBound(id, 3)
+    }
+
+    public void setVisible(bool value) const {
+        setPartFlag(id, 0, value)
+    }
+
+    public bool visible() const {
+        ret partFlag(id, 0)
+    }
+
+    public void setEnabled(bool value) const {
+        setPartFlag(id, 1, value)
+    }
+
+    public bool enabled() const {
+        ret partFlag(id, 1)
+    }
+
+    // How it follows the edges of its window or of its group (D447).
+    public void setAnchor(Horizontal horizontal, Vertical vertical) const {
+        setPartAnchor(id, horizontal, vertical)
+    }
+
+    public Horizontal horizontalAnchor() const {
+        ret partHorizontal(id)
+    }
+
+    public Vertical verticalAnchor() const {
+        ret partVertical(id)
+    }
+}
+
+// A dialog (D467): a card with a title, components and buttons at the bottom, that
+// showDialog of a window opens over its content, with the rest darkened and out of
+// reach until it closes. Its components have their positions from the top left
+// corner of its body, under the title; Esc, or the back key on Android, closes it.
+public struct Dialog {
+    i64 id
+
+    public Dialog(string title, i32 width, i32 height) {
+        i64 made = 0
+        withData([ref made, title, width, height](ref Shared data) {
+            made = makePart(ref data, kindDialog, title, 0, 0, width, height)
+            i64 body = makePart(ref data, kindPanel, "", i32(dialogPadding), i32(dialogTop), width - 2 * i32(dialogPadding),
+                height - i32(dialogTop + dialogBottom))
+            i64 p = partIndexOf(ref data, body)
+            data.parts[p].parent = made
+            data.parts[p].horizontal = Horizontal.Stretch
+            data.parts[p].vertical = Vertical.Stretch
+            rebase(ref data, p)
+            data.parts[partIndexOf(ref data, made)].inner = body
+        })
+        id = made
+    }
+
+    // Puts a component in the body of the dialog, and gives it back.
+    public T add<T : Component>(T component) const {
+        i64 me = id
+        i64 body = 0
+        withData([me, ref body](ref Shared data) { body = data.parts[partIndexOf(ref data, me)].inner })
+        addPart(0, body, component.componentId())
+        ret component
+    }
+
+    // A button at the bottom right, after those added before: the last is indigo.
+    public void addButton(string text, move func() handler) const {
+        addr box = alloc(sizeOf<func()>())
+        put<func()>(box, move handler)
+        i64 me = id
+        withData([me, text, box](ref Shared data) {
+            i64 card = partIndexOf(ref data, me)
+            i64 window = data.parts[card].window
+            i64 button = makePart(ref data, kindButton, text, 0, 0, 0, i32(dialogButton))
+            i64 p = partIndexOf(ref data, button)
+            data.parts[p].parent = me
+            data.parts[p].window = window
+            data.parts[p].action = 2
+            data.parts[p].click.add(box)
+        })
+    }
+
+    // Closes the dialog, if it is shown, and calls the handlers of onClose.
+    public void close() const {
+        i64 me = id
+        withData([me](ref Shared data) {
+            for (i64 i = 0; i < data.windows.len(); i++) {
+                if (data.windows[i].dialog == me) {
+                    data.windows[i].dialog = 0
+                    data.windows[i].dialogEnded = true
+                    data.pending.add(callOf(6, data.parts[partIndexOf(ref data, me)].closing))
+                }
+            }
+        })
+    }
+
+    // Whenever the dialog closes: by close(), with Esc or with the back key.
+    public void onClose(move func() handler) const {
+        addr box = alloc(sizeOf<func()>())
+        put<func()>(box, move handler)
+        addPartHandler(id, 3, box)
+    }
+
+    public bool shown() const {
+        i64 me = id
+        bool result = false
+        withData([me, ref result](ref Shared data) {
+            for (i64 i = 0; i < data.windows.len(); i++) {
+                result = result || data.windows[i].dialog == me
+            }
+        })
+        ret result
+    }
+
+    public void setTitle(string value) const {
+        setPartText(id, value)
+    }
+
+    public string title() const {
+        ret partText(id, false)
     }
 }
 
@@ -1573,7 +1943,21 @@ struct WindowData {
     f32 pointerX = -1  // the mouse, -1 when it is out of the window
     f32 pointerY = -1
     u64 caretStart
-    list<i64> order  // the indices of its components, in the order they are drawn
+    i64 dialog        // the dialog shown (D467), or 0
+    i64 dialogStart   // where it starts in order
+    i64 dialogFocus   // the component in focus before it, which has it back after
+    bool dialogFresh  // the focus goes to the dialog at the next layout
+    bool dialogEnded  // and comes back
+    bool keyboard     // the last input was a key, not the mouse or a finger: the ring of the focus shows
+    string snackText  // the snackbar (D468), shown from snackShown for 4 seconds
+    string snackAction
+    list<addr> snackHandler
+    u64 snackShown
+    bool snackFresh
+    bool snackHot
+    bool snackHeld
+    list<addr> dropped  // func(), handlers of snackbars replaced, freed by the thread of the GUI
+    list<i64> order     // the indices of its components, in the order they are drawn
 }
 
 const i32 kindLabel = 1
@@ -1588,6 +1972,9 @@ const i32 kindPanel = 9
 const i32 kindAppBar = 10
 const i32 kindNavigation = 11
 const i32 kindListView = 12
+const i32 kindSwitch = 13
+const i32 kindSlider = 14
+const i32 kindDialog = 15
 
 // A component: its kind, its window and its group once added, its properties, for
 // a text box where its cursor and the other end of its selection are, as indices
@@ -1635,14 +2022,24 @@ struct PartData {
     i64 page = -1           // of a page, its item in its navigation bar
     list<string> subtitles  // of the items of a list
     list<string> details
-    f32 offsetY        // how far a panel or a list is scrolled (D460)
-    f32 content        // the height of what it has
-    f32 velocity       // in logical pixels each second, after a finger leaves it
-    u64 scrollShown    // when it scrolled last, for its bar
-    i64 bar            // of a page, its navigation bar
-    list<addr> click   // func()
-    list<addr> change  // func(string) of a text box, func(bool) of a check box, func(i64) of a combo box or a list
-    list<addr> enter   // func(string)
+    f32 offsetY          // how far a panel or a list is scrolled (D460)
+    f32 content          // the height of what it has
+    f32 velocity         // in logical pixels each second, after a finger leaves it
+    u64 scrollShown      // when it scrolled last, for its bar
+    list<addr> images    // of the items of a list: round pixels of avatarPixels, or none
+    list<addr> textures  // their textures, made by the thread of the GUI
+    list<addr> dropped   // textures to destroy on the thread of the GUI
+    i64 value            // of a slider, between its minimum and its maximum
+    i64 minimum
+    i64 maximum
+    u64 flipped         // when the user changed a switch, for its knob
+    i32 action          // a button of a dialog: 1 the last, indigo, 2 the others
+    i64 inner           // of a dialog, the panel of its components
+    list<addr> closing  // func(), of a dialog
+    i64 bar             // of a page, its navigation bar
+    list<addr> click    // func()
+    list<addr> change   // func(string) of a text box, func(bool) of a check box, func(i64) of a combo box or a list
+    list<addr> enter    // func(string)
 
     // Laid out by the thread of the GUI: its place in the content of the window,
     // whether it and its groups are visible and enabled, and the rectangle of
@@ -1661,7 +2058,8 @@ struct Shared {
     list<WindowData> windows
     list<PartData> parts
     i64 next
-    bool running  // the thread of the GUI
+    bool running        // the thread of the GUI
+    list<Call> pending  // handlers to call on the thread of the GUI, as onClose of a dialog
 }
 
 u64 lock          // of the data of all the windows
@@ -1824,8 +2222,10 @@ void addPartHandler(i64 id, i32 which, addr box) {
             data.parts[p].click.add(box)
         } else if (which == 1) {
             data.parts[p].change.add(box)
-        } else {
+        } else if (which == 2) {
             data.parts[p].enter.add(box)
+        } else {
+            data.parts[p].closing.add(box)
         }
     })
 }
@@ -1947,6 +2347,26 @@ void rebase(ref Shared data, i64 p) {
     data.parts[p].parentHeight = h
 }
 
+// Shows a snackbar: the handler of the one before is freed by the thread of the GUI,
+// which may be calling it.
+void snackbar(i64 id, string text, string action, addr box) {
+    withData([id, text, action, box](ref Shared data) {
+        i64 i = indexOf(ref data, id)
+        for (i64 k = 0; k < data.windows[i].snackHandler.len(); k++) {
+            data.windows[i].dropped.add(data.windows[i].snackHandler[k])
+        }
+        data.windows[i].snackHandler.clear()
+        addr none
+        if (box != none) {
+            data.windows[i].snackHandler.add(box)
+        }
+        data.windows[i].snackText = text
+        data.windows[i].snackAction = action
+        data.windows[i].snackFresh = true  // its time from the thread of the GUI, whose clock SDL starts
+        data.windows[i].snackHeld = false
+    })
+}
+
 // The index of a list with its item, or a panic if it has no such item.
 i64 listIndex(ref Shared data, i64 id, i64 index) {
     i64 p = partIndexOf(ref data, id)
@@ -2012,6 +2432,46 @@ void setComboItems(i64 id, list<string> items) {
     })
 }
 
+// The pixels of an image, R, G, B and A, with its size: an exception if it cannot
+// be read.
+addr decodeImage(string file, list<u8> bytes, ref i32 w, ref i32 h) {
+    if (bytes.len() == 0) {
+        throw Error(format("cannot read the image {}: the file is empty", file))
+    }
+    addr data = alloc(bytes.len())
+    for (i64 i = 0; i < bytes.len(); i++) {
+        put<u8>(offset(data, i), bytes[i])
+    }
+    addr reason = alloc(128)
+    addr pixels = cromo_gui_image_decode(data, bytes.len(), ref w, ref h, reason, 128)
+    list<u8> why = cText(reason).bytes()
+    free(reason)
+    if (why.len() > 0) {
+        why[0] = lowerByte(why[0])  // stb_image starts with a capital
+    }
+    free(data)
+    addr none
+    if (pixels == none) {
+        string what = file.len() > 0 ? format("the image {}", file) : "the image"
+        throw Error(format("cannot read {}: {}", what, string(why)))
+    }
+    ret pixels
+}
+
+// The image of an item of a list goes: its pixels are freed, its texture is
+// destroyed by the thread of the GUI.
+void dropImage(ref PartData view, i64 index) {
+    addr none
+    if (view.images[index] != none) {
+        cromo_gui_image_free(view.images[index])
+        view.images[index] = none
+    }
+    if (view.textures[index] != none) {
+        view.dropped.add(view.textures[index])
+        view.textures[index] = none
+    }
+}
+
 void loadImage(i64 id, string path) {
     list<u8> bytes
     if (path.len() > 0) {
@@ -2026,27 +2486,11 @@ void loadImage(i64 id, string path) {
 // Decodes an image on this thread, and gives its pixels to the thread of the GUI,
 // which makes its texture.
 void setImage(i64 id, string file, list<u8> bytes) {
-    addr none
     addr pixels
     i32 w = 0
     i32 h = 0
     if (bytes.len() > 0) {
-        addr data = alloc(bytes.len())
-        for (i64 i = 0; i < bytes.len(); i++) {
-            put<u8>(offset(data, i), bytes[i])
-        }
-        addr reason = alloc(128)
-        pixels = cromo_gui_image_decode(data, bytes.len(), ref w, ref h, reason, 128)
-        list<u8> why = cText(reason).bytes()
-        free(reason)
-        if (why.len() > 0) {
-            why[0] = lowerByte(why[0])  // stb_image starts with a capital
-        }
-        free(data)
-        if (pixels == none) {
-            string what = file.len() > 0 ? format("the image {}", file) : "the image"
-            throw Error(format("cannot read {}: {}", what, string(why)))
-        }
+        pixels = decodeImage(file, bytes, ref w, ref h)
     }
     withData([id, file, pixels, w, h](ref Shared data) {
         i64 p = partIndexOf(ref data, id)
@@ -2321,6 +2765,43 @@ public struct Window {
         withData([me, box](ref Shared data) { data.windows[indexOf(ref data, me)].resize.add(box) })
     }
 
+    // Opens a dialog over the content (D467): one at a time.
+    public void showDialog(Dialog dialog) const {
+        i64 me = id
+        i64 card = dialog.id
+        withData([me, card](ref Shared data) {
+            i64 i = indexOf(ref data, me)
+            if (data.windows[i].dialog != 0) {
+                panic("the window shows a dialog already")
+            }
+            for (i64 k = 0; k < data.windows.len(); k++) {
+                if (data.windows[k].dialog == card) {
+                    panic("the dialog is shown in another window")
+                }
+            }
+            data.parts[partIndexOf(ref data, card)].window = me
+            placeIn(ref data.parts, card, me)
+            data.windows[i].dialog = card
+            data.windows[i].dialogFocus = data.windows[i].focus
+            data.windows[i].dialogFresh = true
+            data.windows[i].popup = 0
+        })
+    }
+
+    // A short message at the bottom for 4 seconds (D468), in place of the one shown.
+    public void showSnackbar(string text) const {
+        addr none
+        snackbar(id, text, "", none)
+    }
+
+    // The same, with an action on its right, as "Undo": a click calls the handler
+    // and hides the snackbar.
+    public void showSnackbarAction(string text, string action, move func() handler) const {
+        addr box = alloc(sizeOf<func()>())
+        put<func()>(box, move handler)
+        snackbar(id, text, action, box)
+    }
+
     // The back key of Android, or its gesture (D457): without handlers it closes the
     // window, and so the app.
     public void onBack(move func() handler) const {
@@ -2404,10 +2885,22 @@ const i64 listRows = 8
 const f32 buttonIcon = 18  // the size of the icon of a button
 const f32 appBarHeight = 56
 const f32 navigationHeight = 64
-const f32 headingSize = 18  // of the title of an app bar
-const f32 captionSize = 12  // of the items of a navigation bar
-const f32 rowHeight = 56    // of the items of a list
-const f32 wheelStep = 48    // what a step of the wheel scrolls
+const f32 headingSize = 18    // of the title of an app bar
+const f32 captionSize = 12    // of the items of a navigation bar
+const f32 rowHeight = 56      // of the items of a list
+const i32 avatarPixels = 112  // of the round images of the lists, 40 pixels up to a density of 2.8
+const f32 avatarSize = 40
+const f32 dialogPadding = 24  // the body of a dialog, from its edges
+const f32 dialogTop = 64      // under the title
+const f32 dialogBottom = 68   // above the buttons
+const f32 dialogButton = 36   // the height of its buttons
+const f32 dialogCorner = 16
+const f32 switchWidth = 44
+const f32 switchHeight = 24
+const f32 knob = 20  // of a switch and of a slider
+const f32 snackHeight = 48
+const u64 snackTime = 4000000000
+const f32 wheelStep = 48  // what a step of the wheel scrolls
 
 // The colors of the look (D443): the grays and the indigo of Tailwind, light and
 // dark, with buttons in a gradient and a border of a deeper color.
@@ -2621,8 +3114,16 @@ i32 prepare() {
     i32 fps = 0
     list<addr> handlers
     list<i64> ended
-    withData([ref fps, ref handlers, ref ended](ref Shared data) {
+    list<Call> pending
+    list<addr> dropped
+    withData([ref fps, ref handlers, ref ended, ref pending, ref dropped](ref Shared data) {
+        for (data.pending.len() > 0) {
+            pending.add(data.pending.remove(0))
+        }
         for (ref WindowData window in data.windows) {
+            for (window.dropped.len() > 0) {
+                dropped.add(window.dropped.remove(0))
+            }
             addr none
             if (window.started && window.window == none && !window.closing) {
                 open(ref window)
@@ -2648,6 +3149,13 @@ i32 prepare() {
             }
         }
     })
+    for (addr box in dropped) {  // no call of theirs is running: they ran in the frame before
+        func() handler = take<func()>(box)
+        free(box)
+    }
+    for (ref Call call in pending) {
+        dispatch(ref call)
+    }
     for (addr box in handlers) {
         func() handler = take<func()>(box)
         try {
@@ -2750,7 +3258,25 @@ void resetTextures(ref WindowData window, ref list<PartData> parts) {
             part.texture = none
             part.imageChanged = true
         }
+        if (part.window == window.id) {
+            freeItemTextures(ref part)
+        }
     }
+}
+
+// The textures of the round images of a list, made again when they are drawn.
+void freeItemTextures(ref PartData part) {
+    addr none
+    for (i64 i = 0; i < part.textures.len(); i++) {
+        if (part.textures[i] != none) {
+            SDL_DestroyTexture(part.textures[i])
+            part.textures[i] = none
+        }
+    }
+    for (addr texture in part.dropped) {
+        SDL_DestroyTexture(texture)
+    }
+    part.dropped.clear()
 }
 
 // The scale of the display: the renderer draws in logical pixels, and the fonts
@@ -2816,6 +3342,9 @@ void freeTextures(ref WindowData window, ref list<PartData> parts) {
         if (part.window == window.id && part.texture != none) {
             SDL_DestroyTexture(part.texture)
             part.texture = none
+        }
+        if (part.window == window.id) {
+            freeItemTextures(ref part)
         }
     }
 }
@@ -2981,6 +3510,11 @@ void route(ref WindowData window, ref list<PartData> parts, addr event, u32 kind
             window.hot = hotId
             SDL_SetCursor(hot >= 0 && hot != open && parts[hot].kind == kindTextBox && parts[hot].active ? beam : arrow)
         }
+        window.snackHot = snackAt(ref window, x, y)
+        i64 sliding = partNumber(ref parts, window.held)
+        if (sliding >= 0 && parts[sliding].kind == kindSlider && parts[sliding].active) {
+            slideTo(ref parts[sliding], x, ref calls)
+        }
         if (window.dragging != 0) {
             i64 d = partNumber(ref parts, window.dragging)
             if (d >= 0) {
@@ -3007,9 +3541,20 @@ void route(ref WindowData window, ref list<PartData> parts, addr event, u32 kind
             window.pressed = -1
         } else if (y >= window.originY) {
             bool finger = take<u32>(offset(event, 20)) == 0xFFFFFFFF  // SDL_TOUCH_MOUSEID
+            if (kind == 0x401) {
+                window.keyboard = false
+            }
             if (kind == 0x401 && button == 1) {
-                if (!startScroll(ref window, ref parts, x, y, finger)) {
-                    pressPart(ref window, ref parts, x, y)
+                if (snackAt(ref window, x, y)) {
+                    window.snackHeld = true
+                } else if (!startScroll(ref window, ref parts, x, y, finger)) {
+                    pressPart(ref window, ref parts, x, y, ref calls)
+                }
+            } else if (kind == 0x402 && button == 1 && window.snackHeld) {
+                window.snackHeld = false
+                if (snackAt(ref window, x, y)) {
+                    calls.add(callOf(6, window.snackHandler))
+                    window.snackText = ""
                 }
             } else if (kind == 0x402 && button == 1) {
                 if (endScroll(ref window, ref parts)) {
@@ -3080,22 +3625,31 @@ void route(ref WindowData window, ref list<PartData> parts, addr event, u32 kind
         call.h = window.height
         calls.add(move call)
     } else if (kind == 0x300) {  // SDL_EVENT_KEY_DOWN
+        window.keyboard = true
         u32 modifiers = u32(take<u16>(offset(event, 32)))
         Key key
         key.code = i64(take<u32>(offset(event, 28)))
         key.shift = (modifiers & 0x3) != 0
         key.control = (modifiers & 0xC0) != 0
         key.alt = (modifiers & 0x300) != 0
-        if (window.phone && key.code == keyBack) {  // D457
+        if (window.phone && key.code == keyBack && window.dialog != 0) {  // D467
+            endDialog(ref window, ref parts, ref calls)
+        } else if (window.phone && key.code == keyBack) {  // D457
             if (window.back.len() > 0) {
                 calls.add(callOf(6, window.back))
             } else {
                 window.closing = true
             }
         } else if (!keyOfPart(ref window, ref parts, key, ref calls)) {
-            Call call = callOf(4, window.keyDown)
-            call.key = key
-            calls.add(move call)
+            if (window.dialog != 0) {  // the keys do not go behind a dialog
+                if (key.code == 27) {  // Esc
+                    endDialog(ref window, ref parts, ref calls)
+                }
+            } else {
+                Call call = callOf(4, window.keyDown)
+                call.key = key
+                calls.add(move call)
+            }
         }
     } else if (kind == 0x303) {  // SDL_EVENT_TEXT_INPUT, in UTF-8
         i64 f = partNumber(ref parts, window.focus)
@@ -3146,7 +3700,7 @@ i64 partNumber(ref list<PartData> parts, i64 id) {
 
 // The component of a window at a point of its content: the last drawn is on top.
 i64 partAt(ref WindowData window, ref list<PartData> parts, f32 x, f32 y) {
-    for (i64 k = window.order.len() - 1; k >= 0; k--) {
+    for (i64 k = window.order.len() - 1; k >= firstReached(ref window); k--) {
         i64 i = window.order[k]
         if (parts[i].shown && inside(ref parts[i], x, y)) {
             ret i
@@ -3163,7 +3717,7 @@ bool inside(ref PartData part, f32 x, f32 y) {
 
 bool focusable(ref PartData part) {
     bool takes = part.kind == kindButton || part.kind == kindTextBox || part.kind == kindCheckBox || part.kind == kindComboBox ||
-        part.kind == kindListView
+        part.kind == kindListView || part.kind == kindSwitch || part.kind == kindSlider
     ret takes && part.shown && part.active
 }
 
@@ -3194,7 +3748,7 @@ void focusTo(ref WindowData window, ref list<PartData> parts, i64 id) {
 void moveFocus(ref WindowData window, ref list<PartData> parts, i64 step) {
     list<i64> order
     i64 current = -1
-    for (i64 k = 0; k < window.order.len(); k++) {
+    for (i64 k = firstReached(ref window); k < window.order.len(); k++) {
         i64 i = window.order[k]
         if (focusable(ref parts[i])) {
             if (parts[i].id == window.focus) {
@@ -3212,7 +3766,7 @@ void moveFocus(ref WindowData window, ref list<PartData> parts, i64 step) {
 
 // With the list of a combo box open, a click outside it closes it and does nothing
 // else (P39); on an item, the release chooses it.
-void pressPart(ref WindowData window, ref list<PartData> parts, f32 x, f32 y) {
+void pressPart(ref WindowData window, ref list<PartData> parts, f32 x, f32 y, ref list<Call> calls) {
     i64 open = partNumber(ref parts, window.popup)
     if (open >= 0) {
         if (!inList(ref window, ref parts[open], x, y)) {
@@ -3232,6 +3786,8 @@ void pressPart(ref WindowData window, ref list<PartData> parts, f32 x, f32 y) {
         window.dragging = parts[p].id
     } else if (parts[p].kind == kindComboBox) {
         openList(ref window, ref parts[p])
+    } else if (parts[p].kind == kindSlider) {
+        slideTo(ref parts[p], x, ref calls)
     } else if (parts[p].kind == kindAppBar || parts[p].kind == kindNavigation || parts[p].kind == kindListView) {
         window.heldItem = barItemAt(ref parts[p], x, y)
     }
@@ -3267,11 +3823,107 @@ void releasePart(ref WindowData window, ref list<PartData> parts, f32 x, f32 y, 
     }
 }
 
+// ---- The sliders, the dialogs and the snackbar (D466-D468) ----
+
+// The center of the knob of a slider, between the ends of its track.
+f32 knobAt(ref PartData slider) {
+    f32 from = slider.left + knob / 2
+    f32 span = f32(slider.width) - knob
+    if (slider.maximum == slider.minimum || span <= 0) {
+        ret from
+    }
+    ret from + span * f32(slider.value - slider.minimum) / f32(slider.maximum - slider.minimum)
+}
+
+// The value of a slider for the mouse at x, and the handlers if it changes.
+void slideTo(ref PartData slider, f32 x, ref list<Call> calls) {
+    f32 span = f32(slider.width) - knob
+    i64 value = slider.minimum
+    if (span > 0) {
+        f32 part = (x - slider.left - knob / 2) / span
+        part = part < 0 ? 0 : part > 1 ? 1 : part
+        value = slider.minimum + i64(part * f32(slider.maximum - slider.minimum) + 0.5)
+    }
+    setSlider(ref slider, value, ref calls)
+}
+
+void setSlider(ref PartData slider, i64 value, ref list<Call> calls) {
+    i64 kept = value < slider.minimum ? slider.minimum : value > slider.maximum ? slider.maximum : value
+    if (kept != slider.value) {
+        slider.value = kept
+        Call call = callOf(9, slider.change)
+        call.index = kept
+        calls.add(move call)
+    }
+}
+
+// The keys of a slider (P48): false for those it does not use.
+bool sliderKey(ref PartData slider, Key key, ref list<Call> calls) {
+    i64 page = (slider.maximum - slider.minimum) / 10
+    page = page > 0 ? page : 1
+    if (key.code == keyLeft || key.code == keyDown) {
+        setSlider(ref slider, slider.value - 1, ref calls)
+    } else if (key.code == keyRight || key.code == keyUp) {
+        setSlider(ref slider, slider.value + 1, ref calls)
+    } else if (key.code == keyPageDown) {
+        setSlider(ref slider, slider.value - page, ref calls)
+    } else if (key.code == keyPageUp) {
+        setSlider(ref slider, slider.value + page, ref calls)
+    } else if (key.code == keyHome) {
+        setSlider(ref slider, slider.minimum, ref calls)
+    } else if (key.code == keyEnd) {
+        setSlider(ref slider, slider.maximum, ref calls)
+    } else {
+        ret false
+    }
+    ret true
+}
+
+// The dialog closes with Esc or the back key: its handlers of onClose are called.
+void endDialog(ref WindowData window, ref list<PartData> parts, ref list<Call> calls) {
+    i64 card = partNumber(ref parts, window.dialog)
+    window.dialog = 0
+    window.dialogEnded = true
+    if (card >= 0) {
+        calls.add(callOf(6, parts[card].closing))
+    }
+}
+
+// Whether the snackbar is shown, and where: at the bottom of the content, above the
+// navigation bar, at most 560 pixels wide.
+bool snackVisible(ref WindowData window) {
+    if (window.snackFresh) {
+        window.snackFresh = false
+        window.snackShown = SDL_GetTicksNS()
+    }
+    ret window.snackText.len() > 0 && SDL_GetTicksNS() - window.snackShown < snackTime
+}
+
+Rect snackBox(ref WindowData window) {
+    f32 width = least(f32(contentWidth(window)) - 16, 560)
+    f32 bottom = window.originY + f32(contentHeight(window)) - 8
+    if (window.navigation != 0) {
+        bottom = bottom - navigationHeight
+    }
+    ret Rect(window.originX + (f32(contentWidth(window)) - width) / 2, bottom - snackHeight, width, snackHeight)
+}
+
+// The action of the snackbar at a point, with 8 pixels around its text.
+bool snackAt(ref WindowData window, f32 x, f32 y) {
+    if (!snackVisible(ref window) || window.snackAction.len() == 0) {
+        ret false
+    }
+    Rect box = snackBox(ref window)
+    f32 size = textWidth(window.strong, window.snackAction, window.snackAction.len())
+    f32 right = box.x + box.w - 8
+    ret x >= right - size - 16 && x < right && y >= box.y && y < box.y + box.h
+}
+
 // ---- Scrolling (D460, P46) ----
 
 // The panel or the list that scrolls under a point, the innermost, or -1.
 i64 scrollerAt(ref WindowData window, ref list<PartData> parts, f32 x, f32 y) {
-    for (i64 k = window.order.len() - 1; k >= 0; k--) {
+    for (i64 k = window.order.len() - 1; k >= firstReached(ref window); k--) {
         i64 i = window.order[k]
         if (parts[i].shown && scrolls(ref parts[i]) && inside(ref parts[i], x, y)) {
             ret i
@@ -3284,7 +3936,8 @@ i64 scrollerAt(ref WindowData window, ref list<PartData> parts, f32 x, f32 y) {
 // with its bar, on the right edge. True when the press is taken here.
 bool startScroll(ref WindowData window, ref list<PartData> parts, f32 x, f32 y, bool finger) {
     i64 s = scrollerAt(ref window, ref parts, x, y)
-    if (s < 0 || window.popup != 0) {
+    i64 under = partAt(ref window, ref parts, x, y)
+    if (s < 0 || window.popup != 0 || (under >= 0 && parts[under].kind == kindSlider)) {
         ret false
     }
     parts[s].velocity = 0
@@ -3624,8 +4277,9 @@ bool comboKey(ref WindowData window, ref PartData box, Key key, ref list<Call> c
 void activate(ref PartData part, ref list<Call> calls) {
     if (part.kind == kindButton) {
         calls.add(callOf(6, part.click))
-    } else if (part.kind == kindCheckBox) {
+    } else if (part.kind == kindCheckBox || part.kind == kindSwitch) {
         part.checked = !part.checked
+        part.flipped = SDL_GetTicksNS()
         Call call = callOf(8, part.change)
         call.value = part.checked
         calls.add(move call)
@@ -3651,6 +4305,9 @@ bool keyOfPart(ref WindowData window, ref list<PartData> parts, Key key, ref lis
     }
     if (parts[f].kind == kindListView) {
         ret listKey(ref parts[f], key, ref calls)
+    }
+    if (parts[f].kind == kindSlider) {
+        ret sliderKey(ref parts[f], key, ref calls)
     }
     if (key.code == 32 || (key.code == 13 && parts[f].kind == kindButton)) {  // Space, Enter
         activate(ref parts[f], ref calls)
@@ -3837,19 +4494,102 @@ void layout(ref WindowData window, ref list<PartData> parts) {
     content.clipRight = content.left + f32(content.width)
     content.clipBottom = content.top + f32(content.height)
     layoutIn(ref window, ref parts, 0, content)
+    window.dialogStart = window.order.len()
+    i64 card = partNumber(ref parts, window.dialog)
+    if (card >= 0) {
+        layoutDialog(ref window, ref parts, card, content)
+    }
+    if (window.dialogFresh) {  // the focus to the first component of the dialog that takes it
+        window.dialogFresh = false
+        i64 first = 0
+        for (i64 k = window.dialogStart; k < window.order.len() && first == 0; k++) {
+            if (focusable(ref parts[window.order[k]])) {
+                first = parts[window.order[k]].id
+            }
+        }
+        focusTo(ref window, ref parts, first)
+    }
+    if (window.dialogEnded) {  // and back where it was
+        window.dialogEnded = false
+        window.popup = 0
+        focusTo(ref window, ref parts, partNumber(ref parts, window.dialogFocus) >= 0 ? window.dialogFocus : 0)
+    }
     i64 open = partNumber(ref parts, window.popup)
     if (open < 0 || !parts[open].shown || !parts[open].active) {
         window.popup = 0
     }
 }
 
+// A dialog at the center of the content, at most as large as the content less 32
+// pixels, its buttons in a row at the bottom right, each as wide as its text and
+// 32 pixels, at least 72, the last indigo (P48).
+void layoutDialog(ref WindowData window, ref list<PartData> parts, i64 card, Frame content) {
+    placeDialog(ref parts[card], content)
+    window.order.add(card)
+    list<i64> buttons
+    for (i64 i = 0; i < parts.len(); i++) {
+        if (parts[i].parent == parts[card].id && parts[i].action != 0) {
+            buttons.add(i)
+        }
+    }
+    f32 right = f32(parts[card].width) - 16
+    for (i64 k = buttons.len() - 1; k >= 0; k--) {
+        i64 b = buttons[k]
+        f32 w = most(72, textWidth(window.strong, parts[b].text, parts[b].text.len()) + 32)
+        right = right - w
+        parts[b].x = i32(right)
+        parts[b].y = parts[card].height - i32(16 + dialogButton)
+        parts[b].width = i32(w)
+        parts[b].height = i32(dialogButton)
+        parts[b].action = k == buttons.len() - 1 ? 1 : 2
+        right = right - 8
+    }
+    Frame inner
+    inner.left = parts[card].left
+    inner.top = parts[card].top
+    inner.width = parts[card].width
+    inner.height = parts[card].height
+    inner.shown = true
+    inner.active = true
+    inner.clipLeft = most(content.clipLeft, inner.left)
+    inner.clipTop = most(content.clipTop, inner.top)
+    inner.clipRight = least(content.clipRight, inner.left + f32(inner.width))
+    inner.clipBottom = least(content.clipBottom, inner.top + f32(inner.height))
+    layoutIn(ref window, ref parts, parts[card].id, inner)
+}
+
+void placeDialog(ref PartData dialog, Frame content) {
+    i32 width = dialog.baseWidth < content.width - 32 ? dialog.baseWidth : content.width - 32
+    i32 height = dialog.baseHeight < content.height - 32 ? dialog.baseHeight : content.height - 32
+    dialog.width = width > 0 ? width : 0
+    dialog.height = height > 0 ? height : 0
+    dialog.x = (content.width - dialog.width) / 2
+    dialog.y = (content.height - dialog.height) / 2
+    dialog.left = content.left + f32(dialog.x)
+    dialog.top = content.top + f32(dialog.y)
+    dialog.shown = true
+    dialog.active = true
+    dialog.clipLeft = content.clipLeft
+    dialog.clipTop = content.clipTop
+    dialog.clipRight = content.clipRight
+    dialog.clipBottom = content.clipBottom
+}
+
+// The first component of order that the mouse and the keys reach: those of the
+// dialog when one is open (D467).
+i64 firstReached(ref WindowData window) {
+    ret window.dialog != 0 ? window.dialogStart : 0
+}
+
 void layoutIn(ref WindowData window, ref list<PartData> parts, i64 group, Frame frame) {
     for (i64 i = 0; i < parts.len(); i++) {
-        if (parts[i].window != window.id || parts[i].parent != group) {
-            continue
+        if (parts[i].window != window.id || parts[i].parent != group || parts[i].kind == kindDialog) {
+            continue  // a dialog comes after the rest
         }
         bool hidden = false
-        if (parts[i].page >= 0) {
+        if (parts[i].action != 0) {
+            // placed by layoutDialog
+        } else if (parts[i].page >= 0) {
             placePage(ref parts[i], ref window)
             i64 bar = partNumber(ref parts, parts[i].bar)
             hidden = bar < 0 || parts[bar].selected != parts[i].page || !parts[bar].visible
@@ -4003,7 +4743,34 @@ void drawWindow(ref WindowData window, ref list<PartData> parts) {
 
     glide(ref window, ref parts)
     layout(ref window, ref parts)
-    for (i64 k = 0; k < window.order.len(); k++) {
+    drawParts(ref window, ref parts, ref c, 0, window.dialogStart)
+    if (window.dialog != 0) {  // the rest darkened under the dialog (D467)
+        clipTo(r, window.originX, window.originY, f32(contentWidth(window)), f32(contentHeight(window)))
+        shade(r, dark ? 153 : 102, window.originX, window.originY, f32(contentWidth(window)), f32(contentHeight(window)))
+        drawParts(ref window, ref parts, ref c, window.dialogStart, window.order.len())
+    }
+    i64 open = partNumber(ref parts, window.popup)
+    if (open >= 0) {
+        clipTo(r, window.originX, window.originY, f32(contentWidth(window)), f32(contentHeight(window)))
+        drawList(ref window, ref parts[open], ref c)
+    }
+    if (snackVisible(ref window)) {
+        clipTo(r, window.originX, window.originY, f32(contentWidth(window)), f32(contentHeight(window)))
+        drawSnackbar(ref window)
+    }
+    addr none
+    SDL_SetRenderClipRect(r, none)
+    if (!window.phone) {
+        drawTitleBar(ref window, ref c, width, height)
+    }
+    SDL_RenderPresent(r)
+}
+
+// The components from first to end, excluded, in order, then the bars of those that
+// scroll, over them.
+void drawParts(ref WindowData window, ref list<PartData> parts, ref Colors c, i64 first, i64 end) {
+    addr r = window.renderer
+    for (i64 k = first; k < end; k++) {
         i64 i = window.order[k]
         if (parts[i].shown && parts[i].clipRight > parts[i].clipLeft && parts[i].clipBottom > parts[i].clipTop) {
             clipPart(r, ref parts[i])
@@ -4011,7 +4778,7 @@ void drawWindow(ref WindowData window, ref list<PartData> parts) {
         }
     }
     u64 now = SDL_GetTicksNS()
-    for (i64 k = 0; k < window.order.len(); k++) {  // the bars of what scrolls, over its components
+    for (i64 k = first; k < end; k++) {
         i64 i = window.order[k]
         bool seen = now - parts[i].scrollShown < 1000000000 || window.scrolling == parts[i].id ||
             !window.phone && inside(ref parts[i], window.pointerX, window.pointerY)
@@ -4020,17 +4787,41 @@ void drawWindow(ref WindowData window, ref list<PartData> parts) {
             drawScrollBar(ref window, ref parts[i], ref c)
         }
     }
-    i64 open = partNumber(ref parts, window.popup)
-    if (open >= 0) {
-        clipTo(r, window.originX, window.originY, f32(contentWidth(window)), f32(contentHeight(window)))
-        drawList(ref window, ref parts[open], ref c)
+}
+
+// Black with an alpha over a rectangle.
+void shade(addr renderer, u8 alpha, f32 x, f32 y, f32 w, f32 h) {
+    SDL_SetRenderDrawBlendMode(renderer, 1)  // SDL_BLENDMODE_BLEND
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, alpha)
+    Rect area = Rect(x, y, w, h)
+    SDL_RenderFillRect(renderer, ref area)
+}
+
+// The snackbar (D468): gray-800, its text white and its action indigo-300, lighter
+// under the mouse.
+void drawSnackbar(ref WindowData window) {
+    addr r = window.renderer
+    f32 d = window.density
+    Rect box = snackBox(ref window)
+    cromo_gui_shadow(r, box.x, box.y, box.w, box.h, 8, d, 0x40000000, 8, 3)
+    cromo_gui_box(r, box.x, box.y, box.w, box.h, 8, 0, d, solid(0x1F2937, true), 0)
+    f32 ascent = 0
+    f32 descent = 0
+    f32 gap = 0
+    cromo_gui_font_metrics(window.body, ref ascent, ref descent, ref gap)
+    f32 baseline = box.y + box.h / 2 + (ascent - descent) / 2
+    f32 right = box.x + box.w - 16
+    if (window.snackAction.len() > 0) {
+        f32 size = textWidth(window.strong, window.snackAction, window.snackAction.len())
+        right = right - size
+        if (window.snackHot) {
+            cromo_gui_box(r, right - 8, box.y + 6, size + 16, box.h - 12, 6, 0, d, solid(0x374151, true), 0)
+        }
+        text(window.strong, window.snackAction, right, baseline, 0xA5B4FC, true)
+        right = right - 16
     }
-    addr none
-    SDL_SetRenderClipRect(r, none)
-    if (!window.phone) {
-        drawTitleBar(ref window, ref c, width, height)
-    }
-    SDL_RenderPresent(r)
+    clipTo(r, box.x + 16, box.y, most(right - box.x - 16, 0), box.h)
+    text(window.body, window.snackText, box.x + 16, baseline, 0xFFFFFF, true)
 }
 
 // The title bar, its title and its buttons, and a line at the edges when the
@@ -4081,6 +4872,7 @@ void drawPart(ref WindowData window, ref PartData part, ref Colors c) {
     f32 w = f32(part.width)
     f32 h = f32(part.height)
     bool focused = window.focus == part.id && window.focused
+    bool ring = focused && window.keyboard  // after a key, as :focus-visible of the browsers (P48)
     bool on = part.active
     f32 ascent = 0
     f32 descent = 0
@@ -4089,6 +4881,29 @@ void drawPart(ref WindowData window, ref PartData part, ref Colors c) {
     f32 baseline = y + h / 2 + (ascent - descent) / 2
     if (part.kind == kindLabel) {
         text(window.body, part.text, x, baseline, c.label, on)
+    } else if (part.kind == kindButton && part.action == 2) {  // of a dialog, not the last
+        bool hot = window.hot == part.id && on
+        cromo_gui_shadow(r, x, y, w, h, corner, d, c.inputShadow, 2, 1)
+        cromo_gui_box(r, x, y, w, h, corner, 1, d, solid(hot ? c.hover : c.input, on), solid(c.inputBorder, on))
+        f32 size = textWidth(window.strong, part.text, part.text.len())
+        text(window.strong, part.text, x + (w - size) / 2, baseline, c.text, on)
+        if (ring) {
+            cromo_gui_box(r, x - 3, y - 3, w + 6, h + 6, corner + 3, 2, d, 0, solid(c.focus, true))
+        }
+    } else if (part.kind == kindSwitch) {
+        drawSwitch(ref window, ref part, ref c, ring, baseline)
+    } else if (part.kind == kindSlider) {
+        drawSlider(ref window, ref part, ref c, ring)
+    } else if (part.kind == kindDialog) {
+        cromo_gui_shadow(r, x, y, w, h, dialogCorner, d, 0x30000000, 10, 4)
+        cromo_gui_box(r, x, y, w, h, dialogCorner, 1, d, solid(c.card, true), solid(c.cardBorder, true))
+        f32 high = 0
+        f32 low = 0
+        f32 space = 0
+        cromo_gui_font_metrics(window.heading, ref high, ref low, ref space)
+        clipInside(r, ref part, x + dialogPadding, y, w - 2 * dialogPadding, dialogTop)
+        text(window.heading, part.text, x + dialogPadding, y + dialogPadding + high, c.text, true)
+        clipPart(r, ref part)
     } else if (part.kind == kindButton) {
         bool hot = window.hot == part.id && on
         bool down = window.held == part.id && hot
@@ -4112,7 +4927,7 @@ void drawPart(ref WindowData window, ref PartData part, ref Colors c) {
         } else {
             text(window.strong, part.text, x + (w - size) / 2, baseline, c.buttonText, on)
         }
-        if (focused) {
+        if (ring) {
             cromo_gui_box(r, x - 3, y - 3, w + 6, h + 6, corner + 3, 2, d, 0, solid(c.focus, true))
         }
     } else if (part.kind == kindTextBox) {
@@ -4161,7 +4976,7 @@ void drawPart(ref WindowData window, ref PartData part, ref Colors c) {
         } else {
             cromo_gui_box(r, x, top, checkSide, checkSide, checkCorner, 1, d, solid(c.check, on), solid(c.checkBorder, on))
         }
-        if (focused) {
+        if (ring) {
             cromo_gui_box(r, x - 3, top - 3, checkSide + 6, checkSide + 6, checkCorner + 3, 2, d, 0, solid(c.focus, true))
         }
         text(window.body, part.text, x + checkSide + 8, baseline, c.text, on)
@@ -4195,6 +5010,59 @@ void drawPart(ref WindowData window, ref PartData part, ref Colors c) {
     }
 }
 
+// A switch: its text on the left, and at the right edge a track indigo when it is
+// on, gray when it is off, with a white knob that slides in 150 ms.
+void drawSwitch(ref WindowData window, ref PartData part, ref Colors c, bool focused, f32 baseline) {
+    addr r = window.renderer
+    f32 d = window.density
+    bool on = part.active
+    f32 x = part.left + f32(part.width) - switchWidth
+    f32 y = part.top + (f32(part.height) - switchHeight) / 2
+    f32 moved = f32(SDL_GetTicksNS() - part.flipped) / 150000000
+    moved = moved > 1 ? 1 : moved
+    f32 at = part.checked ? moved : 1 - moved
+    if (part.flipped == 0) {
+        at = part.checked ? 1 : 0
+    }
+    u32 track = part.checked ? c.buttonBottom : c.checkBorder
+    cromo_gui_box(r, x, y, switchWidth, switchHeight, switchHeight / 2, 0, d, solid(track, on), 0)
+    f32 kx = x + 2 + (switchWidth - knob - 4) * at
+    f32 ky = y + (switchHeight - knob) / 2
+    if (on) {
+        cromo_gui_shadow(r, kx, ky, knob, knob, knob / 2, d, c.shadow, 2, 1)
+    }
+    cromo_gui_box(r, kx, ky, knob, knob, knob / 2, 0, d, solid(0xFFFFFF, on), 0)
+    if (focused) {
+        cromo_gui_box(r, x - 3, y - 3, switchWidth + 6, switchHeight + 6, switchHeight / 2 + 3, 2, d, 0, solid(c.focus, true))
+    }
+    clipInside(r, ref part, part.left, part.top, most(f32(part.width) - switchWidth - 8, 0), f32(part.height))
+    text(window.body, part.text, part.left, baseline, c.text, on)
+    clipPart(r, ref part)
+}
+
+// A slider: its track, indigo up to the knob, and a white knob with an indigo
+// border.
+void drawSlider(ref WindowData window, ref PartData part, ref Colors c, bool focused) {
+    addr r = window.renderer
+    f32 d = window.density
+    bool on = part.active
+    f32 middle = part.top + f32(part.height) / 2
+    f32 from = part.left + knob / 2
+    f32 to = part.left + f32(part.width) - knob / 2
+    f32 at = knobAt(ref part)
+    cromo_gui_box(r, from - 2, middle - 2, to - from + 4, 4, 2, 0, d, solid(c.checkBorder, on), 0)
+    cromo_gui_box(r, from - 2, middle - 2, at - from + 4, 4, 2, 0, d, solid(c.buttonBottom, on), 0)
+    if (on) {
+        cromo_gui_shadow(r, at - knob / 2, middle - knob / 2, knob, knob, knob / 2, d, c.shadow, 3, 1)
+    }
+    bool held = window.held == part.id
+    cromo_gui_box(r, at - knob / 2, middle - knob / 2, knob, knob, knob / 2, held ? 3 : 2, d, solid(0xFFFFFF, on),
+        solid(c.buttonBottom, on))
+    if (focused) {
+        cromo_gui_box(r, at - knob / 2 - 4, middle - knob / 2 - 4, knob + 8, knob + 8, knob / 2 + 4, 2, d, 0, solid(c.focus, true))
+    }
+}
+
 // The thin bar on the right of a panel or of a list that scrolls, while it moves and
 // while the mouse is over it, wider while it is dragged.
 void drawScrollBar(ref WindowData window, ref PartData part, ref Colors c) {
@@ -4216,13 +5084,17 @@ void drawListView(ref WindowData window, ref PartData view, ref Colors c) {
     f32 x = view.left
     f32 w = f32(view.width)
     bool on = view.active
-    bool focused = window.focus == view.id && window.focused
+    bool focused = window.focus == view.id && window.focused && window.keyboard
     f32 ascent = 0
     f32 descent = 0
     f32 gap = 0
     cromo_gui_font_metrics(window.body, ref ascent, ref descent, ref gap)
     f32 middle = (ascent - descent) / 2
     f32 bottom = view.top + f32(view.height)
+    for (addr texture in view.dropped) {
+        SDL_DestroyTexture(texture)
+    }
+    view.dropped.clear()
     clipInside(r, ref view, x, view.top, w, f32(view.height))
     for (i64 row = i64(view.offsetY / rowHeight); row < view.items.len(); row++) {
         f32 top = view.top + f32(row) * rowHeight - view.offsetY
@@ -4238,7 +5110,21 @@ void drawListView(ref WindowData window, ref PartData view, ref Colors c) {
             fill(r, c.hover, x, top, w, rowHeight)
         }
         f32 left = x + 16
-        if (view.icons[row] != Icon.None) {
+        addr none
+        if (view.images[row] != none) {  // D469
+            if (view.textures[row] == none) {
+                view.textures[row] = SDL_CreateTexture(r, 0x16762004, 0, avatarPixels, avatarPixels)  // RGBA32, static
+                if (view.textures[row] != none) {
+                    SDL_SetTextureBlendMode(view.textures[row], 1)
+                    SDL_UpdateTexture(view.textures[row], none, view.images[row], avatarPixels * 4)
+                }
+            }
+            if (view.textures[row] != none) {
+                Rect place = Rect(x + 16, top + (rowHeight - avatarSize) / 2, avatarSize, avatarSize)
+                SDL_RenderTexture(r, view.textures[row], none, ref place)
+            }
+            left = x + 72
+        } else if (view.icons[row] != Icon.None) {
             drawIcon(r, view.icons[row], x + 28, top + rowHeight / 2, 24, d, c.label, on)
             left = x + 56
         }

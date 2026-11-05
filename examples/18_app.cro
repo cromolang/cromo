@@ -1,12 +1,15 @@
 // Example 18: an app as those of a phone, with the bar at the top, the bar of the
-// pages at the bottom, the icons of Lucide and lists that scroll.
+// pages at the bottom, the icons of Lucide, lists that scroll, dialogs, a snackbar,
+// switches and a slider.
 //
 // Decided: the icons of Lucide as the cases of gui.Icon (D448, D449), the bars of
 //          the apps (D450), the pages of a navigation bar (D451), the window of
 //          an app of Android and its back key (D456, D457), the panels that
-//          scroll (D460), the lists and their item chosen (D461, D462)
+//          scroll (D460), the lists and their item chosen (D461, D462), the
+//          switches and the sliders (D466), the dialogs (D467), the snackbar
+//          (D468)
 // Draft:   the names of the components and of their methods (P39, P41, P42, P45,
-//          P46)
+//          P46, P48)
 //
 // cromo build --target android 18_app.cro writes 18_app.apk (D453).
 import std.gui
@@ -30,7 +33,6 @@ i32 main() {
     gui.AppBar top = w.add(gui.AppBar("Inbox"))
     top.setNavigation(gui.Icon.Menu)
     top.addAction(gui.Icon.EllipsisVertical, []() { })
-    top.addAction(gui.Icon.Search, []() { })
 
     gui.NavigationBar pages = w.navigationBar()
     // Each page fills the room between the two bars, 390 by 605 here: the lists
@@ -49,6 +51,51 @@ i32 main() {
     gui.Button write = inbox.add(gui.Button("Write", 262, 549, 112, 40))
     write.setIcon(gui.Icon.Pencil)
     write.setAnchor(gui.Horizontal.Right, gui.Vertical.Bottom)
+
+    // The bin asks before deleting the message chosen, and the snackbar can put it
+    // back where it was.
+    gui.Dialog ask = gui.Dialog("Delete the message?", 320, 156)
+    ask.add(gui.Label("It can be undone for a few seconds.", 0, 0, 272, 20))
+    ask.addButton("Cancel", [ask]() { ask.close() })
+    ask.addButton("Delete", [w, ask, messages]() {
+        ask.close()
+        i64 index = messages.selected()
+        if (index < 0) {
+            ret
+        }
+        gui.Icon icon = messages.itemIcon(index)
+        string title = messages.itemTitle(index)
+        string line = messages.itemSubtitle(index)
+        string when = messages.itemDetail(index)
+        messages.removeItem(index)
+        w.showSnackbarAction("Message deleted", "Undo", [messages, index, icon, move title, move line, move when]() {
+            messages.insertItem(index, icon, title, line, when)
+        })
+    })
+    top.addAction(gui.Icon.Trash2, [w, ask, messages]() {
+        if (messages.selected() < 0) {
+            w.showSnackbar("Choose a message first")
+        } else {
+            w.showDialog(ask)
+        }
+    })
+
+    // Write opens a small form in a dialog.
+    gui.Dialog compose = gui.Dialog("New message", 340, 220)
+    gui.TextBox to = compose.add(gui.TextBox("", 0, 0, 292, 32))
+    to.setPlaceholder("To")
+    to.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Top)
+    gui.TextBox subject = compose.add(gui.TextBox("", 0, 44, 292, 32))
+    subject.setPlaceholder("Subject")
+    subject.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Top)
+    compose.addButton("Cancel", [compose]() { compose.close() })
+    compose.addButton("Send", [w, compose, to, subject]() {
+        compose.close()
+        w.showSnackbar(format("Sent to {}", to.text().len() > 0 ? to.text() : "nobody"))
+        to.setText("")
+        subject.setText("")
+    })
+    write.onClick([w, compose]() { w.showDialog(compose) })
 
     gui.Panel contacts = pages.addPage("Contacts", gui.Icon.Users)
     gui.TextBox search = contacts.add(gui.TextBox("", 16, 16, 358, 32))
@@ -70,10 +117,17 @@ i32 main() {
     gui.ComboBox theme = settings.add(gui.ComboBox(["System", "Light", "Dark"], 16, 40, 358, 32))
     theme.setSelected(0)
     theme.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Top)
-    gui.CheckBox notify = settings.add(gui.CheckBox("Notifications", 16, 88, 300, 24))
+    gui.Switch notify = settings.add(gui.Switch("Notifications", 16, 88, 358, 32))
     notify.setChecked(true)
-    settings.add(gui.CheckBox("Sync on mobile data", 16, 120, 300, 24))
-    gui.Button out = settings.add(gui.Button("Log out", 16, 168, 140, 36))
+    notify.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Top)
+    gui.Switch mobile = settings.add(gui.Switch("Sync on mobile data", 16, 128, 358, 32))
+    mobile.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Top)
+    gui.Label size = settings.add(gui.Label("Text size: 100%", 16, 176, 358, 20))
+    gui.Slider zoom = settings.add(gui.Slider(80, 150, 16, 200, 358, 32))
+    zoom.setValue(100)
+    zoom.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Top)
+    zoom.onChange([size](i64 value) { size.setText(format("Text size: {}%", value)) })
+    gui.Button out = settings.add(gui.Button("Log out", 16, 252, 140, 36))
     out.setIcon(gui.Icon.LogOut)
 
     // The title follows the page, the theme the combo box. On Android the back key
