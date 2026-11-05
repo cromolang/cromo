@@ -1,0 +1,26 @@
+// cromo run --target android (D464, P47): the only target of cromo run, an app
+// without arguments, and adb, which it needs.
+// target: windows
+// program-env: CROMO={cromo}
+// program-env: APP={dir}/modules/offline.cro
+// program-env: ANDROID_HOME=
+// program-env: ANDROID_SDK_ROOT=
+// program-env: PATH=C:\no-such-folder
+// expect-output: linux: 2 cromo run takes only --target android, which runs the app on the phone (D159, D464)
+// expect-output: arguments: 2 an app of Android has no arguments (P47)
+// expect-output: no adb: 1 adb not found: install the platform tools of the SDK of Android, and set ANDROID_HOME or put adb in PATH (P47)
+import std.os
+import std.process
+
+void show(string what, list<string> args) {
+    process.Output r = process.run(os.env("CROMO"), args)
+    println("{}: {} {}", what, r.code, r.err.trim().replace("cromo: ", ""))
+}
+
+i32 main() {
+    string app = os.env("APP")
+    show("linux", ["run", "--target", "linux", app])
+    show("arguments", ["run", "--target", "android", app, "--", "one"])
+    show("no adb", ["run", "--target", "android", app])
+    ret 0
+}

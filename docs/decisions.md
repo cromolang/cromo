@@ -949,7 +949,7 @@ extern "kernel32" {
 
 ### D159. The options of `cromo run`
 *2026-10-29.*
-- `-o`, `--target` and `--emit-ir` are options of `cromo build` only: `cromo run` makes a program for the system on which `cromo` runs, and its executable is deleted.
+- `-o`, `--target` and `--emit-ir` are options of `cromo build` only: `cromo run` makes a program for the system on which `cromo` runs, and its executable is deleted. Since D464, `cromo run --target android` runs an app on the phone.
 - The temporary folder is `cromo-run-<number of the process>`, in the temporary folder of the system. The executable has the name of the source, and the DLLs of the modules are copied next to it (D138).
 
 ### D160. How the arguments reach `main`
@@ -2143,6 +2143,15 @@ inbox.onChoose([](i64 index) { println("chosen {}", index) })
 ### D462. The item chosen stays lit
 *2026-11-04.* A list has one item chosen, or none, which stays lit, as in the lists of the desktop; a click or a touch chooses an item and calls the handlers.
 
+### D463. The permission of the network, when the program uses it
+*2026-11-04.* `cromo` puts the permission `android.permission.INTERNET` in the manifest of an APK when the program uses `std.net`, itself or through a module that imports it, as `std.http` and `std.websocket`. There is nothing to write for it, as the libraries of C are linked only when a module uses them. The permission is one of the normal ones of Android, which the system gives when the app is installed, without asking the user.
+
+### D464. `cromo run --target android`
+*2026-11-04.* `cromo run --target android app.cro` makes the APK, installs it with `adb` on the device or the emulator connected, starts the app and shows its output, what the program prints and its errors, until the app ends; then `cromo` ends with its exit code. Ctrl+C in the terminal closes the app too, as it stops a program on the desktop. `--target android` is the only target of `cromo run`, since the program runs on the phone (D159).
+
+### D465. The device of `cromo run`
+*2026-11-04.* With one device connected, `cromo run --target android` uses it; with more than one it stops, lists them, and the variable `ANDROID_SERIAL`, which `adb` knows, chooses one. `cromo` has no option for it.
+
 ---
 
 ## Proposed
@@ -2308,6 +2317,12 @@ A component keeps the distances from the edges of its parent, the content of the
 - A finger that moves more than 8 pixels scrolls the panel or the list under it and leaves what it pressed, and when it is lifted the content goes on with its speed, slowing down. The mouse scrolls with the wheel, 48 pixels for each step, and by dragging the bar, which is shown while the content moves, for a second after, and when the mouse is over it; a click on the content does not scroll it. A panel in a panel scrolls first.
 - `gui.ListView(x, y, width, height)`: `addItem(icon, title, subtitle, detail)`, `gui.Icon.None` and `""` for what an item does not have; `setItem(index, ...)`, `removeItem(index)`, `clear()`, `count()`, `itemTitle(index)`; `setSelected(i64)` and `selected()`, -1 for none, the default; `onChoose(func(i64))` with the index, when the user chooses an item; `scrollTo(index)`, which shows that item. The rows are 56 pixels high, with a line between them; the item chosen is on the light indigo of the pills (D443).
 - A list takes the keyboard as a button: Up and Down choose the previous and the next item, Home and End the first and the last, Page Up and Page Down by a page, and the list scrolls to show the item chosen.
+
+### P47. `cromo run` on Android (D463-D465)
+- `adb` is that of `ANDROID_HOME` or `ANDROID_SDK_ROOT`, in `platform-tools`, else the one in `PATH`; without it `cromo` says so.
+- The app is installed with `adb install -r`, stopped if it was running, and started with `am start -W`; its output is the log of its process, read with `adb logcat`: the lines of its tag, the name of the package, go to the standard output, INFO, and to the standard error, ERROR, as the app wrote them (P44).
+- When the program ends, the runtime writes its exit code in the log, with the tag `cromo-exit`: `cromo run` ends with it. An app that ends without it, as one that crashes, ends `cromo run` with 1 and the fatal lines of its process.
+- The arguments after `--` are an error: an app of Android has none.
 ---
 
 ## Open

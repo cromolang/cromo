@@ -52,7 +52,8 @@ int atexit(void (*function)(void)) { return __cxa_atexit((void (*)(void*))functi
 // executable. When the program ends on that thread, it comes back here and
 // SDL_main returns, so that SDL ends the activity; on another thread it ends the
 // process. The output goes to the log of Android, a line at a time, with the name
-// of the package as tag.
+// of the package as tag, and at the end the exit code, with the tag cromo-exit,
+// which cromo run waits for (P47).
 
 typedef struct {
     u64 words[64];  // jmp_buf of Bionic, 32 words on ARM64, 12 on x86-64
@@ -110,18 +111,42 @@ i32 SDL_main(i32 argc, char** argv) {
     return appCode;
 }
 
+// The bytes of the standard output (1) or error (2) in the log, a line at a time:
+// 1 when they went there, 0 outside an app. Under the lock of printing.
+static char lines[2][1024];
+static u64 lineSizes[2];
+
+// The lines not ended, then the exit code in the log.
+static void logExit(i32 code) {
+    for (i32 which = 0; which < 2; ++which) {
+        if (lineSizes[which] == 0) continue;
+        lines[which][lineSizes[which]] = 0;
+        __android_log_write(which ? 6 : 4, appTag, lines[which]);
+        lineSizes[which] = 0;
+    }
+    char text[16];
+    char digits[12];
+    u64 value = code < 0 ? (u64)-(i64)code : (u64)code;
+    i32 count = 0;
+    do {
+        digits[count++] = (char)('0' + value % 10);
+        value /= 10;
+    } while (value);
+    i32 size = 0;
+    if (code < 0) text[size++] = '-';
+    while (count) text[size++] = digits[--count];
+    text[size] = 0;
+    __android_log_write(4, "cromo-exit", text);  // INFO
+}
+
 NORETURN void cromo_app_exit(i32 code) {
+    logExit(code);
     if (pthread_self() == appThread) {
         appCode = code;
         longjmp(&appEnd, 1);
     }
     _exit(code);
 }
-
-// The bytes of the standard output (1) or error (2) in the log, a line at a time:
-// 1 when they went there, 0 outside an app. Under the lock of printing.
-static char lines[2][1024];
-static u64 lineSizes[2];
 
 i32 cromo_app_write(i64 stream, const u8* data, i64 size) {
     if (!cromo_app) return 0;

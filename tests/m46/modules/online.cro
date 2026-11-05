@@ -1,0 +1,7 @@
+// An app of the test permission.cro that uses the network (D463).
+import std.net
+
+i32 main() {
+    println("{}", net.resolve("localhost").len())
+    ret 0
+}

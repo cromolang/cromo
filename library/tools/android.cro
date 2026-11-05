@@ -1,0 +1,130 @@
+// cromo run --target android (D464, D465, P47): cromo makes the APK, compiles this
+// program with the library of its version and runs it with adb, the APK and the
+// package of the app. It chooses the device, installs the APK, starts the app and
+// shows its log until the program ends, then ends with its exit code; on Ctrl+C
+// cromo stops the app.
+//   android <adb> <apk> <package>
+import std.os
+import std.process
+import std.time
+
+i32 main(list<string> args) {
+    if (args.len() != 4) {
+        println("usage: android <adb> <apk> <package>")
+        ret 2
+    }
+    string adb = args[1]
+    string package = args[3]
+    if (!chooseDevice(adb)) {
+        ret 1
+    }
+    process.Output installed = process.run(adb, ["install", "-r", args[2]])
+    if (installed.code != 0) {
+        eprintln("cromo: adb could not install the app:\n{}{}", installed.out, installed.err)
+        ret 1
+    }
+    process.run(adb, ["shell", "am", "force-stop", package])
+    process.Output started = process.run(adb, ["shell", "am", "start", "-W", "-n", package + "/org.cromo.CromoActivity"])
+    if (started.code != 0 || started.out.contains("Error")) {
+        eprintln("cromo: adb could not start the app:\n{}{}", started.out, started.err)
+        ret 1
+    }
+    string pid = ""
+    for (i64 i = 0; i < 50 && pid.len() == 0; i++) {
+        pid = process.run(adb, ["shell", "pidof", package]).out.trim()
+        if (pid.len() == 0) {
+            time.msleep(100)
+        }
+    }
+    if (pid.len() == 0) {
+        eprintln("cromo: the app ended at once: see adb logcat")
+        ret 1
+    }
+    ret follow(adb, package, pid)
+}
+
+// One device for adb: that of ANDROID_SERIAL, or the only one connected (D465).
+bool chooseDevice(string adb) {
+    if (os.hasEnv("ANDROID_SERIAL")) {
+        ret true
+    }
+    process.Output listed = process.run(adb, ["devices"])
+    if (listed.code != 0) {
+        eprintln("cromo: adb devices failed:\n{}{}", listed.out, listed.err)
+        ret false
+    }
+    list<string> devices
+    for (string line in listed.out.split("\n")) {
+        string device = line.trim()
+        if (device.endsWith("\tdevice")) {
+            devices.add(device.slice(0, device.len() - 7))
+        }
+    }
+    if (devices.len() == 0) {
+        eprintln("cromo: no Android device for adb: connect a phone or start an emulator (D465)")
+        ret false
+    }
+    if (devices.len() > 1) {
+        eprintln("cromo: more than one Android device: choose one with the variable ANDROID_SERIAL (D465)")
+        for (i64 i = 0; i < devices.len(); i++) {
+            eprintln("  {}", devices[i])
+        }
+        ret false
+    }
+    ret true
+}
+
+// The log of the process of the app, each line as "P/tag: text": those of the app
+// to the standard output and error, as it wrote them (P44), until the line of
+// cromo-exit with the exit code. The device stops logcat when the process ends
+// without it, as when it crashes: then the fatal lines are shown, and the code is 1.
+i32 follow(string adb, string package, string pid) {
+    string watch = format("logcat -v tag --pid={} -s {}:V cromo-exit:V libc:F DEBUG:F AndroidRuntime:E & log=$!; ", pid, package) +
+        format("while [ -d /proc/{} ]; do sleep 1; done; sleep 1; kill $log", pid)
+    process.Process log = process.start(adb, ["shell", watch])
+    log.closeInput()
+    list<u8> line  // the bytes of a line, in UTF-8 once it is whole
+    for (true) {
+        list<u8> bytes = log.read(4096)
+        if (bytes.len() == 0) {
+            break
+        }
+        for (i64 i = 0; i < bytes.len(); i++) {
+            if (bytes[i] != 10) {
+                line.add(bytes[i])
+                continue
+            }
+            i64 code = 0
+            bool ended = show(string(line).trimEnd(), package, ref code)
+            line.clear()
+            if (ended) {
+                log.kill()
+                log.wait()
+                ret i32(code)
+            }
+        }
+    }
+    log.wait()
+    eprintln("cromo: the app ended without its exit code: see adb logcat")
+    ret 1
+}
+
+// Shows a line of the log; true with the exit code of the program.
+bool show(string line, string package, ref i64 code) {
+    i64 colon = line.find(": ")
+    if (line.len() < 2 || line[1] != '/' || colon < 0) {
+        ret false  // as "--------- beginning of main"
+    }
+    string tag = line.slice(2, colon)
+    string text = line.slice(colon + 2, line.len())
+    if (tag == "cromo-exit") {
+        code = i64(text.trim())
+        ret true
+    }
+    if (tag == package && line[0] == 'I') {
+        println("{}", text)
+    } else {
+        eprintln("{}", text)
+    }
+    ret false
+}

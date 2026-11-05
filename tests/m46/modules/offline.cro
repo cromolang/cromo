@@ -1,0 +1,5 @@
+// An app of the test permission.cro without the network (D463).
+i32 main() {
+    println("offline")
+    ret 0
+}

@@ -5,8 +5,9 @@
 // resources with the icon, the archive with the files stored and the libraries
 // aligned to 16 KB, which Android maps without extracting them, and the signature
 // of scheme v2 with the key for debugging of the user, in ~/.cromo/android, made
-// the first time.
-//   apk <apk> <package> <name> <icon.png or -> <path in the APK>=<file>...
+// the first time. The permissions are those of Android without android.permission.,
+// separated by commas, as INTERNET when the program uses std.net (D463).
+//   apk <apk> <package> <name> <icon.png or -> <permissions or -> <path in the APK>=<file>...
 import std.crypto
 import std.fs
 import std.os
@@ -27,18 +28,22 @@ const i64 themeResource = 0x7F010000  // style/AppTheme, the first resource of t
 const i64 iconResource = 0x7F020000   // drawable/icon
 
 i32 main(list<string> args) {
-    if (args.len() < 5) {
-        println("usage: apk <apk> <package> <name> <icon.png or -> <path in the APK>=<file>...")
+    if (args.len() < 6) {
+        println("usage: apk <apk> <package> <name> <icon.png or -> <permissions or -> <path in the APK>=<file>...")
         ret 2
     }
     bool icon = args[4] != "-"
+    list<string> permissions
+    if (args[5] != "-") {
+        permissions = args[5].split(",")
+    }
     list<Entry> entries
-    entries.add(Entry("AndroidManifest.xml", manifest(args[2], args[3], icon)))
+    entries.add(Entry("AndroidManifest.xml", manifest(args[2], args[3], icon, permissions)))
     entries.add(Entry("resources.arsc", resources(args[2], icon)))
     if (icon) {
         entries.add(Entry("res/drawable/icon.png", fs.readBytes(args[4])))
     }
-    for (i64 i = 5; i < args.len(); i++) {
+    for (i64 i = 6; i < args.len(); i++) {
         i64 equals = args[i].find("=")
         entries.add(Entry(args[i].slice(0, equals), fs.readBytes(args[i].slice(equals + 1, args[i].len()))))
     }
@@ -224,8 +229,9 @@ Node close(string name) {
 }
 
 // The manifest: the activity of Cromo, that of SDL, which loads libSDL3.so and
-// libmain.so, as in the project of SDL for Android, without its permissions.
-list<u8> manifest(string package, string label, bool icon) {
+// libmain.so, as in the project of SDL for Android, with only the permissions of
+// the program.
+list<u8> manifest(string package, string label, bool icon, list<string> permissions) {
     list<Node> nodes
     nodes.add(open("manifest", [numberAttribute("versionCode", 0x0101021B, typeDecimal, 1),
         textAttribute("versionName", 0x0101021C, "1.0"), textAttribute("package", 0, package)]))
@@ -234,6 +240,10 @@ list<u8> manifest(string package, string label, bool icon) {
     nodes.add(close("uses-sdk"))
     nodes.add(open("uses-feature", [numberAttribute("glEsVersion", 0x01010281, typeHexadecimal, 0x20000)]))
     nodes.add(close("uses-feature"))
+    for (i64 i = 0; i < permissions.len(); i++) {
+        nodes.add(open("uses-permission", [textAttribute("name", 0x01010003, "android.permission." + permissions[i])]))
+        nodes.add(close("uses-permission"))
+    }
     // The back key comes to the activity as on Android 12 (D457).
     list<Attribute> application = [textAttribute("label", 0x01010001, label),
         numberAttribute("hasCode", 0x0101000C, typeBoolean, -1),

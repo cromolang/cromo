@@ -1054,7 +1054,8 @@ i32 main() {
 - The icons are those of Lucide, the cases of `gui.Icon`, as `gui.Icon.Mail` (D448, D449): an `IconBox` shows one, and a `Button` can have one before its text, or alone.
 - For the apps, an `AppBar` at the top of the content, with its title, an icon on the left and actions on the right, and the `NavigationBar` of the window at the bottom, whose items show each a page, a `Panel` (D450, D451).
 - A `Panel`, and so a page, scrolls when its components go beyond its bottom edge, with a finger, the wheel or its bar (D460); a `ListView` shows a list of items, each a row with an icon, a title, a line under it and a text on the right, draws only the rows that are seen and keeps its item chosen lit (D461, D462).
-- `cromo build --target android app.cro` writes the APK of an app for Android (D452-D455), named by `[[android("org.example.mail", "Mail")]]` on `main`. There its one window fills the screen within the bars of the system, turns with the phone, and closes with the back key, unless `w.onBack(...)` handles it (D456-D459).
+- `cromo build --target android app.cro` writes the APK of an app for Android (D452-D455), named by `[[android("org.example.mail", "Mail")]]` on `main`. There its one window fills the screen within the bars of the system, turns with the phone, and closes with the back key, unless `w.onBack(...)` handles it (D456-D459). An app that uses `std.net` has the permission of the network (D463).
+- `cromo run --target android app.cro` installs the app with `adb` on the phone or the emulator connected, starts it and shows what it prints until it ends, with its exit code; Ctrl+C closes it too (D464). With more than one device, `ANDROID_SERIAL` chooses one (D465).
 
 ```cromo
 // draft: the names of the components and of their methods (P37)

@@ -36,6 +36,7 @@
 #include <windows.h>
 #else
 #include <fcntl.h>
+#include <signal.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #endif
@@ -64,8 +65,9 @@ void printUsage(FILE* out) {
         "options of build and run:\n"
         "  -o <file>    name of the executable (build; default: the source name, or the folder\n"
         "               without a file, with .exe for Windows)\n"
-        "  --target     the system of the executable: windows, linux, linux-arm64, android-arm64\n"
-        "               or android-x86_64 (build; default: the one cromo runs on)\n"
+        "  --target     the system of the executable: windows, linux, linux-arm64, android-arm64,\n"
+        "               android-x86_64, or android for the APK of an app (build; default: the one\n"
+        "               cromo runs on); cromo run --target android runs the app on the phone\n"
         "  --release    no overflow checks: integers wrap around (default: debug, with checks)\n"
         "  -O<n>        optimization level (default: -O2)\n"
         "  --emit-ir    print the generated LLVM IR instead of producing the executable (build)\n",
@@ -85,8 +87,9 @@ struct Compilation {
     std::vector<std::string> filters;  // cromo test: the names of the tests to run (D352)
     std::vector<std::string> tests;    // cromo test: the names of the tests, by their number
     bool apk = false;  // --target android: the APK with both architectures (D453)
-    std::string androidPackage;  // of [[android(...)]] on main (D455)
+    std::string androidPackage;  // of [[android(...)]] on main (D455), then that of the APK
     std::string androidName;
+    bool network = false;  // the program uses std.net: the permission INTERNET (D463)
 };
 
 // Compiles the program and writes the executable. Returns the exit code of cromo.
@@ -126,6 +129,7 @@ int build(Compilation& compilation) {
     diag.addFile(sources[1]);
     bool tests = codegen.tests;
     cromo::Module module = cromo::loadProgram(sources, diag, options.target, nullptr, tests);
+    for (const cromo::ModuleFile& file : module.files) compilation.network = compilation.network || file.name == "std.net";
     if (compilation.checkNames) {  // D423: what the pilot of sema checks, and nothing more
         if (!diag.hasErrors()) cromo::checkNames(module, diag);
         return diag.hasErrors() ? 1 : 0;
@@ -207,7 +211,13 @@ bool readOptions(const std::vector<std::string>& args, size_t first, size_t last
     const char* command = test ? "test" : run ? "run" : "build";
     for (size_t i = first; i < last; ++i) {
         const std::string& arg = args[i];
-        if ((arg == "-o" || arg == "--emit-ir" || arg == "--target") && (run || test)) {
+        bool android = arg == "--target" && run && i + 1 < last && args[i + 1] == "android";  // D464
+        if (arg == "--target" && run && !android) {
+            std::fputs("cromo: cromo run takes only --target android, which runs the app on the phone (D159, D464)\n",
+                       stderr);
+            return false;
+        }
+        if ((arg == "-o" || arg == "--emit-ir" || arg == "--target") && (run || test) && !android) {
             std::fprintf(stderr, "cromo: %s is an option of cromo build (D159)\n", arg.c_str());
             return false;
         }
@@ -221,7 +231,7 @@ bool readOptions(const std::vector<std::string>& args, size_t first, size_t last
                 options.target = cromo::Target::Linux;
             } else if (target == "linux-arm64") {
                 options.target = cromo::Target::LinuxArm64;
-            } else if (target == "android" && !run && !test) {  // D453: the APK
+            } else if (target == "android" && !test) {  // D453: the APK, and cromo run on the phone (D464)
                 options.target = cromo::Target::AndroidArm64;
                 compilation.apk = true;
             } else if (target == "android-arm64") {  // P43
@@ -713,6 +723,7 @@ int buildApk(Compilation& compilation) {
         }
         compilation.androidPackage = part.androidPackage;
         compilation.androidName = part.androidName;
+        compilation.network = part.network;
         entries.push_back(std::string("lib/") + abi + "/libSDL3.so=" + sdl.string());
         entries.push_back(std::string("lib/") + abi + "/libmain.so=" + part.options.outputPath);
     }
@@ -724,6 +735,7 @@ int buildApk(Compilation& compilation) {
         if (name.empty() || !std::isalpha(static_cast<unsigned char>(name[0]))) name = "app" + name;
         package = "org.cromo." + name;
     }
+    compilation.androidPackage = package;
     std::string name = compilation.androidName.empty() ? stem : compilation.androidName;
     std::string icon = "-";
     for (const fs::path& candidate : {fs::path(source).replace_extension(".png"), source.parent_path() / "main.png"}) {
@@ -736,7 +748,7 @@ int buildApk(Compilation& compilation) {
     Compilation tool;
     tool.inputPath = cromo::libraryFile("tools/apk.cro").string();
     tool.options.outputPath = "apk";
-    std::vector<std::string> args = {output, package, name, icon};
+    std::vector<std::string> args = {output, package, name, icon, compilation.network ? "INTERNET" : "-"};
     args.insert(args.end(), entries.begin(), entries.end());
 #ifdef _WIN32
     std::vector<std::wstring> programArgs;
@@ -745,6 +757,136 @@ int buildApk(Compilation& compilation) {
     std::vector<std::string> programArgs = args;
 #endif
     int code = run(tool, programArgs);
+    fs::remove_all(folder, ec);
+    return code;
+}
+
+// The adb of ANDROID_HOME or ANDROID_SDK_ROOT, in platform-tools, else the one in
+// PATH (P47); "" without it.
+std::string findAdb() {
+    std::error_code ec;
+#ifdef _WIN32
+    const char* name = "adb.exe";
+    const char separator = ';';
+#else
+    const char* name = "adb";
+    const char separator = ':';
+#endif
+    for (const char* variable : {"ANDROID_HOME", "ANDROID_SDK_ROOT"}) {
+        const char* sdk = std::getenv(variable);
+        if (!sdk || !*sdk) continue;
+        fs::path adb = fs::path(sdk) / "platform-tools" / name;
+        if (fs::is_regular_file(adb, ec)) return adb.string();
+    }
+    const char* path = std::getenv("PATH");
+    std::string folders = path ? path : "";
+    size_t start = 0;
+    while (start <= folders.size()) {
+        size_t end = folders.find(separator, start);
+        if (end == std::string::npos) end = folders.size();
+        if (end > start) {
+            fs::path adb = fs::path(folders.substr(start, end - start)) / name;
+            if (fs::is_regular_file(adb, ec)) return adb.string();
+        }
+        start = end + 1;
+    }
+    return "";
+}
+
+// Ctrl+C during cromo run --target android: the program of adb ends, and cromo then
+// stops the app (D464).
+#ifdef _WIN32
+volatile LONG interrupted = 0;
+BOOL WINAPI onInterrupt(DWORD kind) {
+    if (kind != CTRL_C_EVENT && kind != CTRL_BREAK_EVENT) return FALSE;
+    interrupted = 1;
+    return TRUE;
+}
+#else
+volatile sig_atomic_t interrupted = 0;
+void onInterrupt(int) { interrupted = 1; }
+#endif
+
+// Runs a program and waits for it, with the output of cromo.
+int runAndWait(const std::vector<std::string>& args) {
+#ifdef _WIN32
+    std::wstring line;
+    for (const std::string& arg : args) line += (line.empty() ? L"" : L" ") + quoteArgument(fs::path(arg).wstring());
+    STARTUPINFOW startup{};
+    startup.cb = sizeof startup;
+    PROCESS_INFORMATION process{};
+    if (!CreateProcessW(nullptr, line.data(), nullptr, nullptr, TRUE, 0, nullptr, nullptr, &startup, &process)) return 1;
+    WaitForSingleObject(process.hProcess, INFINITE);
+    DWORD exitCode = 1;
+    GetExitCodeProcess(process.hProcess, &exitCode);
+    CloseHandle(process.hThread);
+    CloseHandle(process.hProcess);
+    return static_cast<int>(exitCode);
+#else
+    std::vector<std::string> copies = args;
+    std::vector<char*> argv;
+    for (std::string& arg : copies) argv.push_back(arg.data());
+    argv.push_back(nullptr);
+    std::fflush(nullptr);
+    pid_t child = fork();
+    if (child == 0) {
+        execvp(argv[0], argv.data());
+        _exit(127);
+    }
+    int status = 0;
+    while (child > 0 && waitpid(child, &status, 0) < 0) {
+    }
+    return child > 0 && WIFEXITED(status) ? WEXITSTATUS(status) : 1;
+#endif
+}
+
+// D464, D465, P47: cromo run --target android. The APK in a temporary folder, then
+// lib/tools/android.cro chooses the device, installs and starts the app and shows
+// its log until it ends, with its exit code. Ctrl+C ends the tool and adb, and
+// cromo stops the app.
+int runAndroid(Compilation& compilation) {
+    std::string adb = findAdb();
+    if (adb.empty()) {
+        std::fputs("cromo: adb not found: install the platform tools of the SDK of Android, and set ANDROID_HOME or "
+                   "put adb in PATH (P47)\n",
+                   stderr);
+        return 1;
+    }
+    std::error_code ec;
+#ifdef _WIN32
+    std::string id = std::to_string(GetCurrentProcessId());
+#else
+    std::string id = std::to_string(getpid());
+#endif
+    fs::path folder = fs::temp_directory_path(ec) / ("cromo-android-" + id);
+    fs::create_directories(folder, ec);
+    if (ec) {
+        std::fprintf(stderr, "cromo: cannot create the folder %s: %s\n", folder.string().c_str(), ec.message().c_str());
+        return 1;
+    }
+    std::string apk = (folder / (fs::path(compilation.inputPath).stem().string() + ".apk")).string();
+    compilation.options.outputPath = apk;
+    int code = buildApk(compilation);
+    if (code == 0) {
+        Compilation tool;
+        tool.inputPath = cromo::libraryFile("tools/android.cro").string();
+        tool.options.outputPath = "android";
+#ifdef _WIN32
+        std::vector<std::wstring> toolArgs = {fs::path(adb).wstring(), fs::path(apk).wstring(),
+                                              fs::path(compilation.androidPackage).wstring()};
+        SetConsoleCtrlHandler(onInterrupt, TRUE);
+#else
+        std::vector<std::string> toolArgs = {adb, apk, compilation.androidPackage};
+        struct sigaction action {};
+        action.sa_handler = onInterrupt;
+        sigaction(SIGINT, &action, nullptr);
+#endif
+        code = run(tool, toolArgs);
+        if (interrupted) {
+            runAndWait({adb, "shell", "am", "force-stop", compilation.androidPackage});
+            code = 130;  // as the shells say Ctrl+C
+        }
+    }
     fs::remove_all(folder, ec);
     return code;
 }
@@ -868,6 +1010,13 @@ int main(int argc, char** argv) {
     if (!readOptions(args, 2, separator, isRun, compilation)) return 2;
     if (compilation.codegen.tests) return testCommand(compilation);
     if (!isRun) return compilation.apk ? buildApk(compilation) : build(compilation);
+    if (compilation.apk) {
+        if (separator != args.size()) {
+            std::fputs("cromo: an app of Android has no arguments (P47)\n", stderr);
+            return 2;
+        }
+        return runAndroid(compilation);
+    }
 
 #ifdef _WIN32
     std::vector<std::wstring> programArgs;
