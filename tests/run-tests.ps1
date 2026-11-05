@@ -136,6 +136,9 @@ function Invoke-Linux([string]$Path, [string[]]$Arguments, [hashtable]$Environme
 # A program for Android runs on the device that adb sees (P43), in a folder of
 # /data/local/tmp with the files of its test, pushed once; the command goes to the
 # shell of Android with each word in single quotes. adb gives back the exit code.
+# A program that does not end in 10 minutes fails, and its processes left on the
+# device are killed: the translator of ARM64 on x86-64 of the emulator can stop a
+# child of fork in a process with threads, before its execve.
 $deviceRoot = '/data/local/tmp/cromo-tests'
 $pushedFolders = @{}
 function Find-Adb {
@@ -167,7 +170,11 @@ function Invoke-Android([string]$Path, [string[]]$Arguments, [hashtable]$Environ
         $line += 'env ' + (($Environment.GetEnumerator() | ForEach-Object { ConvertTo-ShellWord "$($_.Key)=$($_.Value)" }) -join ' ') + ' '
     }
     $line += (@($remote) + $Arguments | ForEach-Object { ConvertTo-ShellWord $_ }) -join ' '
-    Invoke-Program $script:adbPath @('shell', $line) $StandardInput
+    $result = Invoke-Program $script:adbPath @('shell', $line) $StandardInput -TimeoutSeconds 600
+    if ($result.TimedOut) {
+        Invoke-Program $script:adbPath @('shell', "pkill -9 -f $(ConvertTo-ShellWord $remote)") | Out-Null
+    }
+    $result
 }
 
 # Writes an argument in a command line so that the program reads it back as it
@@ -190,8 +197,10 @@ function ConvertTo-Argument([string]$Text) {
 
 # Runs a program and returns its exit code, standard output and standard error,
 # read separately and decoded as UTF-8. $StandardInput, if given, are the bytes of
-# its standard input. $Environment adds variables to its environment.
-function Invoke-Program([string]$Path, [string[]]$Arguments, [byte[]]$StandardInput = $null, [hashtable]$Environment = @{}) {
+# its standard input. $Environment adds variables to its environment. With
+# $TimeoutSeconds, a program still running then is killed, with TimedOut.
+function Invoke-Program([string]$Path, [string[]]$Arguments, [byte[]]$StandardInput = $null, [hashtable]$Environment = @{},
+    [int]$TimeoutSeconds = 0) {
     $info = New-Object System.Diagnostics.ProcessStartInfo
     $info.FileName = $Path
     foreach ($variable in $Environment.GetEnumerator()) { $info.EnvironmentVariables[$variable.Key] = $variable.Value }
@@ -209,12 +218,23 @@ function Invoke-Program([string]$Path, [string[]]$Arguments, [byte[]]$StandardIn
         $process.StandardInput.Close()
     }
     $stdout = $process.StandardOutput.ReadToEndAsync()
-    $stderr = $process.StandardError.ReadToEnd()
+    $stderr = $process.StandardError.ReadToEndAsync()
+    if ($TimeoutSeconds -gt 0 -and -not $process.WaitForExit($TimeoutSeconds * 1000)) {
+        $process.Kill()
+        $process.WaitForExit()
+        return [pscustomobject]@{
+            Code     = -1
+            Out      = ''
+            Err      = "the program did not end in $TimeoutSeconds seconds"
+            TimedOut = $true
+        }
+    }
     $process.WaitForExit()
     [pscustomobject]@{
-        Code = $process.ExitCode
-        Out  = $stdout.Result -replace "`r`n", "`n"
-        Err  = $stderr -replace "`r`n", "`n"
+        Code     = $process.ExitCode
+        Out      = $stdout.Result -replace "`r`n", "`n"
+        Err      = $stderr.Result -replace "`r`n", "`n"
+        TimedOut = $false
     }
 }
 

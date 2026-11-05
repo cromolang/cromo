@@ -1,0 +1,32 @@
+// Other programs on Linux (D307), started by two threads at once: each child only
+// makes system calls until execve, and the pipes of one are not left open in the
+// other. Not on android-arm64, whose programs the emulators of x86-64 run with the
+// translator of ARM64 of Android: there the child of a fork in a process with
+// threads can stop in a lock of the translator before its execve.
+// target: linux-x86_64 linux-arm64 android-x86_64
+// expect-output: parallel 20
+import std.process
+import std.thread
+
+i64 echoes(string word) {
+    i64 right = 0
+    for (i64 i = 0; i < 10; i++) {
+        if (process.run("echo", [word.copy()]).out == word + "\n") {
+            right++
+        }
+    }
+    ret right
+}
+
+i32 main() {
+    i64 one = 0
+    i64 two = 0
+    thread.Thread first = thread.Thread([ref one]() { one = echoes("one") })
+    thread.Thread second = thread.Thread([ref two]() { two = echoes("two") })
+    first.start()
+    second.start()
+    first.join()
+    second.join()
+    println("parallel {}", one + two)
+    ret 0
+}
