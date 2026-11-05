@@ -1,0 +1,5 @@
+// A module whose file is read from its own folder (D470).
+
+public string note() {
+    ret string(embed("texts/note.txt"))
+}

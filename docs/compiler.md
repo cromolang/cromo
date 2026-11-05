@@ -145,6 +145,9 @@ The compiler parses the format string at compile time and translates it into a s
 
 No string is parsed at runtime.
 
+### `embed` (D470, M48)
+Sema reads the file when it checks the call, from the folder of the path of the source file in `Diagnostics`, and replaces the call with a `StringLiteralExpr` of its bytes followed by `.bytes()`: codegen writes those bytes as the constant of a string literal, once for the same bytes, and `bytes()` of the core copies them into the list. No other part of the compiler knows `embed`.
+
 ### Modules (D50, D126, M7)
 - **Loading.** The driver (`src/main.cpp`) parses the standard library and the main file, then the files that they import, and the ones these import, once each: a file is known by its full path. Every file has its index in `SourceLocation::file` and its `ModuleFile` in the `Module`: the name of the module, its imports, with the files each one brings, and whether it writes `import unsafe`. All the declarations end up in one `Module`, compiled together, so two modules can import each other.
 - **Names.** Sema keeps the names of each file apart. A name is looked for in the file itself, then among the public names of the files it imports, then in the standard library (D131); two imports that give it are an error at the point of use, which then writes the module in front. `geometry.area(c)` reaches the parser as a method call on a name: sema recognizes the name of an import and turns it into a call with its module. In a type the parser reads `geometry.Circle` directly.
@@ -527,6 +530,7 @@ Each milestone lists the decisions still open that are needed **before** writing
 | **M45** | `std.gui`: panels that scroll, and `ListView` | none: D460-D462, P46 |
 | **M46** | Android: the permission of the network, and `cromo run --target android` | none: D463-D465, P47 |
 | **M47** | `std.gui`: `Switch`, `Slider`, `Dialog`, the snackbar and the images of the lists | none: D466-D469, P48 |
+| **M48** | `embed`: the files in the program, and the images of the lists from bytes | none: D470, P49 |
 | **Later** | Packages: `cromo.mod`, `cromo.sum`, `cromo get`, the archives of the tags over HTTPS, a reader of tar (D376–D391) | none: D376–D391 |
 | **Last** | Compiler written in Cromo that compiles itself and makes the same archives, when the language is mature (§2, D147, D290, D291) | |
 

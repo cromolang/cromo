@@ -46,6 +46,8 @@ public:
 
     // The text of a source file, for the conditions of assert (D351).
     const std::string& text(int file) const { return files_[file]->text; }
+    // Its path, for the files that embed() reads next to it (D470).
+    const std::string& path(int file) const { return files_[file]->path; }
     int errorCount() const { return errorCount_; }
 
     // While muted nothing is reported or counted: sema uses it to check an

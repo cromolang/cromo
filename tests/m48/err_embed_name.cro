@@ -1,0 +1,10 @@
+// embed is a name of the language (D470).
+// expect-error: 'embed' is a built-in name
+list<u8> embed(string file) {
+    list<u8> none
+    ret none
+}
+
+i32 main() {
+    ret 0
+}

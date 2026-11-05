@@ -591,7 +591,7 @@ i32 main() {
 - Function values are moved and not copied; an empty one, as a variable without a value, is a panic when called (D189).
 - A parameter `const func(...)` receives a function that does not modify what it captures, as a lambda of C++ without `mutable`: a lambda without `ref` captures, a named function, or a function value. Several threads can call it at once, as the handler of `http.serve` (D253). A thread cannot call a parameter `func` that is not `const`.
 
-## 16. Arrays, maps, lists, text and bytes (D196–D200, D304–D317)
+## 16. Arrays, maps, lists, text and bytes (D196–D200, D304–D317, D470)
 
 ```cromo
 i32[4] scores                    // four i32, all 0, where the variable is
@@ -610,6 +610,7 @@ string word = "città"
 u8 first = word[0]               // a byte: the length is in bytes (D12)
 list<u8> bytes = word.bytes()
 string again = string(bytes)     // throws when the bytes are not UTF-8
+list<u8> logo = embed("images/logo.png")  // a file read by the compiler, in the program
 string part = word.slice(0, 3)   // the bytes from 0 to 3, 3 excluded
 string line = format("{} is {}", "anna", a)
 
@@ -623,6 +624,7 @@ string all = join(names, ", ")
 - An array is a value, as a struct: it is copied when its elements are simple, otherwise moved; `a[i]` is checked (D30). `i32[3][4]` is three arrays of four (D206).
 - A `map` is a hash table. Its keys are the numbers, `bool`, `string` and the structs that implement `Key` with `u64 hash() const` and `bool equals(Self other) const` (D198).
 - `format` writes into a string as `println` writes on the screen (D200).
+- `embed("file")` is a built-in function that gives the bytes of a file, which the compiler reads and puts in the program, as `#embed` of C23 (D470): the path starts from the folder of the source file that writes it, and a file that is not there is an error of the compiler. So a program carries its images and its data with it, in the executable or in the APK of Android. Each call gives a `list<u8>` of its own, a copy.
 - `[a, b, c]` makes a list: the type of its elements is the one expected, or the one of the first element, and an empty `[]` needs the type expected. The elements are given to the list as to `add()`: a variable that is not simple is written `move x`, or copied (D308).
 - The functions of text are methods of `string` (D304): `find`, `findFrom`, `findLast`, `contains`, `startsWith`, `endsWith`, `split`, `trim`, `trimStart`, `trimEnd`, `replace`, `upper`, `lower`, `repeat`, and `join(parts, separator)`. The indices are in bytes, and a text not found is -1 (D305); `upper` and `lower` change only the letters of ASCII (D306).
 

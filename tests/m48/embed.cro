@@ -1,0 +1,27 @@
+// embed reads a file when compiling, from the folder of the source file that names
+// it, and gives its bytes as they are, as a list<u8> of its own (D470).
+// expect-output: Hello from a file
+// expect-output: 6 bytes: 0 255 13 10 0 65
+// expect-output: empty: 0
+// expect-output: a copy: 7 then 6
+// expect-output: next to the module
+// expect-output: the same twice: true
+import modules.notes
+
+i32 main() {
+    println("{}", string(embed("data/hello.txt")))
+    list<u8> bytes = embed("data/bytes.bin")
+    print("{} bytes:", bytes.len())
+    for (u8 b in bytes) {
+        print(" {}", b)
+    }
+    println("")
+    println("empty: {}", embed("data/empty.txt").len())
+
+    // Each call gives a list of its own, which can change.
+    bytes.add(1)
+    println("a copy: {} then {}", bytes.len(), embed("data/bytes.bin").len())
+    println("{}", notes.note())
+    println("the same twice: {}", notes.note() == string(embed("modules/texts/note.txt")))
+    ret 0
+}

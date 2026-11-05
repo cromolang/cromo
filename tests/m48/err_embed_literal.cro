@@ -1,0 +1,8 @@
+// The name of the file is a string literal, which the compiler reads (D470).
+// expect-error: embed takes the name of a file as a string literal: embed("logo.png") (D470)
+i32 main() {
+    string name = "data/hello.txt"
+    list<u8> text = embed(name)
+    list<u8> none = embed()
+    ret 0
+}

@@ -9,6 +9,9 @@
 #include <charconv>
 #include <cstring>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <map>
 #include <optional>
 #include <set>
@@ -30,11 +33,23 @@ bool isPrintFunction(const std::string& name) {
     return name == "print" || name == "println" || name == "eprint" || name == "eprintln" || name == "format";
 }
 
-// The functions that every program can call without declaring them (D38, D102).
+// The functions that every program can call without declaring them (D38, D102, D470).
 bool isWrapFunction(const std::string& name) { return name == "wrapAdd" || name == "wrapSub" || name == "wrapMul"; }
 
 bool isBuiltinFunction(const std::string& name) {
-    return isPrintFunction(name) || name == "panic" || name == "assert" || isWrapFunction(name);
+    return isPrintFunction(name) || name == "panic" || name == "assert" || isWrapFunction(name) || name == "embed";
+}
+
+// The bytes of a file for embed() (D470), or why it cannot be read.
+std::string readEmbedded(const std::filesystem::path& file, std::string& bytes) {
+    std::error_code ec;
+    if (std::filesystem::is_directory(file, ec)) return file.string() + " is a folder";
+    if (!std::filesystem::exists(file, ec)) return "there is no file " + file.string();
+    std::ifstream in(file, std::ios::binary);
+    if (!in) return "cannot read " + file.string();
+    bytes.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    if (in.bad()) return "cannot read " + file.string();
+    return "";
 }
 
 // The built-in functions of the `unsafe` dialect, only in the standard library (D98).
@@ -2392,6 +2407,29 @@ private:
         bool panics = statement.expr->kind == ExprKind::Call &&
                       static_cast<const CallExpr&>(*statement.expr).intrinsic == Intrinsic::Panic;
         return panics ? Flow::Returns : Flow::Continues;
+    }
+
+    // `embed("logo.png")` (D470): the bytes of a file, read by the compiler from the
+    // folder of the source file that names it. It becomes a string literal with
+    // those bytes and its bytes(): the list is a copy of the bytes in the program.
+    Type checkEmbed(ExprPtr& expr) {
+        auto& call = static_cast<CallExpr&>(*expr);
+        if (call.args.size() != 1 || call.args[0]->kind != ExprKind::StringLiteral) {
+            diag_->error(call.loc, "embed takes the name of a file as a string literal: embed(\"logo.png\") (D470)");
+            checkIgnored(call.args);
+            return Type::error();
+        }
+        const std::string& name = static_cast<const StringLiteralExpr&>(*call.args[0]).value;
+        std::filesystem::path file = std::filesystem::path(diag_->path(call.loc.file)).parent_path() / name;
+        std::string bytes;
+        std::string problem = readEmbedded(file.lexically_normal(), bytes);
+        if (!problem.empty()) {
+            diag_->error(call.args[0]->loc, "cannot embed " + name + ": " + problem + " (D470)");
+            return Type::error();
+        }
+        SourceLocation loc = call.loc;
+        expr = std::make_unique<MethodCallExpr>(loc, std::make_unique<StringLiteralExpr>(loc, std::move(bytes)), "bytes");
+        return checkMethodCall(expr);
     }
 
     // `assert(condition)` (D351): a panic when it is false, with the condition as
@@ -5090,6 +5128,7 @@ private:
             if (call.callee == "panic") return checkIntrinsic(call, Intrinsic::Panic);
             if (call.callee == "assert") return checkAssert(call);
             if (isWrapFunction(call.callee)) return checkWrap(expr);
+            if (call.callee == "embed") return checkEmbed(expr);
         }
         if (!qualified && isUnsafe(call.loc)) {
             if (std::optional<Intrinsic> intrinsic = findIntrinsic(call.callee)) {

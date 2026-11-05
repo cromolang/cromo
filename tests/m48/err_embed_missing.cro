@@ -1,0 +1,6 @@
+// A file that is not there is an error of the compiler (D470).
+// expect-error: cannot embed data/missing.png: there is no file
+i32 main() {
+    list<u8> logo = embed("data/missing.png")
+    ret 0
+}

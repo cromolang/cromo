@@ -2176,6 +2176,16 @@ w.showDialog(ask)
 ### D469. The images of the lists are round
 *2026-11-05.* An item of a `ListView` can have an image in place of its icon: a circle of 40 pixels, as the photos of the contacts in the apps of mail and of messages.
 
+### D470. `embed`: the files in the program
+*2026-11-05.* `embed("images/logo.png")` gives the bytes of a file that the compiler reads and puts in the program, as `#embed` of C23, `@embedFile` of Zig and `//go:embed`: a program carries its images and its data with it on every system, in the executable or in the APK of Android, which has no folder next to the program. The path starts from the folder of the source file that writes it, as `#include` of C, so that a module finds its files next to itself whoever imports it and wherever the compiler runs; a file that is not there is an error of the compiler. Each call gives a `list<u8>` of its own, a copy of the bytes in the program, which the program can change, as the list of `fs.readBytes`; a text is `string(embed("help.txt"))`. A file changed needs the program compiled again.
+
+```cromo
+// draft: the names of the API of std.gui are not decided
+gui.ImageBox logo = w.add(gui.ImageBox("", 16, 16, 64, 64))
+logo.setBytes(embed("images/logo.png"))
+string help = string(embed("help.txt"))
+```
+
 ---
 
 ## Proposed
@@ -2356,6 +2366,12 @@ A component keeps the distances from the edges of its parent, the content of the
 - `w.showSnackbar(text)` and `w.showSnackbarAction(text, action, func())`: at the bottom of the content, above the navigation bar, for 4 seconds, gray-800 with the text white and the action indigo-300; a new one takes the place of the one shown, and the action hides it after calling the handler.
 - A `ListView` has also `insertItem(index, icon, title, subtitle, detail)`, which keeps the item chosen, and `itemIcon`, `itemSubtitle` and `itemDetail`, as `itemTitle`: so a program can put back an item removed, as the action "Undo" of a snackbar does.
 - `setItemImage(index, file)` of a `ListView`, `""` to remove it: the image is read and decoded by the thread that calls it, as that of an `ImageBox`, cut to the square at its center and made round; the text of a row with an image starts at 72 pixels.
+
+### P49. `embed` (D470)
+- Its argument is a string literal, since the compiler reads the file when it checks the call: a name made while the program runs, or another argument, is an error. `embed` is a built-in name, as `format`: a function cannot have it.
+- The file is read as it is, byte by byte, with no limit of size; a folder, or a file that is not there, is an error with the path looked for. An absolute path is taken as it is.
+- The bytes are in the program as those of a string literal (D100), once however many calls name the same bytes, and `embed` gives their copy, as `bytes()` of that string.
+- A `ListView` has `setItemImageBytes(index, list<u8>)`, as `setBytes` of an `ImageBox`: an image in memory, as `embed` gives it, and none without bytes.
 ---
 
 ## Open

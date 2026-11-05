@@ -1483,20 +1483,17 @@ public struct ListView : Component {
     // A round image in place of the icon of an item (D469), "" for none: read and
     // decoded by this thread, as that of an image box.
     public void setItemImage(i64 index, string file) const {
-        i64 me = id
-        addr pixels
+        list<u8> bytes
         if (file.len() > 0) {
-            i32 w = 0
-            i32 h = 0
-            addr whole = decodeImage(file, fs.readBytes(file), ref w, ref h)
-            pixels = cromo_gui_image_round(whole, w, h, avatarPixels)
-            cromo_gui_image_free(whole)
+            bytes = fs.readBytes(file)
         }
-        withData([me, index, pixels](ref Shared data) {
-            i64 p = listIndex(ref data, me, index)
-            dropImage(ref data.parts[p], index)
-            data.parts[p].images[index] = pixels
-        })
+        setRoundImage(id, index, file, bytes)
+    }
+
+    // An image in memory for the item, as embed() gives it (D470), or none
+    // without bytes.
+    public void setItemImageBytes(i64 index, list<u8> bytes) const {
+        setRoundImage(id, index, "", bytes)
     }
 
     // Scrolls the list so that the item is seen.
@@ -2456,6 +2453,24 @@ addr decodeImage(string file, list<u8> bytes, ref i32 w, ref i32 h) {
         throw Error(format("cannot read {}: {}", what, string(why)))
     }
     ret pixels
+}
+
+// Decodes the image of an item of a list on this thread and makes it round, or
+// removes it when there is neither a file nor bytes.
+void setRoundImage(i64 me, i64 index, string file, list<u8> bytes) {
+    addr pixels
+    if (file.len() > 0 || bytes.len() > 0) {
+        i32 w = 0
+        i32 h = 0
+        addr whole = decodeImage(file, bytes, ref w, ref h)
+        pixels = cromo_gui_image_round(whole, w, h, avatarPixels)
+        cromo_gui_image_free(whole)
+    }
+    withData([me, index, pixels](ref Shared data) {
+        i64 p = listIndex(ref data, me, index)
+        dropImage(ref data.parts[p], index)
+        data.parts[p].images[index] = pixels
+    })
 }
 
 // The image of an item of a list goes: its pixels are freed, its texture is

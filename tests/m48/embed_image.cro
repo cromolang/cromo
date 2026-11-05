@@ -1,0 +1,36 @@
+// The images embedded in the program, in an ImageBox and in the items of a list
+// (D470, D469).
+// target: windows linux-x86_64
+// program-env: SDL_VIDEO_DRIVER=offscreen
+// expect-output: box 3x2
+// expect-output: items set, and removed
+// expect-output: not an image: cannot read the image: image not of any known type, or corrupt
+import std.gui
+import std.time
+
+i32 main() {
+    gui.Window w = gui.Window("Embedded", 390, 300)
+    gui.ImageBox box = w.add(gui.ImageBox("", 16, 16, 64, 64))
+    box.setBytes(embed("../m39/images/tiny.png"))
+    println("box {}x{}", box.imageWidth(), box.imageHeight())
+    gui.ListView people = w.add(gui.ListView(16, 96, 358, 180))
+    people.addItem(gui.Icon.User, "Ada", "", "")
+    people.addItem(gui.Icon.User, "Alan", "", "")
+    w.start()
+    people.setItemImageBytes(0, embed("../m39/images/tiny.png"))
+    people.setItemImageBytes(1, embed("../m39/images/tiny.jpg"))
+    time.msleep(50)
+    list<u8> none
+    people.setItemImageBytes(0, none)
+    people.removeItem(1)
+    time.msleep(50)
+    println("items set, and removed")
+    try {
+        people.setItemImageBytes(0, embed("../m39/images/not_an_image.png"))
+    } catch (Error e) {
+        println("not an image: {}", e.message())
+    }
+    w.close()
+    w.wait()
+    ret 0
+}

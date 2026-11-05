@@ -118,10 +118,10 @@ public bool isBuiltinType(string name) {
     }
 }
 
-// The functions that every program calls without declaring them (D38, D102, D396).
+// The functions that every program calls without declaring them (D38, D102, D396, D470).
 public bool isBuiltinFunction(string name) {
     switch (name) {
-        case "print", "println", "eprint", "eprintln", "format", "panic", "assert", "wrapAdd", "wrapSub", "wrapMul" {
+        case "print", "println", "eprint", "eprintln", "format", "panic", "assert", "wrapAdd", "wrapSub", "wrapMul", "embed" {
             ret true
         }
         default {

@@ -1,0 +1,7 @@
+// A folder cannot be embedded (D470).
+// expect-error: cannot embed data:
+// expect-error: is a folder
+i32 main() {
+    list<u8> all = embed("data")
+    ret 0
+}

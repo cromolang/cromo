@@ -1,15 +1,15 @@
 // Example 18: an app as those of a phone, with the bar at the top, the bar of the
 // pages at the bottom, the icons of Lucide, lists that scroll, dialogs, a snackbar,
-// switches and a slider.
+// switches and a slider, and images embedded in the program.
 //
 // Decided: the icons of Lucide as the cases of gui.Icon (D448, D449), the bars of
 //          the apps (D450), the pages of a navigation bar (D451), the window of
 //          an app of Android and its back key (D456, D457), the panels that
 //          scroll (D460), the lists and their item chosen (D461, D462), the
 //          switches and the sliders (D466), the dialogs (D467), the snackbar
-//          (D468)
+//          (D468), the round images of the lists (D469), embed (D470)
 // Draft:   the names of the components and of their methods (P39, P41, P42, P45,
-//          P46, P48)
+//          P46, P48, P49)
 //
 // cromo build --target android 18_app.cro writes 18_app.apk (D453).
 import std.gui
@@ -22,6 +22,24 @@ void showContacts(gui.ListView people, string searched) {
     for (i64 i = 0; i < names.len(); i++) {
         if (names[i].lower().contains(searched.lower())) {
             people.addItem(gui.Icon.User, names[i], format("{}@example.com", names[i].lower().split(" ")[0]), "")
+            people.setItemImageBytes(people.count() - 1, faceOf(names[i]))
+        }
+    }
+}
+
+// The face of a person, embedded in the program (D470): the app needs no files
+// next to it, on the phone too. The others have the icon of their item.
+list<u8> faceOf(string name) {
+    switch (name) {
+        case "Ada Lovelace" {
+            ret embed("images/ada.png")
+        }
+        case "Charles Babbage" {
+            ret embed("images/charles.png")
+        }
+        default {
+            list<u8> none
+            ret none
         }
     }
 }
@@ -47,6 +65,8 @@ i32 main() {
     for (i64 day = 2; day <= 30; day++) {
         messages.addItem(gui.Icon.Mail, "The workshop", format("The report of day {}", day), format("Oct {}", day))
     }
+    messages.setItemImageBytes(0, faceOf("Ada Lovelace"))
+    messages.setItemImageBytes(1, faceOf("Charles Babbage"))
     messages.onChoose([messages](i64 index) { println("open '{}'", messages.itemTitle(index)) })
     gui.Button write = inbox.add(gui.Button("Write", 262, 549, 112, 40))
     write.setIcon(gui.Icon.Pencil)
@@ -70,6 +90,7 @@ i32 main() {
         messages.removeItem(index)
         w.showSnackbarAction("Message deleted", "Undo", [messages, index, icon, move title, move line, move when]() {
             messages.insertItem(index, icon, title, line, when)
+            messages.setItemImageBytes(index, faceOf(title))
         })
     })
     top.addAction(gui.Icon.Trash2, [w, ask, messages]() {
