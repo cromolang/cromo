@@ -58,10 +58,10 @@ The guide is also available as a PDF, in English and in Italian: use the **PDF**
 
 ## The state of Cromo
 
-Cromo is young. The current version is 0.33, and the language can still change before version 1.0. Every design decision is recorded, with its reasons, in the file `docs/decisions.md` of the [repository](https://github.com/cromolang/cromo), next to the draft specification `docs/language.md`.
+Cromo is young. The current version is 0.49, and the language can still change before version 1.0. Every design decision is recorded, with its reasons, in the file `docs/decisions.md` of the [repository](https://github.com/cromolang/cromo), next to the draft specification `docs/language.md`.
 
 Cromo runs on Windows x64 and Linux x64, and each version compiles programs for both systems, and for Linux on ARM64.
 
 ## The name
 
-*Cromo* is the Italian word for chromium, element 24 of the periodic table, whose symbol Cr appears in the logo. On the web the language is *cromolang*, as in [cromolang.org](https://cromolang.org).
+*Cromo* is the Italian name of element 24 of the periodic table, a hard and bright metal. On the web the language is *cromolang*, as in [cromolang.org](https://cromolang.org).

@@ -166,6 +166,8 @@ h2 { font: 700 clamp(30px, 3.6vw, 42px)/1.1 var(--display); letter-spacing: -0.0
 .modes li { display: grid; grid-template-columns: 74px 1fr; gap: 14px; align-items: baseline; padding: 14px 16px; border: 1px solid var(--border); border-radius: 12px; background: var(--bg-2); }
 .modes li b { font: 500 14px var(--mono); color: var(--accent); }
 .modes li span { color: var(--muted); font-size: 14.5px; }
+.shot { margin: 0; text-align: center; }
+.shot img { max-width: 100%; height: auto; }
 
 /* Examples with tabs */
 .tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }

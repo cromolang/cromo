@@ -190,6 +190,11 @@ th, td { text-align: left; padding: 9px 14px; border-bottom: 1px solid var(--bor
 th { background: var(--surface-2); font-weight: 600; }
 tr:last-child td { border-bottom: 0; }
 
+/* Images: the screenshots of the windows and of the apps */
+figure { margin: 4px 0 24px; text-align: center; }
+figure img { max-width: 100%; max-height: 620px; height: auto; border-radius: 12px; }
+figcaption { margin-top: 8px; color: var(--dim); font-size: 14px; }
+
 /* Previous and next */
 .pager { max-width: 780px; margin: 56px auto 0; display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 .pager a { display: block; padding: 14px 18px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); color: var(--text); font-weight: 500; }
@@ -284,6 +289,9 @@ body.print li { margin: 0.8mm 0; text-align: justify; hyphens: auto; }
 body.print .contents li { margin: 0; text-align: left; hyphens: manual; }
 body.print strong { font-weight: 600; }
 body.print code { font-size: 0.84em; color: #0b5d72; background: #eef4f7; border: 0; padding: 0.05em 0.28em; border-radius: 2px; hyphens: manual; }
+body.print figure { margin: 4mm 0; break-inside: avoid; }
+body.print figure img { max-height: 120mm; border-radius: 2mm; }
+body.print figcaption { margin-top: 2mm; font-size: 8.5pt; color: #4d596b; }
 body.print blockquote { margin: 3.5mm 0; padding: 2.5mm 4mm; border: 0; border-left: 2pt solid #0ea5c6; border-radius: 0 3px 3px 0; background: #f1f8fa; break-inside: avoid; }
 
 /* Code */

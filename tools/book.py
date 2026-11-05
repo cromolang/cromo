@@ -9,9 +9,13 @@ Each language is a folder of book/ with SUMMARY.md, the list of its chapters:
     - [Getting started](getting-started.md)
 
 The chapters are written in a subset of Markdown: headings, paragraphs, lists,
-tables, block quotes, code blocks, and inline code, bold, italic and links. The
-pages go to <out>/book/<language>/, with print.html, the whole guide in one page
-for the PDF, and search.json for the search box.
+tables, block quotes, code blocks, images on a line of their own, and inline code,
+bold, italic and links. The pages go to <out>/book/<language>/, with print.html,
+the whole guide in one page for the PDF, and search.json for the search box.
+
+The images are in book/images/, for every language: ![The text](images/app.png)
+shows one with its text below it. --check puts the folder next to the programs
+too, so that an example can embed() a file of it.
 
 A code block says its language and some flags after the backticks:
 
@@ -85,7 +89,7 @@ LANGUAGES = {
 KEYWORDS = set('''struct interface enum import extern unsafe const void if else for in break
 continue ret switch case default try catch finally throw ref move public true false func'''.split())
 TYPES = set('i8 i16 i32 i64 u8 u16 u32 u64 f32 f64 bool char string list map addr Self'.split())
-BUILTINS = set('print println eprint eprintln format panic assert'.split())
+BUILTINS = set('print println eprint eprintln format panic assert wrapAdd wrapSub wrapMul embed'.split())
 
 
 # ---- Highlighting ----
@@ -222,6 +226,11 @@ def parse(text):
                 i += 1
             blocks.append(Block('quote', blocks=parse('\n'.join(body))))
             continue
+        image = re.match(r'^!\[([^\]]*)\]\(([^)\s]+)\)\s*$', line)
+        if image:
+            blocks.append(Block('image', text=image.group(1), source=image.group(2)))
+            i += 1
+            continue
         if line.startswith('|'):
             rows = []
             while i < len(lines) and lines[i].startswith('|'):
@@ -251,7 +260,7 @@ def parse(text):
             blocks.append(Block('list', ordered=ordered, items=[' '.join(it) for it in items]))
             continue
         body = []
-        while i < len(lines) and lines[i].strip() and not re.match(r'^(```|#{1,4}\s|>|\||\s*([-*]|\d+\.)\s)', lines[i]):
+        while i < len(lines) and lines[i].strip() and not re.match(r'^(```|#{1,4}\s|>|\||!\[|\s*([-*]|\d+\.)\s)', lines[i]):
             body.append(lines[i].strip())
             i += 1
         blocks.append(Block('paragraph', text=' '.join(body)))
@@ -281,6 +290,11 @@ def render(blocks, links, headings):
             out.append(f'<div class="table-wrap"><table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></div>')
         elif b.kind == 'quote':
             out.append('<blockquote>' + render(b.blocks, links, []) + '</blockquote>')
+        elif b.kind == 'image':
+            # The pages of each language are in book/<language>/, the images in book/images/.
+            alt = html.escape(b.text.replace('`', ''))
+            out.append(f'<figure><img src="../{html.escape(b.source)}" alt="{alt}">'
+                       f'<figcaption>{inline(b.text, links)}</figcaption></figure>')
         elif b.kind == 'code':
             lines = b.text.split('\n')
             hidden = 0
@@ -558,6 +572,9 @@ def build(out, checked=False):
     os.makedirs(target, exist_ok=True)
     shutil.copy(os.path.join(BOOK, 'book.css'), target)
     shutil.copy(os.path.join(BOOK, 'book.js'), target)
+    images = os.path.join(BOOK, 'images')
+    if os.path.isdir(images):
+        shutil.copytree(images, os.path.join(target, 'images'), dirs_exist_ok=True)
     for language in LANGUAGES:
         book_title, chapters = read_summary(language)
         folder = os.path.join(target, language)
@@ -612,6 +629,8 @@ def check(cromo):
                 continue
             blocks = parse(open(os.path.join(BOOK, language, source), encoding='utf-8').read())
             work = tempfile.mkdtemp(prefix=f'book-{language}-')
+            if os.path.isdir(os.path.join(BOOK, 'images')):  # for embed()
+                shutil.copytree(os.path.join(BOOK, 'images'), os.path.join(work, 'images'))
             number = 0
             for i, b in enumerate(blocks):
                 if b.kind != 'code':

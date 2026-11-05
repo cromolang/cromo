@@ -17,6 +17,7 @@
 - [Files, processes and time](system.md)
 - [Networking and HTTP](networking.md)
 - [JSON](json.md)
+- [Windows and apps](gui.md)
 - [Calling C](c-interop.md)
 - [Final project: a web service](web-service.md)
 ---

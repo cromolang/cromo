@@ -58,10 +58,10 @@ La guida è disponibile anche in PDF, in inglese e in italiano: usa il pulsante 
 
 ## Lo stato di Cromo
 
-Cromo è giovane. La versione attuale è la 0.33, e il linguaggio può ancora cambiare prima della versione 1.0. Ogni decisione di progetto è registrata, con le sue motivazioni, nel file `docs/decisions.md` del [repository](https://github.com/cromolang/cromo), accanto alla bozza di specifica `docs/language.md`.
+Cromo è giovane. La versione attuale è la 0.49, e il linguaggio può ancora cambiare prima della versione 1.0. Ogni decisione di progetto è registrata, con le sue motivazioni, nel file `docs/decisions.md` del [repository](https://github.com/cromolang/cromo), accanto alla bozza di specifica `docs/language.md`.
 
 Cromo funziona su Windows x64 e Linux x64, e ogni versione compila programmi per entrambi i sistemi, e per Linux su ARM64.
 
 ## Il nome
 
-*Cromo* è il nome italiano dell'elemento 24 della tavola periodica (in inglese *chromium*), il cui simbolo, Cr, compare nel logo. Sul web il linguaggio si chiama *cromolang*, come in [cromolang.org](https://cromolang.org).
+*Cromo* è il nome italiano dell'elemento 24 della tavola periodica, un metallo duro e lucente. Sul web il linguaggio si chiama *cromolang*, come in [cromolang.org](https://cromolang.org).

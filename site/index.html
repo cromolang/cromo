@@ -125,8 +125,8 @@ sum: 120 µs</pre></div>
       <div class="stat"><b>1</b><span>command: compiler, linker, formatter and language server</span></div>
       <div class="stat"><b>0</b><span>dependencies: no libc, no Windows SDK</span></div>
       <div class="stat"><b>32 KB</b><span>for a hello world, statically linked</span></div>
-      <div class="stat"><b>3</b><span>targets: Windows x64, Linux x64 and Linux ARM64</span></div>
-      <div class="stat"><b>419</b><span>design decisions, all written down</span></div>
+      <div class="stat"><b>4</b><span>targets: Windows x64, Linux x64, Linux ARM64 and Android</span></div>
+      <div class="stat"><b>472</b><span>design decisions, all written down</span></div>
     </div></div>
   </div>
 
@@ -158,8 +158,8 @@ sum: 120 µs</pre></div>
         </div>
         <div class="card">
           <div class="icon"><svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><rect x="2.5" y="4" width="15" height="10" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M7 17h6M6 8l2 1.5L6 11m4 0h3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
-          <h3>Windows and Linux</h3>
-          <p>Build for Windows, Linux or Linux on ARM64 from either system with <code>--target windows</code>, <code>--target linux</code> or <code>--target linux-arm64</code>. A module can add <code>fs_windows.cro</code> and <code>fs_linux.cro</code> next to <code>fs.cro</code>.</p>
+          <h3>Windows, Linux and Android</h3>
+          <p>From either system, <code>--target</code> builds for <code>windows</code>, <code>linux</code>, <code>linux-arm64</code> or <code>android</code>, which writes the signed APK of an app. A module can add <code>fs_windows.cro</code> and <code>fs_linux.cro</code> next to <code>fs.cro</code>.</p>
         </div>
         <div class="card">
           <div class="icon"><svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><path d="M7 4 3 10l4 6M13 4l4 6-4 6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
@@ -210,6 +210,22 @@ i32 main() {
     println("{}", name)
                   <span class="out-err">^</span></pre></div>
       </div>
+    </div>
+  </section>
+
+  <section id="apps">
+    <div class="wrap split">
+      <div>
+        <div class="kicker">Windows and apps</div>
+        <h2>One program, <span class="chrome">desktop and phone</span></h2>
+        <p class="section-lead" style="margin-bottom:0"><code>std.gui</code> draws its windows and components itself, with SDL3 inside the program: the same look on Windows and on Linux, light or dark. Compiled with <code>--target android</code>, the same program is an app.</p>
+        <ul class="modes">
+          <li><b>std.gui</b><span>Buttons, text boxes, lists that scroll, dialogs, app bars and the icons of Lucide, with anchors that fit them to every size.</span></li>
+          <li><b>android</b><span><code>cromo build --target android</code> writes and signs the APK by itself, with no Android SDK and no Java; <code>cromo run --target android</code> starts it on the phone.</span></li>
+          <li><b>embed</b><span><code>embed("logo.png")</code> puts a file inside the program, so an app carries its images.</span></li>
+        </ul>
+      </div>
+      <figure class="shot"><img src="app.png" width="633" height="620" alt="The same Cromo program as a window on Windows and as an app on an Android phone" loading="lazy"></figure>
     </div>
   </section>
 
@@ -387,6 +403,7 @@ Hello, world!
 <span class="prompt">$ </span><span class="cmd">cromo build</span>                 <span class="out-dim"># main.cro of the folder</span>
 <span class="prompt">$ </span><span class="cmd">cromo build --release</span>       <span class="out-dim"># optimized</span>
 <span class="prompt">$ </span><span class="cmd">cromo build --target linux</span>  <span class="out-dim"># an ELF, from Windows</span>
+<span class="prompt">$ </span><span class="cmd">cromo run --target android</span>  <span class="out-dim"># the app, on the phone</span>
 <span class="prompt">$ </span><span class="cmd">cromo update</span>                <span class="out-dim"># the latest signed version</span>
 <span class="prompt">$ </span><span class="cmd">cromo fmt .</span>                 <span class="out-dim"># one style, no options</span>
 <span class="prompt">$ </span><span class="cmd">cromo lsp</span>                   <span class="out-dim"># for the editors</span>
@@ -463,12 +480,12 @@ cromo @VERSION@ (LLVM 23.1.4)</pre>
     <div class="wrap">
       <div class="kicker">Roadmap</div>
       <h2>Built in the open, <span class="chrome">one milestone at a time</span></h2>
-      <p class="section-lead">Every choice is decided first and written down with its reasons, then implemented with tests on Windows and Linux. Thirty-four milestones, M0 to M33, are done.</p>
-      <div class="progress-label"><span>M0 – M33 done</span><span>34 of 34 numbered milestones</span></div>
-      <div class="progress" aria-hidden="true"><div></div></div>
+      <p class="section-lead">Every choice is decided first and written down with its reasons, then implemented with tests on Windows and Linux. Forty-nine milestones, from M0 to M49, are done; M34 is next.</p>
+      <div class="progress-label"><span>M0 – M49 done, but M34</span><span>49 of 50 numbered milestones</span></div>
+      <div class="progress" aria-hidden="true"><div style="width:98%"></div></div>
       <div class="roadmap">
         <div class="phase">
-          <h3>Done <span class="badge done">M0 – M33</span></h3>
+          <h3>Done <span class="badge done">M0 – M49</span></h3>
           <ul class="steps">
             <li><b>M0–2</b><span>LLVM backend, numbers, control flow, structs, RAII</span></li>
             <li><b>M3–6</b><span>Ownership, generics, interfaces, lists, strings, enums, exceptions</span></li>
@@ -495,6 +512,11 @@ cromo @VERSION@ (LLVM 23.1.4)</pre>
             <li><b>M31</b><span>The standard input, <code>sort</code> and <code>sortBy</code>, <code>c ? a : b</code></span></li>
             <li><b>M32</b><span>Sema in Cromo begins: the loader and the names of the modules</span></li>
             <li><b>M33</b><span><code>=</code> copies, as in C++; <code>move</code> hands over for free</span></li>
+            <li><b>M35</b><span>Windows programs with an icon, and without a console</span></li>
+            <li><b>M36–41</b><span><code>std.gui</code>: windows and components on SDL3, text with Inter, the icons of Lucide</span></li>
+            <li><b>M42–44</b><span>Android: the APK written by <code>cromo</code>, <code>std.gui</code> on a phone</span></li>
+            <li><b>M45–47</b><span>Lists that scroll, dialogs, snackbars; <code>cromo run</code> on the phone</span></li>
+            <li><b>M48–49</b><span><code>embed</code> for the files of a program; the keyboard on the screen</span></li>
           </ul>
         </div>
         <div class="phase">
@@ -569,7 +591,7 @@ cromo @VERSION@ (LLVM 23.1.4)</pre>
     <circle cx="23.84" cy="5.16" r="3.6" fill="#0ea5c6"/>
   </g>
   <circle cx="32" cy="32" r="9" fill="url(#foot-nucleus)" stroke="#3a4454" stroke-width="1"/>
-</svg><span>Cromo is the Italian word for chromium, element 24.</span></div>
+</svg><span>Cromo is the Italian name of element 24 of the periodic table.</span></div>
     <div class="links">
       <a href="#features">Features</a>
       <a href="download/">Download</a>
