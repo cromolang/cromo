@@ -254,12 +254,15 @@ list<u8> manifest(string package, string label, bool icon, list<string> permissi
         application.add(numberAttribute("icon", 0x01010002, typeReference, iconResource))
     }
     nodes.add(open("application", application))
-    // The changes of the configuration that SDL handles without a new activity.
+    // The changes of the configuration that SDL handles without a new activity. The
+    // keyboard on the screen makes the window shorter before Android 11, and gives
+    // its insets after it (D471).
     i64 changes = 0x5000AFF4
     nodes.add(open("activity", [textAttribute("name", 0x01010003, "org.cromo.CromoActivity"),
         textAttribute("label", 0x01010001, label), numberAttribute("exported", 0x01010010, typeBoolean, -1),
         numberAttribute("launchMode", 0x0101001D, typeDecimal, 3),  // singleInstance
         numberAttribute("configChanges", 0x0101001F, typeHexadecimal, changes),
+        numberAttribute("windowSoftInputMode", 0x0101022B, typeHexadecimal, 0x10),  // adjustResize
         numberAttribute("theme", 0x01010000, typeReference, themeResource)]))
     list<Attribute> none
     nodes.add(open("intent-filter", none))

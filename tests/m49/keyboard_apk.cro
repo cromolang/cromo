@@ -1,0 +1,57 @@
+// The keyboard on the screen (D471): the activity of the APK is adjustResize, and
+// classes.dex has the surface of Cromo, which gives the insets of the keyboard.
+// target: windows
+// program-env: CROMO={cromo}
+// program-env: DIR={dir}/modules
+// program-env: OUT={dir}/../out
+// expect-output: built 0, adjustResize true, CromoSurface true
+import std.fs
+import std.os
+import std.process
+import std.zip
+
+// The text in UTF-16, as the strings of the binary XML of Android.
+list<u8> utf16(string text) {
+    list<u8> out
+    for (u8 b in text.bytes()) {
+        out.add(b)
+        out.add(0)
+    }
+    ret out
+}
+
+bool has(list<u8> data, list<u8> part) {
+    for (i64 i = 0; i + part.len() <= data.len(); i++) {
+        bool same = true
+        for (i64 j = 0; j < part.len() && same; j++) {
+            same = data[i + j] == part[j]
+        }
+        if (same) {
+            ret true
+        }
+    }
+    ret false
+}
+
+i32 main() {
+    string apk = fs.joinPath(os.env("OUT"), "form.apk")
+    fs.removeAll(apk)
+    process.Output built = process.run(os.env("CROMO"), ["build", "--target", "android", fs.joinPath(os.env("DIR"), "form.cro"), "-o", apk])
+    if (built.code != 0) {
+        println("built {}\n{}{}", built.code, built.out, built.err)
+        ret 1
+    }
+    list<zip.Entry> entries = zip.read(fs.readBytes(apk))
+    bool resize = false
+    bool surface = false
+    for (zip.Entry entry in entries) {
+        if (entry.name == "AndroidManifest.xml") {
+            resize = has(entry.data, utf16("windowSoftInputMode"))
+        } else if (entry.name == "classes.dex") {
+            surface = has(entry.data, "Lorg/cromo/CromoSurface;".bytes())
+        }
+    }
+    println("built {}, adjustResize {}, CromoSurface {}", built.code, resize, surface)
+    fs.removeAll(apk)
+    ret 0
+}

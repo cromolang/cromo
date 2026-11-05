@@ -7,9 +7,10 @@
 //          an app of Android and its back key (D456, D457), the panels that
 //          scroll (D460), the lists and their item chosen (D461, D462), the
 //          switches and the sliders (D466), the dialogs (D467), the snackbar
-//          (D468), the round images of the lists (D469), embed (D470)
+//          (D468), the round images of the lists (D469), embed (D470), the
+//          keyboard on the screen (D471), the snackbar above Write (D472)
 // Draft:   the names of the components and of their methods (P39, P41, P42, P45,
-//          P46, P48, P49)
+//          P46, P48, P49, P50)
 //
 // cromo build --target android 18_app.cro writes 18_app.apk (D453).
 import std.gui

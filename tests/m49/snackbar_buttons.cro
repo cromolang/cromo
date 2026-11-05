@@ -1,0 +1,29 @@
+// The snackbar goes above the buttons anchored at the bottom that it would cover,
+// and back to its place when they go (P50), with frames drawn meanwhile.
+// target: windows linux-x86_64
+// program-env: SDL_VIDEO_DRIVER=offscreen
+// expect-output: shown over the buttons
+// expect-output: shown without them
+import std.gui
+import std.time
+
+i32 main() {
+    gui.Window w = gui.Window("Snackbar", 390, 400)
+    gui.Button write = w.add(gui.Button("Write", 262, 309, 112, 40))
+    write.setAnchor(gui.Horizontal.Right, gui.Vertical.Bottom)
+    gui.Button left = w.add(gui.Button("Left", 16, 309, 112, 40))
+    left.setAnchor(gui.Horizontal.Left, gui.Vertical.Bottom)
+    gui.Button top = w.add(gui.Button("Top", 16, 16, 112, 40))
+    w.showSnackbarAction("Message deleted", "Undo", []() { })
+    w.start()
+    time.msleep(50)
+    println("shown over the buttons")
+    write.setVisible(false)
+    left.setVisible(false)
+    w.showSnackbar("Saved")
+    time.msleep(50)
+    println("shown without them")
+    w.close()
+    w.wait()
+    ret 0
+}

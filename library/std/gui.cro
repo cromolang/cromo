@@ -49,6 +49,7 @@ extern "SDL3" {
     void SDL_DelayPrecise(u64 nanoseconds)
     bool SDL_StartTextInput(addr window)
     bool SDL_StopTextInput(addr window)
+    bool SDL_ScreenKeyboardShown(addr window)
     bool SDL_SetClipboardText(addr text)
     addr SDL_GetClipboardText()
     void SDL_free(addr memory)
@@ -1897,12 +1898,16 @@ struct WindowData {
     list<addr> keyDown
     list<addr> resize
     list<addr> close
-    list<addr> back   // the back key of Android (D457)
-    bool phone        // on Android: without a title bar, the content in the safe area (D456)
-    f32 originX       // where the content starts in the window, in logical pixels
-    f32 originY = 35  // under the title bar
-    f32 insetRight    // what the bars of the system cover on Android
-    f32 insetBottom
+    list<addr> back      // the back key of Android (D457)
+    bool phone           // on Android: without a title bar, the content in the safe area (D456)
+    f32 originX          // where the content starts in the window, in logical pixels
+    f32 originY = 35     // under the title bar
+    f32 insetRight       // what the bars of the system cover on Android
+    f32 insetBottom      // and the keyboard on the screen (D471)
+    f32 barsBottom       // what the bars cover at the bottom, without the keyboard
+    f32 fullHeight       // and the height of the window
+    f32 screenKeyboard   // what the keyboard on the screen covers above the bars, or 0
+    bool revealFocus     // the panels scroll to show the component in focus at the next layout
     i32 systemBars = -1  // the theme of the bars of the system on Android: 0 light, 1 dark
 
     // The thread of the GUI.
@@ -1946,6 +1951,7 @@ struct WindowData {
     bool dialogFresh  // the focus goes to the dialog at the next layout
     bool dialogEnded  // and comes back
     bool keyboard     // the last input was a key, not the mouse or a finger: the ring of the focus shows
+    f32 snackLift     // how far the snackbar is above its place, over the components at the bottom (D472)
     string snackText  // the snackbar (D468), shown from snackShown for 4 seconds
     string snackAction
     list<addr> snackHandler
@@ -2307,10 +2313,11 @@ void arrangeNow(ref Shared data, i64 p) {
     }
 }
 
-// A page takes the room between the bars of its window (P42).
+// A page takes the room between the bars of its window (P42), down to the keyboard
+// on the screen, which covers the navigation bar (D471).
 void placePage(ref PartData page, ref WindowData window) {
     i32 top = window.appBar != 0 ? i32(appBarHeight) : 0
-    i32 bottom = contentHeight(window) - i32(navigationHeight)
+    i32 bottom = contentHeight(window) - (window.screenKeyboard > 0 ? 0 : i32(navigationHeight))
     page.x = 0
     page.y = top
     page.width = contentWidth(window)
@@ -3257,6 +3264,21 @@ void readSafeArea(ref WindowData window) {
         window.insetRight = f32(w - safeArea[0] - safeArea[2]) / scale
         window.insetBottom = f32(h - safeArea[1] - safeArea[3]) / scale
     }
+    // The keyboard on the screen (D471): from Android 11 the safe area of the
+    // activity of Cromo leaves it out, before it the window is shorter. Its part
+    // above the bars is what the window had more without it. It can come in steps,
+    // and each one higher shows the component in focus again.
+    f32 lost = window.insetBottom - window.barsBottom + window.fullHeight - f32(window.height)
+    if (SDL_ScreenKeyboardShown(window.window) && lost > 1) {
+        if (lost > window.screenKeyboard + 1) {
+            window.revealFocus = true
+        }
+        window.screenKeyboard = lost
+    } else {
+        window.barsBottom = window.insetBottom
+        window.fullHeight = f32(window.height)
+        window.screenKeyboard = 0
+    }
 }
 
 // The renderer lost its textures, as on Android when an app comes back: they are
@@ -3751,6 +3773,9 @@ void focusTo(ref WindowData window, ref list<PartData> parts, i64 id) {
     bool wasText = old >= 0 && parts[old].kind == kindTextBox
     bool isText = now >= 0 && parts[now].kind == kindTextBox
     window.focus = id
+    if (isText && window.screenKeyboard > 0) {
+        window.revealFocus = true
+    }
     if (wasText && !isText) {
         SDL_StopTextInput(window.window)
     } else if (isText && !wasText) {
@@ -3916,8 +3941,8 @@ bool snackVisible(ref WindowData window) {
 
 Rect snackBox(ref WindowData window) {
     f32 width = least(f32(contentWidth(window)) - 16, 560)
-    f32 bottom = window.originY + f32(contentHeight(window)) - 8
-    if (window.navigation != 0) {
+    f32 bottom = window.originY + f32(contentHeight(window)) - 8 - window.snackLift
+    if (window.navigation != 0 && window.screenKeyboard == 0) {
         bottom = bottom - navigationHeight
     }
     ret Rect(window.originX + (f32(contentWidth(window)) - width) / 2, bottom - snackHeight, width, snackHeight)
@@ -4510,6 +4535,7 @@ void layout(ref WindowData window, ref list<PartData> parts) {
     content.clipBottom = content.top + f32(content.height)
     layoutIn(ref window, ref parts, 0, content)
     window.dialogStart = window.order.len()
+    liftSnackbar(ref window, ref parts)
     i64 card = partNumber(ref parts, window.dialog)
     if (card >= 0) {
         layoutDialog(ref window, ref parts, card, content)
@@ -4533,6 +4559,65 @@ void layout(ref WindowData window, ref list<PartData> parts) {
     if (open < 0 || !parts[open].shown || !parts[open].active) {
         window.popup = 0
     }
+    if (window.revealFocus) {  // above the keyboard on the screen (D471)
+        window.revealFocus = false
+        if (bringIntoView(ref parts, window.focus)) {
+            layout(ref window, ref parts)
+        }
+    }
+}
+
+// The snackbar goes above the components anchored at the bottom of the content that
+// it would cover, as a floating button in the Scaffold of Material 3 (D472).
+void liftSnackbar(ref WindowData window, ref list<PartData> parts) {
+    window.snackLift = 0
+    bool moved = true
+    for (moved) {
+        moved = false
+        Rect box = snackBox(ref window)
+        for (i64 k = 0; k < window.dialogStart && !moved; k++) {
+            i64 i = window.order[k]
+            bool low = parts[i].vertical == Vertical.Bottom && parts[i].kind != kindNavigation && parts[i].shown
+            if (low && parts[i].left < box.x + box.w && parts[i].left + f32(parts[i].width) > box.x &&
+                parts[i].top < box.y + box.h && parts[i].top + f32(parts[i].height) > box.y) {
+                window.snackLift = window.snackLift + box.y + box.h - (parts[i].top - 8)
+                moved = true
+            }
+        }
+    }
+}
+
+// Scrolls the panels that hold a component, from the innermost, so that it is seen
+// with 8 pixels around it: true when one scrolled (D471).
+bool bringIntoView(ref list<PartData> parts, i64 id) {
+    i64 p = partNumber(ref parts, id)
+    if (p < 0) {
+        ret false
+    }
+    f32 top = parts[p].top - 8
+    f32 bottom = parts[p].top + f32(parts[p].height) + 8
+    bool moved = false
+    i64 holder = partNumber(ref parts, parts[p].parent)
+    for (holder >= 0) {
+        if (parts[holder].kind == kindPanel && scrolls(ref parts[holder])) {
+            f32 delta = 0
+            f32 low = parts[holder].top + f32(parts[holder].height)
+            if (bottom > low) {
+                delta = bottom - low
+            }
+            if (top - delta < parts[holder].top) {
+                delta = top - parts[holder].top
+            }
+            f32 before = parts[holder].offsetY
+            scrollBy(ref parts[holder], delta)
+            f32 done = parts[holder].offsetY - before
+            top = top - done
+            bottom = bottom - done
+            moved = moved || done != 0
+        }
+        holder = partNumber(ref parts, parts[holder].parent)
+    }
+    ret moved
 }
 
 // A dialog at the center of the content, at most as large as the content less 32
@@ -4610,6 +4695,7 @@ void layoutIn(ref WindowData window, ref list<PartData> parts, i64 group, Frame 
             hidden = bar < 0 || parts[bar].selected != parts[i].page || !parts[bar].visible
         } else {
             arrange(ref parts[i], frame.width, frame.height)
+            hidden = parts[i].kind == kindNavigation && window.screenKeyboard > 0  // under the keyboard (D471)
         }
         parts[i].left = frame.left + f32(parts[i].x)
         parts[i].top = frame.top + f32(parts[i].y)
@@ -4749,7 +4835,7 @@ void drawWindow(ref WindowData window, ref list<PartData> parts) {
     fill(r, c.content, 0, 0, width, height)
     if (window.phone) {  // the bars of the system of the color of the bars of the app (D456)
         fill(r, c.bar, 0, 0, width, window.originY)
-        fill(r, c.bar, 0, height - window.insetBottom, width, window.insetBottom)
+        fill(r, c.bar, 0, height - window.barsBottom, width, window.barsBottom)
         if (window.systemBars != (dark ? 1 : 0)) {
             window.systemBars = dark ? 1 : 0
             cromo_gui_system_bars(c.bar, !dark)

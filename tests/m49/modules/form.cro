@@ -1,0 +1,11 @@
+// An app of the test keyboard_apk.cro, with a text box (D471).
+import std.gui
+
+[[window]]
+i32 main() {
+    gui.Window w = gui.Window("Form", 390, 760)
+    w.add(gui.TextBox("", 16, 16, 358, 32))
+    w.start()
+    w.wait()
+    ret 0
+}

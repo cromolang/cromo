@@ -2186,6 +2186,12 @@ logo.setBytes(embed("images/logo.png"))
 string help = string(embed("help.txt"))
 ```
 
+### D471. The keyboard on the screen makes the content shorter
+*2026-11-05.* On Android, when the keyboard on the screen opens, the content of the window ends above it, as `adjustResize` of Android does with the views: the anchors move the components, a dialog is at the center of what is left, and the panels scroll to show the component in focus. The navigation bar stays under the keyboard, and the pages go down to the keyboard; the app bar stays where it is. When the keyboard closes, everything goes back.
+
+### D472. The snackbar goes above the components at the bottom
+*2026-11-05.* The snackbar goes above the components anchored at the bottom of the content that it would cover, as a floating button in the Scaffold of Material 3: nothing moves, and a button such as "Write" stays visible and can be pressed while the message is shown.
+
 ---
 
 ## Proposed
@@ -2334,7 +2340,7 @@ A component keeps the distances from the edges of its parent, the content of the
 ### P44. The APK (D453, D455)
 - `cromo build --target android app.cro` writes `app.apk`: it compiles the program twice, for ARM64 and for x86-64, as `libmain.so`, which exports only `SDL_main`, then runs `lib/tools/apk.cro`, written in Cromo as `cromo update` (D403), which writes and signs the APK.
 - The APK has the manifest, `classes.dex` with the classes of Java of SDL, the table of the resources and the icon when there is one, and `lib/arm64-v8a` and `lib/x86_64` with `libSDL3.so` and `libmain.so`. All the files are stored, the libraries aligned to 16 KB, so that Android maps them without extracting them, for the devices with pages of 4 KB and of 16 KB.
-- The manifest has the version 1 and "1.0", the activity of SDL as the launcher, with the theme `Theme.Material.NoActionBar.Fullscreen` and the changes of the configuration that SDL handles itself, `singleInstance`, OpenGL ES 2, and no permission. Without `[[android]]`, the package is `org.cromo.` and the name of the file, lowercase, with `_` for the other characters.
+- The manifest has the version 1 and "1.0", the activity of SDL as the launcher, with the theme `Theme.Material.NoActionBar.Fullscreen`, the changes of the configuration that SDL handles itself, `adjustResize` for the keyboard on the screen (P50), `singleInstance`, OpenGL ES 2, and no permission. Without `[[android]]`, the package is `org.cromo.` and the name of the file, lowercase, with `_` for the other characters.
 - The signature is of scheme v2 only, which Android has from 7.0, with a key of P-256 and a certificate signed by itself, `CN=Android Debug`, as the SDK of Android does: both are made the first time in `~/.cromo/android`, and kept, so that an app installed can be updated by the next build.
 - In an app the standard output and error go to the log of Android, a line at a time, with the package as tag and the priorities INFO and ERROR. When `main` ends on the thread of SDL, `SDL_main` returns and SDL ends the activity; an exit from another thread ends the process.
 - `cromo` needs `lib/android_<architecture>/libSDL3.so` and `lib/android/classes.dex`, which the build makes with the NDK and with the SDK and Java: `build.ps1 -AndroidNdk <folder> -AndroidSdk <folder>`.
@@ -2372,6 +2378,12 @@ A component keeps the distances from the edges of its parent, the content of the
 - The file is read as it is, byte by byte, with no limit of size; a folder, or a file that is not there, is an error with the path looked for. An absolute path is taken as it is.
 - The bytes are in the program as those of a string literal (D100), once however many calls name the same bytes, and `embed` gives their copy, as `bytes()` of that string.
 - A `ListView` has `setItemImageBytes(index, list<u8>)`, as `setBytes` of an `ImageBox`: an image in memory, as `embed` gives it, and none without bytes.
+
+### P50. The keyboard on the screen and the snackbar (D471, D472)
+- From Android 11 the window of an app takes the whole screen, as it does on Android 15 with the API 35 that the apps target: the activity calls `setDecorFitsSystemWindows(false)`, and its surface, `org.cromo.CromoSurface`, gives SDL as safe area the insets of the bars of the system and of the cutout, with the keyboard at the bottom when it is higher. SDL alone also leaves out the areas of the gestures at the sides, for the games: the content of an app goes under them.
+- Before Android 11 the activity is `adjustResize`, and the window becomes shorter. The keyboard is what the window loses at the bottom, from the safe area or from its height, while SDL says it is shown.
+- The keyboard can come in steps: each one higher shows again the component in focus, and so does a text box that takes the focus while the keyboard is open, as with Tab. The panels that hold it scroll, from the innermost, until it is seen with 8 pixels around it.
+- The snackbar goes 8 pixels above the highest of the components it would cover that are visible, out of a dialog and anchored at the bottom (`gui.Vertical.Bottom`); the navigation bar is not one of them, the snackbar is already above it.
 ---
 
 ## Open
