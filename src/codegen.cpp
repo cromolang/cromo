@@ -2596,26 +2596,68 @@ private:
             inst("call void @cromo_exit(i32 " + arg(0) + ")");
             term("unreachable");
             return {"", Type::voidType()};
-        case Intrinsic::AtomicLoad: {  // D328: all in the order of the sequence
+        case Intrinsic::AtomicLoad:  // D328: in the order of the sequence; D503: relaxed, monotonic for LLVM
+        case Intrinsic::AtomicLoadRelaxed: {
             std::string place = arg(0);
-            inst(result + " = load atomic " + atomicType(element) + ", ptr " + place + " seq_cst, align " +
+            std::string order = call.intrinsic == Intrinsic::AtomicLoad ? " seq_cst" : " monotonic";
+            inst(result + " = load atomic " + atomicType(element) + ", ptr " + place + order + ", align " +
                  std::to_string(sizeOf(element)));
             return atomicResult(result, element);
         }
-        case Intrinsic::AtomicStore: {
+        case Intrinsic::AtomicStore:
+        case Intrinsic::AtomicStoreRelaxed: {
             std::string place = arg(0);
             std::string value = atomicValue(*call.args[1], element);
-            inst("store atomic " + atomicType(element) + " " + value + ", ptr " + place + " seq_cst, align " +
+            std::string order = call.intrinsic == Intrinsic::AtomicStore ? " seq_cst" : " monotonic";
+            inst("store atomic " + atomicType(element) + " " + value + ", ptr " + place + order + ", align " +
                  std::to_string(sizeOf(element)));
             return {"", Type::voidType()};
         }
         case Intrinsic::AtomicAdd:
+        case Intrinsic::AtomicAddRelaxed:
         case Intrinsic::AtomicExchange: {
             std::string place = arg(0);
             std::string value = atomicValue(*call.args[1], element);
-            const char* operation = call.intrinsic == Intrinsic::AtomicAdd ? "add" : "xchg";
-            inst(result + " = atomicrmw " + operation + " ptr " + place + ", " + atomicType(element) + " " + value + " seq_cst");
+            const char* operation = call.intrinsic == Intrinsic::AtomicExchange ? "xchg" : "add";
+            std::string order = call.intrinsic == Intrinsic::AtomicAddRelaxed ? " monotonic" : " seq_cst";
+            inst(result + " = atomicrmw " + operation + " ptr " + place + ", " + atomicType(element) + " " + value + order);
             return atomicResult(result, element);
+        }
+        case Intrinsic::CountOnes:  // D502: the instructions of the processor, through those of LLVM
+        case Intrinsic::TrailingZeros:
+        case Intrinsic::LeadingZeros: {
+            Value value = generateExpr(*call.args[0]);
+            std::string width = std::to_string(value.type.bits);
+            std::string type = "i" + width;
+            std::string name = call.intrinsic == Intrinsic::CountOnes      ? "ctpop"
+                               : call.intrinsic == Intrinsic::TrailingZeros ? "cttz"
+                                                                            : "ctlz";
+            std::string fn = "@llvm." + name + "." + type;
+            std::string extra = call.intrinsic == Intrinsic::CountOnes ? "" : ", i1";
+            intrinsic("declare " + type + " " + fn + "(" + type + extra + ")", fn);
+            std::string bits = temp();
+            inst(bits + " = call " + type + " " + fn + "(" + type + " " + value.ref +
+                 (call.intrinsic == Intrinsic::CountOnes ? "" : ", i1 false") + ")");
+            if (value.type.bits == 32) return {bits, Type::intType(32, true)};
+            inst(result + " = " + (value.type.bits > 32 ? "trunc " : "zext ") + type + " " + bits + " to i32");
+            return {result, Type::intType(32, true)};
+        }
+        case Intrinsic::RotateLeft:  // D502: a funnel shift of the value with itself, by n modulo its bits
+        case Intrinsic::RotateRight: {
+            Value value = generateExpr(*call.args[0]);
+            Value amount = generateExpr(*call.args[1]);
+            std::string type = "i" + std::to_string(value.type.bits);
+            std::string by = amount.ref;
+            if (amount.type.bits != value.type.bits) {
+                by = temp();
+                const char* convert = amount.type.bits > value.type.bits ? "trunc " : amount.type.isSigned ? "sext " : "zext ";
+                inst(by + " = " + convert + llvmType(amount.type) + " " + amount.ref + " to " + type);
+            }
+            std::string fn = std::string("@llvm.") + (call.intrinsic == Intrinsic::RotateLeft ? "fshl." : "fshr.") + type;
+            intrinsic("declare " + type + " " + fn + "(" + type + ", " + type + ", " + type + ")", fn);
+            inst(result + " = call " + type + " " + fn + "(" + type + " " + value.ref + ", " + type + " " + value.ref + ", " +
+                 type + " " + by + ")");
+            return {result, value.type};
         }
         case Intrinsic::AtomicCompareExchange: {
             std::string place = arg(0);

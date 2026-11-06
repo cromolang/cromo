@@ -203,6 +203,8 @@ Gli operatori sono quelli del C, con una differenza nella precedenza: gli operat
 
 `!` nega un `bool` e inverte i bit di un intero. `i++` e `i--` esistono, ma solo come istruzioni a sé stanti, mai dentro un'espressione: `a[i++]` non è Cromo.
 
+`countOnes(x)` conta i bit a 1 di un intero, `trailingZeros(x)` e `leadingZeros(x)` i bit a 0 sotto il bit a 1 più basso e sopra il più alto, e `rotateLeft(x, n)` e `rotateRight(x, n)` ruotano i bit, quelli che escono da una parte rientrando dall'altra. Ognuna è un'istruzione del processore: `trailingZeros(set)` è l'indice del bit più basso di un insieme, e `set & (set - 1)` lo toglie.
+
 `c ? a : b` vale `a` quando `c` è vera, `b` altrimenti, come in C; viene calcolato solo il valore scelto, e i due hanno lo stesso tipo:
 
 ```cromo

@@ -1,5 +1,9 @@
 # Changes
 
+## 0.13.0
+
+- The colors of the functions of the bits: `countOnes`, `trailingZeros`, `leadingZeros`, `rotateLeft` and `rotateRight`.
+
 ## 0.12.0
 
 - The documentation of the names, from the `//` comments above their declarations, in the hover and in the completion, with the module of the name; and of the built-in functions and types, as `println` and `i64`.

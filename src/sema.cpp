@@ -33,11 +33,22 @@ bool isPrintFunction(const std::string& name) {
     return name == "print" || name == "println" || name == "eprint" || name == "eprintln" || name == "format";
 }
 
-// The functions that every program can call without declaring them (D38, D102, D470).
+// The functions that every program can call without declaring them (D38, D102, D470, D502).
 bool isWrapFunction(const std::string& name) { return name == "wrapAdd" || name == "wrapSub" || name == "wrapMul"; }
 
+// The functions of the bits (D502).
+std::optional<Intrinsic> findBitFunction(const std::string& name) {
+    if (name == "countOnes") return Intrinsic::CountOnes;
+    if (name == "trailingZeros") return Intrinsic::TrailingZeros;
+    if (name == "leadingZeros") return Intrinsic::LeadingZeros;
+    if (name == "rotateLeft") return Intrinsic::RotateLeft;
+    if (name == "rotateRight") return Intrinsic::RotateRight;
+    return std::nullopt;
+}
+
 bool isBuiltinFunction(const std::string& name) {
-    return isPrintFunction(name) || name == "panic" || name == "assert" || isWrapFunction(name) || name == "embed";
+    return isPrintFunction(name) || name == "panic" || name == "assert" || isWrapFunction(name) || name == "embed" ||
+           findBitFunction(name).has_value();
 }
 
 // The bytes of a file for embed() (D470), or why it cannot be read.
@@ -72,6 +83,8 @@ std::optional<Intrinsic> findIntrinsic(const std::string& name) {
         {"taskStart", Intrinsic::TaskStart}, {"groupStart", Intrinsic::GroupStart},
         {"atomicLoad", Intrinsic::AtomicLoad}, {"atomicStore", Intrinsic::AtomicStore}, {"atomicAdd", Intrinsic::AtomicAdd},
         {"atomicExchange", Intrinsic::AtomicExchange}, {"atomicCompareExchange", Intrinsic::AtomicCompareExchange},
+        {"atomicLoadRelaxed", Intrinsic::AtomicLoadRelaxed}, {"atomicStoreRelaxed", Intrinsic::AtomicStoreRelaxed},
+        {"atomicAddRelaxed", Intrinsic::AtomicAddRelaxed},
         {"variableAddress", Intrinsic::VariableAddress},
     };
     auto found = intrinsics.find(name);
@@ -3091,7 +3104,7 @@ private:
         case ExprKind::Unary: return checkUnary(expr, expected);
         case ExprKind::Binary: return checkBinary(expr, expected);
         case ExprKind::Conditional: return checkConditional(static_cast<ConditionalExpr&>(*expr), expected);
-        case ExprKind::Call: return checkCall(expr);
+        case ExprKind::Call: return checkCall(expr, expected);
         case ExprKind::Field: return checkField(expr);
         case ExprKind::MethodCall: return checkMethodCall(expr);
         case ExprKind::Self: return Type::structType(current_->owner);
@@ -3906,6 +3919,57 @@ private:
         return operand;
     }
 
+    // `countOnes(x)`, `trailingZeros(x)`, `leadingZeros(x)` (D502): an i32 from an integer
+    // of any type; `rotateLeft(x, n)` and `rotateRight(x, n)`: the integer turned by n
+    // bits, n an integer of any type.
+    Type checkBitFunction(CallExpr& call, Intrinsic kind, std::optional<Type> expected) {
+        bool rotate = kind == Intrinsic::RotateLeft || kind == Intrinsic::RotateRight;
+        size_t count = rotate ? 2 : 1;
+        if (call.args.size() != count) {
+            diag_->error(call.loc, call.callee + (rotate ? "() takes an integer and the bits to turn it by (D502)"
+                                                         : "() takes one integer (D502)"));
+            checkIgnored(call.args);
+            return Type::error();
+        }
+        call.intrinsic = kind;
+        bool typed = rotate && expected && expected->isInt();  // `u64 r = rotateLeft(1, 8)`, as a shift (D195)
+        Type value = checkExpr(call.args[0], typed ? expected : std::nullopt);
+        if (value.kind == TypeKind::UntypedInt) {  // its size changes the result: written, as for a shift (D55)
+            if (typed && coerce(call.args[0], *expected)) {
+                value = *expected;
+            } else {
+                if (!typed) {
+                    diag_->error(call.args[0]->loc, "the type of this literal cannot be deduced: write it, for example " +
+                                                        call.callee + "(u64(5)" + (rotate ? ", 1" : "") + ") (D55)");
+                }
+                value = Type::error();
+            }
+        }
+        if (!value.isError() && !value.isInt()) {
+            diag_->error(call.args[0]->loc, call.callee + "() works on integers, not on " + value.name() + " (D502)");
+            value = Type::error();
+        }
+        if (value.isError()) {
+            for (size_t i = 1; i < call.args.size(); ++i) {
+                Type ignored = checkExpr(call.args[i], std::nullopt);
+                (void)ignored;
+            }
+            return value;
+        }
+        if (!rotate) return Type::intType(32, true);
+        Type amount = checkExpr(call.args[1], std::nullopt);
+        if (amount.isUntyped()) {
+            if (!coerce(call.args[1], value)) return Type::error();
+            amount = value;
+        }
+        if (amount.isError()) return amount;
+        if (!amount.isInt()) {
+            diag_->error(call.args[1]->loc, "the bits to turn by are an integer, not " + amount.name() + " (D502)");
+            return Type::error();
+        }
+        return value;
+    }
+
     Type checkBinary(ExprPtr& expr, std::optional<Type> expected) {
         auto& binary = static_cast<BinaryExpr&>(*expr);
         if (binary.op == BinaryOp::And || binary.op == BinaryOp::Or) {
@@ -4610,7 +4674,9 @@ private:
         if (kind == Intrinsic::JsonWrite || kind == Intrinsic::JsonRead) return checkJson(call, kind == Intrinsic::JsonWrite);
         if (kind == Intrinsic::DebugWrite) return checkDebug(call);
         bool atomic = kind == Intrinsic::AtomicLoad || kind == Intrinsic::AtomicStore || kind == Intrinsic::AtomicAdd ||
-                      kind == Intrinsic::AtomicExchange || kind == Intrinsic::AtomicCompareExchange;
+                      kind == Intrinsic::AtomicExchange || kind == Intrinsic::AtomicCompareExchange ||
+                      kind == Intrinsic::AtomicLoadRelaxed || kind == Intrinsic::AtomicStoreRelaxed ||
+                      kind == Intrinsic::AtomicAddRelaxed;
         bool generic = kind == Intrinsic::SizeOf || kind == Intrinsic::Take || kind == Intrinsic::Put ||
                        kind == Intrinsic::Destroy || kind == Intrinsic::CopyAt || kind == Intrinsic::EqualAt || atomic;
         std::string what = "'" + call.callee + "'";
@@ -4709,9 +4775,14 @@ private:
             result = addr;
             break;
         case Intrinsic::ExitProcess: params = {{ParamMode::Read, "code", Type::intType(32, true)}}; break;
-        case Intrinsic::AtomicLoad: params = {{ParamMode::Read, "place", addr}}; result = element; break;  // D328
-        case Intrinsic::AtomicStore: params = {{ParamMode::Read, "place", addr}, {ParamMode::Read, "value", element}}; break;
+        case Intrinsic::AtomicLoad:
+        case Intrinsic::AtomicLoadRelaxed: params = {{ParamMode::Read, "place", addr}}; result = element; break;  // D328, D503
+        case Intrinsic::AtomicStore:
+        case Intrinsic::AtomicStoreRelaxed:
+            params = {{ParamMode::Read, "place", addr}, {ParamMode::Read, "value", element}};
+            break;
         case Intrinsic::AtomicAdd:
+        case Intrinsic::AtomicAddRelaxed:
         case Intrinsic::AtomicExchange:  // they return the value before
             params = {{ParamMode::Read, "place", addr}, {ParamMode::Read, "value", element}};
             result = element;
@@ -4721,6 +4792,11 @@ private:
                       {ParamMode::Read, "desired", element}};
             result = Type::boolType();
             break;
+        case Intrinsic::CountOnes:  // made by checkBitFunction (D502)
+        case Intrinsic::TrailingZeros:
+        case Intrinsic::LeadingZeros:
+        case Intrinsic::RotateLeft:
+        case Intrinsic::RotateRight:
         case Intrinsic::None: break;
         }
         if (atomic && !element.isParam() && !element.isInt() && !element.isBool()) {
@@ -5100,7 +5176,7 @@ private:
         return Type::functionType(internSignature(function.paramTypes, modes, function.resolvedReturn));
     }
 
-    Type checkCall(ExprPtr& expr) {
+    Type checkCall(ExprPtr& expr, std::optional<Type> expected = std::nullopt) {
         auto& call = static_cast<CallExpr&>(*expr);
         bool typed = !call.typeArgs.empty();
         bool qualified = !call.module.empty();  // `geometry.area(c)` (D126)
@@ -5128,6 +5204,7 @@ private:
             if (call.callee == "panic") return checkIntrinsic(call, Intrinsic::Panic);
             if (call.callee == "assert") return checkAssert(call);
             if (isWrapFunction(call.callee)) return checkWrap(expr);
+            if (std::optional<Intrinsic> bits = findBitFunction(call.callee)) return checkBitFunction(call, *bits, expected);
             if (call.callee == "embed") return checkEmbed(expr);
         }
         if (!qualified && isUnsafe(call.loc)) {

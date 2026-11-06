@@ -412,6 +412,24 @@ public struct Atomic<T> {
         ret atomicAdd<T>(selfAddress(), amount)
     }
 
+    // The value, without an order among the threads (D503): what the others wrote before
+    // may not be seen yet, but the value itself is never half written. For counters and
+    // statistics, where only the value counts.
+    public T loadRelaxed() const {
+        ret atomicLoadRelaxed<T>(selfAddress())
+    }
+
+    // Writes the value, without an order among the threads (D503).
+    public void storeRelaxed(T value) const {
+        atomicStoreRelaxed<T>(selfAddress(), value)
+    }
+
+    // Adds 'amount' without an order among the threads (D503), and gives the value before;
+    // for an integer only. A counter that many threads increase.
+    public T addRelaxed(T amount) const {
+        ret atomicAddRelaxed<T>(selfAddress(), amount)
+    }
+
     // Writes the value, and gives the one before.
     public T exchange(T value) const {
         ret atomicExchange<T>(selfAddress(), value)

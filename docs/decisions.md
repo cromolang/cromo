@@ -2401,6 +2401,55 @@ w.saveFile([gui.FileType("Text", "txt")], "notes.txt", [](string file) { println
 ### D501. On Android `std.fs` reads the documents chosen
 *2026-11-06.* Chosen by the author. The picker of Android gives names as `content://...`, not paths: on Android `std.fs` reads and writes them too, through SDL, so that a program opens and saves the files chosen in a dialog with the same functions on every system.
 
+### D502. The bits: functions of the core
+*2026-11-06.* Chosen by the author. As `wrapAdd` (D396), functions of the core for every integer: `countOnes(x)`, the bits at 1, `trailingZeros(x)` and `leadingZeros(x)`, the bits at 0 under the lowest bit at 1 and over the highest, and `rotateLeft(x, n)` and `rotateRight(x, n)`. They become the instructions of the processor, for the boards of bits, the hashes and the compact structures. Methods of the integers would be a new concept: today the integers have none.
+
+```cromo
+// draft: the names are not decided
+u64 row = 0x00FF000000000000
+i32 n = countOnes(row)        // 8
+i32 low = trailingZeros(row)  // 48
+u64 turned = rotateLeft(row, 8)
+```
+
+### D503. The relaxed atomics
+*2026-11-06.* Chosen by the author. It adds to D328. `thread.Atomic<T>` keeps its operations in the order of the sequence, and has `loadRelaxed`, `storeRelaxed` and `addRelaxed` more, without an order among the threads: for the counters, the statistics and the caches shared by the threads, where only the value counts. Acquire and release are not added: on x86-64 they cost as the sequence, and they are the hardest to explain.
+
+### D504. The files read and written in pieces, and mapped in memory
+*2026-11-06.* Chosen by the author. `fs.File` is a file open, which its destructor closes (RAII): `read`, `write`, `readAt(position, count)`, `writeAt(position, bytes)`, `seek`, `size`, for the indices and the databases too large to be read whole. `fs.Mapping` is a file mapped in memory, read only, with readings of its numbers and of its bytes at a position, checked against its size: fast for the large files, without addresses in the safe language.
+
+```cromo
+// draft: the names of the API are not decided
+fs.File index = fs.File("games.idx", fs.Mode.Read)
+list<u8> entry = index.readAt(47 * 1024, 47)
+fs.Mapping names = fs.Mapping("names.bin")
+u32 count = names.u32At(0)
+```
+
+### D505. The vectors of SIMD: types of the language
+*2026-11-06.* Chosen by the author. Types as `i16x16`, `f32x8` and `u8x32`, a fixed number of numbers on which `+`, `-`, `*`, the operators of the bits and the comparisons act element by element, loaded from lists and arrays and stored into them, with the sum of their elements and the other reductions. LLVM makes them the instructions of SIMD of the processor, AVX2, SSE or NEON, or more instructions where it has none: for neural networks, images and sound, in the language and not in C.
+
+```cromo
+// draft: the names of the types and of their functions are not decided
+i16x16 sum = i16x16.load(weights, 0)
+for (i64 i = 16; i < 256; i += 16) {
+    sum = sum + i16x16.load(weights, i)
+}
+i32 total = sum.sum()
+```
+
+### D506. The radio buttons: one component
+*2026-11-06.* Chosen by the author. `gui.RadioGroup` is one component with its choices, one under the other, one chosen: `selected()`, `text()` and `onChange`, and the arrows to change it, as a combo box always open. No groups to join: buttons apart, grouped by their container, would make the rule of the group implicit.
+
+### D507. The buttons with two states
+*2026-11-06.* Chosen by the author. A `gui.Button` with `setToggle(true)` stays pressed or released at each click, with `checked()` and `onChange`; pressed, it is in the soft accent. With its icon only it is the modes of a view in a band or in a bar.
+
+### D508. The progress bar
+*2026-11-06.* Chosen by the author. `gui.ProgressBar` shows the part done, `setValue` from 0 to 1, or with `setBusy(true)` a segment that runs, for the waits without a measure, as a loading or a search.
+
+### D509. Components in the title bar
+*2026-11-06.* Chosen by the author. `w.titleBar()` gives a `gui.Panel` in the title bar, between the title and the buttons of the window, as high as the bar, where the program puts buttons, segments or labels; where there is no component the bar still moves the window. On a phone, without a title bar, the panel is not shown.
+
 ---
 
 ## Proposed
@@ -2665,6 +2714,11 @@ A component keeps the distances from the edges of its parent, the content of the
 - `gui.FileType(name, extensions)`, with public `name` and `extensions`, these without the dot and between `;`, or `*` for every file. `Window.openFile(types, func(list<string>))` and `openFiles(types, func(list<string>))` for more files, `saveFile(types, name, func(string))` with the name proposed, or a path, and `openFolder(func(string))`. An empty list of types lets every file be chosen, and the first type is the one at the start.
 - They can be called from any thread and return at once: the thread of the GUI shows the dialog at the next frame, with `SDL_ShowOpenFileDialog`, `SDL_ShowSaveFileDialog` or `SDL_ShowOpenFolderDialog`, for its window. The handler is called once on the thread of the windows when the user closes the dialog, with the paths chosen, an empty list or `""` when the user cancels or the dialog cannot be shown, and is then freed. More dialogs can be open together. On Android the picker does not show the name proposed, and SDL has no dialog for the folders: the handler of `openFolder` receives `""`.
 - On Android the picker of the documents gives names as `content://...`: `fs.readBytes`, `fs.readText`, `fs.writeBytes` and `fs.writeText` read and write them whole through `SDL_LoadFile` and `SDL_SaveFile`, which `std.gui` gives to the runtime when its thread starts; `appendText` on them is an exception, as are the other functions of `std.fs`, and so is a document in a program without windows.
+
+### P61. The bits and the relaxed atomics (D502, D503)
+- `countOnes(x)`, `trailingZeros(x)` and `leadingZeros(x)` take an integer of any type and give an `i32`; for 0 the zeros are the bits of the type. `rotateLeft(x, n)` and `rotateRight(x, n)` give the type of `x`, with `n` an integer of any type taken modulo the bits of the type, so a negative `n` turns the other way. They are `llvm.ctpop`, `llvm.cttz`, `llvm.ctlz`, `llvm.fshl` and `llvm.fshr`, which become `popcnt`, `tzcnt` and `lzcnt` where the processor has them, `rbit` and `clz` on ARM64, or a few instructions.
+- An integer literal as the value of these functions is an error, as on the left of a shift (D55): its size changes the result, and it is written, `countOnes(u64(5))`; a rotation takes the type expected, as `u64 r = rotateLeft(1, 8)`. A literal as `n` takes the type of the value. A value that is not an integer is an error.
+- `thread.Atomic<T>` has `loadRelaxed()`, `storeRelaxed(value)` and `addRelaxed(amount)`, the order `monotonic` of LLVM, as `memory_order_relaxed` of C++; on ARM64 the functions of the runtime with the suffix `_relax` (D407). `addRelaxed` of an `Atomic<bool>` is an error, as `add`.
 
 ---
 

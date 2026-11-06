@@ -554,6 +554,7 @@ Each milestone lists the decisions still open that are needed **before** writing
 | **M57** | `std.gui`: the context menu, as a value opened at the mouse, and the tooltips | none: D496, D497 |
 | **M58** | `std.gui`: the text area, whose lines go to the next line, and undo | none: D498, D499 |
 | **M59** | `std.gui`: the dialogs of the files of the system, and the documents of Android in `std.fs` | none: D500, D501 |
+| **M60** | The functions of the bits, and the relaxed atomics | none: D502, D503 |
 | **Later** | Packages: `cromo.mod`, `cromo.sum`, `cromo get`, the archives of the tags over HTTPS, a reader of tar (D376–D391) | none: D376–D391 |
 | **Last** | Compiler written in Cromo that compiles itself and makes the same archives, when the language is mature (§2, D147, D290, D291) | |
 

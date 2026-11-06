@@ -195,6 +195,21 @@ const BuiltinDoc* builtinDoc(const std::string& name) {
         {"wrapMul", "T wrapMul(T a, T b)",
          "The product of two integers of the same type, keeping the low bits when it goes out of the range, without "
          "the check of overflow, also in debug: for hashes, checksums and random numbers."},
+        {"countOnes", "i32 countOnes(T x)",
+         "The bits at 1 of an integer, of any type: 'countOnes(0b1011)' is 3. It is one instruction of the processor, "
+         "for the boards of bits and the sets of bits."},
+        {"trailingZeros", "i32 trailingZeros(T x)",
+         "The bits at 0 under the lowest bit at 1 of an integer: the index of that bit, from 0. 'trailingZeros(8)' "
+         "is 3, and for 0 it is the bits of the type, 64 for an i64."},
+        {"leadingZeros", "i32 leadingZeros(T x)",
+         "The bits at 0 over the highest bit at 1 of an integer: 'leadingZeros(u32(1))' is 31, and for 0 it is the "
+         "bits of the type."},
+        {"rotateLeft", "T rotateLeft(T x, n)",
+         "The bits of an integer turned to the left by n: those that go out on the left come in on the right. n is "
+         "an integer of any type, taken modulo the bits of the type, so a negative n turns to the right."},
+        {"rotateRight", "T rotateRight(T x, n)",
+         "The bits of an integer turned to the right by n: those that go out on the right come in on the left. n is "
+         "an integer of any type, taken modulo the bits of the type."},
         {"embed", "list<u8> embed(string path)",
          "The bytes of a file that the compiler reads and puts in the program: images and data that the program "
          "carries with it, also in the APK of Android. 'path' is a string literal, from the folder of the source file "

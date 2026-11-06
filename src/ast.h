@@ -172,6 +172,8 @@ enum class Intrinsic {
     FloatBits,      // `x.bits()` of an f64 or an f32 (D397)
     FloatFromBits,  // `f64.fromBits(b)`, `f32.fromBits(b)` (D397): the type in typeArg
     VariableAddress,  // `variableAddress(x)`: the addr of a module variable, or of a part of it (D394)
+    CountOnes, TrailingZeros, LeadingZeros, RotateLeft, RotateRight,  // the bits (D502)
+    AtomicLoadRelaxed, AtomicStoreRelaxed, AtomicAddRelaxed,          // D503
 };
 
 // Pairs of arguments that must not be the same element of a list: when the

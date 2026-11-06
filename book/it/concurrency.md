@@ -181,7 +181,7 @@ i32 main() {
 
 ## Atomici
 
-`thread.Atomic<T>` contiene un intero o un `bool` che più thread modificano senza lock: `load`, `store`, `add`, `exchange` e `compareExchange`. Le operazioni sono sequenzialmente consistenti, il modello su cui è più semplice ragionare. Un atomico non si può copiare, e i task e i thread che lo usano lo catturano in lettura, come `done` e `letters` qui sopra.
+`thread.Atomic<T>` contiene un intero o un `bool` che più thread modificano senza lock: `load`, `store`, `add`, `exchange` e `compareExchange`. Le operazioni sono sequenzialmente consistenti, il modello su cui è più semplice ragionare. `loadRelaxed`, `storeRelaxed` e `addRelaxed` sono più veloci dove conta solo il valore, come un contatore che molti thread aumentano: non danno un ordine a ciò che i thread fanno intorno. Un atomico non si può copiare, e i task e i thread che lo usano lo catturano in lettura, come `done` e `letters` qui sopra.
 
 ## Riepilogo
 

@@ -1,0 +1,26 @@
+// The relaxed atomics (D503): a counter that four tasks increase, without an order
+// among them, next to one in the order of the sequence; a value read and written.
+// expect-output: 400000 400000
+// expect-output: stored 7, added 7 then 12
+import std.thread
+
+i32 main() {
+    thread.Atomic<i64> counter
+    thread.Atomic<i64> exact
+    thread.Group jobs
+    for (i32 t = 0; t < 4; t++) {
+        jobs.start([counter, exact]() {
+            for (i32 i = 0; i < 100000; i++) {
+                counter.addRelaxed(1)
+                exact.add(1)
+            }
+        })
+    }
+    jobs.wait()
+    println("{} {}", counter.loadRelaxed(), exact.load())
+    thread.Atomic<u32> small
+    small.storeRelaxed(7)
+    u32 before = small.addRelaxed(5)
+    println("stored {}, added {} then {}", u32(7), before, small.loadRelaxed())
+    ret 0
+}

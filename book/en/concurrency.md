@@ -181,7 +181,7 @@ i32 main() {
 
 ## Atomics
 
-`thread.Atomic<T>` holds an integer or a `bool` that several threads change without a lock: `load`, `store`, `add`, `exchange` and `compareExchange`. They are sequentially consistent, the simplest model to reason about. An atomic cannot be copied, and the tasks and threads that use it capture it by reading it, as `done` and `letters` above.
+`thread.Atomic<T>` holds an integer or a `bool` that several threads change without a lock: `load`, `store`, `add`, `exchange` and `compareExchange`. They are sequentially consistent, the simplest model to reason about. `loadRelaxed`, `storeRelaxed` and `addRelaxed` are faster where only the value counts, as a counter that many threads increase: they give no order to what the threads do around them. An atomic cannot be copied, and the tasks and threads that use it capture it by reading it, as `done` and `letters` above.
 
 ## Summary
 
