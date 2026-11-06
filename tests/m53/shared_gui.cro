@@ -1,0 +1,36 @@
+// The handlers of a window capture a thread.Shared by copy and change its value
+// (D485): here a handler kept by the window, called by the program through a
+// function value of the same kind.
+// target: windows linux-x86_64
+// program-env: SDL_VIDEO_DRIVER=offscreen
+// expect-output: dragged to 30, 40
+import std.gui
+import std.thread
+
+struct Point {
+    f32 x
+    f32 y
+}
+
+i32 main() {
+    thread.Shared<Point> held = thread.Shared<Point>(Point())
+    gui.Window w = gui.Window("shared", 300, 200)
+    gui.Canvas canvas = w.add(gui.Canvas(0, 0, 300, 165))
+    func(gui.Mouse) drag = [held, canvas](gui.Mouse m) {
+        held.lock([m](ref Point p) {
+            p.x = m.x
+            p.y = m.y
+        })
+        gui.Drawing d
+        held.lock([ref d](ref Point p) { d.circle(p.x, p.y, 8, gui.rgb(0xB4761C)) })
+        canvas.setDrawing(move d)
+    }
+    gui.Mouse m
+    m.x = 30
+    m.y = 40
+    drag(m)
+    canvas.onMouseMove(move drag)
+    held.lock([](ref Point p) { println("dragged to {}, {}", p.x, p.y) })
+    w.close()
+    ret 0
+}

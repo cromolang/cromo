@@ -78,6 +78,30 @@ i32 main() {
 
 There is no way to reach the `i64` without the lock, so there is no way to forget it. `lock` is released at the end of the lambda, even when an exception goes through.
 
+## Shared
+
+A `Mutex` stays where it is declared, and a lambda that is kept, as the handler of a window, cannot capture it. `thread.Shared<T>` is a handle to a value with its lock, kept until the end of the program: a small value, copied freely, and every copy reaches the same value with `lock`:
+
+```cromo
+import std.thread
+
+i32 main() {
+    thread.Shared<list<string>> log = thread.Shared<list<string>>(list<string>())
+    list<func(string)> handlers
+    handlers.add([log](string line) { log.lock([line](ref list<string> v) { v.add(line) }) })
+    handlers[0]("opened")
+    handlers[0]("saved")
+    log.lock([](ref list<string> v) { println("{}", join(v, ", ")) })
+    ret 0
+}
+```
+
+```output
+opened, saved
+```
+
+The handlers of the windows keep their state so, as [Windows and apps](gui.md) shows; threads and tasks capture a `Shared` as any other value.
+
 ## Tasks
 
 A `thread.Task` has the interface and the rules of a `thread.Thread`, but it is not a thread of the system: the runtime runs many tasks on a few threads, one for each processor. When a task waits, for the network, for `time.sleep`, for a mutex or for `join()`, its thread runs other tasks in the meantime. The code is the same as with threads: there is no `async`, no `await`, and no function of a different color.
@@ -163,5 +187,6 @@ i32 main() {
 
 - `thread.Thread` is a thread of the system; `thread.Task` a lightweight task with the same interface.
 - The compiler checks what threads and tasks capture: shared data that change go in a `thread.Mutex`.
+- `thread.Shared` is a handle to a value with its lock, which the handlers of the windows can keep too.
 - `thread.Group` starts many tasks and waits for them; a task that waits leaves its thread to others.
 - `thread.Channel` passes values between tasks; `thread.Atomic` counts without locks.

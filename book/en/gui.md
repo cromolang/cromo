@@ -260,6 +260,57 @@ i32 main() {
 - `onMouseDown`, `onMouseMove` and `onMouseUp` give the position from the top left corner of the canvas. While a button pressed on the canvas is held, its moves and its release come to the canvas also outside it: so the program can drag what it draws.
 - The handler cannot change the variables of `main`: it owns its copies, moved into it with `move`, and at each move it draws again from them and from the mouse.
 
+A state that the handlers change goes in a `thread.Shared`, which every handler captures by copy. Here the circle follows the mouse while its button is held:
+
+```cromo norun
+import std.gui
+import std.thread
+
+struct Spot {
+    f32 x = 100
+    f32 y = 100
+    bool held
+}
+
+gui.Drawing spotOf(Spot s) {
+    gui.Drawing d
+    d.roundRect(0, 0, 400, 240, 8, gui.rgb(0xFFFFFF))
+    d.circle(s.x, s.y, 20, gui.rgb(s.held ? 0x2F6E8F : 0xB4761C))
+    ret d
+}
+
+[[window]]
+i32 main() {
+    thread.Shared<Spot> spot = thread.Shared<Spot>(Spot())
+    gui.Window w = gui.Window("Drag", 432, 307)
+    gui.Canvas canvas = w.add(gui.Canvas(16, 16, 400, 240))
+    canvas.setDrawing(spotOf(Spot()))
+    canvas.onMouseDown([spot, canvas](gui.Mouse m) {
+        spot.lock([canvas, m](ref Spot s) {
+            s.held = (m.x - s.x) * (m.x - s.x) + (m.y - s.y) * (m.y - s.y) < 400
+            canvas.setDrawing(spotOf(s))
+        })
+    })
+    canvas.onMouseMove([spot, canvas](gui.Mouse m) {
+        spot.lock([canvas, m](ref Spot s) {
+            if (s.held) {
+                s.x = m.x
+                s.y = m.y
+                canvas.setDrawing(spotOf(s))
+            }
+        })
+    })
+    canvas.onMouseUp([spot, canvas](gui.Mouse m) {
+        spot.lock([canvas](ref Spot s) {
+            s.held = false
+            canvas.setDrawing(spotOf(s))
+        })
+    })
+    w.start()
+    ret 0
+}
+```
+
 ## The same program on Android
 
 ```sh

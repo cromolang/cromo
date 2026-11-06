@@ -78,6 +78,30 @@ i32 main() {
 
 Non c'è modo di raggiungere l'`i64` senza il lock, e quindi non c'è modo di dimenticarselo. Il `lock` viene rilasciato alla fine della lambda, anche quando la attraversa un'eccezione.
 
+## Shared
+
+Un `Mutex` resta dove è dichiarato, e una lambda che viene tenuta, come il gestore di una finestra, non può catturarlo. `thread.Shared<T>` è un handle a un valore con il suo lock, tenuto fino alla fine del programma: un valore piccolo, che si copia liberamente, e ogni copia raggiunge lo stesso valore con `lock`:
+
+```cromo
+import std.thread
+
+i32 main() {
+    thread.Shared<list<string>> log = thread.Shared<list<string>>(list<string>())
+    list<func(string)> handlers
+    handlers.add([log](string line) { log.lock([line](ref list<string> v) { v.add(line) }) })
+    handlers[0]("opened")
+    handlers[0]("saved")
+    log.lock([](ref list<string> v) { println("{}", join(v, ", ")) })
+    ret 0
+}
+```
+
+```output
+opened, saved
+```
+
+I gestori delle finestre tengono così il loro stato, come mostra [Finestre e app](gui.md); thread e task catturano uno `Shared` come qualunque altro valore.
+
 ## Task
 
 Un `thread.Task` ha l'interfaccia e le regole di un `thread.Thread`, ma non è un thread del sistema: il runtime esegue molti task su pochi thread, uno per processore. Quando un task aspetta la rete, `time.sleep`, un mutex o `join()`, il suo thread nel frattempo esegue altri task. Il codice è lo stesso che si scrive con i thread: niente `async`, niente `await`, e nessuna funzione di un colore diverso.
@@ -163,5 +187,6 @@ i32 main() {
 
 - `thread.Thread` è un thread del sistema; `thread.Task` è un task leggero con la stessa interfaccia.
 - Il compilatore controlla ciò che thread e task catturano: i dati condivisi che cambiano vanno in un `thread.Mutex`.
+- `thread.Shared` è un handle a un valore con il suo lock, che anche i gestori delle finestre possono tenere.
 - `thread.Group` avvia molti task e li attende; un task che attende lascia il suo thread agli altri.
 - `thread.Channel` passa valori tra i task; `thread.Atomic` conta senza lock.

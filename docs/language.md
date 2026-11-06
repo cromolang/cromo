@@ -729,6 +729,7 @@ i32 main() {
 - `thread.Thread` is made from a lambda, started with `start()` and waited for with `join()` (D214).
 - A thread whose lambda captures by address is a thread of its block: it is waited for at the end of the block, and while it runs the block cannot use what the thread has with `ref`, nor modify what it reads (D215). The compiler checks it, so two threads never write the same data. A thread that captures only with `move` is free: it can be kept in a list and outlive its block.
 - The data of a `thread.Mutex<T>` are reached only inside `lock`, which gives them with `ref` to one thread at a time (D216).
+- A `thread.Shared<T>` is a handle to a value with its lock, kept until the end of the program: a simple value, which the handlers of the windows, the threads and the tasks copy and capture, and which reaches the value with `lock`, as a `Mutex` (D485).
 - `join()` throws again the exception of the thread; an exception that no `join()` takes stops the program (D217).
 - A thread that calls a function received as a parameter needs it `const func`, which does not modify what it captures (D253).
 

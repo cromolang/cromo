@@ -1,0 +1,27 @@
+// thread.Shared (D485): tasks that change the same value, a lambda kept in a list
+// that changes it, and the copies of the handle, which reach the same value.
+// expect-output: 100 tasks: 100
+// expect-output: kept: 2 items, first 'one'
+// expect-output: the copy sees 3 items
+import std.thread
+
+i32 main() {
+    thread.Shared<i64> done = thread.Shared<i64>(0)
+    thread.Group jobs
+    for (i64 i = 0; i < 100; i++) {
+        jobs.start([done]() { done.lock([](ref i64 n) { n++ }) })
+    }
+    jobs.wait()
+    done.lock([](ref i64 n) { println("100 tasks: {}", n) })
+
+    thread.Shared<list<string>> names = thread.Shared<list<string>>(list<string>())
+    list<func(string)> handlers
+    handlers.add([names](string name) { names.lock([name](ref list<string> v) { v.add(name) }) })
+    handlers[0]("one")
+    handlers[0]("two")
+    names.lock([](ref list<string> v) { println("kept: {} items, first '{}'", v.len(), v[0]) })
+    thread.Shared<list<string>> other = names
+    other.lock([](ref list<string> v) { v.add("three") })
+    names.lock([](ref list<string> v) { println("the copy sees {} items", v.len()) })
+    ret 0
+}

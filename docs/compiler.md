@@ -215,6 +215,7 @@ The tag of an enum is the value of its case, which is its position unless it is 
 - **Threads of the system:** `CreateThread` on Windows; on Linux `clone` with a stack from `mmap` and a guard page, in a few lines of assembly, and `join` waits on the futex that the kernel clears when the thread ends. The runtime calls the code of the lambda with its data and a slot for its exception, as any call that can throw (D36).
 - **`std.thread`** is written in Cromo (`library/std/thread.cro`) with the built-in functions `threadStart`, `threadWait`, `threadRethrow`, `threadUncaught`, `threadFree`, `mutexLock`, `mutexUnlock` and `selfAddress`. `threadRethrow` moves the exception of the thread into the slot of the caller of `join()`, which can therefore throw anything.
 - **Threads of a block:** sema lets the lambda written in `thread.Thread(...)` capture by address when the construction is the value of a declaration; the data of the lambda stay in the frame and the `Thread` owns them, destroying them with `.release`. From `start()` to `join()`, or to the end of the block, the captures by address are lent as the elements of a `for` (D101): `loopBorrows_` refuses the modifications, and `threadBorrows_` also the reads of what the thread has with `ref`.
+- **Shared (D485):** a struct of one `addr`, so a simple type that every lambda can capture: the constructor allocates the lock and the value, and `lock` calls `mutexLock` and `mutexUnlock` on that memory, as `Mutex` does on itself.
 - **Mutex:** `lock` is a `const` method that writes the mutex through `selfAddress()`. The struct is marked `addressed`, and so is every struct that holds one: it is passed by address and without `noalias readonly`, so that LLVM does not assume that a call leaves it unchanged.
 - **LLVM without the C library:** the analysis of the library functions allows only `memcpy`, `memmove`, `memset`, `memcmp` and, on Linux, `bcmp`, which `runtime/mem_x64.S` defines; otherwise LLVM turned a loop of `std.fs` into a call to `strlen`.
 - **`const func` (D253):** `checkConstFunction` refuses, in the argument of a `const func` parameter, a lambda that captures with `ref` or captures a parameter `func` that is not `const`; `mayModifyCaptures` follows the captures of nested lambdas back to the parameter. The lambda of a thread or of a task cannot capture such a parameter either.
@@ -539,7 +540,8 @@ Each milestone lists the decisions still open that are needed **before** writing
 | **M49** | `std.gui`: the keyboard on the screen of Android, and the snackbar above the components at the bottom | none: D471, D472, P50 |
 | **M50** | The documentation in the editor: comments above the declarations, the completion after a module, the help on the signature, and the library documented | none: D473-D478, P51 |
 | **M51** | `std.gui`: the look of a desktop application for data, the density of the system and the styles of the buttons | none: D479-D482, P52 |
-| **M52** | `std.gui`: the canvas, with `gui.Drawing`, and the SVG images | none: D483, D484 |
+| **M52** | `std.gui`: the canvas, with `gui.Drawing`, and the SVG images | none: D483, D484, P53 |
+| **M53** | `thread.Shared<T>`: a value that the handlers, the threads and the tasks change | none: D485 |
 | **Later** | Packages: `cromo.mod`, `cromo.sum`, `cromo get`, the archives of the tags over HTTPS, a reader of tar (D376–D391) | none: D376–D391 |
 | **Last** | Compiler written in Cromo that compiles itself and makes the same archives, when the language is mature (§2, D147, D290, D291) | |
 

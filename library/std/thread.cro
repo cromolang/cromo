@@ -1,6 +1,7 @@
 // Code that runs at the same time: the threads of the system (Thread), lightweight
 // tasks that share a few threads (Task and Group), and what they use together:
-// Mutex for data that change, Channel to pass values and Atomic for counters.
+// Mutex for data that change, Shared for a value that the handlers of the windows
+// change too, Channel to pass values and Atomic for counters.
 //
 // The compiler checks what a thread or a task captures: while it runs, the code
 // that started it cannot change what it reads, nor touch what it changes. Data that
@@ -233,6 +234,52 @@ public struct Mutex<T> {
         } finally {
             put<T>(place, move value)
             mutexUnlock(me)
+        }
+    }
+}
+
+// A value that the handlers of the windows, the threads and the tasks change: a handle
+// to the value with its lock, which stays until the end of the program. A handle is a
+// simple value, copied freely: every copy reaches the same value, and a lambda that is
+// kept, as a handler of a window, captures it by copy, where a 'Mutex' could not go.
+// The value is reached only inside 'lock', by one at a time.
+//
+// '''
+// thread.Shared<i64> clicks = thread.Shared<i64>(0)
+// button.onClick([clicks, label]() {
+//     clicks.lock([label](ref i64 n) {
+//         n++
+//         label.setText(format("{} clicks", n))
+//     })
+// })
+// '''
+public struct Shared<T> {
+    addr place  // the lock of the system, then the value, on the heap
+
+    // Keeps the value, moved here, for the whole program.
+    public Shared(move T value) {
+        place = alloc(8 + sizeOf<T>())
+        put<u64>(place, 0)
+        put<T>(offset(place, 8), move value)
+    }
+
+    // Locks the value, calls 'body' with it by 'ref', and unlocks it at the end of
+    // 'body', also when an exception goes through. Who finds it locked waits; a task
+    // leaves its thread to the others meanwhile. Locking it again inside 'body' waits
+    // for ever. A 'Shared' declared without a value has none: locking it is a panic.
+    public void lock(func(ref T) body) const {
+        addr none
+        if (place == none) {
+            panic("this thread.Shared has no value: make it with thread.Shared<T>(value)")
+        }
+        mutexLock(place)
+        addr at = offset(place, 8)
+        T value = take<T>(at)
+        try {
+            body(ref value)
+        } finally {
+            put<T>(at, move value)
+            mutexUnlock(place)
         }
     }
 }

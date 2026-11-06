@@ -2278,6 +2278,20 @@ chart.onMouseDown([chart](gui.Mouse m) { println("{} {}", m.x, m.y) })
 ### D484. Vector images: SVG
 *2026-11-06.* `std.gui` reads SVG images, with nanosvg (zlib license) in its glue of C (D441), and draws them at the size where they are shown, sharp at every size and density: icons, logos, illustrations, the figures of a game. The image boxes take them as the other images.
 
+### D485. A value that the handlers, the threads and the tasks change
+*2026-11-06.* Chosen by the author, when the canvas showed the need: a lambda that is kept captures only copies and values moved into it, and reads them only (D184, D188), so the handlers of a window had no state to change, as the shape that the mouse drags. `thread.Shared<T>` is a handle to a value with its lock, kept until the end of the program: a simple type (D23), which the handlers of the windows, the threads and the tasks copy and capture freely, and `s.lock([](ref T v) { ... })` reaches the value as `Mutex` does. One concept for all the code that runs at other times, simpler than the counted pointers of C++ and Rust.
+
+```cromo
+// draft: the names are those of the code of M53
+thread.Shared<Point> held = thread.Shared<Point>(Point())
+canvas.onMouseMove([held](gui.Mouse m) {
+    held.lock([m](ref Point p) {
+        p.x = m.x
+        p.y = m.y
+    })
+})
+```
+
 ---
 
 ## Proposed
@@ -2497,6 +2511,10 @@ A component keeps the distances from the edges of its parent, the content of the
 - `std.gui` draws the rectangles and the circles as the boxes of the components, smoothed, the images from textures, and the texts with the fonts of the window, one for each size. The segments, the polygons and the polylines that follow one another are a layer: `std.gui` writes them as an SVG over the rectangle that holds them, and nanosvg draws it once, at the density of the display, until the drawing or the density changes. An SVG image has a texture for each size at which a canvas shows it, and the textures not used by the last frame are freed.
 - An image box takes an SVG image as the others, with `setBytes` or from a file, and nanosvg draws it again when the size at which it is shown changes.
 - nanosvg is compiled with the images, without the C library: its memory, its strings and its math are those of SDL, and it opens no file.
+
+### P54. `thread.Shared<T>` (D485)
+- `thread.Shared<T>(value)` moves the value into memory of its own, after a lock of the system as that of `Mutex`, and holds only its address: a struct of one `addr`, without a destructor, a simple type whatever `T` is. The value stays until the end of the program, and its destructor never runs.
+- `lock(func(ref T))` is that of `Mutex`: one at a time, the lock released also when an exception goes through, and locking it again inside waits for ever. A `Shared` declared without a value has none, and `lock` on it is a panic.
 ---
 
 ## Open

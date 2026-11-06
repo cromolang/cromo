@@ -1,0 +1,10 @@
+// A thread.Shared declared without a value has none: locking it is a panic (D485).
+// expect-exit: 101
+// expect-stderr: this thread.Shared has no value: make it with thread.Shared<T>(value)
+import std.thread
+
+i32 main() {
+    thread.Shared<i64> empty
+    empty.lock([](ref i64 n) { n++ })
+    ret 0
+}
