@@ -2734,6 +2734,11 @@ A component keeps the distances from the edges of its parent, the content of the
 - `sum()`, `smallest()` and `largest()` give a number, the sum of the floats in any order, as SIMD adds; `abs()` of the signed and of the floats, `min(w)` and `max(w)` number by number; `low()` and `high()`, the halves of a vector of 256 bits; `len()`. The form of debug is that of an array, `[1.0, 2.0]`.
 - LLVM has them as `<16 x i16>`, aligned at their size, as LLVM wants in the structs; their loads and stores say the alignment of their numbers, so that a vector in a list is read unaligned. The operators are the instructions of LLVM on vectors, the methods its intrinsics, as `llvm.vector.reduce.add`, `llvm.smin` and `llvm.fptosi.sat`: SSE2 on x86-64 by default, NEON on ARM64, and the halves of 128 bits where a vector is of 256.
 
+
+### P64. The radio groups, the buttons with two states and the progress bars (D506-D508)
+- `gui.RadioGroup(choices, x, y, w, h)`: the first choice chosen, -1 without choices; `setItems`, which chooses the first again, `items()`, `setSelected(index)`, a panic outside the choices, `selected()`, `text()`, `onChange(func(i64))`. A choice takes 28 pixels of the height on the desktop and 44 on a phone; its circle is as large as a check box, 16 pixels, with the border of the controls, ink 3 under the mouse; the one chosen is filled with the accent, with a dot of 6 pixels of the text on the accent, and the ring of the focus. A click chooses at the release; while it has the keyboard Up, Down, Left, Right, Home and End do.
+- `Button.setToggle(true)` makes a button with two states, `toggle()` reads it; `setChecked`, `checked()` and `onChange(func(bool))`, called at each click before the handlers of `onClick`, and with Space and Enter. Pressed, a normal button is the soft accent with a border of the accent, accent 2 under the mouse, and its text and its icon in accent 2.
+- `gui.ProgressBar(x, y, w, h)`: `setValue(value)` from 0 to 1, a value outside taken to its nearest end, `value()`, `setBusy(busy)`, `busy()`, from any thread. The bar is at most 6 pixels high, in the middle of the height, round; its track is rule, the part done the accent, at least as wide as it is high; busy, a third of its width runs across it from the left in 1.2 seconds.
 ---
 
 ## Open

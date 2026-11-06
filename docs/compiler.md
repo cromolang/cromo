@@ -557,6 +557,7 @@ Each milestone lists the decisions still open that are needed **before** writing
 | **M60** | The functions of the bits, and the relaxed atomics | none: D502, D503 |
 | **M61** | `std.fs`: the files read and written in pieces, and mapped in memory | none: D504 |
 | **M62** | The vectors of SIMD: `i16x16`, `f32x8` and the others, with their operators | none: D505 |
+| **M63** | `std.gui`: the radio groups, the buttons with two states and the progress bars | none: D506-D508 |
 | **Later** | Packages: `cromo.mod`, `cromo.sum`, `cromo get`, the archives of the tags over HTTPS, a reader of tar (D376–D391) | none: D376–D391 |
 | **Last** | Compiler written in Cromo that compiles itself and makes the same archives, when the language is mature (§2, D147, D290, D291) | |
 

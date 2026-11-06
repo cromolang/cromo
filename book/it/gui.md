@@ -54,6 +54,8 @@ i32 main() {
 | `gui.Table(...)` | righe di celle in colonne, anche milioni, chieste mentre sono mostrate |
 | `gui.TabView(...)` | una card con schede, ognuna con la sua pagina: `addPage(titolo)` |
 | `gui.Segmented(voci, ...)` | una fila di pulsanti uniti, uno scelto |
+| `gui.RadioGroup(voci, ...)` | una scelta fra pochi valori, uno sotto l'altro |
+| `gui.ProgressBar(...)` | la parte fatta di un lavoro, o un'attesa |
 | `gui.TextView(...)` | testo ricco: stili, blocchi, piccole immagini e pezzi che l'utente clicca |
 | `gui.Canvas(...)` | una superficie su cui il programma disegna: `setDrawing`, e il mouse su di essa |
 
@@ -280,6 +282,38 @@ i32 main() {
 - `gui.Segmented` è una fila di pulsanti uniti, uno scelto, per una scelta fra pochi valori che si vedono tutti: i segmenti si dividono la sua larghezza in parti uguali. `selected()` e `text()` dicono quale è scelto.
 - Tutti e due prendono la tastiera: Sinistra e Destra scelgono la scheda o il segmento accanto.
 - `examples/22_agenda.cro` è una piccola agenda con tutti e due.
+
+## Scelte e avanzamento
+
+```cromo norun
+import std.gui
+
+[[window]]
+i32 main() {
+    gui.Window w = gui.Window("Choices", 420, 260)
+    gui.RadioGroup size = w.add(gui.RadioGroup(["Small", "Medium", "Large"], 16, 16, 180, 84))
+    size.setSelected(1)
+    gui.Button bold = w.add(gui.Button("Bold", 220, 16, 80, 28))
+    bold.setToggle(true)
+    bold.setChecked(true)
+    gui.Button italic = w.add(gui.Button("Italic", 308, 16, 80, 28))
+    italic.setToggle(true)
+    gui.ProgressBar done = w.add(gui.ProgressBar(16, 130, 388, 8))
+    done.setValue(0.6)
+    gui.ProgressBar busy = w.add(gui.ProgressBar(16, 160, 388, 8))
+    busy.setBusy(true)
+    size.onChange([size](i64 index) { println("size {}", size.text()) })
+    bold.onChange([](bool pressed) { println("bold {}", pressed) })
+    w.start()
+    ret 0
+}
+```
+
+![Un gruppo di scelte, pulsanti a due stati e barre di avanzamento](images/choices.png)
+
+- `gui.RadioGroup` è una scelta fra pochi valori, uno sotto l'altro: `selected()`, `text()` e `onChange`, e le frecce mentre ha la tastiera.
+- Un pulsante con `setToggle(true)` resta premuto o rilasciato a ogni clic, nell'accento tenue quando è premuto: `checked()` e `onChange` dicono il suo stato. Con la sola icona è il modo di una vista in una barra.
+- `gui.ProgressBar` mostra la parte fatta di un lavoro, `setValue` da 0 a 1, o con `setBusy(true)` un segmento che scorre, per un'attesa senza misura. Si può cambiare da qualunque thread, come da un task che fa il lavoro.
 
 ## Testo ricco
 

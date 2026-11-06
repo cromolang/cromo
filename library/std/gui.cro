@@ -698,6 +698,41 @@ public struct Button : Component {
         ret partText(id, false)
     }
 
+    // Makes the button one with two states, pressed and released, which a click changes
+    // (D507): pressed it is in the soft accent. A button is normal by default.
+    public void setToggle(bool value) const {
+        i64 me = id
+        withData([me, value](ref Shared data) { data.parts[partIndexOf(ref data, me)].toggle = value })
+    }
+
+    // Whether the button has two states.
+    public bool toggle() const {
+        i64 me = id
+        bool result = false
+        withData([me, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, me)].toggle })
+        ret result
+    }
+
+    // Presses or releases a button with two states, without calling the handlers of
+    // 'onChange'.
+    public void setChecked(bool value) const {
+        setPartFlag(id, 2, value)
+    }
+
+    // Whether a button with two states is pressed.
+    public bool checked() const {
+        ret partFlag(id, 2)
+    }
+
+    // Adds a handler, called on the thread of the windows when the user presses or
+    // releases a button with two states, with its new state; 'setChecked' does not call
+    // it. The handlers of 'onClick' are called too.
+    public void onChange(move func(bool) handler) const {
+        addr box = alloc(sizeOf<func(bool)>())
+        put<func(bool)>(box, move handler)
+        addPartHandler(id, 1, box)
+    }
+
     // Moves the button, in logical pixels from the top left corner of its parent: the content
     // of the window, or the group, the panel or the dialog that holds it. Its anchors keep the
     // distances from the edges that it has at the new place.
@@ -3961,6 +3996,314 @@ public struct Menu {
     }
 }
 
+// A choice among a few values, one under the other, one of them chosen (D506): a click
+// chooses one, and while it has the keyboard the arrows do. The first one is chosen at
+// the start.
+//
+// '''
+// gui.RadioGroup size = w.add(gui.RadioGroup(["Small", "Medium", "Large"], 16, 16, 200, 84))
+// size.onChange([size](i64 index) { println("size {}", size.text()) })
+// '''
+public struct RadioGroup : Component {
+    i64 id
+
+    // A radio group with a copy of its choices, the first one chosen. 'x' and 'y' are in
+    // logical pixels from the top left corner of its parent, the window, the group, the
+    // panel or the dialog whose 'add' puts it there, and 'width' and 'height' its size: a
+    // choice takes 28 pixels of the height on the desktop and 44 on a phone.
+    public RadioGroup(list<string> choices, i32 x, i32 y, i32 width, i32 height) {
+        id = newPart(kindRadioGroup, "", x, y, width, height)
+        setSegments(id, choices)
+    }
+
+    i64 componentId() const {
+        ret id
+    }
+
+    // Replaces the choices with a copy of 'choices', and chooses the first one.
+    public void setItems(list<string> choices) const {
+        setSegments(id, choices)
+    }
+
+    // A copy of the choices.
+    public list<string> items() const {
+        list<string> result
+        i64 me = id
+        withData([me, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, me)].items })
+        ret result
+    }
+
+    // Chooses the choice at 'index', from 0, without calling the handlers of 'onChange'.
+    // An index out of the choices is a panic.
+    public void setSelected(i64 index) const {
+        i64 me = id
+        withData([me, index](ref Shared data) {
+            i64 p = partIndexOf(ref data, me)
+            if (index < 0 || index >= data.parts[p].items.len()) {
+                panic(format("the radio group has no choice {}", index))
+            }
+            data.parts[p].selected = index
+        })
+    }
+
+    // The index of the choice chosen, from 0: -1 only without choices.
+    public i64 selected() const {
+        i64 me = id
+        i64 result = -1
+        withData([me, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, me)].selected })
+        ret result
+    }
+
+    // The text of the choice chosen, or "" without choices.
+    public string text() const {
+        i64 me = id
+        string result
+        withData([me, ref result](ref Shared data) {
+            i64 p = partIndexOf(ref data, me)
+            if (data.parts[p].selected >= 0) {
+                result = data.parts[p].items[data.parts[p].selected]
+            }
+        })
+        ret result
+    }
+
+    // Adds a handler, called on the thread of the windows with the index of the choice
+    // that the user makes, when it is not the one chosen before. 'setSelected' and
+    // 'setItems' do not call it.
+    public void onChange(move func(i64) handler) const {
+        addr box = alloc(sizeOf<func(i64)>())
+        put<func(i64)>(box, move handler)
+        addPartHandler(id, 1, box)
+    }
+
+    // Moves the radio group, in logical pixels from the top left corner of its parent: the content of
+    // the window, or the group, the panel or the dialog that holds it. Its anchors keep the
+    // distances from the edges that it has at the new place.
+    public void setPosition(i32 x, i32 y) const {
+        setPartBounds(id, x, y, -1, -1)
+    }
+
+    // Changes the width and the height of the radio group, in logical pixels. Its anchors keep the
+    // distances from the edges that it has with the new size.
+    public void setSize(i32 width, i32 height) const {
+        setPartBounds(id, -1, -1, width, height)
+    }
+
+    // The distance of the radio group from the left edge of its parent, in logical pixels, where its
+    // anchors have placed it now.
+    public i32 x() const {
+        ret partBound(id, 0)
+    }
+
+    // The distance of the radio group from the top edge of its parent, in logical pixels, where its
+    // anchors have placed it now.
+    public i32 y() const {
+        ret partBound(id, 1)
+    }
+
+    // The width of the radio group now, in logical pixels: a 'Stretch' anchor changes it with its
+    // parent.
+    public i32 width() const {
+        ret partBound(id, 2)
+    }
+
+    // The height of the radio group now, in logical pixels: a 'Stretch' anchor changes it with its
+    // parent.
+    public i32 height() const {
+        ret partBound(id, 3)
+    }
+
+    // Sets the text that a small card shows when the mouse stays on the radio group for a moment,
+    // or after a long press on a phone: "" for none, the default; "\n" starts a new line.
+    public void setTooltip(string text) const {
+        setPartTooltip(id, text)
+    }
+
+    // The text of the tooltip of the radio group, "" for none.
+    public string tooltip() const {
+        ret partTooltip(id)
+    }
+
+    // Shows or hides the radio group.
+    public void setVisible(bool value) const {
+        setPartFlag(id, 0, value)
+    }
+
+    // Whether the radio group is visible, as 'setVisible' set it: true by default.
+    public bool visible() const {
+        ret partFlag(id, 0)
+    }
+
+    // Enables or disables the radio group: disabled, it is drawn at half its opacity.
+    public void setEnabled(bool value) const {
+        setPartFlag(id, 1, value)
+    }
+
+    // Whether the radio group is enabled, as 'setEnabled' set it: true by default.
+    public bool enabled() const {
+        ret partFlag(id, 1)
+    }
+
+    // Sets which edges of its parent the radio group follows when the parent changes size: the
+    // window, or the group, the panel or the dialog that holds it. It keeps the distances from
+    // those edges that it has now, as 'setAnchor(gui.Horizontal.Right, gui.Vertical.Bottom)' in
+    // the bottom right corner. By default it is anchored to the left and to the top, and does
+    // not move.
+    public void setAnchor(Horizontal horizontal, Vertical vertical) const {
+        setPartAnchor(id, horizontal, vertical)
+    }
+
+    // How the radio group follows the left and the right edges of its parent: 'Horizontal.Left' by
+    // default.
+    public Horizontal horizontalAnchor() const {
+        ret partHorizontal(id)
+    }
+
+    // How the radio group follows the top and the bottom edges of its parent: 'Vertical.Top' by
+    // default.
+    public Vertical verticalAnchor() const {
+        ret partVertical(id)
+    }
+}
+
+// A bar that shows how much of a work is done (D508), from 0 to 1, or with 'setBusy' a
+// segment that runs, for a wait without a measure.
+//
+// '''
+// gui.ProgressBar progress = w.add(gui.ProgressBar(16, 16, 300, 8))
+// progress.setValue(0.25)
+// '''
+public struct ProgressBar : Component {
+    i64 id
+
+    // A progress bar at 0. 'x' and 'y' are in logical pixels from the top left corner of
+    // its parent, the window, the group, the panel or the dialog whose 'add' puts it
+    // there, and 'width' and 'height' its size: the bar is at most 6 pixels high, in the
+    // middle of the height.
+    public ProgressBar(i32 x, i32 y, i32 width, i32 height) {
+        id = newPart(kindProgressBar, "", x, y, width, height)
+    }
+
+    i64 componentId() const {
+        ret id
+    }
+
+    // Sets the part done, from 0 to 1: a value out of the range is taken to its nearest
+    // end. It can be called from any thread.
+    public void setValue(f64 value) const {
+        i64 me = id
+        f64 done = value < 0 ? 0 : value > 1 ? 1 : value
+        withData([me, done](ref Shared data) { data.parts[partIndexOf(ref data, me)].done = done })
+    }
+
+    // The part done, from 0 to 1.
+    public f64 value() const {
+        i64 me = id
+        f64 done = 0
+        withData([me, ref done](ref Shared data) { done = data.parts[partIndexOf(ref data, me)].done })
+        ret done
+    }
+
+    // Shows a segment that runs instead of the part done, while 'busy' is true.
+    public void setBusy(bool busy) const {
+        setPartFlag(id, 2, busy)
+    }
+
+    // Whether the bar shows a wait without a measure.
+    public bool busy() const {
+        ret partFlag(id, 2)
+    }
+
+    // Moves the progress bar, in logical pixels from the top left corner of its parent: the content of
+    // the window, or the group, the panel or the dialog that holds it. Its anchors keep the
+    // distances from the edges that it has at the new place.
+    public void setPosition(i32 x, i32 y) const {
+        setPartBounds(id, x, y, -1, -1)
+    }
+
+    // Changes the width and the height of the progress bar, in logical pixels. Its anchors keep the
+    // distances from the edges that it has with the new size.
+    public void setSize(i32 width, i32 height) const {
+        setPartBounds(id, -1, -1, width, height)
+    }
+
+    // The distance of the progress bar from the left edge of its parent, in logical pixels, where its
+    // anchors have placed it now.
+    public i32 x() const {
+        ret partBound(id, 0)
+    }
+
+    // The distance of the progress bar from the top edge of its parent, in logical pixels, where its
+    // anchors have placed it now.
+    public i32 y() const {
+        ret partBound(id, 1)
+    }
+
+    // The width of the progress bar now, in logical pixels: a 'Stretch' anchor changes it with its
+    // parent.
+    public i32 width() const {
+        ret partBound(id, 2)
+    }
+
+    // The height of the progress bar now, in logical pixels: a 'Stretch' anchor changes it with its
+    // parent.
+    public i32 height() const {
+        ret partBound(id, 3)
+    }
+
+    // Sets the text that a small card shows when the mouse stays on the progress bar for a moment,
+    // or after a long press on a phone: "" for none, the default; "\n" starts a new line.
+    public void setTooltip(string text) const {
+        setPartTooltip(id, text)
+    }
+
+    // The text of the tooltip of the progress bar, "" for none.
+    public string tooltip() const {
+        ret partTooltip(id)
+    }
+
+    // Shows or hides the progress bar.
+    public void setVisible(bool value) const {
+        setPartFlag(id, 0, value)
+    }
+
+    // Whether the progress bar is visible, as 'setVisible' set it: true by default.
+    public bool visible() const {
+        ret partFlag(id, 0)
+    }
+
+    // Enables or disables the progress bar: disabled, it is drawn at half its opacity.
+    public void setEnabled(bool value) const {
+        setPartFlag(id, 1, value)
+    }
+
+    // Whether the progress bar is enabled, as 'setEnabled' set it: true by default.
+    public bool enabled() const {
+        ret partFlag(id, 1)
+    }
+
+    // Sets which edges of its parent the progress bar follows when the parent changes size: the
+    // window, or the group, the panel or the dialog that holds it. It keeps the distances from
+    // those edges that it has now, as 'setAnchor(gui.Horizontal.Right, gui.Vertical.Bottom)' in
+    // the bottom right corner. By default it is anchored to the left and to the top, and does
+    // not move.
+    public void setAnchor(Horizontal horizontal, Vertical vertical) const {
+        setPartAnchor(id, horizontal, vertical)
+    }
+
+    // How the progress bar follows the left and the right edges of its parent: 'Horizontal.Left' by
+    // default.
+    public Horizontal horizontalAnchor() const {
+        ret partHorizontal(id)
+    }
+
+    // How the progress bar follows the top and the bottom edges of its parent: 'Vertical.Top' by
+    // default.
+    public Vertical verticalAnchor() const {
+        ret partVertical(id)
+    }
+}
+
 // What a canvas shows (D483): its shapes, each drawn over the ones before it. The
 // positions are in logical pixels from the top left corner of the canvas. A drawing is
 // a value: the program builds it, on any thread, and hands it to the canvas with
@@ -4520,6 +4863,8 @@ const i32 kindTextView = 18
 const i32 kindTabView = 19
 const i32 kindSegmented = 20
 const i32 kindTextArea = 21
+const i32 kindRadioGroup = 22
+const i32 kindProgressBar = 23
 
 // A component: its kind, its window and its group once added, its properties, for
 // a text box where its cursor and the other end of its selection are, as indices
@@ -4607,6 +4952,8 @@ struct PartData {
     i64 reveal = -1         // the piece to show after the next layout
     list<addr> pieces       // func(i64, Mouse), of a text view
     string tooltip          // shown when the mouse stays on it (D497)
+    bool toggle             // a button with two states, pressed when checked (D507)
+    f64 done                // of a progress bar, from 0 to 1; checked when it is busy (D508)
     list<string> undoTexts  // of a text box or a text area: the texts before the last edits (D498)
     list<i64> undoCarets
     list<string> redoTexts
@@ -6689,7 +7036,7 @@ bool inside(ref PartData part, f32 x, f32 y) {
 bool focusable(ref PartData part) {
     bool takes = part.kind == kindButton || part.kind == kindTextBox || part.kind == kindCheckBox || part.kind == kindComboBox ||
         part.kind == kindListView || part.kind == kindSwitch || part.kind == kindSlider || part.kind == kindTable ||
-        part.kind == kindTabView || part.kind == kindSegmented || part.kind == kindTextArea
+        part.kind == kindTabView || part.kind == kindSegmented || part.kind == kindTextArea || part.kind == kindRadioGroup
     ret takes && part.shown && part.active
 }
 
@@ -6776,7 +7123,7 @@ void pressPart(ref WindowData window, ref list<PartData> parts, f32 x, f32 y, re
         window.heldItem = tableItemAt(ref parts[p], x, y)
     } else if (parts[p].kind == kindTextView) {
         window.heldItem = pieceAt(ref parts[p], x, y)
-    } else if (parts[p].kind == kindTabView || parts[p].kind == kindSegmented) {
+    } else if (parts[p].kind == kindTabView || parts[p].kind == kindSegmented || parts[p].kind == kindRadioGroup) {
         window.heldItem = choiceAt(ref parts[p], x, y)
     }
 }
@@ -6809,7 +7156,7 @@ void releasePart(ref WindowData window, ref list<PartData> parts, f32 x, f32 y, 
             if (item >= 0 && pieceAt(ref parts[p], x, y) == item) {
                 pieceClick(ref parts[p], item, x, y, 1, ref calls)
             }
-        } else if (parts[p].kind == kindTabView || parts[p].kind == kindSegmented) {
+        } else if (parts[p].kind == kindTabView || parts[p].kind == kindSegmented || parts[p].kind == kindRadioGroup) {
             if (item >= 0 && choiceAt(ref parts[p], x, y) == item) {
                 chooseChoice(ref parts[p], item, ref calls)
             }
@@ -7101,7 +7448,7 @@ i64 barItemAt(ref PartData bar, f32 x, f32 y) {
     if (bar.kind == kindTextView) {
         ret pieceAt(ref bar, x, y)
     }
-    if (bar.kind == kindTabView || bar.kind == kindSegmented) {
+    if (bar.kind == kindTabView || bar.kind == kindSegmented || bar.kind == kindRadioGroup) {
         ret choiceAt(ref bar, x, y)
     }
     if (bar.kind == kindNavigation && bar.items.len() > 0 && bar.width > 0) {
@@ -7285,6 +7632,12 @@ bool comboKey(ref WindowData window, ref PartData box, Key key, ref list<Call> c
 // A click, or Space: a button calls its handlers, a check box changes.
 void activate(ref PartData part, ref list<Call> calls) {
     if (part.kind == kindButton) {
+        if (part.toggle) {  // D507
+            part.checked = !part.checked
+            Call call = callOf(8, part.change)
+            call.value = part.checked
+            calls.add(move call)
+        }
         calls.add(callOf(6, part.click))
     } else if (part.kind == kindCheckBox || part.kind == kindSwitch) {
         part.checked = !part.checked
@@ -7325,7 +7678,7 @@ bool keyOfPart(ref WindowData window, ref list<PartData> parts, Key key, ref lis
     if (parts[f].kind == kindSlider) {
         ret sliderKey(ref parts[f], key, ref calls)
     }
-    if (parts[f].kind == kindTabView || parts[f].kind == kindSegmented) {
+    if (parts[f].kind == kindTabView || parts[f].kind == kindSegmented || parts[f].kind == kindRadioGroup) {
         ret choiceKey(ref parts[f], key, ref calls)
     }
     if (key.code == 32 || (key.code == 13 && parts[f].kind == kindButton)) {  // Space, Enter
@@ -8088,6 +8441,10 @@ void drawPart(ref WindowData window, ref PartData part, ref Colors c, ref list<I
             back = hot ? c.danger : c.surface
             line = hot ? c.danger : c.rule2
             fore = hot ? c.onAccent : c.danger
+        } else if (part.toggle && part.checked) {  // pressed (D507)
+            back = c.accentSoft
+            line = hot ? c.accent2 : c.accent
+            fore = c.accent2
         }
         cromo_gui_box(r, x, y, w, h, corner, 1, d, solid(back, on), solid(line, on))
         f32 size = textWidth(font, part.text, part.text.len())
@@ -8191,6 +8548,10 @@ void drawPart(ref WindowData window, ref PartData part, ref Colors c, ref list<I
         drawTabView(ref window, ref part, ref c, ring)
     } else if (part.kind == kindSegmented) {
         drawSegmented(ref window, ref part, ref c, ring)
+    } else if (part.kind == kindRadioGroup) {
+        drawRadioGroup(ref window, ref part, ref c, ring)
+    } else if (part.kind == kindProgressBar) {
+        drawProgressBar(ref window, ref part, ref c)
     }
 }
 
@@ -9707,6 +10068,73 @@ void drawTextArea(ref WindowData window, ref PartData area, ref Colors c, bool f
     clipPart(r, ref area)
 }
 
+// ---- The radio groups and the progress bars (D506, D508) ----
+
+f32 radioRow() {  // a choice of a radio group
+    ret comfortable() ? 44 : 28
+}
+
+// The choice of a radio group at y in the window, or -1.
+i64 radioAt(ref PartData part, f32 y) {
+    i64 k = i64((y - part.top) / radioRow())
+    ret y >= part.top && k < part.items.len() ? k : -1
+}
+
+// A radio group: its choices one under the other, each with a circle as the check boxes,
+// the one chosen filled with the accent and a dot of the text on the accent, the others
+// with the border of the controls, ink 3 under the mouse (D506).
+void drawRadioGroup(ref WindowData window, ref PartData part, ref Colors c, bool ring) {
+    addr r = window.renderer
+    f32 d = window.density
+    f32 x = part.left
+    bool on = part.active
+    f32 ascent = 0
+    f32 descent = 0
+    f32 gap = 0
+    cromo_gui_font_metrics(window.body, ref ascent, ref descent, ref gap)
+    clipInside(r, ref part, x, part.top, f32(part.width), f32(part.height))
+    for (i64 k = 0; k < part.items.len(); k++) {
+        f32 middle = part.top + f32(k) * radioRow() + radioRow() / 2
+        f32 top = middle - checkSide / 2
+        bool chosen = k == part.selected
+        bool hot = window.hot == part.id && window.hotItem == k && on
+        if (chosen) {
+            u32 back = hot ? c.accent2 : c.accent
+            cromo_gui_box(r, x, top, checkSide, checkSide, checkSide / 2, 1, d, solid(back, on), solid(back, on))
+            cromo_gui_box(r, x + checkSide / 2 - 3, middle - 3, 6, 6, 3, 0, d, solid(c.onAccent, on), 0)
+            if (ring) {
+                focusRing(r, x, top, checkSide, checkSide, checkSide / 2, d, ref c)
+            }
+        } else {
+            cromo_gui_box(r, x, top, checkSide, checkSide, checkSide / 2, 1, d, solid(c.surface, on), solid(hot ? c.ink3 : c.rule2, on))
+        }
+        text(window.body, part.items[k], x + checkSide + 8, middle + (ascent - descent) / 2, c.ink, on)
+    }
+    clipPart(r, ref part)
+}
+
+// A progress bar: a track of rule at most 6 pixels high, with the part done in the
+// accent; busy, a third of its width that runs across it in 1.2 seconds (D508).
+void drawProgressBar(ref WindowData window, ref PartData part, ref Colors c) {
+    addr r = window.renderer
+    f32 d = window.density
+    f32 x = part.left
+    f32 w = f32(part.width)
+    bool on = part.active
+    f32 bar = least(f32(part.height), 6)
+    f32 top = part.top + (f32(part.height) - bar) / 2
+    cromo_gui_box(r, x, top, w, bar, bar / 2, 0, d, solid(c.rule, on), 0)
+    if (part.checked) {
+        f32 phase = f32((SDL_GetTicksNS() / 1000000) % 1200) / 1200
+        f32 span = w / 3
+        clipInside(r, ref part, x, top, w, bar)
+        cromo_gui_box(r, x - span + (w + span) * phase, top, span, bar, bar / 2, 0, d, solid(c.accent, on), 0)
+        clipPart(r, ref part)
+    } else if (part.done > 0) {
+        cromo_gui_box(r, x, top, most(w * f32(part.done), bar), bar, bar / 2, 0, d, solid(c.accent, on), 0)
+    }
+}
+
 // ---- The tabs and the segmented controls (D494, D495) ----
 
 f32 tabHeight() {  // a tab in the band of a tab view
@@ -9758,6 +10186,9 @@ f32 bandTitleWidth(ref WindowData window, string title) {
 // The tab or the segment at a point of the content, or -1. The tabs are where the last
 // drawing put them.
 i64 choiceAt(ref PartData part, f32 x, f32 y) {
+    if (part.kind == kindRadioGroup) {
+        ret radioAt(ref part, y)
+    }
     if (part.kind == kindSegmented) {
         if (part.items.len() == 0 || part.width <= 0) {
             ret -1
@@ -9797,9 +10228,10 @@ bool choiceKey(ref PartData part, Key key, ref list<Call> calls) {
     }
     i64 at = part.selected
     i64 next = at
-    if (key.code == keyLeft) {
+    bool down = part.kind == kindRadioGroup  // its choices are one under the other
+    if (key.code == keyLeft || (down && key.code == keyUp)) {
         next = at > 0 ? at - 1 : 0
-    } else if (key.code == keyRight) {
+    } else if (key.code == keyRight || (down && key.code == keyDown)) {
         next = at < n - 1 ? at + 1 : n - 1
     } else if (key.code == keyHome) {
         next = 0

@@ -54,6 +54,8 @@ i32 main() {
 | `gui.Table(...)` | rows of cells in columns, also millions, asked for as they are shown |
 | `gui.TabView(...)` | a card with tabs, each with its page: `addPage(title)` |
 | `gui.Segmented(items, ...)` | a row of buttons joined together, one chosen |
+| `gui.RadioGroup(items, ...)` | a choice among a few values, one under the other |
+| `gui.ProgressBar(...)` | the part done of a work, or a wait |
 | `gui.TextView(...)` | rich text: styles, blocks, small images and pieces that the user clicks |
 | `gui.Canvas(...)` | a surface on which the program draws: `setDrawing`, and the mouse on it |
 
@@ -280,6 +282,38 @@ i32 main() {
 - `gui.Segmented` is a row of buttons joined together, one chosen, for a choice among a few values that are all seen: the segments share its width in equal parts. `selected()` and `text()` say which one is chosen.
 - Both take the keyboard: Left and Right choose the tab or the segment next to it.
 - `examples/22_agenda.cro` is a small agenda with both.
+
+## Choices and progress
+
+```cromo norun
+import std.gui
+
+[[window]]
+i32 main() {
+    gui.Window w = gui.Window("Choices", 420, 260)
+    gui.RadioGroup size = w.add(gui.RadioGroup(["Small", "Medium", "Large"], 16, 16, 180, 84))
+    size.setSelected(1)
+    gui.Button bold = w.add(gui.Button("Bold", 220, 16, 80, 28))
+    bold.setToggle(true)
+    bold.setChecked(true)
+    gui.Button italic = w.add(gui.Button("Italic", 308, 16, 80, 28))
+    italic.setToggle(true)
+    gui.ProgressBar done = w.add(gui.ProgressBar(16, 130, 388, 8))
+    done.setValue(0.6)
+    gui.ProgressBar busy = w.add(gui.ProgressBar(16, 160, 388, 8))
+    busy.setBusy(true)
+    size.onChange([size](i64 index) { println("size {}", size.text()) })
+    bold.onChange([](bool pressed) { println("bold {}", pressed) })
+    w.start()
+    ret 0
+}
+```
+
+![A radio group, buttons with two states and progress bars](images/choices.png)
+
+- `gui.RadioGroup` is a choice among a few values, one under the other: `selected()`, `text()` and `onChange`, and the arrows while it has the keyboard.
+- A button with `setToggle(true)` stays pressed or released at each click, in the soft accent when pressed: `checked()` and `onChange` say its state. With an icon only, it is the mode of a view in a bar.
+- `gui.ProgressBar` shows the part done of a work, `setValue` from 0 to 1, or with `setBusy(true)` a segment that runs, for a wait without a measure. It can be changed from any thread, as from a task that does the work.
 
 ## Rich text
 

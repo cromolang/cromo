@@ -1,0 +1,13 @@
+// A choice that the radio group does not have is a panic (D506).
+// target: windows linux-x86_64
+// program-env: SDL_VIDEO_DRIVER=offscreen
+// expect-exit: 101
+// expect-stderr: the radio group has no choice 3
+import std.gui
+
+i32 main() {
+    gui.Window w = gui.Window("radio", 400, 335)
+    gui.RadioGroup size = w.add(gui.RadioGroup(["A", "B", "C"], 0, 0, 200, 84))
+    size.setSelected(3)
+    ret 0
+}
