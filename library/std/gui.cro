@@ -3188,6 +3188,360 @@ public struct TextView : Component {
     }
 }
 
+// Pages one over the other in a card, with their tabs in the band at its top (D494): a
+// click on a tab shows its page, and while the tabs have the keyboard Left, Right,
+// Home and End choose one. Each page is a panel that fills the card under the band,
+// with its components; the first tab is chosen at the start.
+//
+// '''
+// gui.TabView views = w.add(gui.TabView(16, 16, 520, 300))
+// gui.Panel files = views.addPage("Files")
+// files.add(gui.ListView(0, 0, 518, 267))
+// gui.Panel notes = views.addPage("Notes")
+// views.onChange([](i64 index) { println("tab {}", index) })
+// '''
+public struct TabView : Component {
+    i64 id
+
+    // A card without tabs. 'x' and 'y' are in logical pixels from the top left corner of
+    // its parent, the window, the group, the panel or the dialog whose 'add' puts it there,
+    // and 'width' and 'height' its size, with the band of the tabs.
+    public TabView(i32 x, i32 y, i32 width, i32 height) {
+        id = newPart(kindTabView, "", x, y, width, height)
+        i64 me = id
+        withData([me](ref Shared data) { data.parts[partIndexOf(ref data, me)].selected = 0 })
+    }
+
+    i64 componentId() const {
+        ret id
+    }
+
+    // Adds a tab with its title, on the right of the others, and gives back its page: a
+    // panel that fills the card under the band and follows its size, shown while its tab
+    // is chosen. Its components take their positions from its top left corner; its own
+    // position and size are those of the card, whatever is set.
+    public Panel addPage(string title) const {
+        i64 me = id
+        i64 made = 0
+        withData([me, title, ref made](ref Shared data) {
+            i64 p = partIndexOf(ref data, me)
+            made = makePart(ref data, kindPanel, "", 0, 0, 0, 0)
+            i64 page = partIndexOf(ref data, made)
+            data.parts[page].page = data.parts[p].items.len()
+            data.parts[page].bar = me
+            data.parts[page].parent = me
+            data.parts[page].window = data.parts[p].window
+            data.parts[p].items.add(title)
+            data.parts[p].pages.add(made)
+            arrangeNow(ref data, page)
+        })
+        Panel page
+        page.id = made
+        ret page
+    }
+
+    // The number of the tabs.
+    public i64 pageCount() const {
+        i64 me = id
+        i64 count = 0
+        withData([me, ref count](ref Shared data) { count = data.parts[partIndexOf(ref data, me)].items.len() })
+        ret count
+    }
+
+    // Changes the title of the tab at 'index', from 0. An index out of the tabs is a panic.
+    public void setPageTitle(i64 index, string title) const {
+        i64 me = id
+        withData([me, index, title](ref Shared data) {
+            i64 p = partIndexOf(ref data, me)
+            if (index < 0 || index >= data.parts[p].items.len()) {
+                panic(format("the tab view has no tab {}", index))
+            }
+            data.parts[p].items[index] = title
+        })
+    }
+
+    // The title of the tab at 'index', from 0. An index out of the tabs is a panic.
+    public string pageTitle(i64 index) const {
+        i64 me = id
+        string title
+        withData([me, index, ref title](ref Shared data) {
+            i64 p = partIndexOf(ref data, me)
+            if (index < 0 || index >= data.parts[p].items.len()) {
+                panic(format("the tab view has no tab {}", index))
+            }
+            title = data.parts[p].items[index]
+        })
+        ret title
+    }
+
+    // Chooses the tab at 'index', from 0, and shows its page, without calling the handlers
+    // of 'onChange'. An index out of the tabs is a panic.
+    public void setSelected(i64 index) const {
+        i64 me = id
+        withData([me, index](ref Shared data) {
+            i64 p = partIndexOf(ref data, me)
+            if (index < 0 || index >= data.parts[p].items.len()) {
+                panic(format("the tab view has no tab {}", index))
+            }
+            data.parts[p].selected = index
+        })
+    }
+
+    // The index of the tab chosen, whose page is shown: 0 at the start.
+    public i64 selected() const {
+        i64 me = id
+        i64 result = 0
+        withData([me, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, me)].selected })
+        ret result
+    }
+
+    // Adds a handler, called on the thread of the windows with the index of the tab that
+    // the user chooses, when it is not the one chosen before. 'setSelected' does not call
+    // it.
+    public void onChange(move func(i64) handler) const {
+        addr box = alloc(sizeOf<func(i64)>())
+        put<func(i64)>(box, move handler)
+        addPartHandler(id, 1, box)
+    }
+
+    // Moves the tab view, in logical pixels from the top left corner of its parent: the content of
+    // the window, or the group, the panel or the dialog that holds it. Its anchors keep the
+    // distances from the edges that it has at the new place.
+    public void setPosition(i32 x, i32 y) const {
+        setPartBounds(id, x, y, -1, -1)
+    }
+
+    // Changes the width and the height of the tab view, in logical pixels. Its anchors keep the
+    // distances from the edges that it has with the new size.
+    public void setSize(i32 width, i32 height) const {
+        setPartBounds(id, -1, -1, width, height)
+    }
+
+    // The distance of the tab view from the left edge of its parent, in logical pixels, where its
+    // anchors have placed it now.
+    public i32 x() const {
+        ret partBound(id, 0)
+    }
+
+    // The distance of the tab view from the top edge of its parent, in logical pixels, where its
+    // anchors have placed it now.
+    public i32 y() const {
+        ret partBound(id, 1)
+    }
+
+    // The width of the tab view now, in logical pixels: a 'Stretch' anchor changes it with its
+    // parent.
+    public i32 width() const {
+        ret partBound(id, 2)
+    }
+
+    // The height of the tab view now, in logical pixels: a 'Stretch' anchor changes it with its
+    // parent.
+    public i32 height() const {
+        ret partBound(id, 3)
+    }
+
+    // Shows or hides the tab view.
+    public void setVisible(bool value) const {
+        setPartFlag(id, 0, value)
+    }
+
+    // Whether the tab view is visible, as 'setVisible' set it: true by default.
+    public bool visible() const {
+        ret partFlag(id, 0)
+    }
+
+    // Enables or disables the tab view: disabled, it is drawn at half its opacity.
+    public void setEnabled(bool value) const {
+        setPartFlag(id, 1, value)
+    }
+
+    // Whether the tab view is enabled, as 'setEnabled' set it: true by default.
+    public bool enabled() const {
+        ret partFlag(id, 1)
+    }
+
+    // Sets which edges of its parent the tab view follows when the parent changes size: the
+    // window, or the group, the panel or the dialog that holds it. It keeps the distances from
+    // those edges that it has now, as 'setAnchor(gui.Horizontal.Right, gui.Vertical.Bottom)' in
+    // the bottom right corner. By default it is anchored to the left and to the top, and does
+    // not move.
+    public void setAnchor(Horizontal horizontal, Vertical vertical) const {
+        setPartAnchor(id, horizontal, vertical)
+    }
+
+    // How the tab view follows the left and the right edges of its parent: 'Horizontal.Left' by
+    // default.
+    public Horizontal horizontalAnchor() const {
+        ret partHorizontal(id)
+    }
+
+    // How the tab view follows the top and the bottom edges of its parent: 'Vertical.Top' by
+    // default.
+    public Vertical verticalAnchor() const {
+        ret partVertical(id)
+    }
+}
+
+// A row of buttons joined together, one of them chosen and filled with the accent
+// (D495): a choice among a few values that are all seen, as a view by day, by week or
+// by month. The segments share the width in equal parts. A click chooses one, and while
+// it has the keyboard Left, Right, Home and End do.
+//
+// '''
+// gui.Segmented period = w.add(gui.Segmented(["Day", "Week", "Month"], 16, 16, 240, 28))
+// period.onChange([](i64 index) { println("period {}", index) })
+// '''
+public struct Segmented : Component {
+    i64 id
+
+    // A segmented control with a copy of its segments, the first one chosen. 'x' and 'y'
+    // are in logical pixels from the top left corner of its parent, the window, the group,
+    // the panel or the dialog whose 'add' puts it there, and 'width' and 'height' its size.
+    public Segmented(list<string> segments, i32 x, i32 y, i32 width, i32 height) {
+        id = newPart(kindSegmented, "", x, y, width, height)
+        setSegments(id, segments)
+    }
+
+    i64 componentId() const {
+        ret id
+    }
+
+    // Replaces the segments with a copy of 'segments', and chooses the first one.
+    public void setItems(list<string> segments) const {
+        setSegments(id, segments)
+    }
+
+    // A copy of the segments.
+    public list<string> items() const {
+        list<string> result
+        i64 me = id
+        withData([me, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, me)].items })
+        ret result
+    }
+
+    // Chooses the segment at 'index', from 0, without calling the handlers of 'onChange'.
+    // An index out of the segments is a panic.
+    public void setSelected(i64 index) const {
+        i64 me = id
+        withData([me, index](ref Shared data) {
+            i64 p = partIndexOf(ref data, me)
+            if (index < 0 || index >= data.parts[p].items.len()) {
+                panic(format("the segmented control has no segment {}", index))
+            }
+            data.parts[p].selected = index
+        })
+    }
+
+    // The index of the segment chosen, from 0: -1 only without segments.
+    public i64 selected() const {
+        i64 me = id
+        i64 result = -1
+        withData([me, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, me)].selected })
+        ret result
+    }
+
+    // The text of the segment chosen, or "" without segments.
+    public string text() const {
+        i64 me = id
+        string result
+        withData([me, ref result](ref Shared data) {
+            i64 p = partIndexOf(ref data, me)
+            if (data.parts[p].selected >= 0) {
+                result = data.parts[p].items[data.parts[p].selected]
+            }
+        })
+        ret result
+    }
+
+    // Adds a handler, called on the thread of the windows with the index of the segment
+    // that the user chooses, when it is not the one chosen before. 'setSelected' and
+    // 'setItems' do not call it.
+    public void onChange(move func(i64) handler) const {
+        addr box = alloc(sizeOf<func(i64)>())
+        put<func(i64)>(box, move handler)
+        addPartHandler(id, 1, box)
+    }
+
+    // Moves the segmented control, in logical pixels from the top left corner of its parent: the content of
+    // the window, or the group, the panel or the dialog that holds it. Its anchors keep the
+    // distances from the edges that it has at the new place.
+    public void setPosition(i32 x, i32 y) const {
+        setPartBounds(id, x, y, -1, -1)
+    }
+
+    // Changes the width and the height of the segmented control, in logical pixels. Its anchors keep the
+    // distances from the edges that it has with the new size.
+    public void setSize(i32 width, i32 height) const {
+        setPartBounds(id, -1, -1, width, height)
+    }
+
+    // The distance of the segmented control from the left edge of its parent, in logical pixels, where its
+    // anchors have placed it now.
+    public i32 x() const {
+        ret partBound(id, 0)
+    }
+
+    // The distance of the segmented control from the top edge of its parent, in logical pixels, where its
+    // anchors have placed it now.
+    public i32 y() const {
+        ret partBound(id, 1)
+    }
+
+    // The width of the segmented control now, in logical pixels: a 'Stretch' anchor changes it with its
+    // parent.
+    public i32 width() const {
+        ret partBound(id, 2)
+    }
+
+    // The height of the segmented control now, in logical pixels: a 'Stretch' anchor changes it with its
+    // parent.
+    public i32 height() const {
+        ret partBound(id, 3)
+    }
+
+    // Shows or hides the segmented control.
+    public void setVisible(bool value) const {
+        setPartFlag(id, 0, value)
+    }
+
+    // Whether the segmented control is visible, as 'setVisible' set it: true by default.
+    public bool visible() const {
+        ret partFlag(id, 0)
+    }
+
+    // Enables or disables the segmented control: disabled, it is drawn at half its opacity.
+    public void setEnabled(bool value) const {
+        setPartFlag(id, 1, value)
+    }
+
+    // Whether the segmented control is enabled, as 'setEnabled' set it: true by default.
+    public bool enabled() const {
+        ret partFlag(id, 1)
+    }
+
+    // Sets which edges of its parent the segmented control follows when the parent changes size: the
+    // window, or the group, the panel or the dialog that holds it. It keeps the distances from
+    // those edges that it has now, as 'setAnchor(gui.Horizontal.Right, gui.Vertical.Bottom)' in
+    // the bottom right corner. By default it is anchored to the left and to the top, and does
+    // not move.
+    public void setAnchor(Horizontal horizontal, Vertical vertical) const {
+        setPartAnchor(id, horizontal, vertical)
+    }
+
+    // How the segmented control follows the left and the right edges of its parent: 'Horizontal.Left' by
+    // default.
+    public Horizontal horizontalAnchor() const {
+        ret partHorizontal(id)
+    }
+
+    // How the segmented control follows the top and the bottom edges of its parent: 'Vertical.Top' by
+    // default.
+    public Vertical verticalAnchor() const {
+        ret partVertical(id)
+    }
+}
+
 // What a canvas shows (D483): its shapes, each drawn over the ones before it. The
 // positions are in logical pixels from the top left corner of the canvas. A drawing is
 // a value: the program builds it, on any thread, and hands it to the canvas with
@@ -3711,6 +4065,8 @@ const i32 kindDialog = 15
 const i32 kindCanvas = 16
 const i32 kindTable = 17
 const i32 kindTextView = 18
+const i32 kindTabView = 19
+const i32 kindSegmented = 20
 
 // A component: its kind, its window and its group once added, its properties, for
 // a text box where its cursor and the other end of its selection are, as indices
@@ -3794,10 +4150,11 @@ struct PartData {
     TextLayout laid     // its lines
     f32 textSize        // 0 for that of the components
     f32 lineSpacing = 1.5
-    i64 marked = -1    // the piece marked
-    i64 reveal = -1    // the piece to show after the next layout
-    list<addr> pieces  // func(i64, Mouse), of a text view
-    addr svg           // of an image box with an SVG image, and its size in bytes (D484)
+    i64 marked = -1     // the piece marked
+    i64 reveal = -1     // the piece to show after the next layout
+    list<addr> pieces   // func(i64, Mouse), of a text view
+    list<f32> tabSpans  // of a tab view: the left and the width of each tab, from its left (D494)
+    addr svg            // of an image box with an SVG image, and its size in bytes (D484)
     i64 svgSize
     i32 textureWidth  // the size in pixels of the texture of an SVG image
     i32 textureHeight
@@ -4081,7 +4438,13 @@ i32 contentHeight(WindowData window) {
 // (P40): what the thread of the GUI computes when it draws.
 void arrangeNow(ref Shared data, i64 p) {
     i64 group = data.parts[p].parent
-    if (data.parts[p].page >= 0 && data.parts[p].window != 0) {
+    if (data.parts[p].page >= 0 && group != 0) {  // a page of a tab view (D494)
+        i64 g = partIndexOf(ref data, group)
+        arrangeNow(ref data, g)
+        i32 gw = data.parts[g].width
+        i32 gh = data.parts[g].height
+        placeTabPage(ref data.parts[p], gw, gh)
+    } else if (data.parts[p].page >= 0 && data.parts[p].window != 0) {
         i64 i = indexOf(ref data, data.parts[p].window)
         placePage(ref data.parts[p], ref data.windows[i])
     } else if (group != 0) {
@@ -5753,7 +6116,8 @@ bool inside(ref PartData part, f32 x, f32 y) {
 
 bool focusable(ref PartData part) {
     bool takes = part.kind == kindButton || part.kind == kindTextBox || part.kind == kindCheckBox || part.kind == kindComboBox ||
-        part.kind == kindListView || part.kind == kindSwitch || part.kind == kindSlider || part.kind == kindTable
+        part.kind == kindListView || part.kind == kindSwitch || part.kind == kindSlider || part.kind == kindTable ||
+        part.kind == kindTabView || part.kind == kindSegmented
     ret takes && part.shown && part.active
 }
 
@@ -5833,6 +6197,8 @@ void pressPart(ref WindowData window, ref list<PartData> parts, f32 x, f32 y, re
         window.heldItem = tableItemAt(ref parts[p], x, y)
     } else if (parts[p].kind == kindTextView) {
         window.heldItem = pieceAt(ref parts[p], x, y)
+    } else if (parts[p].kind == kindTabView || parts[p].kind == kindSegmented) {
+        window.heldItem = choiceAt(ref parts[p], x, y)
     }
 }
 
@@ -5863,6 +6229,10 @@ void releasePart(ref WindowData window, ref list<PartData> parts, f32 x, f32 y, 
         } else if (parts[p].kind == kindTextView) {
             if (item >= 0 && pieceAt(ref parts[p], x, y) == item) {
                 pieceClick(ref parts[p], item, x, y, 1, ref calls)
+            }
+        } else if (parts[p].kind == kindTabView || parts[p].kind == kindSegmented) {
+            if (item >= 0 && choiceAt(ref parts[p], x, y) == item) {
+                chooseChoice(ref parts[p], item, ref calls)
             }
         } else if (parts[p].kind == kindAppBar || parts[p].kind == kindNavigation) {
             if (item >= 0 && barItemAt(ref parts[p], x, y) == item) {
@@ -6152,6 +6522,9 @@ i64 barItemAt(ref PartData bar, f32 x, f32 y) {
     if (bar.kind == kindTextView) {
         ret pieceAt(ref bar, x, y)
     }
+    if (bar.kind == kindTabView || bar.kind == kindSegmented) {
+        ret choiceAt(ref bar, x, y)
+    }
     if (bar.kind == kindNavigation && bar.items.len() > 0 && bar.width > 0) {
         i64 item = i64((x - bar.left) * f32(bar.items.len()) / f32(bar.width))
         ret item >= 0 && item < bar.items.len() ? item : -1
@@ -6368,6 +6741,9 @@ bool keyOfPart(ref WindowData window, ref list<PartData> parts, Key key, ref lis
     }
     if (parts[f].kind == kindSlider) {
         ret sliderKey(ref parts[f], key, ref calls)
+    }
+    if (parts[f].kind == kindTabView || parts[f].kind == kindSegmented) {
+        ret choiceKey(ref parts[f], key, ref calls)
     }
     if (key.code == 32 || (key.code == 13 && parts[f].kind == kindButton)) {  // Space, Enter
         activate(ref parts[f], ref calls)
@@ -6711,7 +7087,11 @@ void layoutIn(ref WindowData window, ref list<PartData> parts, i64 group, Frame 
         if (parts[i].action != 0) {
             // placed by layoutDialog
         } else if (parts[i].page >= 0) {
-            placePage(ref parts[i], ref window)
+            if (parts[i].parent != 0) {
+                placeTabPage(ref parts[i], frame.width, frame.height)
+            } else {
+                placePage(ref parts[i], ref window)
+            }
             i64 bar = partNumber(ref parts, parts[i].bar)
             hidden = bar < 0 || parts[bar].selected != parts[i].page || !parts[bar].visible
         } else {
@@ -6741,7 +7121,7 @@ void layoutIn(ref WindowData window, ref list<PartData> parts, i64 group, Frame 
         if (parts[i].kind == kindTextView) {  // D490: its height from its last layout
             clampScroll(ref parts[i])
         }
-        if (parts[i].kind == kindGroup || parts[i].kind == kindPanel) {
+        if (parts[i].kind == kindGroup || parts[i].kind == kindPanel || parts[i].kind == kindTabView) {
             Frame inner
             inner.left = parts[i].left
             inner.top = parts[i].top
@@ -7201,6 +7581,10 @@ void drawPart(ref WindowData window, ref PartData part, ref Colors c, ref list<I
         drawTable(ref window, ref part, ref c)
     } else if (part.kind == kindTextView) {
         drawTextView(ref window, ref part, ref c, ref images)
+    } else if (part.kind == kindTabView) {
+        drawTabView(ref window, ref part, ref c, ring)
+    } else if (part.kind == kindSegmented) {
+        drawSegmented(ref window, ref part, ref c, ring)
     }
 }
 
@@ -7914,15 +8298,7 @@ void drawTable(ref WindowData window, ref PartData table, ref Colors c) {
         }
         f32 cx = x + lefts[col]
         bool hot = window.hot == table.id && window.hotItem == -2 - col && on
-        string title = table.columns[col].title.upper()
-        f32 spacing = bandSize() * 0.07
-        f32 size = 0
-        i64 next = 0
-        for (i64 i = 0; i < title.len(); i = next) {
-            u8 lead = title[i]
-            next = least64(i + (lead < 0x80 ? 1 : lead < 0xE0 ? 2 : lead < 0xF0 ? 3 : 4), title.len())
-            size = size + textWidth(window.band, title.slice(i, next), next - i) + spacing
-        }
+        f32 size = bandTitleWidth(ref window, table.columns[col].title)
         bool sorted = table.sortColumn == col
         f32 arrow = sorted ? 16 : 0
         f32 left = cx + 8
@@ -7972,6 +8348,198 @@ void drawTable(ref WindowData window, ref PartData table, ref Colors c) {
             table.cells.remove(k)
             table.asked.remove(k / tablePage)
         }
+    }
+}
+
+// ---- The tabs and the segmented controls (D494, D495) ----
+
+f32 tabHeight() {  // a tab in the band of a tab view
+    ret comfortable() ? 30 : 22
+}
+
+const f32 tabInset = 12  // the first tab from the left edge of the card
+const f32 tabPad = 10    // the title of a tab from its edges
+const f32 tabCorner = 5
+const f32 segmentCorner = 4
+
+void setSegments(i64 id, list<string> segments) {
+    withData([id, segments](ref Shared data) {
+        i64 p = partIndexOf(ref data, id)
+        data.parts[p].items = segments
+        data.parts[p].selected = segments.len() > 0 ? 0 : -1
+    })
+}
+
+// A page of a tab view fills its card under the band, inside its border.
+void placeTabPage(ref PartData page, i32 width, i32 height) {
+    i32 band = i32(bandHeight())
+    page.x = 1
+    page.y = band
+    page.width = width > 2 ? width - 2 : 0
+    page.height = height > band + 1 ? height - band - 1 : 0
+    page.baseX = page.x
+    page.baseY = page.y
+    page.baseWidth = page.width
+    page.baseHeight = page.height
+    page.parentWidth = width
+    page.parentHeight = height
+}
+
+// The width of a title in the capitals of the bands, as bandTitle draws it.
+f32 bandTitleWidth(ref WindowData window, string title) {
+    string upper = title.upper()
+    f32 spacing = bandSize() * 0.09
+    f32 size = 0
+    i64 next = 0
+    for (i64 i = 0; i < upper.len(); i = next) {
+        u8 lead = upper[i]
+        next = least64(i + (lead < 0x80 ? 1 : lead < 0xE0 ? 2 : lead < 0xF0 ? 3 : 4), upper.len())
+        size = size + textWidth(window.band, upper.slice(i, next), next - i) + (next < upper.len() ? spacing : 0)
+    }
+    ret size
+}
+
+// The tab or the segment at a point of the content, or -1. The tabs are where the last
+// drawing put them.
+i64 choiceAt(ref PartData part, f32 x, f32 y) {
+    if (part.kind == kindSegmented) {
+        if (part.items.len() == 0 || part.width <= 0) {
+            ret -1
+        }
+        i64 item = i64((x - part.left) * f32(part.items.len()) / f32(part.width))
+        ret item >= 0 && item < part.items.len() ? item : -1
+    }
+    f32 middle = part.top + bandHeight() / 2
+    if (y < middle - tabHeight() / 2 || y >= middle + tabHeight() / 2) {
+        ret -1
+    }
+    for (i64 k = 0; k + 1 < part.tabSpans.len() && k / 2 < part.items.len(); k += 2) {
+        if (x >= part.left + part.tabSpans[k] && x < part.left + part.tabSpans[k] + part.tabSpans[k + 1]) {
+            ret k / 2
+        }
+    }
+    ret -1
+}
+
+// A tab or a segment chosen with the mouse or the keys: the handlers are called when it
+// changes.
+void chooseChoice(ref PartData part, i64 item, ref list<Call> calls) {
+    if (item < 0 || item >= part.items.len() || item == part.selected) {
+        ret
+    }
+    part.selected = item
+    Call call = callOf(9, part.change)
+    call.index = item
+    calls.add(move call)
+}
+
+// Left, Right, Home and End on tabs or on a segmented control.
+bool choiceKey(ref PartData part, Key key, ref list<Call> calls) {
+    i64 n = part.items.len()
+    if (n == 0) {
+        ret false
+    }
+    i64 at = part.selected
+    i64 next = at
+    if (key.code == keyLeft) {
+        next = at > 0 ? at - 1 : 0
+    } else if (key.code == keyRight) {
+        next = at < n - 1 ? at + 1 : n - 1
+    } else if (key.code == keyHome) {
+        next = 0
+    } else if (key.code == keyEnd) {
+        next = n - 1
+    } else {
+        ret false
+    }
+    chooseChoice(ref part, next, ref calls)
+    ret true
+}
+
+// A tab view: a card as a group, with its tabs in the band, small, in capitals, as the
+// titles of the bands: in ink 3, ink 2 on surface 3 under the mouse, the one chosen in
+// accent 2 on the soft accent (D494).
+void drawTabView(ref WindowData window, ref PartData view, ref Colors c, bool ring) {
+    addr r = window.renderer
+    f32 d = window.density
+    f32 x = view.left
+    f32 y = view.top
+    f32 w = f32(view.width)
+    f32 h = f32(view.height)
+    bool on = view.active
+    f32 band = bandHeight()
+    cardShadow(r, x, y, w, h, groupCorner, d, ref c)
+    bandCard(r, ref view, band, groupCorner, d, ref c, c.rule)
+    clipInside(r, ref view, x + 1, y, w - 2, band)
+    view.tabSpans.clear()
+    f32 at = tabInset
+    f32 top = y + (band - tabHeight()) / 2
+    for (i64 k = 0; k < view.items.len(); k++) {
+        f32 tab = bandTitleWidth(ref window, view.items[k]) + 2 * tabPad
+        view.tabSpans.add(at)
+        view.tabSpans.add(tab)
+        bool chosen = k == view.selected
+        bool hot = window.hot == view.id && window.hotItem == k && on
+        u32 ink = c.ink3
+        if (chosen) {
+            cromo_gui_box(r, x + at, top, tab, tabHeight(), tabCorner, 0, d, solid(c.accentSoft, on), 0)
+            ink = c.accent2
+        } else if (hot) {
+            cromo_gui_box(r, x + at, top, tab, tabHeight(), tabCorner, 0, d, solid(c.surface3, on), 0)
+            ink = c.ink2
+        }
+        bandTitle(ref window, view.items[k], x + at + tabPad, top, tabHeight(), ink, on)
+        if (chosen && ring) {
+            clipPart(r, ref view)
+            focusRing(r, x + at, top, tab, tabHeight(), tabCorner, d, ref c)
+            clipInside(r, ref view, x + 1, y, w - 2, band)
+        }
+        at = at + tab + 2
+    }
+    clipPart(r, ref view)
+}
+
+// A segmented control: a box with the border of the controls, its segments in equal
+// parts with a line between them, the one chosen filled with the accent, with its text
+// semibold on the accent, the one under the mouse in surface 3 (D495).
+void drawSegmented(ref WindowData window, ref PartData part, ref Colors c, bool ring) {
+    addr r = window.renderer
+    f32 d = window.density
+    f32 x = part.left
+    f32 y = part.top
+    f32 w = f32(part.width)
+    f32 h = f32(part.height)
+    bool on = part.active
+    i64 n = part.items.len()
+    cromo_gui_box(r, x, y, w, h, segmentCorner, 1, d, solid(c.surface, on), solid(c.rule2, on))
+    f32 ascent = 0
+    f32 descent = 0
+    f32 gap = 0
+    cromo_gui_font_metrics(window.body, ref ascent, ref descent, ref gap)
+    f32 baseline = y + h / 2 + (ascent - descent) / 2
+    for (i64 k = 0; k < n; k++) {
+        f32 left = x + w * f32(k) / f32(n)
+        f32 right = x + w * f32(k + 1) / f32(n)
+        bool chosen = k == part.selected
+        bool hot = window.hot == part.id && window.hotItem == k && on
+        if (chosen || hot) {  // inside the border; round only at the ends of the box
+            f32 from = k == 0 ? x + 1 : left - segmentCorner
+            f32 to = k == n - 1 ? x + w - 1 : right + segmentCorner
+            clipInside(r, ref part, left, y, right - left, h)
+            cromo_gui_box(r, from, y + 1, to - from, h - 2, segmentCorner - 1, 0, d, solid(chosen ? c.accent : c.surface3, on), 0)
+        }
+        if (k > 0 && !chosen && k - 1 != part.selected) {
+            clipPart(r, ref part)
+            fill(r, c.rule2, left, y + 1, 1, h - 2)
+        }
+        addr font = chosen ? window.strong : window.body
+        f32 size = textWidth(font, part.items[k], part.items[k].len())
+        clipInside(r, ref part, left + 4, y, right - left - 8, h)
+        text(font, part.items[k], most(left + (right - left - size) / 2, left + 4), baseline, chosen ? c.onAccent : c.ink, on)
+    }
+    clipPart(r, ref part)
+    if (ring) {
+        focusRing(r, x, y, w, h, segmentCorner, d, ref c)
     }
 }
 

@@ -1,0 +1,99 @@
+// Example 22: a small agenda. A segmented control chooses the period, and tabs hold the
+// events, the tasks and the notes, each on its page.
+//
+// Decided: the tabs as a card with pages (D494), the segmented control in equal parts
+//          (D495), the rich text (D490), the look (D479)
+// Draft:   the names of the tabs, of the segmented control and of their methods
+import std.gui
+
+struct Event {
+    i64 day  // from today
+    string time
+    string title
+    string place
+}
+
+list<Event> events() {
+    list<Event> all
+    list<string> titles = ["Review of the plan", "Lunch with Ada", "Call with the bank", "Release of the version",
+        "Dentist", "Meeting of the team", "Train to Milano", "Dinner with Grace"]
+    list<string> places = ["Room 2", "Trattoria", "Phone", "Online", "Via Roma 12", "Room 1", "Central station", "Home"]
+    for (i64 i = 0; i < 24; i++) {
+        Event e
+        e.day = i * 5 % 31
+        e.time = format("{:02}:{:02}", 9 + i % 9, i % 2 * 30)
+        e.title = titles[i % 8]
+        e.place = places[i % 8]
+        all.add(move e)
+    }
+    ret all
+}
+
+// The events of the next day, week or month in the list, by day.
+void show(gui.ListView agenda, list<Event> all, i64 period) {
+    i64 days = period == 0 ? 1 : period == 1 ? 7 : 31
+    agenda.clear()
+    for (i64 day = 0; day < days; day++) {
+        for (Event e in all) {
+            if (e.day == day) {
+                string when = day == 0 ? "today" : day == 1 ? "tomorrow" : format("in {} days", day)
+                agenda.addItem(gui.Icon.Calendar, e.title, format("{}, {}", e.place, when), e.time)
+            }
+        }
+    }
+}
+
+gui.RichText notes() {
+    gui.TextStyle plain = gui.TextStyle(gui.Ink.Normal)
+    gui.TextStyle strong = gui.TextStyle(gui.Ink.Normal)
+    strong.strong = true
+    gui.TextStyle faint = gui.TextStyle(gui.Ink.Faint)
+    faint.italic = true
+    gui.RichText t
+    t.text("Before the release\n", strong)
+    t.text("Check the notes of the version, and write to the people who asked for the new tables.\n\n", plain)
+    t.text("Ideas\n", strong)
+    t.startBlock(4, gui.BlockLine.Accent)
+    t.text("A view by year, with the months in a grid.", plain)
+    t.endBlock()
+    t.text("Written on Monday", faint)
+    ret t
+}
+
+[[window]]
+i32 main() {
+    list<Event> all = events()
+    gui.Window w = gui.Window("Agenda", 560, 420)
+    gui.Segmented period = w.add(gui.Segmented(["Day", "Week", "Month"], 16, 16, 240, 28))
+    period.setSelected(1)
+    gui.Label summary = w.add(gui.Label("", 272, 16, 272, 28))
+    summary.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Top)
+
+    gui.TabView views = w.add(gui.TabView(16, 60, 528, 309))
+    views.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Stretch)
+    gui.Panel events = views.addPage("Events")
+    gui.ListView agenda = events.add(gui.ListView(0, 0, 526, 276))
+    agenda.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Stretch)
+    gui.Panel tasks = views.addPage("Tasks")
+    tasks.add(gui.CheckBox("Book the room for Thursday", 16, 16, 400, 24))
+    tasks.add(gui.CheckBox("Send the notes of the meeting", 16, 48, 400, 24))
+    tasks.add(gui.CheckBox("Renew the subscription", 16, 80, 400, 24))
+    gui.Panel page = views.addPage("Notes")
+    gui.TextView text = page.add(gui.TextView(0, 0, 526, 276))
+    text.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Stretch)
+    text.setText(notes())
+
+    show(agenda, all, 1)
+    summary.setText("The events of the next 7 days")
+    period.onChange([agenda, summary, move all](i64 index) {
+        show(agenda, all, index)
+        summary.setText(index == 0 ? "The events of today" : index == 1 ? "The events of the next 7 days" :
+            "The events of the next 31 days")
+    })
+    views.onChange([period, summary](i64 index) {  // the period is that of the events
+        period.setVisible(index == 0)
+        summary.setVisible(index == 0)
+    })
+    w.start()
+    ret 0
+}

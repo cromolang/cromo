@@ -1,0 +1,13 @@
+// A segment that the segmented control does not have is a panic (D495).
+// target: windows linux-x86_64
+// program-env: SDL_VIDEO_DRIVER=offscreen
+// expect-exit: 101
+// expect-stderr: the segmented control has no segment -1
+import std.gui
+
+i32 main() {
+    gui.Window w = gui.Window("segments", 400, 335)
+    gui.Segmented choice = w.add(gui.Segmented(["A", "B"], 0, 0, 200, 28))
+    choice.setSelected(-1)
+    ret 0
+}

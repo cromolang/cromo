@@ -51,6 +51,8 @@ i32 main() {
 | `gui.Panel(...)` | un contenitore senza aspetto proprio, che scorre quando i suoi componenti vanno oltre il fondo |
 | `gui.ListView(...)` | una lista di voci, ognuna con un'icona o un'immagine, un titolo, una riga e un dettaglio |
 | `gui.Table(...)` | righe di celle in colonne, anche milioni, chieste mentre sono mostrate |
+| `gui.TabView(...)` | una card con schede, ognuna con la sua pagina: `addPage(titolo)` |
+| `gui.Segmented(voci, ...)` | una fila di pulsanti uniti, uno scelto |
 | `gui.TextView(...)` | testo ricco: stili, blocchi, piccole immagini e pezzi che l'utente clicca |
 | `gui.Canvas(...)` | una superficie su cui il programma disegna: `setDrawing`, e il mouse su di essa |
 
@@ -247,6 +249,36 @@ i32 main() {
 - Un clic su un titolo chiama `onSort(colonna, discendente)`: il programma ordina i suoi dati, chiama `clearRows()`, e la tabella chiede di nuovo le sue righe. La tabella mostra l'ordine con una freccia.
 - Un clic sceglie una riga, Ctrl ne aggiunge una, Maiusc quelle in mezzo; `selectedRows()` le dà, `onChange` dice quando cambiano, e un doppio clic o Invio chiamano `onChoose`.
 - I dati che i gestori leggono e ordinano vanno in un `thread.Shared`, come in `examples/20_table.cro`.
+
+## Schede e controlli segmentati
+
+```cromo norun
+import std.gui
+
+[[window]]
+i32 main() {
+    gui.Window w = gui.Window("Agenda", 480, 300)
+    gui.Segmented period = w.add(gui.Segmented(["Day", "Week", "Month"], 16, 16, 240, 28))
+    period.setSelected(1)
+    gui.TabView views = w.add(gui.TabView(16, 60, 448, 189))
+    views.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Stretch)
+    gui.Panel events = views.addPage("Events")
+    events.add(gui.Label("Review of the plan, at 9:00", 16, 16, 300, 20))
+    gui.Panel tasks = views.addPage("Tasks")
+    tasks.add(gui.CheckBox("Book the room for Thursday", 16, 16, 300, 24))
+    period.onChange([period](i64 index) { println("period {}", period.text()) })
+    views.onChange([](i64 index) { println("tab {}", index) })
+    w.start()
+    ret 0
+}
+```
+
+![Schede e un controllo segmentato](images/tabs.png)
+
+- `gui.TabView` è una card con le sue schede in alto: `addPage(titolo)` aggiunge una scheda e restituisce la sua pagina, un pannello sotto le schede che segue la dimensione della card, dove vanno i componenti di quella scheda. Un clic su una scheda mostra la sua pagina, e `onChange` dice quale ha scelto l'utente.
+- `gui.Segmented` è una fila di pulsanti uniti, uno scelto, per una scelta fra pochi valori che si vedono tutti: i segmenti si dividono la sua larghezza in parti uguali. `selected()` e `text()` dicono quale è scelto.
+- Tutti e due prendono la tastiera: Sinistra e Destra scelgono la scheda o il segmento accanto.
+- `examples/22_agenda.cro` è una piccola agenda con tutti e due.
 
 ## Testo ricco
 

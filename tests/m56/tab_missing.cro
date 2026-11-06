@@ -1,0 +1,14 @@
+// A tab that the tab view does not have is a panic (D494).
+// target: windows linux-x86_64
+// program-env: SDL_VIDEO_DRIVER=offscreen
+// expect-exit: 101
+// expect-stderr: the tab view has no tab 1
+import std.gui
+
+i32 main() {
+    gui.Window w = gui.Window("tabs", 400, 335)
+    gui.TabView views = w.add(gui.TabView(0, 0, 400, 300))
+    views.addPage("Only")
+    views.setSelected(1)
+    ret 0
+}

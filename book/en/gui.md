@@ -51,6 +51,8 @@ i32 main() {
 | `gui.Panel(...)` | a container with no look of its own, which scrolls when its components go below its bottom |
 | `gui.ListView(...)` | a list of items, each with an icon or an image, a title, a line and a detail |
 | `gui.Table(...)` | rows of cells in columns, also millions, asked for as they are shown |
+| `gui.TabView(...)` | a card with tabs, each with its page: `addPage(title)` |
+| `gui.Segmented(items, ...)` | a row of buttons joined together, one chosen |
 | `gui.TextView(...)` | rich text: styles, blocks, small images and pieces that the user clicks |
 | `gui.Canvas(...)` | a surface on which the program draws: `setDrawing`, and the mouse on it |
 
@@ -247,6 +249,36 @@ i32 main() {
 - A click on a title calls `onSort(column, descending)`: the program sorts its data, calls `clearRows()`, and the table asks again for its rows. The table shows the order with an arrow.
 - A click chooses a row, Ctrl adds one, Shift those between; `selectedRows()` gives them, `onChange` says when they change, and a double click or Enter calls `onChoose`.
 - The data that the handlers read and sort go in a `thread.Shared`, as in `examples/20_table.cro`.
+
+## Tabs and segmented controls
+
+```cromo norun
+import std.gui
+
+[[window]]
+i32 main() {
+    gui.Window w = gui.Window("Agenda", 480, 300)
+    gui.Segmented period = w.add(gui.Segmented(["Day", "Week", "Month"], 16, 16, 240, 28))
+    period.setSelected(1)
+    gui.TabView views = w.add(gui.TabView(16, 60, 448, 189))
+    views.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Stretch)
+    gui.Panel events = views.addPage("Events")
+    events.add(gui.Label("Review of the plan, at 9:00", 16, 16, 300, 20))
+    gui.Panel tasks = views.addPage("Tasks")
+    tasks.add(gui.CheckBox("Book the room for Thursday", 16, 16, 300, 24))
+    period.onChange([period](i64 index) { println("period {}", period.text()) })
+    views.onChange([](i64 index) { println("tab {}", index) })
+    w.start()
+    ret 0
+}
+```
+
+![Tabs and a segmented control](images/tabs.png)
+
+- `gui.TabView` is a card with its tabs at the top: `addPage(title)` adds a tab and gives back its page, a panel under the tabs that follows the size of the card, where the components of that tab go. A click on a tab shows its page, and `onChange` says which one the user chose.
+- `gui.Segmented` is a row of buttons joined together, one chosen, for a choice among a few values that are all seen: the segments share its width in equal parts. `selected()` and `text()` say which one is chosen.
+- Both take the keyboard: Left and Right choose the tab or the segment next to it.
+- `examples/22_agenda.cro` is a small agenda with both.
 
 ## Rich text
 

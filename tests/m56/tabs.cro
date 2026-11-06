@@ -1,0 +1,36 @@
+// The tabs (D494) and the segmented control (D495): the pages, the tab chosen, the
+// titles; the segments, the one chosen and its text.
+// target: windows linux-x86_64
+// program-env: SDL_VIDEO_DRIVER=offscreen
+// expect-output: 3 tabs, chosen 0, titles Files Notes Plans
+// expect-output: chosen 2, title Old plans
+// expect-output: page 0 0 526 257
+// expect-output: segments ["Day", "Week", "Month"], chosen 0 Day
+// expect-output: chosen 2 Month
+// expect-output: segments ["Yes", "No"], chosen 0 Yes
+// expect-output: empty: chosen -1 ''
+import std.gui
+
+i32 main() {
+    gui.Window w = gui.Window("tabs", 560, 400)
+    gui.TabView views = w.add(gui.TabView(16, 16, 528, 290))
+    gui.Panel files = views.addPage("Files")
+    views.addPage("Notes")
+    views.addPage("Plans")
+    println("{} tabs, chosen {}, titles {} {} {}", views.pageCount(), views.selected(), views.pageTitle(0), views.pageTitle(1),
+        views.pageTitle(2))
+    views.setSelected(2)
+    views.setPageTitle(2, "Old plans")
+    println("chosen {}, title {}", views.selected(), views.pageTitle(2))
+    println("page {} {} {} {}", files.x() - 1, files.y() - 32, files.width(), files.height())
+
+    gui.Segmented period = w.add(gui.Segmented(["Day", "Week", "Month"], 16, 320, 240, 28))
+    println("segments {:?}, chosen {} {}", period.items(), period.selected(), period.text())
+    period.setSelected(2)
+    println("chosen {} {}", period.selected(), period.text())
+    period.setItems(["Yes", "No"])
+    println("segments {:?}, chosen {} {}", period.items(), period.selected(), period.text())
+    gui.Segmented empty = w.add(gui.Segmented([], 280, 320, 100, 28))
+    println("empty: chosen {} '{}'", empty.selected(), empty.text())
+    ret 0
+}

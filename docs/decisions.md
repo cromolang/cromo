@@ -2338,6 +2338,40 @@ view.setMarked(7)
 ### D493. The italic: Inter slanted
 *2026-11-06.* Chosen by the author. The italic is drawn from the outlines of Inter, slanted before they are rasterized, as the browsers do for a font without its italic: sharp at every size, and no file more. The italic of Inter is itself almost only slanted.
 
+### D494. The tabs: a card with pages
+*2026-11-06.* Chosen by the author. `gui.TabView` is a card with its tabs in the band at its top, small, in capitals, as the titles of the bands, the one chosen in the soft accent. `addPage(title)` adds a tab and gives back its page, a panel that fills the card under the band and is shown while its tab is chosen, as the pages of a navigation bar (D451); `onChange` says which tab the user chooses. A strip of tabs alone, with the panels shown and hidden by the program, would make each program write the same code.
+
+```cromo
+// draft: the names of the API of the tabs are not decided
+gui.TabView views = w.add(gui.TabView(16, 16, 520, 300))
+gui.Panel files = views.addPage("Files")
+files.add(gui.ListView(0, 0, 518, 267))
+gui.Panel notes = views.addPage("Notes")
+views.onChange([](i64 index) { println("tab {}", index) })
+```
+
+### D495. The segmented control: equal parts
+*2026-11-06.* Chosen by the author. `gui.Segmented` is a row of buttons joined together, one of them chosen, filled with the accent: a choice among a few values that are all seen, as a view by day, by week or by month. The program gives its width, as for every component, and the segments share it in equal parts: aligned, easy to touch on a phone, and a rule simple to explain.
+
+### D496. The context menu: a value opened at the mouse
+*2026-11-06.* Chosen by the author. `gui.Menu` is a value that the program builds when it needs it, with its items and their handlers, which capture what the menu is about, as the piece clicked; `w.showMenu(move m)` opens it where the mouse is, over everything, and it goes away when an item is chosen, with Esc, or with a click out of it. A menu made once, as a dialog, would need the program to keep apart what it is about. On a phone a long press is the right button, and opens the menu as it.
+
+```cromo
+// draft: the names of the API of the menu are not decided
+view.onClick([w](i64 piece, gui.Mouse m) {
+    if (m.button == 3) {
+        gui.Menu menu
+        menu.addItem("Copy", [piece]() { println("copy {}", piece) })
+        menu.addSeparator()
+        menu.addItem("Delete", [piece]() { println("delete {}", piece) })
+        w.showMenu(move menu)
+    }
+})
+```
+
+### D497. The tooltips: light, as the menu
+*2026-11-06.* Chosen by the author. A component with `setTooltip(text)` shows the text when the mouse stays on it, in a small card on the surface with a border and a light shadow, the text in ink 2, as the tooltips of the system that the browsers show, and as the menu.
+
 ---
 
 ## Proposed
@@ -2576,6 +2610,13 @@ A component keeps the distances from the edges of its parent, the content of the
 - The layout: a line breaks after spaces and gaps, never inside a piece, and a word wider than the line is cut between its letters; a line that breaks by itself does not start with spaces or gaps. A line is as high as the largest size of its texts by the spacing, or as its images with 4 pixels more; its letters are in its middle, and the images too. A block starts and ends on lines of its own, 3 pixels from the text around it; its line is 2 pixels wide, `indent` pixels from the margin around it, and its text 10 pixels after the line, or at `indent` without a line. The lines: `BlockLine.Plain` rule 2, `Selection` the soft selection, `Accent` the accent.
 - The look: the view on the surface, its text 10 pixels from its sides and 8 from its top and its bottom; the piece under the mouse in surface 3, the piece marked in the accent, semibold, with the text on the accent, in a box with corners of 3 pixels, 1 pixel shorter than its line at the top and at the bottom; the layout leaves 2 pixels on each side of a piece, inside its box. On a piece the cursor of the mouse is a hand.
 - The fonts: JetBrains Mono NL 2.304, regular and semibold, without its hinting, its substitutions and the names of its glyphs, with the em of Inter at the same size; the italic slants the outline by 0.2, about 11 degrees, before it is rasterized. A font of text up to 32 pixels of the display has a texture of 512 by 512, a larger one of 1024 by 1024.
+
+### P57. The tabs and the segmented control (D494, D495)
+- `gui.TabView(x, y, w, h)`: `addPage(title)` gives back a `gui.Panel` placed 1 pixel inside the card, under the band, as wide as the card less 2 and as high as it less the band and 1; its position and its size follow the card, whatever is set. `pageCount()`, `setPageTitle(index, title)`, `pageTitle(index)`, `setSelected(index)`, `selected()`, 0 at the start, and `onChange(func(i64))`, called when the user chooses another tab; an index out of the tabs is a panic. The pages of the tabs not chosen are hidden with their components.
+- The look of the tabs: the card of a group, with the band of the groups, 32 pixels high on the desktop and 40 on a phone; the tabs from 12 pixels from the left edge, 2 pixels apart, each as wide as its title and 10 pixels on each side, 22 pixels high on the desktop and 30 on a phone, with corners of 5; the titles as those of the bands, in ink 3, ink 2 on surface 3 under the mouse, accent 2 on the soft accent for the one chosen, with the ring of the focus around it.
+- `gui.Segmented(segments, x, y, w, h)`: the first segment chosen, -1 without segments; `setItems(segments)`, which chooses the first one again, `items()`, `setSelected(index)`, a panic out of the segments, `selected()`, `text()`, and `onChange(func(i64))`.
+- The look of the segmented control: a box with the border of the controls and corners of 4, on the surface; a line of rule 2 between two segments not chosen; the one chosen filled with the accent inside the border, its text semibold on the accent; the one under the mouse in surface 3; the texts in ink, at the middle of their segment; the ring of the focus around the box.
+- The tabs and the segmented controls take the keyboard: Left, Right, Home and End choose, and call `onChange`. A click chooses at the release, on the tab or the segment where it was pressed.
 
 ---
 
