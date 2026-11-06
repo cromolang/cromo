@@ -1,5 +1,9 @@
 # Changes
 
+## 0.14.0
+
+- The colors of the vectors of SIMD, as `i16x16` and `f32x8`.
+
 ## 0.13.0
 
 - The colors of the functions of the bits: `countOnes`, `trailingZeros`, `leadingZeros`, `rotateLeft` and `rotateRight`.

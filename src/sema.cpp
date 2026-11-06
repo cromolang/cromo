@@ -564,7 +564,7 @@ private:
     }
 
     static bool isStaticType(Type type) {
-        if (type.isNumeric() || type.isBool() || type.kind == TypeKind::Addr) return true;
+        if (type.isNumeric() || type.isBool() || type.kind == TypeKind::Addr || type.isVector()) return true;
         if (type.isArray()) return isStaticType(type.array->element);
         if (!type.isStruct() || type.structDecl->isEnum || type.structDecl->needsDestruction) return false;
         for (const FieldDecl& field : type.structDecl->fields) {
@@ -3500,6 +3500,10 @@ private:
         if (std::optional<Type> named = enumNamed(*call.object)) {
             return checkEnumCase(expr, *named, call.method, &call.args, call.loc);
         }
+        if (call.object->kind == ExprKind::Name && call.method == "load" && !lookup(static_cast<NameExpr&>(*call.object).name)) {
+            std::optional<Type> type = findBuiltinType(static_cast<NameExpr&>(*call.object).name);
+            if (type && type->isVector()) return checkVectorLoad(expr, *type);  // `i16x16.load(values, at)` (D505)
+        }
         if (call.object->kind == ExprKind::Name && call.method == "fromBits") {  // `f64.fromBits(b)` (D397)
             std::optional<Type> type = findBuiltinType(static_cast<NameExpr&>(*call.object).name);
             if (type && type->isFloat()) return checkFromBits(expr, *type);
@@ -3520,6 +3524,7 @@ private:
         }
         if (object.isParam() || object.isInterface()) return checkInterfaceCall(call, object);
         if (object.isArray()) return checkArrayMethod(expr, object);
+        if (object.isVector()) return checkVectorMethod(expr, object);
         if ((object.isNumeric() || object.isBool()) && (call.method == "hash" || call.method == "equals")) {
             return checkKeyMethod(expr, object);
         }
@@ -3782,6 +3787,145 @@ private:
 
     // `a.len()` is the size written in the type, `a.copy()` a copy of an array of
     // simple values (D196).
+    // `i16x16.load(values, at)` (D505): the numbers from `at` of a list or an array of the
+    // numbers of the vector, checked when the program runs.
+    Type checkVectorLoad(ExprPtr& expr, Type vector) {
+        auto& call = static_cast<MethodCallExpr&>(*expr);
+        Type number = vector.array->element;
+        if (call.args.size() != 2) {
+            diag_->error(call.loc, "load() takes a list or an array of " + number.name() + " and the index of the first (D505)");
+            checkIgnored(call.args);
+            return Type::error();
+        }
+        Type source = checkExpr(call.args[0], std::nullopt);
+        bool atOk = coerce(call.args[1], Type::intType(64, true));
+        if (source.isError() || !atOk) return Type::error();
+        if (!holdsNumbers(source, number)) {
+            diag_->error(call.args[0]->loc, "load() reads a list<" + number.name() + "> or an array of " + number.name() +
+                                                ", not " + source.name() + " (D505)");
+            return Type::error();
+        }
+        SourceLocation loc = call.loc;
+        auto made = std::make_unique<CallExpr>(loc, "load");
+        made->intrinsic = Intrinsic::VectorLoad;
+        made->typeArg = vector;
+        made->args.push_back(std::move(call.args[0]));
+        made->args.push_back(std::move(call.args[1]));
+        expr = std::move(made);
+        return vector;
+    }
+
+    bool holdsNumbers(Type source, Type number) {
+        if (source.isArray()) return source.array->element == number;
+        return isList(source) && elementOf(source) == number;
+    }
+
+    // The methods of a vector (D505): sum, smallest, largest, abs, the numbers two by two
+    // with min and max, store into a list or an array, the halves, the length; and of a
+    // mask, all, any and select.
+    Type checkVectorMethod(ExprPtr& expr, Type vector) {
+        auto& call = static_cast<MethodCallExpr&>(*expr);
+        Type number = vector.array->element;
+        const std::string& name = call.method;
+        SourceLocation loc = call.loc;
+        auto made = std::make_unique<CallExpr>(loc, name);
+        made->typeArg = vector;
+        auto finish = [&](Intrinsic kind, Type result) {
+            made->intrinsic = kind;
+            made->args.insert(made->args.begin(), std::move(call.object));
+            expr = std::move(made);
+            return result;
+        };
+        auto arguments = [&](size_t count, const std::string& usage) {
+            if (call.args.size() == count) return true;
+            diag_->error(loc, name + "() takes " + usage + " (D505)");
+            checkIgnored(call.args);
+            return false;
+        };
+        bool mask = number.isInt() && number.isSigned;
+        if (name == "len") {
+            if (!arguments(0, "no arguments")) return Type::error();
+            expr = std::make_unique<IntLiteralExpr>(loc, static_cast<uint64_t>(vector.array->count), false);
+            return computeType(expr, Type::intType(64, true));
+        }
+        if (name == "sum" || name == "smallest" || name == "largest" || name == "abs") {
+            if (!arguments(0, "no arguments")) return Type::error();
+            if (name == "abs" && number.isInt() && !number.isSigned) {
+                diag_->error(loc, "abs() of an unsigned vector is the vector itself (D505)");
+                return Type::error();
+            }
+            Intrinsic kind = name == "sum"        ? Intrinsic::VectorSum
+                             : name == "smallest" ? Intrinsic::VectorSmallest
+                             : name == "largest"  ? Intrinsic::VectorLargest
+                                                  : Intrinsic::VectorAbs;
+            return finish(kind, name == "abs" ? vector : number);
+        }
+        if (name == "min" || name == "max") {
+            if (!arguments(1, "a vector of the same type")) return Type::error();
+            if (!coerce(call.args[0], vector)) return Type::error();
+            made->args.push_back(std::move(call.args[0]));
+            return finish(name == "min" ? Intrinsic::VectorMin : Intrinsic::VectorMax, vector);
+        }
+        if (name == "low" || name == "high") {
+            if (!arguments(0, "no arguments")) return Type::error();
+            if (sizeOf(vector) != 32) {
+                diag_->error(loc, name + "() gives half of a vector of 256 bits, and " + vector.name() + " has 128 (D505)");
+                return Type::error();
+            }
+            made->typeArg = vectorOf(number, vector.array->count / 2);
+            return finish(name == "low" ? Intrinsic::VectorLow : Intrinsic::VectorHigh, made->typeArg);
+        }
+        if (name == "store") {
+            if (!arguments(2, "'ref' a list or an array of its numbers, and the index of the first")) return Type::error();
+            ExprPtr& target = call.args[0];
+            if (target->kind != ExprKind::Ref) {
+                diag_->error(target->loc, "store() changes the list or the array: pass it with 'ref' (D505)");
+                return Type::error();
+            }
+            Type place = checkExpr(static_cast<RefExpr&>(*target).operand, std::nullopt);
+            bool atOk = coerce(call.args[1], Type::intType(64, true));
+            if (place.isError() || !atOk) return Type::error();
+            if (!holdsNumbers(place, number)) {
+                diag_->error(target->loc, "store() writes into a list<" + number.name() + "> or an array of " + number.name() +
+                                              ", not " + place.name() + " (D505)");
+                return Type::error();
+            }
+            ExprPtr& written = static_cast<RefExpr&>(*target).operand;
+            if (!isPlace(*written)) {
+                diag_->error(written->loc, "store() writes into a variable, a field or an element (D505)");
+                return Type::error();
+            }
+            std::string reason = readOnlyReason(*written);
+            if (!reason.empty()) {
+                diag_->error(written->loc, reason);
+                return Type::error();
+            }
+            made->args.push_back(std::move(static_cast<RefExpr&>(*target).operand));
+            made->args.push_back(std::move(call.args[1]));
+            return finish(Intrinsic::VectorStore, Type::voidType());
+        }
+        if (mask && (name == "all" || name == "any")) {
+            if (!arguments(0, "no arguments")) return Type::error();
+            return finish(name == "all" ? Intrinsic::VectorAll : Intrinsic::VectorAny, Type::boolType());
+        }
+        if (mask && name == "select") {
+            if (!arguments(2, "two vectors of the same type, as many numbers as the mask")) return Type::error();
+            Type first = checkExpr(call.args[0], std::nullopt);
+            if (first.isError()) return first;
+            if (!first.isVector() || first.array->count != vector.array->count ||
+                first.array->element.bits != number.bits) {
+                diag_->error(call.args[0]->loc, "select() takes two vectors with as many numbers as the mask, of its size (D505)");
+                return Type::error();
+            }
+            if (!coerce(call.args[1], first)) return Type::error();
+            made->args.push_back(std::move(call.args[0]));
+            made->args.push_back(std::move(call.args[1]));
+            return finish(Intrinsic::VectorSelect, first);
+        }
+        diag_->error(loc, "a " + vector.name() + " has no method " + name + "() (D505)");
+        return Type::error();
+    }
+
     Type checkArrayMethod(ExprPtr& expr, Type object) {
         auto& call = static_cast<MethodCallExpr&>(*expr);
         if (call.method != "len" && call.method != "copy") {
@@ -3855,6 +3999,7 @@ private:
                                         "example !u8(0) (D55)");
                 return Type::error();
             }
+            if (type.isVector() && type.array->element.isInt()) return type;  // its bits (D505)
             if (!type.isBool() && !type.isInt()) {
                 if (!type.isError()) diag_->error(unary.loc, "'!' needs a bool or an integer, found " + type.name() + " (D194)");
                 return Type::error();
@@ -3883,6 +4028,14 @@ private:
 
         Type type = checkExpr(unary.operand, expected && expected->isNumeric() ? expected : std::nullopt);
         if (type.isError()) return type;
+        if (type.isVector()) {  // D505
+            Type number = type.array->element;
+            if (number.isInt() && !number.isSigned) {
+                diag_->error(unary.loc, "cannot negate an unsigned vector (" + type.name() + ") (D59)");
+                return Type::error();
+            }
+            return type;
+        }
         if (type.isInt() && !type.isSigned) {
             diag_->error(unary.loc, "cannot negate an unsigned value (" + type.name() + ") (D59)");
             return Type::error();
@@ -4015,6 +4168,7 @@ private:
             diag_->error(binary.loc, std::string("'") + spelling(binary.op) + "' does not work on structs yet (D76)");
             return Type::error();
         }
+        if (operand.isVector()) return checkVectorOperator(binary, operand);  // D505
         if (operand.isArray() || operand.isFunction()) {
             diag_->error(binary.loc, std::string("'") + spelling(binary.op) + "' does not work on values of type " + operand.name());
             return Type::error();
@@ -4041,6 +4195,33 @@ private:
         return Type::boolType();
     }
 
+    // An operator on vectors (D505): + - * on each number, / of floats, & | ^ of integers;
+    // a comparison gives the mask, -1 where true and 0 where false.
+    Type checkVectorOperator(BinaryExpr& binary, Type vector) {
+        Type number = vector.array->element;
+        std::string what = std::string("'") + spelling(binary.op) + "'";
+        if (binary.op == BinaryOp::Rem || (binary.op == BinaryOp::Div && !number.isFloat())) {
+            diag_->error(binary.loc, what + " works on vectors of floats only: the processors have no division of integer "
+                                            "vectors (D505)");
+            return Type::error();
+        }
+        if (isBitwise(binary.op) && !number.isInt()) {
+            diag_->error(binary.loc, what + " works on vectors of integers (D505)");
+            return Type::error();
+        }
+        if (isArithmetic(binary.op)) return vector;
+        return maskOf(vector);
+    }
+
+    // A number with a vector, in an operator: the vector with that number in each of its
+    // numbers (D505).
+    bool splatInto(ExprPtr& number, Type vector) {
+        if (!coerce(number, vector.array->element)) return false;
+        SourceLocation loc = number->loc;
+        number = std::make_unique<ConversionExpr>(loc, std::move(number), vector, false);
+        return true;
+    }
+
     // `x << n`, `x >> n` (D195): the type is the one of x; n is any integer.
     Type checkShift(BinaryExpr& binary, std::optional<Type> expected) {
         Type type = checkExpr(binary.lhs, expected && expected->isInt() ? expected : std::nullopt);
@@ -4054,11 +4235,16 @@ private:
             type = *expected;
         }
         Type count = checkExpr(binary.rhs, std::nullopt);
-        if (count.isUntyped() && !type.isError() && type.isInt()) {
-            if (!coerce(binary.rhs, type)) return Type::error();
-            count = type;
+        if (count.isUntyped() && !type.isError() && (type.isInt() || type.isVector())) {
+            Type target = type.isVector() ? Type::intType(64, true) : type;
+            if (!coerce(binary.rhs, target)) return Type::error();
+            count = target;
         }
         if (type.isError() || count.isError()) return Type::error();
+        if (type.isVector() && type.array->element.isInt() && count.isInt()) {  // D505: each number, by the same count
+            binary.operandType = type;
+            return type;
+        }
         if (!type.isInt()) {
             diag_->error(binary.loc, std::string("'") + spelling(binary.op) + "' works on integers, found " + type.name() + " (D195)");
             return Type::error();
@@ -4134,10 +4320,11 @@ private:
         }
         bool indexOk = coerce(node.index, Type::intType(64, true));
         if (object.isError() || !indexOk) return Type::error();
-        if (object.isArray()) {  // D196: a constant index is checked here, the others when the program runs
+        if (object.isArray() || object.isVector()) {  // D196, D505: a constant index here, the others when the program runs
             std::optional<int64_t> constant = constantIndex(*node.index);
             if (constant && (*constant < 0 || *constant >= object.array->count)) {
-                diag_->error(node.index->loc, "the index " + std::to_string(*constant) + " is outside the array, which has " +
+                diag_->error(node.index->loc, "the index " + std::to_string(*constant) + " is outside the " +
+                                                  (object.isVector() ? "vector" : "array") + ", which has " +
                                                   std::to_string(object.array->count) + " elements (D30)");
                 return Type::error();
             }
@@ -4172,7 +4359,7 @@ private:
             if (place.empty()) return reason.empty() ? std::string("it has no form of debug") : reason;
             return place + " has type " + type.name() + (reason.empty() ? "" : " (" + reason + ")");
         };
-        if (type.isBool() || type.isNumeric() || type.isError()) return "";
+        if (type.isBool() || type.isNumeric() || type.isError() || type.isVector()) return "";
         if (type.isParam()) {
             const auto& constraints = type.param->interfaces;
             if (std::find(constraints.begin(), constraints.end(), debugInterface_) != constraints.end()) return "";
@@ -4309,7 +4496,7 @@ private:
                           "out += \".0\"\n}\n}\n";
         }
         if (type.isNumeric() || type.isBool()) return text + "out += format(\"{}\", value)\n}\n";
-        if (type.isArray()) {
+        if (type.isArray() || type.isVector()) {
             bindings.emplace_back("E", type.array->element);
             return text + "out += \"[\"\nfor (i64 i = 0; i < value.len(); i++) {\nif (i > 0) {\nout += \", \"\n}\n"
                           "debugWrite<E>(ref out, value[i])\n}\nout += \"]\"\n}\n";
@@ -4792,6 +4979,19 @@ private:
                       {ParamMode::Read, "desired", element}};
             result = Type::boolType();
             break;
+        case Intrinsic::VectorLoad:  // made by the methods of the vectors (D505)
+        case Intrinsic::VectorStore:
+        case Intrinsic::VectorSum:
+        case Intrinsic::VectorSmallest:
+        case Intrinsic::VectorLargest:
+        case Intrinsic::VectorMin:
+        case Intrinsic::VectorMax:
+        case Intrinsic::VectorAbs:
+        case Intrinsic::VectorAll:
+        case Intrinsic::VectorAny:
+        case Intrinsic::VectorSelect:
+        case Intrinsic::VectorLow:
+        case Intrinsic::VectorHigh:
         case Intrinsic::CountOnes:  // made by checkBitFunction (D502)
         case Intrinsic::TrailingZeros:
         case Intrinsic::LeadingZeros:
@@ -4926,6 +5126,7 @@ private:
             ExprPtr& literal = leftLiteral ? binary.lhs : binary.rhs;
             Type type = checkExpr(typed, hint);
             if (type.isError()) return type;
+            if (type.isVector()) return splatInto(literal, type) ? type : Type::error();  // `v * 2` (D505)
             if (!type.isNumeric()) {
                 diag_->error(literal->loc, "a number cannot be combined with a value of type " + type.name());
                 return Type::error();
@@ -4937,6 +5138,8 @@ private:
         Type right = checkExpr(binary.rhs, hint);
         if (left.isError() || right.isError()) return Type::error();
         if (left == right) return left;
+        if (left.isVector() && right.isNumeric()) return splatInto(binary.rhs, left) ? left : Type::error();  // D505
+        if (right.isVector() && left.isNumeric()) return splatInto(binary.lhs, right) ? right : Type::error();
         if (convertsLosslessly(left, right)) {
             coerce(binary.lhs, right);
             return right;
@@ -5504,6 +5707,7 @@ private:
             diag_->error(call.loc, "a conversion to " + target.name() + " takes exactly one value");
             return Type::error();
         }
+        if (target.isVector()) return checkVectorConversion(expr, target);
         ExprPtr operand = std::move(call.args[0]);
         Type type;
         bool toAddress = target.kind == TypeKind::Addr;
@@ -5545,6 +5749,35 @@ private:
         } else {
             expr = std::make_unique<ConversionExpr>(loc, std::move(operand), target, true);
         }
+        return target;
+    }
+
+    // `i16x16(5)`: the number in each number of the vector; `i32x8(v)`: the numbers of a
+    // vector with as many, converted one by one (D505).
+    Type checkVectorConversion(ExprPtr& expr, Type target) {
+        auto& call = static_cast<CallExpr&>(*expr);
+        ExprPtr operand = std::move(call.args[0]);
+        Type number = target.array->element;
+        Type type = checkExpr(operand, isUntypedLiteral(*operand) ? std::optional<Type>(number) : std::nullopt);
+        if (type.isError()) return type;
+        SourceLocation loc = call.loc;
+        if (type.isVector()) {
+            if (type.array->count != target.array->count) {
+                diag_->error(loc, "cannot convert " + type.name() + " to " + target.name() +
+                                      ": a vector converts to one with as many numbers (D505)");
+                return Type::error();
+            }
+            expr = type == target ? std::move(operand) : std::make_unique<ConversionExpr>(loc, std::move(operand), target, true);
+            return target;
+        }
+        if (!type.isNumeric()) {
+            diag_->error(loc, "cannot convert " + type.name() + " to " + target.name() + ": a vector takes a number (D505)");
+            return Type::error();
+        }
+        if (type != number) {  // the number first converted as a number, explicitly
+            operand = std::make_unique<ConversionExpr>(loc, std::move(operand), number, true);
+        }
+        expr = std::make_unique<ConversionExpr>(loc, std::move(operand), target, true);
         return target;
     }
 

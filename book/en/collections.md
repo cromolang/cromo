@@ -96,6 +96,30 @@ i32 main() {
 
 `f64[2][3]` is two arrays of three. An array is a value: it is copied when its elements are simple, moved otherwise.
 
+## Vectors
+
+```cromo
+i32 main() {
+    list<f32> prices = [1.5, 2.0, 3.5, 4.0, 0.5, 6.0, 7.5, 8.0]
+    f32x8 all = f32x8.load(prices, 0)        // eight numbers in one value
+    f32x8 taxed = all * 1.2                   // eight multiplications in one instruction
+    i32x8 expensive = taxed > 5.0             // a mask: -1 where true, 0 where false
+    f32x8 capped = expensive.select(f32x8(5.0), taxed)
+    println("{:.2f} {:.2f} {}", taxed.sum(), capped.sum(), expensive.any())
+    ret 0
+}
+```
+
+```output
+39.60 28.80 true
+```
+
+`f32x8` holds eight `f32`, and `i16x16` sixteen `i16`: a vector of SIMD, the numbers on which the processor works together with AVX2, SSE or NEON. There are vectors of 128 and of 256 bits for every number, as `i8x32`, `u16x8`, `i32x4` or `f64x4`.
+
+- `f32x8(x)` puts x in each number, `f32x8.load(list, at)` reads eight numbers from a list or an array, `v.store(ref list, at)` writes them, and `v[i]` is one of them.
+- `+`, `-`, `*`, `/` of the floats and the operators of the bits act number by number; a number on one side goes into each number, as `taxed * 1.2`. The integers wrap around, without the checks of overflow.
+- A comparison gives a mask, with `all()`, `any()` and `select(a, b)`. `sum()`, `smallest()`, `largest()`, `abs()`, `min(w)` and `max(w)` complete them, and `i32x8(v)` converts the numbers of a vector.
+
 ## Maps
 
 `map<K, V>` associates keys with values, with a hash table:

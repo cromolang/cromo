@@ -122,7 +122,7 @@
       "patterns": [
         {
           "name": "storage.type.primitive.cromo",
-          "match": "\\b(?:i8|i16|i32|i64|u8|u16|u32|u64|f32|f64|bool|char|void|string|list|map|Self|addr)\\b"
+          "match": "\\b(?:i8|i16|i32|i64|u8|u16|u32|u64|f32|f64|bool|char|void|string|list|map|Self|addr|(?:[iu](?:8|16|32|64)|f(?:32|64))x(?:2|4|8|16|32))\\b"
         },
         {
           "name": "variable.other.constant.cromo",

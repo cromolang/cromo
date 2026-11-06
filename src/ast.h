@@ -174,6 +174,10 @@ enum class Intrinsic {
     VariableAddress,  // `variableAddress(x)`: the addr of a module variable, or of a part of it (D394)
     CountOnes, TrailingZeros, LeadingZeros, RotateLeft, RotateRight,  // the bits (D502)
     AtomicLoadRelaxed, AtomicStoreRelaxed, AtomicAddRelaxed,          // D503
+    // The vectors (D505): load and store from a list or an array, the reductions,
+    // the numbers two by two, the masks and the halves.
+    VectorLoad, VectorStore, VectorSum, VectorSmallest, VectorLargest, VectorMin, VectorMax, VectorAbs,
+    VectorAll, VectorAny, VectorSelect, VectorLow, VectorHigh,
 };
 
 // Pairs of arguments that must not be the same element of a list: when the

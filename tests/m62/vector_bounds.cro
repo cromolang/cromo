@@ -1,0 +1,9 @@
+// A vector loaded beyond the end of a list is a panic, as an index out of it (D505).
+// expect-exit: 101
+// expect-stderr: index out of bounds: the index is 16 but the length is 16
+i32 main() {
+    list<i16> values = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+    i16x16 first = i16x16.load(values, 0)
+    i16x16 second = i16x16.load(values, 1)
+    ret 0
+}

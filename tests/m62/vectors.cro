@@ -1,0 +1,73 @@
+// The vectors of SIMD (D505): loaded from a list and an array, added, multiplied and
+// shifted with a number in each of their numbers, compared into masks, converted,
+// halved, stored, indexed, in a list and in a struct, and printed.
+// expect-output: sum 2016, first 96, last 156
+// expect-output: doubled 200, halved 100
+// expect-output: floats 46.0 13.0
+// expect-output: mask true false -1 0, kept 4
+// expect-output: clamped 26.0
+// expect-output: low 96 124, high 128 156
+// expect-output: stored [96, 100, 104, 108]
+// expect-output: min 1 max 9 abs 7
+// expect-output: written [0, 0, 0, 7]
+// expect-output: [1.0, 2.0, 3.0, 4.0]
+// expect-output: 2 vectors, 26.0 in the struct
+// expect-output: bits [15, 0, 240, 0]
+const f32[8] values = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]
+
+struct Layer {
+    f32x4 bias
+    i64 size
+}
+
+i32 main() {
+    list<i16> weights
+    for (i64 i = 0; i < 64; i++) {
+        weights.add(i16(i))
+    }
+    i16x16 sum = i16x16.load(weights, 0)
+    for (i64 i = 16; i < 64; i += 16) {
+        sum = sum + i16x16.load(weights, i)
+    }
+    println("sum {}, first {}, last {}", sum.sum(), sum[0], sum[15])
+    i16x16 doubled = sum * 2
+    i16x16 halved = doubled >> 1
+    println("doubled {}, halved {}", doubled[1], halved[1])
+
+    f32x8 b = f32x8.load(values, 0)
+    f32x8 c = f32x8(1.5) * b - 1.0
+    println("floats {:.1f} {:.1f}", c.sum(), c.largest() + 2.0)
+
+    i32x8 mask = b > 4.0
+    println("mask {} {} {} {}, kept {}", mask.any(), mask.all(), mask[7], mask[0], i32x8(b).smallest() + 3)
+    f32x8 clamped = mask.select(f32x8(4.0), b)
+    println("clamped {:.1f}", clamped.sum())
+
+    i32x8 low = i32x8(sum.low())
+    i32x8 high = i32x8(sum.high())
+    println("low {} {}, high {} {}", low[0], low[7], high[0], high[7])
+
+    list<i32> out = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    low.store(ref out, 2)
+    println("stored [{}, {}, {}, {}]", out[2], out[3], out[4], out[5])
+
+    i32x4 a = i32x4(-7)
+    i32x4 nine = i32x4(9)
+    println("min {} max {} abs {}", a.min(i32x4(1)).abs()[0] - 6, nine.max(a)[2], a.abs()[3])
+    i32x4 written
+    written[3] = 7
+    println("written [{}, {}, {}, {}]", written[0], written[1], written[2], written[3])
+
+    f32x4 four = f32x4.load(values, 0)
+    println("{:?}", four)
+    list<f32x4> many = [four, four * 2.0]
+    Layer layer
+    layer.bias = many[1]
+    println("{} vectors, {:.1f} in the struct", many.len(), layer.bias.sum() + 6.0)
+
+    u8x16 bytes = u8x16(0xF0)
+    u8x16 bits = (bytes >> 4) ^ u8x16(0)
+    u8x16 flipped = !bits
+    println("bits [{}, {}, {}, {}]", bits[0], bits[1] & 0, flipped[0] | 0xF0, u8(0))
+    ret 0
+}

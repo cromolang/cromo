@@ -29,6 +29,7 @@ enum class TypeKind {
     UntypedFloat,  // floating-point literal still waiting for its type (D55)
     Function,      // `func(i32, i32) bool`: a pair of captured data and code (D185, D186)
     Array,         // `i32[4]`: a fixed number of elements, kept where the array is (D196)
+    Vector,        // `i16x16`: numbers that the operators take together, SIMD (D505); `array` has them
 };
 
 struct Type {
@@ -58,6 +59,9 @@ struct Type {
     static Type arrayType(const ArrayInfo* array) {
         return {TypeKind::Array, 0, false, nullptr, nullptr, nullptr, nullptr, array};
     }
+    static Type vectorType(const ArrayInfo* lanes) {
+        return {TypeKind::Vector, 0, false, nullptr, nullptr, nullptr, nullptr, lanes};
+    }
 
     bool isError() const { return kind == TypeKind::Error; }
     bool isVoid() const { return kind == TypeKind::Void; }
@@ -70,6 +74,7 @@ struct Type {
     bool isInterface() const { return kind == TypeKind::Interface; }
     bool isFunction() const { return kind == TypeKind::Function; }
     bool isArray() const { return kind == TypeKind::Array; }
+    bool isVector() const { return kind == TypeKind::Vector; }
     bool isAggregate() const { return isStruct() || isArray(); }  // kept in memory
     bool isUntyped() const { return kind == TypeKind::UntypedInt || kind == TypeKind::UntypedFloat; }
 
@@ -100,6 +105,13 @@ const ArrayInfo* internArray(Type element, int64_t count);
 
 // The type of the elements of the innermost array: i32 for i32[3][4].
 Type baseElement(Type type);
+
+// The vector of SIMD with `count` numbers of the type `element`, 128 or 256 bits (D505).
+Type vectorOf(Type element, int64_t count);
+
+// The vector of the comparisons of a vector: signed integers of the size of its
+// numbers, -1 where true and 0 where false.
+Type maskOf(Type vector);
 
 // Built-in types that can be named in the source (D9, D46). `char` is u8.
 std::optional<Type> findBuiltinType(const std::string& name);

@@ -106,16 +106,49 @@ i32 scopeOf(Tree tree, i32 file) {
     ret part >= 0 ? part : file
 }
 
-// The types of the language (D14): the numbers, bool and char.
+// The types of the language (D14): the numbers, bool and char, and the vectors (D505).
 public bool isBuiltinType(string name) {
     switch (name) {
         case "bool", "f32", "f64", "char", "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64" {
             ret true
         }
         default {
+            ret isVectorType(name)
+        }
+    }
+}
+
+// A vector of SIMD, as i16x16: a number, x, and how many, for 128 or 256 bits (D505).
+bool isVectorType(string name) {
+    list<string> parts = name.split("x")
+    if (parts.len() != 2 || parts[0] == "char" || parts[0] == "bool" || !isBuiltinType(parts[0])) {
+        ret false
+    }
+    i64 bits = 0
+    switch (parts[0]) {
+        case "i8", "u8" {
+            bits = 8
+        }
+        case "i16", "u16" {
+            bits = 16
+        }
+        case "i32", "u32", "f32" {
+            bits = 32
+        }
+        default {
+            bits = 64
+        }
+    }
+    for (i64 i = 0; i < parts[1].len(); i++) {
+        if (parts[1][i] < 48 || parts[1][i] > 57 || (i == 0 && parts[1][i] == 48)) {
             ret false
         }
     }
+    if (parts[1].len() == 0 || parts[1].len() > 2) {
+        ret false
+    }
+    i64 total = i64(parts[1]) * bits
+    ret total == 128 || total == 256
 }
 
 // The functions that every program calls without declaring them (D38, D102, D396, D470, D502).

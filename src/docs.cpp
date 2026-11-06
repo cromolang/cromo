@@ -1,6 +1,10 @@
 #include "docs.h"
 
+#include <map>
+#include <optional>
+
 #include "lexer.h"
+#include "types.h"
 
 namespace cromo {
 
@@ -246,6 +250,29 @@ const BuiltinDoc* builtinDoc(const std::string& name) {
     };
     for (const BuiltinDoc& doc : docs) {
         if (name == doc.name) return &doc;
+    }
+    // A vector of SIMD (D505): one text for all of them, as `i16x16` or `f32x8`.
+    std::optional<Type> type = findBuiltinType(name);
+    if (type && type->isVector()) {
+        static std::map<std::string, std::pair<std::string, std::string>> vectors;
+        auto& made = vectors[name];
+        if (made.second.empty()) {
+            made.first = name;
+            made.second = "A vector of SIMD: " + std::to_string(type->array->count) + " numbers " + type->array->element.name() +
+                          ", " + std::to_string(sizeOf(*type) * 8) + " bits, on which the operators act number by number "
+                          "in one instruction of the processor, AVX2, SSE or NEON. '+', '-', '*', '/' of the floats, the "
+                          "operators of the bits of the integers and the shifts; a number on one side is in each number. "
+                          "A comparison gives a mask, -1 where true and 0 where false, with 'all()', 'any()' and "
+                          "'select(a, b)'.\n"
+                          "\n"
+                          "'" + name + "(x)' has x in each number, '" + name + ".load(values, at)' reads from a list or an "
+                          "array, 'v.store(ref values, at)' writes; 'v[i]' is a number. 'sum()', 'smallest()', "
+                          "'largest()', 'abs()', 'min(w)', 'max(w)', 'len()', and 'low()' and 'high()' for the halves "
+                          "of 256 bits. The integers wrap around, without the checks of overflow.";
+        }
+        static thread_local BuiltinDoc doc;
+        doc = BuiltinDoc{made.first.c_str(), "", made.second.c_str()};
+        return &doc;
     }
     return nullptr;
 }

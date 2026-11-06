@@ -231,6 +231,7 @@ bool zeroDefault(Type type) {
 
 std::string defaultConstant(Type type) {
     if (type.isFunction()) return "zeroinitializer";  // no code: calling it is a panic
+    if (type.isVector()) return "zeroinitializer";    // D505
     if (type.isInterface()) return "zeroinitializer";  // empty: calling a method is a panic (D361)
     if (type.isArray()) {  // D196: every element has its default value
         if (zeroDefault(type)) return "zeroinitializer";
@@ -548,6 +549,11 @@ private:
                                    ", size: " + bits + ", elements: !{" +
                                    metadata("!DISubrange(count: " + std::to_string(type.array->count) + ")") + "})");
             break;
+        case TypeKind::Vector:
+            defineMetadata(id, "!DICompositeType(tag: DW_TAG_array_type, baseType: " + debugType(type.array->element) +
+                                   ", size: " + bits + ", flags: DIFlagVector, elements: !{" +
+                                   metadata("!DISubrange(count: " + std::to_string(type.array->count) + ")") + "})");
+            break;
         case TypeKind::Struct: debugStruct(id, *type.structDecl); break;
         case TypeKind::Function:
         case TypeKind::Interface: {  // two addresses: the code and its data, the object and its table
@@ -651,6 +657,14 @@ private:
     void inst(const std::string& line) {
         ensureLive();
         body_ << "  " << line;
+        // A vector in a list, a struct or an array is aligned as its numbers: its loads
+        // and stores say so, and LLVM makes them unaligned instructions (D505).
+        if (line.rfind("store <", 0) == 0 || line.find(" = load <") != std::string::npos) {
+            size_t from = line.find(" x ") + 3;
+            std::string number = line.substr(from, line.find('>', from) - from);
+            int size = number == "float" ? 4 : number == "double" ? 8 : std::stoi(number.substr(1)) / 8;
+            body_ << ", align " << size;
+        }
         if (!subprogram_.empty()) body_ << ", !dbg " << locationNode();
         body_ << "\n";
     }
@@ -1965,16 +1979,24 @@ private:
             Value index = element.access ? Value{} : generateExpr(*element.index);
             Type type = element.object->type;
             if (element.access) return mapValue(list, element);
-            if (type.isArray()) {  // D196: the size is in the type
+            if (type.isArray() || type.isVector()) {  // D196, D505: the size is in the type
                 if (element.index->kind != ExprKind::IntLiteral) checkIndex(index.ref, std::to_string(type.array->count), element.loc);
                 std::string result = temp();
-                inst(result + " = getelementptr inbounds " + llvmType(type) + ", ptr " + list + ", i64 0, i64 " + index.ref);
+                std::string layout = type.isVector() ? "[" + std::to_string(type.array->count) + " x " +
+                                                           llvmType(type.array->element) + "]"
+                                                     : llvmType(type);
+                inst(result + " = getelementptr inbounds " + layout + ", ptr " + list + ", i64 0, i64 " + index.ref);
                 return result;
             }
             return elementAddress(list, *type.structDecl, index.ref, element.loc);
         }
         default: {
             std::string address = slot(expr.type);
+            if (expr.type.isVector()) {  // a vector computed: its numbers have a place (D505)
+                Value value = generateExpr(expr);
+                inst("store " + llvmType(expr.type) + " " + value.ref + ", ptr " + address);
+                return address;
+            }
             generateStructInto(expr, address);
             if (needsDestruction(expr.type)) temporaries_.push_back(LiveObject{address, expr.type, nullptr});
             return address;
@@ -2623,6 +2645,89 @@ private:
             inst(result + " = atomicrmw " + operation + " ptr " + place + ", " + atomicType(element) + " " + value + order);
             return atomicResult(result, element);
         }
+        case Intrinsic::VectorLoad: {  // D505: `i16x16.load(values, at)`
+            std::string at = arg(1);
+            std::string place = vectorPlace(*call.args[0], at, call.typeArg.array->count, call.loc);
+            return load(place, call.typeArg);
+        }
+        case Intrinsic::VectorStore: {  // `v.store(ref values, at)`
+            Value vector = generateExpr(*call.args[0]);
+            std::string at = arg(2);
+            std::string place = vectorPlace(*call.args[1], at, vector.type.array->count, call.loc);
+            inst("store " + llvmType(vector.type) + " " + vector.ref + ", ptr " + place);
+            return {"", Type::voidType()};
+        }
+        case Intrinsic::VectorSum:
+        case Intrinsic::VectorSmallest:
+        case Intrinsic::VectorLargest: {
+            Value vector = generateExpr(*call.args[0]);
+            Type number = vector.type.array->element;
+            if (number.isFloat()) {
+                if (call.intrinsic == Intrinsic::VectorSum) {  // in any order, as SIMD adds
+                    std::string fn = "@llvm.vector.reduce.fadd." + vectorSuffix(vector.type);
+                    intrinsic("declare " + llvmType(number) + " " + fn + "(" + llvmType(number) + ", " +
+                                  llvmType(vector.type) + ")", fn);
+                    inst(result + " = call reassoc " + llvmType(number) + " " + fn + "(" + llvmType(number) + " -0.0, " +
+                         llvmType(vector.type) + " " + vector.ref + ")");
+                    return {result, number};
+                }
+                const char* name = call.intrinsic == Intrinsic::VectorSmallest ? "vector.reduce.fmin" : "vector.reduce.fmax";
+                return {vectorCall(name, number, {vector}), number};
+            }
+            std::string name = call.intrinsic == Intrinsic::VectorSum ? std::string("vector.reduce.add")
+                               : call.intrinsic == Intrinsic::VectorSmallest
+                                   ? std::string(number.isSigned ? "vector.reduce.smin" : "vector.reduce.umin")
+                                   : std::string(number.isSigned ? "vector.reduce.smax" : "vector.reduce.umax");
+            return {vectorCall(name, number, {vector}), number};
+        }
+        case Intrinsic::VectorMin:
+        case Intrinsic::VectorMax: {
+            Value first = generateExpr(*call.args[0]);
+            Value second = generateExpr(*call.args[1]);
+            Type number = first.type.array->element;
+            bool smaller = call.intrinsic == Intrinsic::VectorMin;
+            std::string name = number.isFloat() ? std::string(smaller ? "minnum" : "maxnum")
+                                                : std::string(number.isSigned ? "s" : "u") + (smaller ? "min" : "max");
+            return {vectorCall(name, first.type, {first, second}), first.type};
+        }
+        case Intrinsic::VectorAbs: {
+            Value vector = generateExpr(*call.args[0]);
+            if (vector.type.array->element.isFloat()) return {vectorCall("fabs", vector.type, {vector}), vector.type};
+            return {vectorCall("abs", vector.type, {vector, Value{"false", Type::boolType()}}), vector.type};
+        }
+        case Intrinsic::VectorAll:
+        case Intrinsic::VectorAny: {
+            Value mask = generateExpr(*call.args[0]);
+            std::string flags = maskFlags(mask);
+            std::string bits = "<" + std::to_string(mask.type.array->count) + " x i1>";
+            std::string fn = std::string("@llvm.vector.reduce.") + (call.intrinsic == Intrinsic::VectorAll ? "and" : "or") +
+                             ".v" + std::to_string(mask.type.array->count) + "i1";
+            intrinsic("declare i1 " + fn + "(" + bits + ")", fn);
+            inst(result + " = call i1 " + fn + "(" + bits + " " + flags + ")");
+            return {result, Type::boolType()};
+        }
+        case Intrinsic::VectorSelect: {  // `mask.select(a, b)`: a where the mask is true, b where it is false
+            Value mask = generateExpr(*call.args[0]);
+            Value first = generateExpr(*call.args[1]);
+            Value second = generateExpr(*call.args[2]);
+            std::string flags = maskFlags(mask);
+            inst(result + " = select <" + std::to_string(mask.type.array->count) + " x i1> " + flags + ", " +
+                 llvmType(first.type) + " " + first.ref + ", " + llvmType(second.type) + " " + second.ref);
+            return {result, first.type};
+        }
+        case Intrinsic::VectorLow:
+        case Intrinsic::VectorHigh: {
+            Value vector = generateExpr(*call.args[0]);
+            int64_t half = vector.type.array->count / 2;
+            std::string lanes;
+            for (int64_t i = 0; i < half; ++i) {
+                lanes += (i ? ", " : "") + std::string("i32 ") +
+                         std::to_string(call.intrinsic == Intrinsic::VectorLow ? i : half + i);
+            }
+            inst(result + " = shufflevector " + llvmType(vector.type) + " " + vector.ref + ", " + llvmType(vector.type) +
+                 " poison, <" + std::to_string(half) + " x i32> <" + lanes + ">");
+            return {result, call.typeArg};
+        }
         case Intrinsic::CountOnes:  // D502: the instructions of the processor, through those of LLVM
         case Intrinsic::TrailingZeros:
         case Intrinsic::LeadingZeros: {
@@ -2938,6 +3043,17 @@ private:
     Value generateUnary(const UnaryExpr& unary) {
         Value operand = generateExpr(*unary.operand);
         std::string result = temp();
+        if (operand.type.isVector()) {  // D505: on each number, without checks
+            std::string t = llvmType(operand.type);
+            if (unary.op == UnaryOp::Not) {
+                inst(result + " = xor " + t + " " + operand.ref + ", splat (" + llvmType(operand.type.array->element) + " -1)");
+            } else if (operand.type.array->element.isFloat()) {
+                inst(result + " = fneg " + t + " " + operand.ref);
+            } else {
+                inst(result + " = sub " + t + " zeroinitializer, " + operand.ref);
+            }
+            return {result, operand.type};
+        }
         if (unary.op == UnaryOp::Not) {  // on an integer it inverts the bits (D194)
             inst(result + " = xor " + llvmType(operand.type) + " " + operand.ref + ", " + (operand.type.isBool() ? "true" : "-1"));
             return {result, operand.type};
@@ -2964,6 +3080,15 @@ private:
 
     // A comparison of two values already computed.
     Value compare(BinaryOp op, Type type, const Value& lhs, const Value& rhs) {
+        if (type.isVector()) {  // D505: -1 where true, 0 where false, in the integers of the size of the numbers
+            std::string flags = temp();
+            inst(flags + " = " + predicateOf(op, type.array->element) + " " + llvmType(type) + " " + lhs.ref + ", " + rhs.ref);
+            std::string fixed = temp();
+            Type mask = maskOf(type);
+            std::string count = std::to_string(type.array->count);
+            inst(fixed + " = sext <" + count + " x i1> " + flags + " to " + llvmType(mask));
+            return {fixed, mask};
+        }
         if (type.isStruct()) {  // enums without data: their tags (D112)
             std::string left = temp();
             std::string right = temp();
@@ -2973,25 +3098,27 @@ private:
             inst(result + " = icmp " + (op == BinaryOp::Eq ? "eq" : "ne") + " i32 " + left + ", " + right);
             return {result, Type::boolType()};
         }
-        std::string predicate;
+        std::string result = temp();
+        inst(result + " = " + predicateOf(op, type) + " " + llvmType(type) + " " + lhs.ref + ", " + rhs.ref);
+        return {result, Type::boolType()};
+    }
+
+    // The instruction of a comparison of numbers of the type: fcmp or icmp, with its predicate.
+    static std::string predicateOf(BinaryOp op, Type type) {
         if (type.isFloat()) {
             static const std::map<BinaryOp, std::string> floats = {
                 {BinaryOp::Eq, "oeq"}, {BinaryOp::Ne, "une"}, {BinaryOp::Lt, "olt"},
                 {BinaryOp::Le, "ole"}, {BinaryOp::Gt, "ogt"}, {BinaryOp::Ge, "oge"}};
-            predicate = "fcmp " + floats.at(op);
-        } else {
-            bool isSigned = type.isInt() && type.isSigned;
-            static const std::map<BinaryOp, std::string> signedOps = {
-                {BinaryOp::Eq, "eq"}, {BinaryOp::Ne, "ne"}, {BinaryOp::Lt, "slt"},
-                {BinaryOp::Le, "sle"}, {BinaryOp::Gt, "sgt"}, {BinaryOp::Ge, "sge"}};
-            static const std::map<BinaryOp, std::string> unsignedOps = {
-                {BinaryOp::Eq, "eq"}, {BinaryOp::Ne, "ne"}, {BinaryOp::Lt, "ult"},
-                {BinaryOp::Le, "ule"}, {BinaryOp::Gt, "ugt"}, {BinaryOp::Ge, "uge"}};
-            predicate = "icmp " + (isSigned ? signedOps : unsignedOps).at(op);
+            return "fcmp " + floats.at(op);
         }
-        std::string result = temp();
-        inst(result + " = " + predicate + " " + llvmType(type) + " " + lhs.ref + ", " + rhs.ref);
-        return {result, Type::boolType()};
+        bool isSigned = type.isInt() && type.isSigned;
+        static const std::map<BinaryOp, std::string> signedOps = {
+            {BinaryOp::Eq, "eq"}, {BinaryOp::Ne, "ne"}, {BinaryOp::Lt, "slt"},
+            {BinaryOp::Le, "sle"}, {BinaryOp::Gt, "sgt"}, {BinaryOp::Ge, "sge"}};
+        static const std::map<BinaryOp, std::string> unsignedOps = {
+            {BinaryOp::Eq, "eq"}, {BinaryOp::Ne, "ne"}, {BinaryOp::Lt, "ult"},
+            {BinaryOp::Le, "ule"}, {BinaryOp::Gt, "ugt"}, {BinaryOp::Ge, "uge"}};
+        return "icmp " + (isSigned ? signedOps : unsignedOps).at(op);
     }
 
     // `c ? a : b` (D422): only the branch chosen is computed, and its temporaries end
@@ -3064,6 +3191,17 @@ private:
     Value shift(BinaryOp op, Value lhs, Value rhs, SourceLocation loc) {
         Type type = lhs.type;
         std::string t = llvmType(type);
+        Value masked = shiftCount(rhs, type, loc);
+        std::string result = temp();
+        const char* name = op == BinaryOp::Shl ? "shl" : type.isSigned ? "ashr" : "lshr";
+        inst(result + " = " + name + " " + t + " " + lhs.ref + ", " + masked.ref);
+        return {result, type};
+    }
+
+    // The count of a shift of a value of the type: in debug a panic outside its width,
+    // then of its type and masked with its width (D195).
+    Value shiftCount(Value rhs, Type type, SourceLocation loc) {
+        std::string t = llvmType(type);
         std::string count = rhs.ref;
         if (!options_.release) {
             std::string wide = count;
@@ -3086,16 +3224,14 @@ private:
         }
         std::string masked = temp();
         inst(masked + " = and " + t + " " + count + ", " + std::to_string(type.bits - 1));
-        std::string result = temp();
-        const char* name = op == BinaryOp::Shl ? "shl" : type.isSigned ? "ashr" : "lshr";
-        inst(result + " = " + name + " " + t + " " + lhs.ref + ", " + masked);
-        return {result, type};
+        return {masked, type};
     }
 
     Value arithmetic(BinaryOp op, Value lhs, Value rhs, SourceLocation loc, bool wrap = false) {
         Type type = lhs.type;
         std::string t = llvmType(type);
         std::string result = temp();
+        if (type.isVector()) return vectorArithmetic(op, lhs, rhs, loc);
 
         if (type.isFloat()) {
             static const std::map<BinaryOp, std::string> ops = {
@@ -3161,10 +3297,136 @@ private:
         return {result, type};
     }
 
+    // The operators on vectors (D505): on each number, the integers wrapping around, without
+    // the checks of overflow; a shift by a count of the scalars, checked and masked as for them.
+    Value vectorArithmetic(BinaryOp op, Value lhs, Value rhs, SourceLocation loc) {
+        Type type = lhs.type;
+        Type element = type.array->element;
+        std::string t = llvmType(type);
+        std::string result = temp();
+        if (op == BinaryOp::Shl || op == BinaryOp::Shr) {
+            Value count = shiftCount(rhs, element, loc);
+            std::string lanes = splat(count.ref, type);
+            const char* name = op == BinaryOp::Shl ? "shl" : element.isSigned ? "ashr" : "lshr";
+            inst(result + " = " + name + " " + t + " " + lhs.ref + ", " + lanes);
+            return {result, type};
+        }
+        std::string name;
+        if (element.isFloat()) {
+            name = op == BinaryOp::Add ? "fadd" : op == BinaryOp::Sub ? "fsub" : op == BinaryOp::Mul ? "fmul" : "fdiv";
+        } else {
+            name = op == BinaryOp::Add      ? "add"
+                   : op == BinaryOp::Sub    ? "sub"
+                   : op == BinaryOp::Mul    ? "mul"
+                   : op == BinaryOp::BitAnd ? "and"
+                   : op == BinaryOp::BitOr  ? "or"
+                                            : "xor";
+        }
+        inst(result + " = " + name + " " + t + " " + lhs.ref + ", " + rhs.ref);
+        return {result, type};
+    }
+
+    // A conversion to a vector (D505): a number in each of its numbers, or the numbers of a
+    // vector with as many converted one by one; from a float to an integer saturated, as
+    // in release for the numbers, without a panic.
+    Value vectorConvert(Value value, Type to, SourceLocation loc) {
+        Type element = to.array->element;
+        if (!value.type.isVector()) {
+            Value number = convert(value, element, loc);
+            return {splat(number.ref, to), to};
+        }
+        Type from = value.type.array->element;
+        std::string source = llvmType(value.type) + " " + value.ref;
+        std::string target = llvmType(to);
+        std::string result = temp();
+        if (from.isInt() && element.isInt()) {
+            if (from.bits == element.bits) return {value.ref, to};
+            const char* op = element.bits < from.bits ? "trunc" : (from.isSigned ? "sext" : "zext");
+            inst(result + " = " + op + " " + source + " to " + target);
+        } else if (from.isInt() && element.isFloat()) {
+            inst(result + " = " + (from.isSigned ? "sitofp " : "uitofp ") + source + " to " + target);
+        } else if (from.isFloat() && element.isFloat()) {
+            inst(result + " = " + (element.bits > from.bits ? "fpext " : "fptrunc ") + source + " to " + target);
+        } else {
+            std::string fn = std::string("@llvm.") + (element.isSigned ? "fptosi" : "fptoui") + ".sat." + vectorSuffix(to) +
+                             "." + vectorSuffix(value.type);
+            intrinsic("declare " + target + " " + fn + "(" + llvmType(value.type) + ")", fn);
+            inst(result + " = call " + target + " " + fn + "(" + source + ")");
+        }
+        return {result, to};
+    }
+
+    // The suffix of the intrinsics of LLVM for a vector: v16i16, v8f32.
+    static std::string vectorSuffix(Type vector) {
+        Type element = vector.array->element;
+        return "v" + std::to_string(vector.array->count) + (element.isFloat() ? "f" : "i") + std::to_string(element.bits);
+    }
+
+    // The address of the number at `at` of a list or an array, checked with the `count`
+    // numbers from it (D505).
+    std::string vectorPlace(const Expr& source, const std::string& at, int64_t count, SourceLocation loc) {
+        Type i64 = Type::intType(64, true);
+        std::string place = addressOf(source);
+        Type type = source.type;
+        std::string data = place;
+        std::string length;
+        Type element;
+        if (type.isArray()) {
+            element = type.array->element;
+            length = std::to_string(type.array->count);
+        } else {
+            const StructDecl& decl = *type.structDecl;
+            element = decl.typeArgs[0];
+            data = load(listField(place, decl, "data"), Type::addrType()).ref;
+            length = load(listField(place, decl, "length"), i64).ref;
+        }
+        checkIndex(at, length, loc);
+        std::string last = temp();
+        inst(last + " = add i64 " + at + ", " + std::to_string(count - 1));
+        checkIndex(last, length, loc);
+        std::string result = temp();
+        inst(result + " = getelementptr inbounds " + llvmType(element) + ", ptr " + data + ", i64 " + at);
+        return result;
+    }
+
+    // A call of an intrinsic of LLVM on vectors, declared the first time.
+    std::string vectorCall(const std::string& name, Type result, const std::vector<Value>& args) {
+        std::string fn = "@llvm." + name + "." + vectorSuffix(args[0].type);
+        std::string params;
+        std::string values;
+        for (size_t i = 0; i < args.size(); ++i) {
+            params += (i ? ", " : "") + llvmType(args[i].type);
+            values += (i ? ", " : "") + llvmType(args[i].type) + " " + args[i].ref;
+        }
+        intrinsic("declare " + llvmType(result) + " " + fn + "(" + params + ")", fn);
+        std::string out = temp();
+        inst(out + " = call " + llvmType(result) + " " + fn + "(" + values + ")");
+        return out;
+    }
+
+    // The numbers of a mask that are true, as i1.
+    std::string maskFlags(Value mask) {
+        std::string flags = temp();
+        inst(flags + " = icmp ne " + llvmType(mask.type) + " " + mask.ref + ", zeroinitializer");
+        return flags;
+    }
+
+    // A vector with the value in each of its numbers.
+    std::string splat(const std::string& value, Type vector) {
+        std::string element = llvmType(vector.array->element);
+        std::string one = temp();
+        std::string all = temp();
+        inst(one + " = insertelement " + llvmType(vector) + " poison, " + element + " " + value + ", i64 0");
+        inst(all + " = shufflevector " + llvmType(vector) + " " + one + ", " + llvmType(vector) + " poison, <" +
+             std::to_string(vector.array->count) + " x i32> zeroinitializer");
+        return all;
+    }
+
     // Conversions between numeric types (D33, D61).
     Value convert(Value value, Type to, SourceLocation loc) {
         Type from = value.type;
         if (from == to) return value;
+        if (to.isVector()) return vectorConvert(value, to, loc);
         std::string result = temp();
         std::string source = llvmType(from) + " " + value.ref;
         std::string target = llvmType(to);

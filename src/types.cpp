@@ -35,6 +35,7 @@ std::string Type::name() const {
         for (; inner.isArray(); inner = inner.array->element) dims += "[" + std::to_string(inner.array->count) + "]";
         return inner.name() + dims;
     }
+    case TypeKind::Vector: return array->element.name() + "x" + std::to_string(array->count);
     case TypeKind::SelfType: return "Self";
     case TypeKind::Addr: return "addr";
     case TypeKind::UntypedInt: return "integer literal";
@@ -44,6 +45,19 @@ std::string Type::name() const {
 }
 
 std::optional<Type> findBuiltinType(const std::string& name) {
+    size_t x = name.find('x');  // `i16x16`, `f32x8` (D505): 128 or 256 bits
+    if (x != std::string::npos && x >= 2) {
+        std::optional<Type> element = findBuiltinType(name.substr(0, x));
+        std::string lanes = name.substr(x + 1);
+        bool digits = !lanes.empty() && lanes.size() <= 2 && lanes[0] != '0' &&
+                      lanes.find_first_not_of("0123456789") == std::string::npos;
+        if (element && element->isNumeric() && name.substr(0, x) != "char" && digits) {
+            int64_t count = std::stoll(lanes);
+            int64_t bits = count * element->bits;
+            if (bits == 128 || bits == 256) return vectorOf(*element, count);
+        }
+        return std::nullopt;
+    }
     if (name == "bool") return Type::boolType();
     if (name == "f32") return Type::floatType(32);
     if (name == "f64") return Type::floatType(64);
@@ -105,6 +119,12 @@ bool isAbstract(Type type) {
     return type.isParam() || type.kind == TypeKind::SelfType || (type.isStruct() && type.structDecl->isAbstract);
 }
 
+Type vectorOf(Type element, int64_t count) { return Type::vectorType(internArray(element, count)); }
+
+Type maskOf(Type vector) {
+    return vectorOf(Type::intType(vector.array->element.bits, true), vector.array->count);
+}
+
 int sizeOf(Type type) {
     switch (type.kind) {
     case TypeKind::Bool: return 1;
@@ -114,7 +134,8 @@ int sizeOf(Type type) {
     case TypeKind::Interface:
     case TypeKind::Function: return 16;
     case TypeKind::Addr: return 8;
-    case TypeKind::Array: return static_cast<int>(type.array->count * sizeOf(type.array->element));
+    case TypeKind::Array:
+    case TypeKind::Vector: return static_cast<int>(type.array->count * sizeOf(type.array->element));
     default: return 0;
     }
 }
@@ -123,7 +144,7 @@ int alignOf(Type type) {
     if (type.isStruct()) return type.structDecl->align;
     if (type.isInterface() || type.isFunction()) return 8;
     if (type.isArray()) return alignOf(type.array->element);
-    int size = sizeOf(type);
+    int size = sizeOf(type);  // a vector as LLVM aligns it: at its size (D505)
     return size > 0 ? size : 1;
 }
 
@@ -139,6 +160,7 @@ std::string llvmType(Type type) {
     case TypeKind::Function: return "{ ptr, ptr }";
     case TypeKind::Addr: return "ptr";
     case TypeKind::Array: return "[" + std::to_string(type.array->count) + " x " + llvmType(type.array->element) + "]";
+    case TypeKind::Vector: return "<" + std::to_string(type.array->count) + " x " + llvmType(type.array->element) + ">";
     default: return "<invalid>";
     }
 }
