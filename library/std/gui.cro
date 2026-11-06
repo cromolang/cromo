@@ -550,6 +550,17 @@ public struct Label : Component {
         ret partBound(id, 3)
     }
 
+    // Sets the text that a small card shows when the mouse stays on the label for a moment,
+    // or after a long press on a phone: "" for none, the default; "\n" starts a new line.
+    public void setTooltip(string text) const {
+        setPartTooltip(id, text)
+    }
+
+    // The text of the tooltip of the label, "" for none.
+    public string tooltip() const {
+        ret partTooltip(id)
+    }
+
     // Shows or hides the label.
     public void setVisible(bool value) const {
         setPartFlag(id, 0, value)
@@ -701,6 +712,17 @@ public struct Button : Component {
         ret partBound(id, 3)
     }
 
+    // Sets the text that a small card shows when the mouse stays on the button: hidden for a moment,
+    // or after a long press on a phone: "" for none, the default; "\n" starts a new line.
+    public void setTooltip(string text) const {
+        setPartTooltip(id, text)
+    }
+
+    // The text of the tooltip of the button: hidden, "" for none.
+    public string tooltip() const {
+        ret partTooltip(id)
+    }
+
     // Shows or hides the button: hidden, it takes neither the mouse nor the keys.
     public void setVisible(bool value) const {
         setPartFlag(id, 0, value)
@@ -846,6 +868,17 @@ public struct TextBox : Component {
         ret partBound(id, 3)
     }
 
+    // Sets the text that a small card shows when the mouse stays on the text box: hidden for a moment,
+    // or after a long press on a phone: "" for none, the default; "\n" starts a new line.
+    public void setTooltip(string text) const {
+        setPartTooltip(id, text)
+    }
+
+    // The text of the tooltip of the text box: hidden, "" for none.
+    public string tooltip() const {
+        ret partTooltip(id)
+    }
+
     // Shows or hides the text box: hidden, it takes neither the mouse nor the keys.
     public void setVisible(bool value) const {
         setPartFlag(id, 0, value)
@@ -976,6 +1009,17 @@ public struct CheckBox : Component {
         ret partBound(id, 3)
     }
 
+    // Sets the text that a small card shows when the mouse stays on the check box: hidden for a moment,
+    // or after a long press on a phone: "" for none, the default; "\n" starts a new line.
+    public void setTooltip(string text) const {
+        setPartTooltip(id, text)
+    }
+
+    // The text of the tooltip of the check box: hidden, "" for none.
+    public string tooltip() const {
+        ret partTooltip(id)
+    }
+
     // Shows or hides the check box: hidden, it takes neither the mouse nor the keys.
     public void setVisible(bool value) const {
         setPartFlag(id, 0, value)
@@ -1099,6 +1143,17 @@ public struct GroupBox : Component {
     // parent.
     public i32 height() const {
         ret partBound(id, 3)
+    }
+
+    // Sets the text that a small card shows when the mouse stays on the group for a moment,
+    // or after a long press on a phone: "" for none, the default; "\n" starts a new line.
+    public void setTooltip(string text) const {
+        setPartTooltip(id, text)
+    }
+
+    // The text of the tooltip of the group, "" for none.
+    public string tooltip() const {
+        ret partTooltip(id)
     }
 
     // Shows or hides the group, and its components with it.
@@ -1282,6 +1337,17 @@ public struct ComboBox : Component {
         ret partBound(id, 3)
     }
 
+    // Sets the text that a small card shows when the mouse stays on the combo box: hidden for a moment,
+    // or after a long press on a phone: "" for none, the default; "\n" starts a new line.
+    public void setTooltip(string text) const {
+        setPartTooltip(id, text)
+    }
+
+    // The text of the tooltip of the combo box: hidden, "" for none.
+    public string tooltip() const {
+        ret partTooltip(id)
+    }
+
     // Shows or hides the combo box: hidden, it takes neither the mouse nor the keys.
     public void setVisible(bool value) const {
         setPartFlag(id, 0, value)
@@ -1432,6 +1498,17 @@ public struct ImageBox : Component {
         ret partBound(id, 3)
     }
 
+    // Sets the text that a small card shows when the mouse stays on the image box for a moment,
+    // or after a long press on a phone: "" for none, the default; "\n" starts a new line.
+    public void setTooltip(string text) const {
+        setPartTooltip(id, text)
+    }
+
+    // The text of the tooltip of the image box, "" for none.
+    public string tooltip() const {
+        ret partTooltip(id)
+    }
+
     // Shows or hides the image box.
     public void setVisible(bool value) const {
         setPartFlag(id, 0, value)
@@ -1540,6 +1617,17 @@ public struct IconBox : Component {
     // parent.
     public i32 height() const {
         ret partBound(id, 3)
+    }
+
+    // Sets the text that a small card shows when the mouse stays on the icon box for a moment,
+    // or after a long press on a phone: "" for none, the default; "\n" starts a new line.
+    public void setTooltip(string text) const {
+        setPartTooltip(id, text)
+    }
+
+    // The text of the tooltip of the icon box, "" for none.
+    public string tooltip() const {
+        ret partTooltip(id)
     }
 
     // Shows or hides the icon box.
@@ -1669,6 +1757,17 @@ public struct Panel : Component {
     // parent.
     public i32 height() const {
         ret partBound(id, 3)
+    }
+
+    // Sets the text that a small card shows when the mouse stays on the panel for a moment,
+    // or after a long press on a phone: "" for none, the default; "\n" starts a new line.
+    public void setTooltip(string text) const {
+        setPartTooltip(id, text)
+    }
+
+    // The text of the tooltip of the panel, "" for none.
+    public string tooltip() const {
+        ret partTooltip(id)
     }
 
     // Shows or hides the panel, and its components with it.
@@ -2214,6 +2313,17 @@ public struct ListView : Component {
         ret partBound(id, 3)
     }
 
+    // Sets the text that a small card shows when the mouse stays on the list: hidden for a moment,
+    // or after a long press on a phone: "" for none, the default; "\n" starts a new line.
+    public void setTooltip(string text) const {
+        setPartTooltip(id, text)
+    }
+
+    // The text of the tooltip of the list: hidden, "" for none.
+    public string tooltip() const {
+        ret partTooltip(id)
+    }
+
     // Shows or hides the list: hidden, it takes neither the mouse nor the keys.
     public void setVisible(bool value) const {
         setPartFlag(id, 0, value)
@@ -2344,6 +2454,17 @@ public struct Switch : Component {
     // parent.
     public i32 height() const {
         ret partBound(id, 3)
+    }
+
+    // Sets the text that a small card shows when the mouse stays on the switch: hidden for a moment,
+    // or after a long press on a phone: "" for none, the default; "\n" starts a new line.
+    public void setTooltip(string text) const {
+        setPartTooltip(id, text)
+    }
+
+    // The text of the tooltip of the switch: hidden, "" for none.
+    public string tooltip() const {
+        ret partTooltip(id)
     }
 
     // Shows or hides the switch: hidden, it takes neither the mouse nor the keys.
@@ -2506,6 +2627,17 @@ public struct Slider : Component {
     // parent.
     public i32 height() const {
         ret partBound(id, 3)
+    }
+
+    // Sets the text that a small card shows when the mouse stays on the slider: hidden for a moment,
+    // or after a long press on a phone: "" for none, the default; "\n" starts a new line.
+    public void setTooltip(string text) const {
+        setPartTooltip(id, text)
+    }
+
+    // The text of the tooltip of the slider: hidden, "" for none.
+    public string tooltip() const {
+        ret partTooltip(id)
     }
 
     // Shows or hides the slider: hidden, it takes neither the mouse nor the keys.
@@ -2840,6 +2972,17 @@ public struct Table : Component {
         ret partBound(id, 3)
     }
 
+    // Sets the text that a small card shows when the mouse stays on the table for a moment,
+    // or after a long press on a phone: "" for none, the default; "\n" starts a new line.
+    public void setTooltip(string text) const {
+        setPartTooltip(id, text)
+    }
+
+    // The text of the tooltip of the table, "" for none.
+    public string tooltip() const {
+        ret partTooltip(id)
+    }
+
     // Shows or hides the table.
     public void setVisible(bool value) const {
         setPartFlag(id, 0, value)
@@ -3146,6 +3289,17 @@ public struct TextView : Component {
         ret partBound(id, 3)
     }
 
+    // Sets the text that a small card shows when the mouse stays on the view for a moment,
+    // or after a long press on a phone: "" for none, the default; "\n" starts a new line.
+    public void setTooltip(string text) const {
+        setPartTooltip(id, text)
+    }
+
+    // The text of the tooltip of the view, "" for none.
+    public string tooltip() const {
+        ret partTooltip(id)
+    }
+
     // Shows or hides the view.
     public void setVisible(bool value) const {
         setPartFlag(id, 0, value)
@@ -3341,6 +3495,17 @@ public struct TabView : Component {
         ret partBound(id, 3)
     }
 
+    // Sets the text that a small card shows when the mouse stays on the tab view for a moment,
+    // or after a long press on a phone: "" for none, the default; "\n" starts a new line.
+    public void setTooltip(string text) const {
+        setPartTooltip(id, text)
+    }
+
+    // The text of the tooltip of the tab view, "" for none.
+    public string tooltip() const {
+        ret partTooltip(id)
+    }
+
     // Shows or hides the tab view.
     public void setVisible(bool value) const {
         setPartFlag(id, 0, value)
@@ -3500,6 +3665,17 @@ public struct Segmented : Component {
         ret partBound(id, 3)
     }
 
+    // Sets the text that a small card shows when the mouse stays on the segmented control for a moment,
+    // or after a long press on a phone: "" for none, the default; "\n" starts a new line.
+    public void setTooltip(string text) const {
+        setPartTooltip(id, text)
+    }
+
+    // The text of the tooltip of the segmented control, "" for none.
+    public string tooltip() const {
+        ret partTooltip(id)
+    }
+
     // Shows or hides the segmented control.
     public void setVisible(bool value) const {
         setPartFlag(id, 0, value)
@@ -3539,6 +3715,76 @@ public struct Segmented : Component {
     // default.
     public Vertical verticalAnchor() const {
         ret partVertical(id)
+    }
+}
+
+// A menu of items, as the one that the right button opens (D496): a value that the
+// program builds when it needs it, with a handler for each item, which captures what the
+// menu is about, and opens with 'Window.showMenu' where the mouse is. It goes away when
+// an item is chosen, with Esc, or with a click out of it; Up, Down and Enter choose with
+// the keys. On a phone a long press on a piece of rich text is the right button.
+//
+// '''
+// view.onClick([w](i64 piece, gui.Mouse m) {
+//     if (m.button == 3) {
+//         gui.Menu menu
+//         menu.addItem("Copy", [piece]() { println("copy {}", piece) })
+//         menu.addSeparator()
+//         menu.addItem("Delete", [piece]() { println("delete {}", piece) })
+//         w.showMenu(move menu)
+//     }
+// })
+// '''
+public struct Menu {
+    list<MenuItem> items
+    list<func()> actions
+
+    // Adds an item with its text under the others, and its handler, called on the thread
+    // of the windows when the user chooses it, after the menu has gone away.
+    public void addItem(string text, move func() handler) {
+        MenuItem item
+        item.text = text
+        item.action = actions.len()
+        actions.add(move handler)
+        items.add(move item)
+    }
+
+    // Adds an item with an icon on the left of its text, as 'addItem' does.
+    public void addIconItem(Icon icon, string text, move func() handler) {
+        MenuItem item
+        item.text = text
+        item.icon = icon
+        item.action = actions.len()
+        actions.add(move handler)
+        items.add(move item)
+    }
+
+    // Adds a line between the items above and those below.
+    public void addSeparator() {
+        MenuItem line
+        line.separator = true
+        items.add(move line)
+    }
+
+    // Enables or disables the entry at 'index', from 0, counting the separators too: a
+    // disabled item is gray and cannot be chosen. An index out of the entries, or that of
+    // a separator, is a panic.
+    public void setEnabled(i64 index, bool enabled) {
+        if (index < 0 || index >= items.len() || items[index].separator) {
+            panic(format("the menu has no item {}", index))
+        }
+        items[index].enabled = enabled
+    }
+
+    // The number of the entries: the items and the separators.
+    public i64 len() const {
+        ret items.len()
+    }
+
+    // Removes all the entries.
+    public void clear() {
+        items.clear()
+        actions.clear()
     }
 }
 
@@ -3763,6 +4009,17 @@ public struct Canvas : Component {
     // parent.
     public i32 height() const {
         ret partBound(id, 3)
+    }
+
+    // Sets the text that a small card shows when the mouse stays on the canvas for a moment,
+    // or after a long press on a phone: "" for none, the default; "\n" starts a new line.
+    public void setTooltip(string text) const {
+        setPartTooltip(id, text)
+    }
+
+    // The text of the tooltip of the canvas, "" for none.
+    public string tooltip() const {
+        ret partTooltip(id)
     }
 
     // Shows or hides the canvas.
@@ -4015,6 +4272,26 @@ struct WindowData {
     i64 sideView  // the text view and the piece pressed with another button than the left one
     i64 sidePiece = -1
     i32 sideButton
+    Menu menu  // the menu open (D496)
+    bool menuOpen
+    bool menuPlaced  // its size and its place, computed when it is first drawn
+    i64 menuAnchor   // the component under which it opens, or 0 for the mouse
+    f32 menuX        // in logical pixels of the window
+    f32 menuY
+    f32 menuW
+    f32 menuH
+    i64 menuHot = -1   // the item under the mouse, or chosen with the keys
+    i64 menuHeld = -1  // the item pressed
+    u64 hotSince       // when the mouse came on the component under it (D497)
+    bool tipBlocked    // a press since then: no tooltip until it goes on another one
+    i64 tipPart        // on a phone, the component whose tooltip a long press shows
+    f32 tipX
+    f32 tipY
+    i64 longPart  // the component held with a finger, for a long press (D496)
+    i64 longPiece = -1
+    u64 longStart
+    f32 longX
+    f32 longY
     i64 appBar         // its bar at the top, or 0
     i64 navigation     // its bar at the bottom, or 0
     i64 hotItem = -1   // the item of a bar or the row of a list under the mouse
@@ -4153,6 +4430,7 @@ struct PartData {
     i64 marked = -1     // the piece marked
     i64 reveal = -1     // the piece to show after the next layout
     list<addr> pieces   // func(i64, Mouse), of a text view
+    string tooltip      // shown when the mouse stays on it (D497)
     list<f32> tabSpans  // of a tab view: the left and the width of each tab, from its left (D494)
     addr svg            // of an image box with an SVG image, and its size in bytes (D484)
     i64 svgSize
@@ -5047,6 +5325,26 @@ public struct Window {
         })
     }
 
+    // Opens a menu where the mouse is, or where the finger is on a phone, over everything,
+    // and on the left of the mouse or above it when there is no room (D496). It takes the
+    // place of the menu open, and a menu without entries closes it. It can be called from
+    // any thread, as from the handler of a right click.
+    public void showMenu(move Menu menu) const {
+        openMenu(id, move menu, 0)
+    }
+
+    // Opens a menu under a component of the window, from its left edge, as the list of a
+    // button: above it when there is no room below.
+    public void showMenuUnder<T : Component>(move Menu menu, T anchor) const {
+        openMenu(id, move menu, anchor.componentId())
+    }
+
+    // Closes the menu open, if there is one, without calling its handlers.
+    public void closeMenu() const {
+        i64 me = id
+        withData([me](ref Shared data) { data.windows[indexOf(ref data, me)].menuOpen = false })
+    }
+
     // Shows a short message at the bottom of the content for 4 seconds, above the
     // navigation bar and above the components anchored to the bottom that it would cover,
     // which stay visible and can be pressed. It takes the place of the one shown, and ""
@@ -5165,7 +5463,7 @@ const f32 checkSide = 16
 const f32 corner = 4       // of the buttons, the text boxes and the combo boxes (D479)
 const f32 checkCorner = 3  // of the check boxes
 const f32 groupCorner = 8  // of the groups, which are cards
-const f32 menuCorner = 8   // of the list of a combo box
+const f32 menuCorner = 8   // of the list of a combo box, and of a menu (D496)
 const i64 listRows = 8
 const i32 avatarPixels = 112  // of the round images of the lists, 40 pixels up to a density of 2.8
 const f32 switchWidth = 40
@@ -5852,6 +6150,9 @@ void route(ref WindowData window, ref list<PartData> parts, addr event, u32 kind
     i32 h = 0
     SDL_GetWindowSize(window.window, ref w, ref h)
     f32 width = f32(w) / toWindow(ref window)
+    if (window.menuOpen && menuEvent(ref window, event, kind, ref calls)) {  // D496
+        ret
+    }
     if (kind == 0x400) {  // SDL_EVENT_MOUSE_MOTION
         f32 x = take<f32>(offset(event, 28))
         f32 y = take<f32>(offset(event, 32))
@@ -5871,6 +6172,10 @@ void route(ref WindowData window, ref list<PartData> parts, addr event, u32 kind
         i64 hotId = hot >= 0 ? parts[hot].id : 0
         window.hotItem = hot >= 0 && hot != open ? barItemAt(ref parts[hot], x, y) : -1
         bool hand = hot >= 0 && hot != open && parts[hot].kind == kindTextView && parts[hot].active && window.hotItem >= 0
+        if (hotId != window.hot) {  // D497: the tooltip waits from here
+            window.hotSince = SDL_GetTicksNS()
+            window.tipBlocked = false
+        }
         if (hotId != window.hot || hand != window.hand) {
             window.hot = hotId
             window.hand = hand
@@ -5907,6 +6212,10 @@ void route(ref WindowData window, ref list<PartData> parts, addr event, u32 kind
         i32 button = i32(take<u8>(offset(event, 24)))
         if (kind == 0x401) {
             window.clicks = i32(take<u8>(offset(event, 26)))
+            window.tipBlocked = true
+        } else {
+            window.longPart = 0
+            window.tipPart = 0
         }
         i32 on = window.phone ? -1 : buttonAt(x, y, width)
         i64 canvas = -1
@@ -5946,6 +6255,13 @@ void route(ref WindowData window, ref list<PartData> parts, addr event, u32 kind
                     window.snackHeld = true
                 } else if (!startScroll(ref window, ref parts, x, y, finger)) {
                     pressPart(ref window, ref parts, x, y, ref calls)
+                    if (finger && window.held != 0) {  // D496: maybe a long press
+                        window.longPart = window.held
+                        window.longPiece = window.heldItem
+                        window.longStart = SDL_GetTicksNS()
+                        window.longX = x
+                        window.longY = y
+                    }
                 }
             } else if (kind == 0x402 && button == 1 && window.snackHeld) {
                 window.snackHeld = false
@@ -6025,6 +6341,7 @@ void route(ref WindowData window, ref list<PartData> parts, addr event, u32 kind
         calls.add(move call)
     } else if (kind == 0x300) {  // SDL_EVENT_KEY_DOWN
         window.keyboard = true
+        window.tipBlocked = true
         u32 modifiers = u32(take<u16>(offset(event, 32)))
         Key key
         key.code = i64(take<u32>(offset(event, 28)))
@@ -7256,6 +7573,7 @@ void drawWindow(ref WindowData window, ref list<PartData> parts, ref list<ImageD
     }
 
     glide(ref window, ref parts)
+    checkLongPress(ref window, ref parts)
     layout(ref window, ref parts)
     drawParts(ref window, ref parts, ref c, 0, window.dialogStart, ref images)
     if (window.dialog != 0) {  // the rest darkened under the dialog (D467)
@@ -7271,6 +7589,15 @@ void drawWindow(ref WindowData window, ref list<PartData> parts, ref list<ImageD
     if (snackVisible(ref window)) {
         clipTo(r, window.originX, window.originY, f32(contentWidth(window)), f32(contentHeight(window)))
         drawSnackbar(ref window, ref c, dark)
+    }
+    if (window.menuOpen) {  // over everything (D496)
+        clipTo(r, window.originX, window.originY, f32(contentWidth(window)), f32(contentHeight(window)))
+        drawMenu(ref window, ref parts, ref c)
+    }
+    i64 tip = tipPart(ref window, ref parts)
+    if (tip >= 0) {  // D497
+        clipTo(r, window.originX, window.originY, f32(contentWidth(window)), f32(contentHeight(window)))
+        drawTooltip(ref window, ref c, parts[tip].tooltip)
     }
     addr none
     SDL_SetRenderClipRect(r, none)
@@ -8349,6 +8676,364 @@ void drawTable(ref WindowData window, ref PartData table, ref Colors c) {
             table.asked.remove(k / tablePage)
         }
     }
+}
+
+// ---- The menus and the tooltips (D496, D497) ----
+
+// An entry of a menu: an item with its text, its icon and the index of its handler, or
+// a separator.
+struct MenuItem {
+    string text
+    Icon icon
+    bool enabled = true
+    bool separator
+    i64 action = -1
+}
+
+f32 menuRow() {  // an item of a menu
+    ret comfortable() ? 44 : 30
+}
+
+f32 tipSize() {  // the text of a tooltip
+    ret comfortable() ? 13 : 12
+}
+
+const f32 menuPad = 4            // the items from the edges of the card
+const f32 menuLine = 9           // the height of a separator
+const f32 menuWidth = 190        // at least
+const u64 tipDelay = 600000000   // the mouse stays on a component 0.6 s before its tooltip shows
+const u64 longPress = 500000000  // a finger held 0.5 s is a long press
+
+void setPartTooltip(i64 id, string text) {
+    withData([id, text](ref Shared data) { data.parts[partIndexOf(ref data, id)].tooltip = text })
+}
+
+string partTooltip(i64 id) {
+    string text
+    withData([id, ref text](ref Shared data) { text = data.parts[partIndexOf(ref data, id)].tooltip })
+    ret text
+}
+
+// Opens a menu, at the mouse or under a component, at the next frame.
+void openMenu(i64 window, move Menu menu, i64 anchor) {
+    addr box = alloc(sizeOf<Menu>())
+    put<Menu>(box, move menu)
+    withData([window, box, anchor](ref Shared data) {
+        i64 i = indexOf(ref data, window)
+        data.windows[i].menu = take<Menu>(box)
+        data.windows[i].menuOpen = data.windows[i].menu.items.len() > 0
+        data.windows[i].menuPlaced = false
+        data.windows[i].menuAnchor = anchor
+        data.windows[i].menuHot = -1
+        data.windows[i].menuHeld = -1
+        data.windows[i].popup = 0
+    })
+    free(box)
+}
+
+// Closes the menu, and frees its handlers: none of them is running.
+void closeMenu(ref WindowData window) {
+    window.menuOpen = false
+    window.menuHot = -1
+    window.menuHeld = -1
+    window.menu.clear()
+}
+
+// The size of the menu, from its texts, and its place: at the mouse, on its left or above
+// it when there is no room, or under its component, or above it; inside the content.
+void placeMenu(ref WindowData window, ref list<PartData> parts) {
+    f32 w = menuWidth
+    f32 h = 2 * menuPad
+    for (ref MenuItem item in window.menu.items) {
+        if (item.separator) {
+            h = h + menuLine
+        } else {
+            f32 icon = item.icon != Icon.None ? 24 : 0
+            w = most(w, textWidth(window.body, item.text, item.text.len()) + icon + 2 * menuPad + 36)
+            h = h + menuRow()
+        }
+    }
+    f32 left = window.originX + 4
+    f32 top = window.originY + 4
+    f32 right = window.originX + f32(contentWidth(window)) - 4
+    f32 bottom = window.originY + f32(contentHeight(window)) - 4
+    f32 x = window.pointerX >= 0 ? window.pointerX + 2 : (left + right - w) / 2
+    f32 y = window.pointerY >= 0 ? window.pointerY + 2 : (top + bottom - h) / 2
+    i64 a = partNumber(ref parts, window.menuAnchor)
+    if (a >= 0) {
+        x = parts[a].left
+        y = parts[a].top + f32(parts[a].height) + 4
+        if (y + h > bottom) {
+            y = parts[a].top - h - 4
+        }
+        if (x + w > right) {
+            x = right - w
+        }
+    } else {
+        if (x + w > right) {
+            x = window.pointerX >= 0 ? window.pointerX - w - 2 : right - w
+        }
+        if (y + h > bottom) {
+            y = window.pointerY >= 0 ? window.pointerY - h - 2 : bottom - h
+        }
+    }
+    window.menuX = most(x, left)
+    window.menuY = most(y, top)
+    window.menuW = w
+    window.menuH = h
+    window.menuPlaced = true
+}
+
+bool inMenu(ref WindowData window, f32 x, f32 y) {
+    ret window.menuPlaced && x >= window.menuX && x < window.menuX + window.menuW && y >= window.menuY &&
+        y < window.menuY + window.menuH
+}
+
+// The entry of the menu at a point of the window, or -1.
+i64 menuItemAt(ref WindowData window, f32 x, f32 y) {
+    if (!inMenu(ref window, x, y)) {
+        ret -1
+    }
+    f32 at = window.menuY + menuPad
+    for (i64 k = 0; k < window.menu.items.len(); k++) {
+        f32 tall = window.menu.items[k].separator ? menuLine : menuRow()
+        if (y >= at && y < at + tall) {
+            ret k
+        }
+        at = at + tall
+    }
+    ret -1
+}
+
+bool choosable(ref WindowData window, i64 k) {
+    ret k >= 0 && k < window.menu.items.len() && !window.menu.items[k].separator && window.menu.items[k].enabled
+}
+
+// An item chosen: the menu goes away, and its handler is called, in a box that the
+// thread of the GUI frees at the next frame.
+void chooseMenuItem(ref WindowData window, i64 k, ref list<Call> calls) {
+    i64 action = window.menu.items[k].action
+    if (action >= 0 && action < window.menu.actions.len()) {
+        addr box = alloc(sizeOf<func()>())
+        put<func()>(box, window.menu.actions.remove(action))
+        list<addr> boxes
+        boxes.add(box)
+        calls.add(callOf(6, boxes))
+        window.dropped.add(box)
+    }
+    closeMenu(ref window)
+}
+
+// The events of a window while its menu is open: the mouse and the keys go to the menu,
+// and a press out of it closes it and does nothing else. True when the event is taken.
+bool menuEvent(ref WindowData window, addr event, u32 kind, ref list<Call> calls) {
+    if (kind == 0x20F) {  // FOCUS_LOST
+        closeMenu(ref window)
+        ret false
+    }
+    if (kind == 0x206) {  // RESIZED: placed again in the new content
+        window.menuPlaced = false
+        ret false
+    }
+    if (kind == 0x400) {
+        window.pointerX = take<f32>(offset(event, 28))
+        window.pointerY = take<f32>(offset(event, 32))
+        i64 k = menuItemAt(ref window, window.pointerX, window.pointerY)
+        window.menuHot = choosable(ref window, k) ? k : -1
+        window.hot = 0
+        window.hotItem = -1
+        ret true
+    }
+    if (kind == 0x401 || kind == 0x402) {
+        f32 x = take<f32>(offset(event, 28))
+        f32 y = take<f32>(offset(event, 32))
+        i64 k = menuItemAt(ref window, x, y)
+        if (kind == 0x401) {
+            if (!inMenu(ref window, x, y)) {
+                closeMenu(ref window)
+            } else {
+                window.menuHeld = k
+            }
+        } else if (k >= 0 && k == window.menuHeld && choosable(ref window, k)) {
+            chooseMenuItem(ref window, k, ref calls)
+        } else {
+            window.menuHeld = -1
+        }
+        ret true
+    }
+    if (kind == 0x403) {
+        ret true
+    }
+    if (kind == 0x300) {
+        i64 code = i64(take<u32>(offset(event, 28)))
+        menuKey(ref window, code, ref calls)
+        ret true
+    }
+    ret false
+}
+
+// Up, Down, Home and End move among the items that can be chosen; Enter and Space choose,
+// Esc closes.
+void menuKey(ref WindowData window, i64 code, ref list<Call> calls) {
+    i64 n = window.menu.items.len()
+    if (code == 27 || (window.phone && code == keyBack)) {
+        closeMenu(ref window)
+        ret
+    }
+    if ((code == 13 || code == 32 || code == keyEnter) && choosable(ref window, window.menuHot)) {
+        chooseMenuItem(ref window, window.menuHot, ref calls)
+        ret
+    }
+    i64 step = code == keyDown || code == keyHome ? 1 : code == keyUp || code == keyEnd ? -1 : 0
+    if (step == 0) {
+        ret
+    }
+    i64 at = code == keyHome ? -1 : code == keyEnd ? n : window.menuHot
+    if (at < 0 && step < 0) {
+        at = n
+    }
+    for (i64 k = 0; k < n; k++) {
+        at = at + step
+        if (at < 0 || at >= n) {
+            at = step > 0 ? 0 : n - 1
+        }
+        if (choosable(ref window, at)) {
+            window.menuHot = at
+            ret
+        }
+    }
+}
+
+// The menu: a card on the surface, with the border of the controls and the shadow of the
+// cards; the item under the mouse in accent 2 on the soft accent, the disabled ones in
+// ink 3, a line of rule for a separator (D496).
+void drawMenu(ref WindowData window, ref list<PartData> parts, ref Colors c) {
+    addr r = window.renderer
+    f32 d = window.density
+    if (!window.menuPlaced) {
+        placeMenu(ref window, ref parts)
+    }
+    f32 x = window.menuX
+    f32 y = window.menuY
+    f32 w = window.menuW
+    cardShadow(r, x, y, w, window.menuH, menuCorner, d, ref c)
+    cromo_gui_box(r, x, y, w, window.menuH, menuCorner, 1, d, solid(c.surface, true), solid(c.rule2, true))
+    f32 ascent = 0
+    f32 descent = 0
+    f32 gap = 0
+    cromo_gui_font_metrics(window.body, ref ascent, ref descent, ref gap)
+    f32 at = y + menuPad
+    for (i64 k = 0; k < window.menu.items.len(); k++) {
+        if (window.menu.items[k].separator) {
+            fill(r, c.rule, x + 1, at + menuLine / 2, w - 2, 1)
+            at = at + menuLine
+            continue
+        }
+        bool enabled = window.menu.items[k].enabled
+        bool hot = k == window.menuHot && enabled
+        if (hot) {
+            cromo_gui_box(r, x + menuPad, at, w - 2 * menuPad, menuRow(), 5, 0, d, solid(c.accentSoft, true), 0)
+        }
+        u32 ink = !enabled ? c.ink3 : hot ? c.accent2 : c.ink
+        f32 left = x + menuPad + 12
+        if (window.menu.items[k].icon != Icon.None) {
+            drawIcon(r, window.menu.items[k].icon, left + 8, at + menuRow() / 2, 16, d, hot ? c.accent2 : enabled ? c.ink2 : c.ink3, true)
+            left = left + 24
+        }
+        clipTo(r, left, at, x + w - menuPad - 12 - left, menuRow())
+        text(window.body, window.menu.items[k].text, left, at + menuRow() / 2 + (ascent - descent) / 2, ink, true)
+        clipTo(r, window.originX, window.originY, f32(contentWidth(window)), f32(contentHeight(window)))
+        at = at + menuRow()
+    }
+}
+
+// The component whose tooltip shows now, or -1: on the desktop the one under the mouse
+// since 0.6 s, without a press since it came there; on a phone the one of a long press.
+i64 tipPart(ref WindowData window, ref list<PartData> parts) {
+    if (window.menuOpen || window.popup != 0) {
+        ret -1
+    }
+    if (window.phone) {
+        i64 p = partNumber(ref parts, window.tipPart)
+        ret p >= 0 && parts[p].shown && parts[p].tooltip.len() > 0 ? p : -1
+    }
+    if (window.hot == 0 || window.tipBlocked || window.held != 0 || window.canvasHeld != 0 || window.scrolling != 0 ||
+        SDL_GetTicksNS() - window.hotSince < tipDelay) {
+        ret -1
+    }
+    i64 p = partNumber(ref parts, window.hot)
+    ret p >= 0 && parts[p].shown && parts[p].tooltip.len() > 0 ? p : -1
+}
+
+// A tooltip: a small card on the surface, with the border of the controls and a light
+// shadow, its lines in ink 2 (D497); under the mouse, or above the finger on a phone.
+void drawTooltip(ref WindowData window, ref Colors c, string value) {
+    addr r = window.renderer
+    f32 d = window.density
+    addr font = faceFor(ref window, 0, tipSize())
+    f32 ascent = 0
+    f32 descent = 0
+    f32 gap = 0
+    cromo_gui_font_metrics(font, ref ascent, ref descent, ref gap)
+    list<string> lines = value.split("\n")
+    f32 line = tipSize() * 1.45
+    f32 w = 0
+    for (string s in lines) {
+        w = most(w, textWidth(font, s, s.len()))
+    }
+    w = w + 16
+    f32 h = f32(lines.len()) * line + 8
+    f32 left = window.originX + 4
+    f32 top = window.originY + 4
+    f32 right = window.originX + f32(contentWidth(window)) - 4
+    f32 bottom = window.originY + f32(contentHeight(window)) - 4
+    f32 x = window.phone ? window.tipX - w / 2 : window.pointerX
+    f32 y = window.phone ? window.tipY - h - 32 : window.pointerY + 22
+    if (x + w > right) {
+        x = right - w
+    }
+    if (y + h > bottom) {
+        y = window.pointerY - h - 6
+    }
+    x = most(x, left)
+    y = most(y, top)
+    cromo_gui_shadow(r, x, y, w, h, 4, d, c.shadowNear, 2, 1)
+    cromo_gui_box(r, x, y, w, h, 4, 1, d, solid(c.surface, true), solid(c.rule2, true))
+    for (i64 k = 0; k < lines.len(); k++) {
+        text(font, lines[k], x + 8, y + 4 + f32(k) * line + line / 2 + (ascent - descent) / 2, c.ink2, true)
+    }
+}
+
+// A finger held still on a component for 0.5 s (D496): on a piece of rich text it is a
+// click of the right button, on a component with a tooltip it shows it; then its
+// release clicks nothing.
+void checkLongPress(ref WindowData window, ref list<PartData> parts) {
+    if (window.longPart == 0) {
+        ret
+    }
+    if (window.held != window.longPart || window.dragMoved) {
+        window.longPart = 0
+        ret
+    }
+    if (SDL_GetTicksNS() - window.longStart < longPress) {
+        ret
+    }
+    i64 p = partNumber(ref parts, window.longPart)
+    window.longPart = 0
+    if (p < 0) {
+        ret
+    }
+    if (parts[p].kind == kindTextView && window.longPiece >= 0) {
+        pieceClick(ref parts[p], window.longPiece, window.longX, window.longY, 3, ref window.requests)
+    } else if (parts[p].tooltip.len() > 0) {
+        window.tipPart = parts[p].id
+        window.tipX = window.longX
+        window.tipY = window.longY
+    } else {
+        ret
+    }
+    window.held = 0
+    window.heldItem = -1
 }
 
 // ---- The tabs and the segmented controls (D494, D495) ----

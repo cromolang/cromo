@@ -1,0 +1,40 @@
+// The menu (D496): a value with its entries, shown by a window and closed; the tooltips
+// of the components (D497).
+// target: windows linux-x86_64
+// program-env: SDL_VIDEO_DRIVER=offscreen
+// expect-output: 4 entries
+// expect-output: 0 entries after clear
+// expect-output: tooltip 'Saves the file', label '', view "Line one\nline two"
+// expect-output: shown and closed
+import std.gui
+import std.time
+
+i32 main() {
+    gui.Menu menu
+    menu.addItem("Copy", []() { println("copy") })
+    menu.addIconItem(gui.Icon.Trash2, "Delete", []() { println("delete") })
+    menu.addSeparator()
+    menu.addItem("Paste", []() { println("paste") })
+    menu.setEnabled(3, false)
+    println("{} entries", menu.len())
+    gui.Menu other
+    other.addItem("One", []() {})
+    other.clear()
+    println("{} entries after clear", other.len())
+
+    gui.Window w = gui.Window("menu", 400, 335)
+    gui.Button save = w.add(gui.Button("Save", 16, 16, 100, 28))
+    save.setTooltip("Saves the file")
+    gui.Label status = w.add(gui.Label("", 16, 60, 200, 20))
+    gui.TextView view = w.add(gui.TextView(16, 90, 300, 200))
+    view.setTooltip("Line one\nline two")
+    println("tooltip '{}', label '{}', view {:?}", save.tooltip(), status.tooltip(), view.tooltip())
+    w.start()
+    w.showMenu(move menu)
+    time.msleep(300)
+    w.closeMenu()
+    time.msleep(100)
+    println("shown and closed")
+    w.close()
+    ret 0
+}

@@ -1,11 +1,13 @@
 // Example 21: a discussion with its replies, in a view of rich text: the authors are
-// pieces that the user clicks, the replies are blocks with a line along them, the
-// quotes are in italic, the code is monospaced, and two buttons change the size of the
-// text.
+// pieces that the user clicks, and the right button, or a long press on a phone, opens a
+// menu on them; the replies are blocks with a line along them, the quotes are in
+// italic, the code is monospaced, and two buttons with their tooltips change the size of
+// the text.
 //
 // Decided: the rich text handed over (D490), the styles as roles of the theme (D491),
-//          the monospaced font (D492), the italic from Inter (D493), the look (D479)
-// Draft:   the names of the rich text, of the view and of their methods
+//          the monospaced font (D492), the italic from Inter (D493), the menu as a value
+//          opened at the mouse (D496), the tooltips (D497), the look (D479)
+// Draft:   the names of the rich text, of the view, of the menu and of their methods
 import std.gui
 
 struct Message {
@@ -106,20 +108,33 @@ i32 main() {
     smaller.setAnchor(gui.Horizontal.Right, gui.Vertical.Bottom)
     gui.Button larger = w.add(gui.Button("Larger", 456, 365, 88, 28))
     larger.setAnchor(gui.Horizontal.Right, gui.Vertical.Bottom)
+    smaller.setTooltip("Makes the text smaller, down to 10 pixels")
+    larger.setTooltip("Makes the text larger, up to 24 pixels")
 
-    view.onClick([view, status, move messages](i64 piece, gui.Mouse m) {
+    view.onClick([w, view, status, move messages](i64 piece, gui.Mouse m) {
         string who = messages[piece].author
-        if (m.button == 3) {
-            status.setText(format("A menu for the message of {}", who))
+        i64 count = 0
+        for (Message other in messages) {
+            if (other.author == who) {
+                count++
+            }
+        }
+        string wrote = format("{} wrote {} {}", who, count, count == 1 ? "message" : "messages")
+        if (m.button == 3) {  // a menu on the author, with what it is about in its handlers
+            string reply = format("Replying to {}", who)
+            string quote = format("Quoting the message of {}", who)
+            gui.Menu menu
+            menu.addIconItem(gui.Icon.MessageSquare, format("Reply to {}", who), [status, move reply]() { status.setText(reply) })
+            menu.addItem("Quote the message", [status, move quote]() { status.setText(quote) })
+            menu.addSeparator()
+            menu.addItem("Count the messages", [view, status, piece, move wrote]() {
+                view.setMarked(piece)
+                status.setText(wrote)
+            })
+            w.showMenu(move menu)
         } else {
             view.setMarked(piece)
-            i64 count = 0
-            for (Message other in messages) {
-                if (other.author == who) {
-                    count++
-                }
-            }
-            status.setText(format("{} wrote {} {}", who, count, count == 1 ? "message" : "messages"))
+            status.setText(wrote)
         }
     })
     smaller.onClick([view]() { view.setTextSize(view.textSize() > 10 ? view.textSize() - 1 : 10) })

@@ -321,6 +321,37 @@ i32 main() {
 - `link(piece, value, style)` adds a piece that the user clicks, with its number: the texts with the same number one after the other are one piece. `onClick` gives the number and the mouse, with its button, and `setMarked` marks a piece in the accent and scrolls to show it.
 - `examples/21_thread.cro` shows a discussion with its replies, one inside the other.
 
+## Menus and tooltips
+
+```cromo norun
+import std.gui
+
+[[window]]
+i32 main() {
+    gui.Window w = gui.Window("Files", 480, 300)
+    gui.Button actions = w.add(gui.Button("Actions", 16, 16, 100, 28))
+    actions.setTooltip("What can be done with the file")
+    gui.Label status = w.add(gui.Label("report.pdf", 132, 16, 300, 28))
+    actions.onClick([w, actions, status]() {
+        gui.Menu menu
+        menu.addIconItem(gui.Icon.Copy, "Copy", [status]() { status.setText("Copied") })
+        menu.addIconItem(gui.Icon.Pencil, "Rename", [status]() { status.setText("Renamed") })
+        menu.addSeparator()
+        menu.addIconItem(gui.Icon.Trash2, "Delete", [status]() { status.setText("Deleted") })
+        menu.setEnabled(3, false)
+        w.showMenuUnder(move menu, actions)
+    })
+    w.start()
+    ret 0
+}
+```
+
+![A menu under a button](images/menu.png)
+
+- `gui.Menu` is a value that the program builds when it needs it: `addItem(text, handler)`, `addIconItem` with an icon, `addSeparator()`, and `setEnabled` for an item that cannot be chosen now. Since it is built at that moment, its handlers capture what it is about, as the row or the piece clicked.
+- `w.showMenu(move menu)` opens it where the mouse is: the place of the menu of the right button, as in `onClick` of a text view with `m.button == 3`. `w.showMenuUnder(move menu, component)` opens it under a component, as the list of a button. It goes away when an item is chosen, and then its handler is called, with Esc, or with a click out of it; on a phone a long press on a piece of rich text is the right button.
+- `setTooltip(text)` gives a component a tooltip: the text shows in a small card when the mouse stays on it for a moment, and on a phone after a long press.
+
 ## Drawing on a canvas
 
 ```cromo norun

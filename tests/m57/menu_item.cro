@@ -1,0 +1,12 @@
+// A separator, or an entry that the menu does not have, cannot be enabled (D496).
+// expect-exit: 101
+// expect-stderr: the menu has no item 1
+import std.gui
+
+i32 main() {
+    gui.Menu menu
+    menu.addItem("Copy", []() {})
+    menu.addSeparator()
+    menu.setEnabled(1, true)
+    ret 0
+}

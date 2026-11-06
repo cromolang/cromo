@@ -321,6 +321,37 @@ i32 main() {
 - `link(pezzo, valore, stile)` aggiunge un pezzo che l'utente clicca, con il suo numero: i testi con lo stesso numero uno dopo l'altro sono un pezzo solo. `onClick` dà il numero e il mouse, con il suo pulsante, e `setMarked` segna un pezzo nell'accento e scorre per mostrarlo.
 - `examples/21_thread.cro` mostra una discussione con le sue risposte, una dentro l'altra.
 
+## Menu e tooltip
+
+```cromo norun
+import std.gui
+
+[[window]]
+i32 main() {
+    gui.Window w = gui.Window("Files", 480, 300)
+    gui.Button actions = w.add(gui.Button("Actions", 16, 16, 100, 28))
+    actions.setTooltip("What can be done with the file")
+    gui.Label status = w.add(gui.Label("report.pdf", 132, 16, 300, 28))
+    actions.onClick([w, actions, status]() {
+        gui.Menu menu
+        menu.addIconItem(gui.Icon.Copy, "Copy", [status]() { status.setText("Copied") })
+        menu.addIconItem(gui.Icon.Pencil, "Rename", [status]() { status.setText("Renamed") })
+        menu.addSeparator()
+        menu.addIconItem(gui.Icon.Trash2, "Delete", [status]() { status.setText("Deleted") })
+        menu.setEnabled(3, false)
+        w.showMenuUnder(move menu, actions)
+    })
+    w.start()
+    ret 0
+}
+```
+
+![Un menu sotto un pulsante](images/menu.png)
+
+- `gui.Menu` è un valore che il programma costruisce quando gli serve: `addItem(testo, gestore)`, `addIconItem` con un'icona, `addSeparator()`, e `setEnabled` per una voce che ora non si può scegliere. Siccome è costruito in quel momento, i suoi gestori catturano ciò di cui parla, come la riga o il pezzo cliccato.
+- `w.showMenu(move menu)` lo apre dove è il mouse: il posto del menu del tasto destro, come in `onClick` di una vista di testo con `m.button == 3`. `w.showMenuUnder(move menu, componente)` lo apre sotto un componente, come la lista di un pulsante. Sparisce quando si sceglie una voce, e allora il suo gestore viene chiamato, con Esc, o con un clic fuori; sul telefono una pressione lunga su un pezzo di testo ricco vale come tasto destro.
+- `setTooltip(testo)` dà un tooltip a un componente: il testo compare in una piccola card quando il mouse resta un momento su di esso, e sul telefono dopo una pressione lunga.
+
 ## Disegnare su un canvas
 
 ```cromo norun
