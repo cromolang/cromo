@@ -679,21 +679,14 @@ void cromo_gui_box(void* renderer, f32 x, f32 y, f32 w, f32 h, f32 radius, f32 b
     }
 }
 
-// A color between a and b, at t from 0 to 1, for each of its four bytes.
-static u32 mix(u32 a, u32 b, f32 t) {
-    u32 out = 0;
-    for (i32 shift = 0; shift < 32; shift += 8) {
-        f32 ca = (f32)((a >> shift) & 0xFF), cb = (f32)((b >> shift) & 0xFF);
-        out |= (u32)(ca + (cb - ca) * t + 0.5f) << shift;
-    }
-    return out;
-}
-
-// A soft shadow under a box: five layers, each larger by a fifth of `blur` and
-// with a fifth of the alpha of `color`, moved down by `dy`.
+// A soft shadow under a box: layers about 2 pixels of the display apart, at least
+// five, each larger by its part of `blur` and with its part of the alpha of `color`,
+// moved down by `dy`.
 void cromo_gui_shadow(void* renderer, f32 x, f32 y, f32 w, f32 h, f32 radius, f32 density, u32 color, f32 blur, f32 dy) {
     if (!(color >> 24)) return;
-    const i32 layers = 5;
+    i32 layers = (i32)(blur * density / 2);
+    if (layers < 5) layers = 5;
+    if (layers > 24) layers = 24;
     u32 alpha = (color >> 24) / layers;
     if (alpha == 0) alpha = 1;
     u32 layer = (alpha << 24) | (color & 0xFFFFFF);
@@ -701,40 +694,6 @@ void cromo_gui_shadow(void* renderer, f32 x, f32 y, f32 w, f32 h, f32 radius, f3
         f32 grow = blur * i / layers;
         cromo_gui_box(renderer, x - grow, y - grow + dy, w + 2 * grow, h + 2 * grow, radius + grow, 0, density, layer, 0);
     }
-}
-
-// A box with a vertical gradient from `top` to `bottom`, a row for each pixel of
-// the display, a border of `line` and a line of light, `highlight`, inside its
-// top edge.
-void cromo_gui_gradient(void* renderer, f32 x, f32 y, f32 w, f32 h, f32 radius, f32 border, f32 density, u32 top, u32 bottom,
-                        u32 line, u32 highlight) {
-    snap(&x, &y, &w, &h, density);
-    if (w <= 0 || h <= 0) return;
-    if (radius * 2 > w) radius = w / 2;
-    if (radius * 2 > h) radius = h / 2;
-    Corner* corner = radius > 0 ? findCorner(renderer, radius, border, density) : 0;
-    f32 side = corner ? corner->size / density : 0;
-    i32 rows = (i32)SDL_floor(h * density + 0.5);
-    i32 sideRows = (i32)SDL_floor(side * density + 0.5);
-    for (i32 j = 0; j < rows; ++j) {
-        setColor(renderer, mix(top, bottom, (j + 0.5f) / rows));
-        f32 row = y + j / density;
-        if (j < sideRows || j >= rows - sideRows) {
-            fillRect(renderer, x + side, row, w - 2 * side, 1 / density);
-        } else {
-            fillRect(renderer, x, row, w, 1 / density);
-        }
-    }
-    if (corner) {
-        drawCorners(renderer, corner->fill, corner->size, x, y, w, h, side, mix(top, bottom, side / h / 2),
-                    mix(top, bottom, 1 - side / h / 2));
-    }
-    f32 b = (f32)SDL_floor(border * density + 0.5) / density;
-    if (highlight >> 24) {
-        setColor(renderer, highlight);
-        fillRect(renderer, x + side, y + b, w - 2 * side, 1 / density);
-    }
-    if ((line >> 24) && b > 0) cromo_gui_box(renderer, x, y, w, h, radius, border, density, 0, line);
 }
 
 // The textures of the corners of a renderer, before it is destroyed.

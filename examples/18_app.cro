@@ -8,7 +8,8 @@
 //          scroll (D460), the lists and their item chosen (D461, D462), the
 //          switches and the sliders (D466), the dialogs (D467), the snackbar
 //          (D468), the round images of the lists (D469), embed (D470), the
-//          keyboard on the screen (D471), the snackbar above Write (D472)
+//          keyboard on the screen (D471), the snackbar above Write (D472), the
+//          look, comfortable on a phone (D479, D480), the main button (D482)
 // Draft:   the names of the components and of their methods (P39, P41, P42, P45,
 //          P46, P48, P49, P50)
 //
@@ -54,10 +55,11 @@ i32 main() {
     top.addAction(gui.Icon.EllipsisVertical, []() { })
 
     gui.NavigationBar pages = w.navigationBar()
-    // Each page fills the room between the two bars, 390 by 605 here: the lists
-    // follow it, and the button stays at the bottom while the list scrolls.
+    // Each page fills the room between the two bars, lower on a phone, where the bars
+    // are higher: the lists take its size and follow it, and the button stays at the
+    // bottom while the list scrolls.
     gui.Panel inbox = pages.addPage("Inbox", gui.Icon.Inbox)
-    gui.ListView messages = inbox.add(gui.ListView(0, 0, 390, 605))
+    gui.ListView messages = inbox.add(gui.ListView(0, 0, inbox.width(), inbox.height()))
     messages.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Stretch)
     messages.addItem(gui.Icon.User, "Ada Lovelace", "The notes on the engine", "10:42")
     messages.addItem(gui.Icon.User, "Charles Babbage", "The plans of the machine", "09:15")
@@ -69,8 +71,9 @@ i32 main() {
     messages.setItemImageBytes(0, faceOf("Ada Lovelace"))
     messages.setItemImageBytes(1, faceOf("Charles Babbage"))
     messages.onChoose([messages](i64 index) { println("open '{}'", messages.itemTitle(index)) })
-    gui.Button write = inbox.add(gui.Button("Write", 262, 549, 112, 40))
+    gui.Button write = inbox.add(gui.Button("Write", inbox.width() - 128, inbox.height() - 56, 112, 40))
     write.setIcon(gui.Icon.Pencil)
+    write.setStyle(gui.ButtonStyle.Primary)
     write.setAnchor(gui.Horizontal.Right, gui.Vertical.Bottom)
 
     // The bin asks before deleting the message chosen, and the snackbar can put it
@@ -123,13 +126,13 @@ i32 main() {
     gui.TextBox search = contacts.add(gui.TextBox("", 16, 16, 358, 32))
     search.setPlaceholder("Search the contacts")
     search.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Top)
-    gui.ListView people = contacts.add(gui.ListView(0, 64, 390, 541))
+    gui.ListView people = contacts.add(gui.ListView(0, 64, contacts.width(), contacts.height() - 64))
     people.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Stretch)
     showContacts(people, "")
     search.onChange([people](string text) { showContacts(people, text) })
 
     gui.Panel today = pages.addPage("Calendar", gui.Icon.Calendar)
-    gui.ListView events = today.add(gui.ListView(0, 0, 390, 605))
+    gui.ListView events = today.add(gui.ListView(0, 0, today.width(), today.height()))
     events.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Stretch)
     events.addItem(gui.Icon.Clock, "10:00", "The meeting of the Society", "")
     events.addItem(gui.Icon.MapPin, "15:30", "The visit to the workshop", "")

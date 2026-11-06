@@ -1,6 +1,6 @@
 # Finestre e app
 
-`std.gui` crea finestre con i loro componenti: etichette, pulsanti, caselle di testo, liste, dialoghi. Li disegna da sé, con SDL3 dentro il programma, perciò una finestra appare uguale su Windows e su Linux, nello stile di una dashboard fatta con Tailwind, chiara o scura. Lo stesso programma, compilato con `--target android`, è un'app per Android.
+`std.gui` crea finestre con i loro componenti: etichette, pulsanti, caselle di testo, liste, dialoghi. Li disegna da sé, con SDL3 dentro il programma, perciò una finestra appare uguale su Windows e su Linux: piatta e sobria, con un accento ocra, chiara o scura, compatta come un'applicazione desktop. Lo stesso programma, compilato con `--target android`, è un'app per Android.
 
 > Il funzionamento di `std.gui` è deciso: componenti come handle, gestori sul thread della finestra, posizioni in pixel con le ancore. I nomi dei componenti e dei loro metodi sono ancora una bozza, e possono cambiare prima della versione 1.0.
 
@@ -16,6 +16,7 @@ i32 main() {
     gui.TextBox name = w.add(gui.TextBox("", 24, 48, 372, 32))
     name.setPlaceholder("Write your name")
     gui.Button greet = w.add(gui.Button("Greet", 24, 96, 100, 32))
+    greet.setStyle(gui.ButtonStyle.Primary)
     gui.Label answer = w.add(gui.Label("", 24, 148, 372, 20))
     greet.onClick([name, answer]() {
         answer.setText(format("Hello, {}!", name.text()))
@@ -31,6 +32,7 @@ i32 main() {
 - `w.add(...)` mette un componente nella finestra e lo restituisce. Un componente è un *handle*: un piccolo valore che lo indica, e che si può copiare liberamente. La lambda di `onClick` cattura `name` e `answer` per copia, e legge e cambia i componenti sullo schermo.
 - Posizioni e dimensioni sono in pixel logici, dall'angolo in alto a sinistra del contenuto, sotto la barra del titolo: `std.gui` le scala con la densità dello schermo.
 - I gestori girano sul thread della finestra, uno alla volta, e possono cambiare qualunque componente. Un gestore che impiega molto blocca la finestra: il lavoro lungo va a un task, come in [Thread, task e canali](concurrency.md).
+- `setStyle(gui.ButtonStyle.Primary)` riempie con l'accento il pulsante dell'azione principale; `gui.ButtonStyle.Danger` è per un'azione che distrugge, e gli altri pulsanti sono chiari con un bordo sottile.
 - `[[window]]` produce su Windows un programma senza console, come sono i programmi con finestre; senza, la console resta, comoda per `println` mentre si scrive il programma. Un'icona `greet.ico` accanto a `greet.cro` entra nell'eseguibile.
 
 ## I componenti
@@ -38,14 +40,14 @@ i32 main() {
 | Componente | Che cos'è |
 |---|---|
 | `gui.Label(testo, x, y, larghezza, altezza)` | una riga di testo |
-| `gui.Button(testo, ...)` | un pulsante: `onClick`, e `setIcon` per un'icona prima del testo |
+| `gui.Button(testo, ...)` | un pulsante: `onClick`, `setIcon` per un'icona prima del testo, e `setStyle` |
 | `gui.TextBox(testo, ...)` | una riga in cui scrivere: `text()`, `setPlaceholder`, `onChange`, e `onEnter` per il tasto Invio |
 | `gui.CheckBox(testo, ...)`, `gui.Switch(testo, ...)` | acceso o spento: `checked()` e `onChange` |
 | `gui.Slider(minimo, massimo, ...)` | un intero tra i due: `value()` e `onChange` |
 | `gui.ComboBox(voci, ...)` | una voce di una lista: `selected()`, `text()` e `onChange` |
 | `gui.ImageBox(file, ...)` | un'immagine PNG, JPEG, BMP o GIF, da un file, o dalla memoria con `setBytes` |
 | `gui.IconBox(icona, ...)` | un'icona |
-| `gui.GroupBox(testo, ...)` | una scheda con un titolo, che contiene altri componenti |
+| `gui.GroupBox(testo, ...)` | una scheda con il titolo in una fascia in alto, che contiene altri componenti |
 | `gui.Panel(...)` | un contenitore senza aspetto proprio, che scorre quando i suoi componenti vanno oltre il fondo |
 | `gui.ListView(...)` | una lista di voci, ognuna con un'icona o un'immagine, un titolo, una riga e un dettaglio |
 
@@ -120,9 +122,9 @@ i32 main() {
     gui.AppBar top = w.add(gui.AppBar("Inbox"))
     gui.NavigationBar bar = w.navigationBar()
 
-    // Ogni pagina riempie lo spazio tra le due barre: qui 390 per 605.
+    // Ogni pagina riempie lo spazio tra le due barre, e ha subito la sua misura.
     gui.Panel inbox = bar.addPage("Inbox", gui.Icon.Inbox)
-    gui.ListView messages = inbox.add(gui.ListView(0, 0, 390, 605))
+    gui.ListView messages = inbox.add(gui.ListView(0, 0, inbox.width(), inbox.height()))
     messages.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Stretch)
     messages.addItem(gui.Icon.User, "Ada Lovelace", "The notes on the engine", "10:42")
     messages.setItemImageBytes(0, embed("images/ada.png"))
@@ -132,8 +134,9 @@ i32 main() {
         messages.addItem(gui.Icon.Mail, "The workshop", format("The report of day {}", day), format("Oct {}", day))
     }
     messages.onChoose([messages](i64 index) { println("open {}", messages.itemTitle(index)) })
-    gui.Button write = inbox.add(gui.Button("Write", 262, 549, 112, 40))
+    gui.Button write = inbox.add(gui.Button("Write", inbox.width() - 128, inbox.height() - 56, 112, 40))
     write.setIcon(gui.Icon.Pencil)
+    write.setStyle(gui.ButtonStyle.Primary)
     write.setAnchor(gui.Horizontal.Right, gui.Vertical.Bottom)
 
     gui.Panel settings = bar.addPage("Settings", gui.Icon.Settings)
@@ -158,6 +161,7 @@ i32 main() {
 - `w.navigationBar()` dà la barra in basso. Ogni `addPage(testo, icona)` le aggiunge una voce e ne restituisce la pagina, un `gui.Panel` che riempie lo spazio tra le due barre; la barra mostra la pagina della voce scelta, e `onChange` dice quale.
 - `gui.ListView` mostra le sue voci in righe: `addItem(icona, titolo, sottotitolo, dettaglio)`, con `gui.Icon.None` e `""` per ciò che una voce non ha, `setItemImageBytes` per un'immagine rotonda al posto dell'icona, e `onChoose` quando l'utente ne sceglie una. Una lista scorre con la rotella del mouse, con la barra alla sua destra o con un dito; lo stesso fa una pagina i cui componenti vanno oltre il fondo.
 - Il pulsante `Write` è ancorato in basso a destra della sua pagina: resta lì mentre la lista gli scorre sotto.
+- Sul desktop `std.gui` è compatto, come le applicazioni desktop; sul telefono il testo, le righe e le barre sono più grandi, per le dita. Una pagina è più bassa sul telefono, dove le barre sono più alte: la lista e il pulsante prendono il loro posto da `inbox.width()` e `inbox.height()`, così vanno bene in entrambi i casi.
 
 ## Dialoghi e snackbar
 
@@ -168,13 +172,13 @@ import std.gui
 i32 main() {
 #     gui.Window w = gui.Window("Mail", 390, 760)
 #     gui.AppBar top = w.add(gui.AppBar("Inbox"))
-#     gui.ListView messages = w.add(gui.ListView(0, 56, 390, 669))
+#     gui.ListView messages = w.add(gui.ListView(0, top.height(), 390, 725 - top.height()))
 #     messages.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Stretch)
 #     messages.addItem(gui.Icon.Mail, "The workshop", "The report of the day", "10:42")
 #     messages.addItem(gui.Icon.Bell, "Reminder", "Send the letters", "Sun")
 #
     gui.Dialog ask = gui.Dialog("Delete the message?", 320, 156)
-    ask.add(gui.Label("It can be undone for a few seconds.", 0, 0, 272, 20))
+    ask.add(gui.Label("It can be undone for a few seconds.", 0, 0, 292, 20))
     ask.addButton("Cancel", [ask]() { ask.close() })
     ask.addButton("Delete", [w, ask, messages]() {
         ask.close()

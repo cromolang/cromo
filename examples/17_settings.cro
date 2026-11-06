@@ -3,7 +3,8 @@
 //
 // Decided: the groups contain components (D444), the combo box chooses among its
 //          items (D445), the images in PNG, JPEG, BMP and GIF (D446), the anchors
-//          to the edges of the window or of the group (D447)
+//          to the edges of the window or of the group (D447), the groups as cards
+//          with a band (D479), the main button (D482)
 // Draft:   the names of the components and of their methods (P37, P39), how the
 //          anchors move the components (P40)
 import std.gui
@@ -14,28 +15,29 @@ i32 main(list<string> args) {
 
     // The components of a group take their positions from its top left corner.
     gui.GroupBox account = w.add(gui.GroupBox("Account", 12, 12, 300, 200))
-    account.add(gui.Label("Name", 12, 34, 200, 18))
-    gui.TextBox name = account.add(gui.TextBox("", 12, 54, 276, 28))
+    account.add(gui.Label("Name", 12, 42, 200, 18))
+    gui.TextBox name = account.add(gui.TextBox("", 12, 62, 276, 28))
     name.setPlaceholder("Your name")
-    account.add(gui.Label("Role", 12, 90, 200, 18))
-    gui.ComboBox role = account.add(gui.ComboBox(["Administrator", "Developer", "Designer", "Viewer"], 12, 110, 276, 28))
+    account.add(gui.Label("Role", 12, 98, 200, 18))
+    gui.ComboBox role = account.add(gui.ComboBox(["Administrator", "Developer", "Designer", "Viewer"], 12, 118, 276, 28))
     role.setPlaceholder("Choose a role")
-    gui.CheckBox news = account.add(gui.CheckBox("Send me the news", 12, 154, 260, 22))
+    gui.CheckBox news = account.add(gui.CheckBox("Send me the news", 12, 162, 260, 22))
 
     // The preview grows with the window, and its image with it.
     gui.GroupBox preview = w.add(gui.GroupBox("Preview", 324, 12, 304, 200))
     preview.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Stretch)
     if (args.len() > 1) {
-        gui.ImageBox picture = preview.add(gui.ImageBox(args[1], 12, 34, 280, 154))
+        gui.ImageBox picture = preview.add(gui.ImageBox(args[1], 12, 42, 280, 146))
         picture.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Stretch)
     } else {
-        preview.add(gui.Label("No image: give its path to the program.", 12, 34, 280, 18))
+        preview.add(gui.Label("No image: give its path to the program.", 12, 42, 280, 18))
     }
 
     // The buttons stay in the bottom right corner, the status in the bottom left.
     gui.Label status = w.add(gui.Label("", 12, 299, 400, 18))
     status.setAnchor(gui.Horizontal.Left, gui.Vertical.Bottom)
     gui.Button save = w.add(gui.Button("Save", 452, 293, 82, 30))
+    save.setStyle(gui.ButtonStyle.Primary)
     save.setAnchor(gui.Horizontal.Right, gui.Vertical.Bottom)
     gui.Button quit = w.add(gui.Button("Quit", 546, 293, 82, 30))
     quit.setAnchor(gui.Horizontal.Right, gui.Vertical.Bottom)

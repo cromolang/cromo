@@ -2047,7 +2047,7 @@ ret 0  // the program ends when the window is closed
 ```
 
 ### D443. The look of a dashboard of Tailwind
-*2026-11-03.* The components and the windows of `std.gui` have the look of a dashboard made with Tailwind, not that of the controls of Microsoft: the grays and the indigo of its palette, light and dark, with a hint of depth. The buttons, and the check boxes when checked, are a vertical gradient of indigo with a border of a deeper indigo and a line of light inside their top edge; under them, and under the text boxes and the check boxes, a soft shadow of a few pixels. The corners are rounded by 7 pixels, 4 on the check boxes; the text box with the keyboard has an indigo border with a glow around it, and the other components a ring of 2 pixels. The text is Inter at 14 pixels, semibold on the buttons. The title bar keeps its layout and its buttons (D431), in the colors of that palette, with a line under it. It is the first of six alternatives, with other fonts and colors, drawn for the author; the look can change later.
+*2026-11-03.* The components and the windows of `std.gui` have the look of a dashboard made with Tailwind, not that of the controls of Microsoft: the grays and the indigo of its palette, light and dark, with a hint of depth. The buttons, and the check boxes when checked, are a vertical gradient of indigo with a border of a deeper indigo and a line of light inside their top edge; under them, and under the text boxes and the check boxes, a soft shadow of a few pixels. The corners are rounded by 7 pixels, 4 on the check boxes; the text box with the keyboard has an indigo border with a glow around it, and the other components a ring of 2 pixels. The text is Inter at 14 pixels, semibold on the buttons. The title bar keeps its layout and its buttons (D431), in the colors of that palette, with a line under it. It is the first of six alternatives, with other fonts and colors, drawn for the author; the look can change later. Replaced by D479.
 
 ### D444. The groups contain components
 *2026-11-04.* It amends D430. A `gui.GroupBox` is a component that contains others: `g.add(...)`, as `w.add(...)`, puts a component in the group, with its position from the top left corner of the group. Moving the group moves its components, a group hidden or disabled hides or disables them, and they are drawn only inside it. A group can contain groups: the components of a window are a tree, whose root is the window. A component is in one window or in one group.
@@ -2230,6 +2230,53 @@ public list<string> split(string separator) const {
 
 ### D478. The library is documented
 *2026-11-06.* Every public declaration of the core and of the modules of `std` has its documentation, written for who uses the library: what it does and gives back, its exceptions and panics, and an example where it helps. The documentation of a module ends with a link to the chapter of the guide that explains it, on cromolang.org.
+
+### D479. The look of a desktop application for data
+*2026-11-06.* Chosen by the author, in place of the dashboard of Tailwind (D443): the look of a desktop application that shows much data, quiet and dense. Neutral grays with a hint of blue, an ochre accent, and a blue for the selection and the focus; flat controls with borders of 1 pixel and corners of 4 to 9 pixels, no gradients; one soft shadow under the cards, the dialogs and the menus. The normal button is light with a thin border, the main one is filled with the accent. The groups are cards with a band at the top, whose title is small, in capitals and spaced; the dialogs have the same band, and their buttons are in a band at the bottom. The selected row of a list has a light blue background and a blue bar on its left. The focus is a ring of 2 pixels in the blue of the selection.
+
+| Color | Light | Dark | Where |
+|---|---|---|---|
+| background | `#EDF1F4` | `#0F1418` | under the components |
+| surface | `#FFFFFF` | `#171D22` | cards, dialogs, fields, buttons, bars |
+| surface 2 | `#F5F7F9` | `#1D242A` | bands of the cards and of the dialogs, hover |
+| surface 3 | `#E7ECF0` | `#252E35` | pressed, tracks |
+| ink | `#18212A` | `#E3E9ED` | the text |
+| ink 2 | `#4A5A67` | `#AEBBC4` | secondary text, labels, icons |
+| ink 3 | `#7A8B99` | `#7B8A95` | muted text, titles of the bands, placeholders |
+| rule | `#D5DDE3` | `#2A343B` | lines and borders of the cards |
+| rule 2 | `#C2CDD5` | `#37434B` | borders of the controls |
+| accent | `#B4761C` | `#E0A64A` | main buttons, checked boxes, switches, sliders |
+| accent 2 | `#8A5A12` | `#F0C177` | the accent under the mouse, text on the soft accent |
+| accent soft | `#FBEFD9` | `#2E2413` | the item pointed at in a menu, the item chosen of a bar |
+| selection | `#2F6E8F` | `#6FB2D2` | the focus, the bar of the selected row |
+| selection soft | `#DFECF3` | `#182B36` | the selected row, the selected text |
+| on the accent | `#FFFFFF` | `#1A1206` | text on the accent |
+| danger | `#B0453C` | `#E0786D` | the dangerous buttons, errors |
+
+### D480. The density follows the system
+*2026-11-06.* On the desktop `std.gui` is compact, as the desktop applications: text of 13 pixels, lists, bars and dialogs low. On the phone it is comfortable, for the fingers, as it is now. It changes what `std.gui` measures by itself: the text, the rows of the lists and of the combo boxes, the bars, the bands and the buttons of the dialogs. The positions and the sizes that the program gives stay as written.
+
+### D481. The font stays Inter
+*2026-11-06.* With the new look the font is still Inter, in the library (D440): the same on Windows, Linux and Android. The font of the system, as Segoe UI, would change the look from one system to the other.
+
+### D482. The styles of the buttons
+*2026-11-06.* A button is normal unless the program says otherwise: `b.setStyle(gui.ButtonStyle.Primary)` fills it with the accent, `gui.ButtonStyle.Danger` is for an action that destroys, and `b.style()` reads it. The last button of a dialog is the main one by itself, as before.
+
+### D483. The canvas: a drawing handed over
+*2026-11-06.* `gui.Canvas` is a component on which the program draws: a chart, a map, a diagram, a game. The program builds a `gui.Drawing`, a value with the rectangles, lines, circles, polygons, images and texts of what is shown, and hands it over with `setDrawing(move d)`, from any thread; `std.gui` keeps it and draws it again whenever it must. A new drawing takes the place of the old one. The canvas tells where the mouse is pressed, moves and is released, in pixels from its top left corner, so the program can drag what it draws. No handler of drawing runs on the thread of the GUI, and no state is shared with it: in Cromo a handler sees only copies or values moved into it.
+
+```cromo
+// draft: the names of the API of the canvas are not decided
+gui.Canvas chart = w.add(gui.Canvas(16, 16, 480, 320))
+gui.Drawing d
+d.rect(0, 0, 480, 320, gui.rgb(0xFFFFFF))
+d.circle(90, 90, 8, gui.rgba(0x2F6E8F, 115))
+chart.setDrawing(move d)
+chart.onMouseDown([chart](gui.Mouse m) { println("{} {}", m.x, m.y) })
+```
+
+### D484. Vector images: SVG
+*2026-11-06.* `std.gui` reads SVG images, with nanosvg (zlib license) in its glue of C (D441), and draws them at the size where they are shown, sharp at every size and density: icons, logos, illustrations, the figures of a game. The image boxes take them as the other images.
 
 ---
 
@@ -2432,6 +2479,15 @@ A component keeps the distances from the edges of its parent, the content of the
 - The functions of the files for each system repeat their documentation in each file, since `cromo` reads only the one of the system it compiles for. The numbers of the decisions stay out of the documentation of the library, in the notes for who works on it.
 - The completion after a module proposes its public names, without the instances of the generics, the tests and the C functions.
 - The help on the signature: the server analyzes the text with the call without its arguments, as the completion does (D180); the parameter in evidence is the one after as many commas as precede the cursor, the last one past the end.
+
+### P52. The look and the density (D479-D482)
+- The sizes, on the desktop and on a phone: the text 13 and 14 pixels; the title of an app bar 15 and 18; the items of a navigation bar 11 and 12; the titles of the bands 11 and 12, semibold, in capitals, spaced by 0.09 of their size; the bands of the groups and of the dialogs 32 and 40 pixels high; the rows of the list of a combo box 28 and 40; the rows of a list 44 and 56, with round images of 32 and 40; the icons of the buttons 16 and 18, of the app bars 20 and 24; the app bar 44 and 56, the navigation bar 56 and 64. A dialog has its body 14 pixels, 16 on a phone, from the edges of the card and from its bands, the band of the buttons 44 and 60 pixels high, buttons 26 and 36 high, as wide as their text and 24 pixels, at least 64 and 72, 7 and 8 pixels apart, and corners of 9 and 14. The title bar of the desktop stays as it is, 35 pixels.
+- The controls: corners of 4 pixels, 3 for the check boxes, 8 for the groups and the list of a combo box. The normal button is the surface with a border of rule 2 and its text in ink 2, under the mouse a border of ink 3 and the text in ink, pressed surface 3; the main one is the accent, the second accent under the mouse, with its text semibold in the color on the accent; the dangerous one has its text in the color of danger, and is filled with it under the mouse. The text boxes and the combo boxes are the surface with a border of rule 2, ink 3 under the mouse; the selected text is in the soft selection and the caret in ink. A check box checked is filled with the accent; a switch has its track in the accent, or rule 2 when it is off, and a white knob; a slider has its track in rule 2, the accent up to the knob, and a knob in the accent with a ring of the surface.
+- The labels are in ink 2. A group without a title has no band. A list is drawn on the surface, as a table in a card: the row under the mouse in surface 2, the lines between the rows in rule. The list of a combo box is a menu: the item pointed at in the soft accent with its text in accent 2, the item chosen semibold with a mark in the accent.
+- The app bar and the navigation bar are the surface with a line of rule; the item chosen of the navigation bar is in accent 2 on a pill of the soft accent, the others in ink 3. The title bar is the surface, with the title in ink 2, ink 3 when the window is not in front, and the button that closes red, #C42B1C, under the mouse.
+- The snackbar takes the colors of the other theme: the ink as its background, the surface as its text, and its action in the accent of the other theme, which reads on it. A dialog darkens the rest with rgba(10, 15, 20, 0.45), in both themes.
+- The shadow of the cards, of the dialogs, of the snackbar and of the list of a combo box has two parts, as `0 1px 2px` and `0 10px 26px -18px` of CSS: a sharp one, 1 pixel down, and a soft one, under the box and hardly at its sides. The soft shadow is drawn in layers about 2 pixels of the display apart.
+- On the desktop the program gives the sizes of its components: 28 pixels is the height of the buttons and of the text boxes of the examples. The pages of a navigation bar have their size as soon as they are made, so a program can size the components of a page from its `width()` and `height()`, right for both densities.
 ---
 
 ## Open

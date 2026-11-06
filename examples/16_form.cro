@@ -3,7 +3,8 @@
 // Decided: the components are handles with their properties as methods (D434),
 //          Label, Button, TextBox and CheckBox (D439), their handlers on the
 //          thread of the GUI (D435), the positions in logical pixels from the
-//          top left corner of the content (D438), the window as a handle (D442)
+//          top left corner of the content (D438), the window as a handle (D442),
+//          the look and the main button in the accent (D479, D482)
 // Draft:   the names of the components, of their methods and of their events
 //          (P34, P37), the keys and the focus (P38)
 import std.gui
@@ -17,6 +18,7 @@ i32 main() {
     name.setPlaceholder("Write your name")
     gui.CheckBox news = w.add(gui.CheckBox("Send me the news", 24, 92, 240, 24))
     gui.Button greet = w.add(gui.Button("Greet", 24, 136, 100, 28))
+    greet.setStyle(gui.ButtonStyle.Primary)
     gui.Button quit = w.add(gui.Button("Quit", 136, 136, 100, 28))
     gui.Label answer = w.add(gui.Label("", 24, 188, 460, 20))
 

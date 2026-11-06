@@ -1,0 +1,26 @@
+// The styles of the buttons (D482): normal unless the program says otherwise; the
+// list of a window keeps them; and the sizes of the desktop are compact (D480).
+// target: windows linux-x86_64
+// program-env: SDL_VIDEO_DRIVER=offscreen
+// expect-output: save Normal, then Primary
+// expect-output: remove Danger, cancel Normal
+// expect-output: app bar 44 high, navigation bar 56 high
+import std.gui
+
+i32 main() {
+    gui.Window w = gui.Window("styles", 400, 335)
+    gui.Button save = w.add(gui.Button("Save", 16, 16, 100, 28))
+    gui.Button remove = w.add(gui.Button("Delete", 124, 16, 100, 28))
+    gui.Button cancel = w.add(gui.Button("Cancel", 232, 16, 100, 28))
+    string before = format("{:?}", save.style())
+    save.setStyle(gui.ButtonStyle.Primary)
+    remove.setStyle(gui.ButtonStyle.Danger)
+    println("save {}, then {:?}", before, save.style())
+    println("remove {:?}, cancel {:?}", remove.style(), cancel.style())
+    gui.AppBar top = w.add(gui.AppBar("Inbox"))
+    gui.NavigationBar bar = w.navigationBar()
+    bar.addPage("Home", gui.Icon.House)
+    println("app bar {} high, navigation bar {} high", top.height(), bar.height())
+    w.close()
+    ret 0
+}

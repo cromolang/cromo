@@ -1,14 +1,15 @@
 // The bars of the apps (D450, D451, P42): an app bar at the top of the content, the
 // navigation bar of the window at the bottom, and the pages in the room between,
-// which follow the window when it is resized.
+// which follow the window when it is resized; on the desktop the bars are compact
+// (D480).
 // target: windows linux-x86_64
 // program-env: SDL_VIDEO_DRIVER=offscreen
-// expect-output: app bar 'Inbox' at 0,0 size 400x56, navigation Menu true
-// expect-output: navigation bar at 0,236 size 400x64, the same: true
-// expect-output: pages at 0,56 size 400x180 and 0,56 size 400x180, selected 0
+// expect-output: app bar 'Inbox' at 0,0 size 400x44, navigation Menu true
+// expect-output: navigation bar at 0,244 size 400x56, the same: true
+// expect-output: pages at 0,44 size 400x200 and 0,44 size 400x200, selected 0
 // expect-output: a label in the page at 16,16
 // expect-output: selected 1
-// expect-output: resized: app bar 500 wide, navigation bar at 0,296 size 500x64, page 500x240
+// expect-output: resized: app bar 500 wide, navigation bar at 0,304 size 500x56, page 500x260
 import std.gui
 import std.time
 

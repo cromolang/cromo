@@ -1,9 +1,9 @@
 // Windows and their components, drawn by the program itself: labels, buttons, text
 // boxes, check boxes, switches, sliders, combo boxes, images and icons, groups and
 // panels that scroll, lists, the bars of an app, dialogs and snackbars. A window looks
-// the same on Windows and on Linux, in the style of a dashboard made with Tailwind,
-// light or dark, and the same program compiled with '--target android' is an app for
-// Android.
+// the same on Windows and on Linux, flat and quiet, with an ochre accent, light or dark,
+// compact on the desktop; the same program compiled with '--target android' is an app
+// for Android, with the sizes for the fingers.
 //
 // 'Window' makes a window, its 'add' puts a component in it and gives it back, and
 // 'start' shows it; when 'main' returns, the program waits until its windows are
@@ -123,8 +123,6 @@ extern "cromo" {
     void cromo_gui_box(addr renderer, f32 x, f32 y, f32 w, f32 h, f32 radius, f32 border, f32 density, u32 fill, u32 line)
     void cromo_gui_boxes_free(addr renderer)
     void cromo_gui_shadow(addr renderer, f32 x, f32 y, f32 w, f32 h, f32 radius, f32 density, u32 color, f32 blur, f32 dy)
-    void cromo_gui_gradient(addr renderer, f32 x, f32 y, f32 w, f32 h, f32 radius, f32 border, f32 density, u32 top, u32 bottom,
-        u32 line, u32 highlight)
     void cromo_gui_wait_at_end()
     addr cromo_gui_image_decode(addr bytes, i64 size, ref i32 width, ref i32 height, addr reason, i64 room)
     void cromo_gui_image_free(addr pixels)
@@ -142,6 +140,13 @@ public enum Theme {
     System  // that of the system, the default, which changes when the user changes it
     Light   // dark text on light grays
     Dark    // light text on dark grays
+}
+
+// The style of a button, set with 'Button.setStyle'.
+public enum ButtonStyle {
+    Normal   // light, with a thin border: the default
+    Primary  // filled with the accent, for the main action of a window or of a group
+    Danger   // in the color of danger, for an action that destroys, as Delete
 }
 
 // How a component follows the left and the right edges of its parent, the window or
@@ -519,10 +524,30 @@ public struct Button : Component {
         addPartHandler(id, 0, box)
     }
 
-    // Puts an icon of 18 pixels before the text, or alone in the middle when the button
-    // has no text; 'Icon.None' removes it.
+    // Puts an icon of 16 pixels before the text, 18 on a phone, or alone in the middle when
+    // the button has no text; 'Icon.None' removes it.
     public void setIcon(Icon value) const {
         setPartIcon(id, value)
+    }
+
+    // Changes the style of the button: 'ButtonStyle.Primary' fills it with the accent, for
+    // the main action, and 'ButtonStyle.Danger' is for an action that destroys.
+    //
+    // '''
+    // gui.Button save = w.add(gui.Button("Save", 364, 217, 100, 28))
+    // save.setStyle(gui.ButtonStyle.Primary)
+    // '''
+    public void setStyle(ButtonStyle value) const {
+        i64 me = id
+        withData([me, value](ref Shared data) { data.parts[partIndexOf(ref data, me)].style = value })
+    }
+
+    // The style of the button: 'ButtonStyle.Normal' unless it was changed.
+    public ButtonStyle style() const {
+        i64 me = id
+        ButtonStyle result = ButtonStyle.Normal
+        withData([me, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, me)].style })
+        ret result
     }
 
     // The icon of the button, 'Icon.None' without one.
@@ -895,16 +920,16 @@ public struct CheckBox : Component {
     }
 }
 
-// A card with a title in its top left corner, which holds other components: their
-// positions are from its top left corner, so the first ones go under the title, at
-// about 34 pixels. They move, hide and are disabled with the group, follow its edges
-// with their anchors, and are drawn only inside it. A group can hold groups; unlike a
-// panel, it does not scroll.
+// A card with its title in a band at its top, 32 pixels high, 40 on a phone, which holds other
+// components: their positions are from its top left corner, so the first ones go under the band, at
+// about 42 pixels. Without a title the card has no band. They move, hide and are disabled with the
+// group, follow its edges with their anchors, and are drawn only inside it. A group can hold
+// groups; unlike a panel, it does not scroll.
 //
 // '''
 // gui.GroupBox account = w.add(gui.GroupBox("Account", 12, 12, 300, 200))
-// account.add(gui.Label("Name", 12, 34, 200, 18))
-// gui.TextBox name = account.add(gui.TextBox("", 12, 54, 276, 28))
+// account.add(gui.Label("Name", 12, 42, 200, 18))
+// gui.TextBox name = account.add(gui.TextBox("", 12, 62, 276, 28))
 // account.setEnabled(false)   // name too
 // '''
 public struct GroupBox : Component {
@@ -1591,7 +1616,7 @@ public struct Panel : Component {
 
 // The bar at the top of an app: its title, an icon on its left, as a menu or an arrow
 // back, and the icons of its actions on its right. Put in a window with 'add', it takes
-// the top of the content, the whole width and 56 pixels: the other components of the
+// the top of the content, the whole width and 44 pixels, 56 on a phone: the other components of the
 // window go under it, and the pages of a navigation bar start there by themselves. On
 // the desktop it is under the title bar of the window.
 //
@@ -1608,7 +1633,7 @@ public struct AppBar : Component {
     // a second one, or an app bar put in a group, a panel or a dialog, is a panic of
     // 'add'.
     public AppBar(string title) {
-        id = newPart(kindAppBar, title, 0, 0, 0, i32(appBarHeight))
+        id = newPart(kindAppBar, title, 0, 0, 0, i32(appBarHeight()))
     }
 
     i64 componentId() const {
@@ -1703,7 +1728,7 @@ public struct AppBar : Component {
 
 // The bar at the bottom of an app, whose items, an icon and a text each, choose the
 // page that is shown. A window has one, made the first time that 'Window.navigationBar'
-// is called: it takes the bottom of the content, the whole width and 64 pixels. Each
+// is called: it takes the bottom of the content, the whole width and 56 pixels, 64 on a phone. Each
 // page is a panel that fills the room between it and the app bar, and scrolls when its
 // components go below its bottom. On a phone the keyboard on the screen covers the
 // bar, and the pages go down to the keyboard.
@@ -1823,7 +1848,7 @@ public struct NavigationBar : Component {
     }
 }
 
-// A list of items in rows of 56 pixels, as those of an app of mail: each has an icon
+// A list of items in rows of 44 pixels, 56 on a phone, as those of an app of mail: each has an icon
 // or a round image, a title, a line under it and a text on its right, as a time, all
 // optional. Only the rows that are seen are drawn, so a list can have thousands of
 // items, and it scrolls as a panel, with a finger, the wheel or its bar. The item
@@ -2446,18 +2471,20 @@ public struct Slider : Component {
 public struct Dialog {
     i64 id
 
-    // A dialog with its title and the size of its card, in logical pixels. Its body,
-    // where 'add' puts the components, starts 24 pixels from the left edge of the card
-    // and 64 from the top, under the title, and leaves 68 pixels at the bottom for the
-    // buttons: 'Dialog("...", 320, 156)' has a body of 272 by 24. The card is at most as
-    // large as the content of the window less 32 pixels: in a smaller window it shrinks,
-    // and the components of its body follow their anchors.
+    // A dialog with its title and the size of its card, in logical pixels. The title is in a band
+    // at the top of the card, 32 pixels high, and the buttons in a band at the bottom, 44 pixels
+    // high. The body, where 'add' puts the components, starts 14 pixels from the left edge of the
+    // card and 14 under the band of the title, and ends 14 pixels above the band of the buttons:
+    // 'Dialog("...", 320, 156)' has a body of 292 by 52. On a phone the bands are 40 and 60 pixels
+    // high and the margins 16. The card is at most as large as the content of the window less 32
+    // pixels: in a smaller window it shrinks, and the components of its body follow their anchors.
     public Dialog(string title, i32 width, i32 height) {
         i64 made = 0
         withData([ref made, title, width, height](ref Shared data) {
             made = makePart(ref data, kindDialog, title, 0, 0, width, height)
-            i64 body = makePart(ref data, kindPanel, "", i32(dialogPadding), i32(dialogTop), width - 2 * i32(dialogPadding),
-                height - i32(dialogTop + dialogBottom))
+            f32 pad = dialogPadding()
+            i64 body = makePart(ref data, kindPanel, "", i32(pad), i32(bandHeight() + pad), width - 2 * i32(pad),
+                height - i32(bandHeight() + dialogFooter() + 2 * pad))
             i64 p = partIndexOf(ref data, body)
             data.parts[p].parent = made
             data.parts[p].horizontal = Horizontal.Stretch
@@ -2479,10 +2506,10 @@ public struct Dialog {
         ret component
     }
 
-    // Adds a button at the bottom right of the card, on the right of those added before,
-    // as wide as its text: the last one is the main one, in indigo, the others are white
-    // with a border. A click, or Space and Enter while it has the keyboard, call the
-    // handler on the thread of the windows; the dialog stays open until it calls 'close'.
+    // Adds a button in the band at the bottom of the card, on the right of those added before, as
+    // wide as its text: the last one is the main one, filled with the accent, the others are normal
+    // buttons. A click, or Space and Enter while it has the keyboard, call the handler on the
+    // thread of the windows; the dialog stays open until it calls 'close'.
     public void addButton(string text, move func() handler) const {
         addr box = alloc(sizeOf<func()>())
         put<func()>(box, move handler)
@@ -2490,7 +2517,7 @@ public struct Dialog {
         withData([me, text, box](ref Shared data) {
             i64 card = partIndexOf(ref data, me)
             i64 window = data.parts[card].window
-            i64 button = makePart(ref data, kindButton, text, 0, 0, 0, i32(dialogButton))
+            i64 button = makePart(ref data, kindButton, text, 0, 0, 0, i32(dialogButton()))
             i64 p = partIndexOf(ref data, button)
             data.parts[p].parent = me
             data.parts[p].window = window
@@ -2609,6 +2636,7 @@ struct WindowData {
     addr strong   // of the buttons, semibold
     addr heading  // of the title of an app bar, semibold
     addr caption  // of the items of a navigation bar, semibold
+    addr band     // of the titles of the bands of the groups and of the dialogs, semibold
     u32 sdlId
     f32 density = 1
     i32 hovered = -1  // the button of the title bar under the mouse
@@ -2726,7 +2754,8 @@ struct PartData {
     i64 minimum
     i64 maximum
     u64 flipped         // when the user changed a switch, for its knob
-    i32 action          // a button of a dialog: 1 the last, indigo, 2 the others
+    i32 action          // a button of a dialog: 1 the last, the main one, 2 the others
+    ButtonStyle style   // of a button (D482)
     i64 inner           // of a dialog, the panel of its components
     list<addr> closing  // func(), of a dialog
     i64 bar             // of a page, its navigation bar
@@ -3006,8 +3035,8 @@ void arrangeNow(ref Shared data, i64 p) {
 // A page takes the room between the bars of its window (P42), down to the keyboard
 // on the screen, which covers the navigation bar (D471).
 void placePage(ref PartData page, ref WindowData window) {
-    i32 top = window.appBar != 0 ? i32(appBarHeight) : 0
-    i32 bottom = contentHeight(window) - (window.screenKeyboard > 0 ? 0 : i32(navigationHeight))
+    i32 top = window.appBar != 0 ? i32(appBarHeight()) : 0
+    i32 bottom = contentHeight(window) - (window.screenKeyboard > 0 ? 0 : i32(navigationHeight()))
     page.x = 0
     page.y = top
     page.width = contentWidth(window)
@@ -3282,8 +3311,8 @@ public struct Window {
             i64 i = indexOf(ref data, me)
             if (data.windows[i].navigation == 0) {
                 i32 content = contentHeight(data.windows[i])
-                i64 bar = makePart(ref data, kindNavigation, "", 0, content - i32(navigationHeight), contentWidth(data.windows[i]),
-                    i32(navigationHeight))
+                i64 bar = makePart(ref data, kindNavigation, "", 0, content - i32(navigationHeight()), contentWidth(data.windows[i]),
+                    i32(navigationHeight()))
                 i64 p = partIndexOf(ref data, bar)
                 data.parts[p].window = me
                 data.parts[p].selected = 0
@@ -3687,138 +3716,168 @@ const f32 barHeight = 35
 const f32 buttonWidth = 46
 const f32 edgeWidth = 6
 const f32 titleSize = 12
-const f32 bodySize = 14  // text-sm
-const f32 padding = 8    // of the text in a text box and in a combo box
+const f32 padding = 8  // of the text in a text box and in a combo box
 const f32 checkSide = 16
-const f32 corner = 7       // of the buttons, the text boxes and the combo boxes
-const f32 checkCorner = 4  // of the check boxes
-const f32 groupCorner = 8
-const f32 itemHeight = 26  // of the list of a combo box
+const f32 corner = 4       // of the buttons, the text boxes and the combo boxes (D479)
+const f32 checkCorner = 3  // of the check boxes
+const f32 groupCorner = 8  // of the groups, which are cards
+const f32 menuCorner = 8   // of the list of a combo box
 const i64 listRows = 8
-const f32 buttonIcon = 18  // the size of the icon of a button
-const f32 appBarHeight = 56
-const f32 navigationHeight = 64
-const f32 headingSize = 18    // of the title of an app bar
-const f32 captionSize = 12    // of the items of a navigation bar
-const f32 rowHeight = 56      // of the items of a list
 const i32 avatarPixels = 112  // of the round images of the lists, 40 pixels up to a density of 2.8
-const f32 avatarSize = 40
-const f32 dialogPadding = 24  // the body of a dialog, from its edges
-const f32 dialogTop = 64      // under the title
-const f32 dialogBottom = 68   // above the buttons
-const f32 dialogButton = 36   // the height of its buttons
-const f32 dialogCorner = 16
-const f32 switchWidth = 44
-const f32 switchHeight = 24
-const f32 knob = 20  // of a switch and of a slider
+const f32 switchWidth = 40
+const f32 switchHeight = 22
+const f32 knob = 18  // of a switch and of a slider
+
+// 0 until it is known, then 1 on the desktop and 2 on a phone (D480).
+i32 platformKind
+
+// Whether std.gui is comfortable, for the fingers, as on a phone, or compact, as on
+// the desktop (D480).
+bool comfortable() {
+    if (platformKind == 0) {
+        platformKind = onAndroid() ? 2 : 1
+    }
+    ret platformKind == 2
+}
+
+f32 bodySize() {  // the text of the components
+    ret comfortable() ? 14 : 13
+}
+
+f32 headingSize() {  // the title of an app bar
+    ret comfortable() ? 18 : 15
+}
+
+f32 captionSize() {  // the items of a navigation bar
+    ret comfortable() ? 12 : 11
+}
+
+f32 bandSize() {  // the titles of the bands, in capitals
+    ret comfortable() ? 12 : 11
+}
+
+f32 bandHeight() {  // the band at the top of a group or of a dialog
+    ret comfortable() ? 40 : 32
+}
+
+f32 itemHeight() {  // a row of the list of a combo box
+    ret comfortable() ? 40 : 28
+}
+
+f32 rowHeight() {  // an item of a list
+    ret comfortable() ? 56 : 44
+}
+
+f32 avatarSize() {  // a round image in a list
+    ret comfortable() ? 40 : 32
+}
+
+f32 buttonIcon() {  // the icon of a button
+    ret comfortable() ? 18 : 16
+}
+
+f32 barIcon() {  // the icons of an app bar
+    ret comfortable() ? 24 : 20
+}
+
+f32 appBarHeight() {
+    ret comfortable() ? 56 : 44
+}
+
+f32 navigationHeight() {
+    ret comfortable() ? 64 : 56
+}
+
+f32 dialogPadding() {  // the body of a dialog from the edges of the card and from its bands
+    ret comfortable() ? 16 : 14
+}
+
+f32 dialogFooter() {  // the band of the buttons of a dialog
+    ret comfortable() ? 60 : 44
+}
+
+f32 dialogButton() {  // the height of the buttons of a dialog
+    ret comfortable() ? 36 : 26
+}
+
+f32 dialogCorner() {
+    ret comfortable() ? 14 : 9
+}
+
 const f32 snackHeight = 48
 const u64 snackTime = 4000000000
 const f32 wheelStep = 48  // what a step of the wheel scrolls
 
-// The colors of the look (D443): the grays and the indigo of Tailwind, light and
-// dark, with buttons in a gradient and a border of a deeper color.
+// The colors of the look (D479): grays with a hint of blue, an ochre accent and a
+// blue for the selection, light and dark.
 struct Colors {
-    u32 bar
-    u32 separator
-    u32 title
-    u32 inactive
-    u32 content
-    u32 border
-    u32 hover
-    u32 pressed
-    u32 text
-    u32 label
-    u32 muted
-    u32 buttonTop
-    u32 buttonBottom
-    u32 hoverTop
-    u32 hoverBottom
-    u32 buttonLine
-    u32 buttonText
-    u32 highlight  // 0xAARRGGBB, a line of light inside the top of a button
-    u32 input
-    u32 inputBorder
-    u32 check
-    u32 checkBorder
-    u32 focus
-    u32 selection
-    u32 shadow       // 0xAARRGGBB, under the buttons
-    u32 inputShadow  // under the text boxes, the check boxes and the groups
-    u32 glow         // around the text box in focus
-    u32 card         // of the groups
-    u32 cardBorder
-    u32 item        // under the item that the mouse or the keys point at
-    u32 listShadow  // 0xAARRGGBB, under the list of a combo box
-    u32 accent      // the icon and the text of the item chosen of a navigation bar
+    u32 background     // under the components
+    u32 surface        // cards, dialogs, fields, buttons and bars
+    u32 surface2       // the bands of the groups and of the dialogs, under the mouse
+    u32 surface3       // pressed, and the tracks
+    u32 ink            // the text
+    u32 ink2           // secondary text, labels and icons
+    u32 ink3           // muted text, the titles of the bands, the placeholders
+    u32 rule           // lines, and the borders of the cards
+    u32 rule2          // the borders of the controls
+    u32 accent         // main buttons, checked boxes, switches and sliders
+    u32 accent2        // the accent under the mouse, and the text on the soft accent
+    u32 accentSoft     // the item pointed at in a list, the item chosen of a bar
+    u32 selection      // the focus, and the bar of the selected row
+    u32 selectionSoft  // the selected row and the selected text
+    u32 onAccent       // the text on the accent
+    u32 danger         // the buttons that destroy
+    u32 shadowNear     // 0xAARRGGBB, the sharp part of the shadow of the cards
+    u32 shadowFar      // 0xAARRGGBB, its soft part, further down
 }
 
 Colors colorsOf(bool dark) {
     Colors c
-    c.buttonTop = 0x6366F1     // indigo-500
-    c.buttonBottom = 0x4F46E5  // indigo-600
-    c.hoverTop = 0x818CF8      // indigo-400
-    c.hoverBottom = 0x6366F1
-    c.buttonLine = 0x4338CA  // indigo-700
-    c.buttonText = 0xFFFFFF
-    c.focus = 0x6366F1
     if (dark) {
-        c.bar = 0x111827        // gray-900
-        c.separator = 0x1F2937  // gray-800
-        c.title = 0xD1D5DB      // gray-300
-        c.inactive = 0x6B7280   // gray-500
-        c.content = 0x111827
-        c.border = 0x1F2937
-        c.hover = 0x1F2937
-        c.pressed = 0x374151  // gray-700
-        c.text = 0xF3F4F6     // gray-100
-        c.label = 0xD1D5DB
-        c.muted = 0x6B7280
-        c.highlight = 0x33FFFFFF
-        c.input = 0x1D2331  // white/5 on gray-900
-        c.inputBorder = 0x374151
-        c.check = 0x1D2331
-        c.checkBorder = 0x4B5563  // gray-600
-        c.selection = 0x3730A3    // indigo-800
-        c.shadow = 0x73000000
-        c.inputShadow = 0x40000000
-        c.glow = 0x596366F1
-        c.card = 0x161E2D
-        c.cardBorder = 0x273244
-        c.item = 0x2B2F5E
-        c.listShadow = 0x99000000
-        c.accent = 0xA5B4FC  // indigo-300
+        c.background = 0x0F1418
+        c.surface = 0x171D22
+        c.surface2 = 0x1D242A
+        c.surface3 = 0x252E35
+        c.ink = 0xE3E9ED
+        c.ink2 = 0xAEBBC4
+        c.ink3 = 0x7B8A95
+        c.rule = 0x2A343B
+        c.rule2 = 0x37434B
+        c.accent = 0xE0A64A
+        c.accent2 = 0xF0C177
+        c.accentSoft = 0x2E2413
+        c.selection = 0x6FB2D2
+        c.selectionSoft = 0x182B36
+        c.onAccent = 0x1A1206
+        c.danger = 0xE0786D
+        c.shadowNear = 0x80000000
+        c.shadowFar = 0x99000000
     } else {
-        c.bar = 0xFFFFFF
-        c.separator = 0xE5E7EB  // gray-200
-        c.title = 0x374151      // gray-700
-        c.inactive = 0x9CA3AF   // gray-400
-        c.content = 0xF3F4F6    // gray-100
-        c.border = 0xE5E7EB
-        c.hover = 0xF3F4F6
-        c.pressed = 0xE5E7EB
-        c.text = 0x111827  // gray-900
-        c.label = 0x374151
-        c.muted = 0x9CA3AF
-        c.highlight = 0x40FFFFFF
-        c.input = 0xFFFFFF
-        c.inputBorder = 0xD1D5DB  // gray-300
-        c.check = 0xFFFFFF
-        c.checkBorder = 0xC9CDD4
-        c.selection = 0xC7D2FE  // indigo-200
-        c.shadow = 0x30111827
-        c.inputShadow = 0x14111827
-        c.glow = 0x406366F1
-        c.card = 0xFFFFFF
-        c.cardBorder = 0xE5E7EB
-        c.item = 0xEEF2FF  // indigo-50
-        c.listShadow = 0x2E111827
-        c.accent = 0x4F46E5  // indigo-600
+        c.background = 0xEDF1F4
+        c.surface = 0xFFFFFF
+        c.surface2 = 0xF5F7F9
+        c.surface3 = 0xE7ECF0
+        c.ink = 0x18212A
+        c.ink2 = 0x4A5A67
+        c.ink3 = 0x7A8B99
+        c.rule = 0xD5DDE3
+        c.rule2 = 0xC2CDD5
+        c.accent = 0xB4761C
+        c.accent2 = 0x8A5A12
+        c.accentSoft = 0xFBEFD9
+        c.selection = 0x2F6E8F
+        c.selectionSoft = 0xDFECF3
+        c.onAccent = 0xFFFFFF
+        c.danger = 0xB0453C
+        c.shadowNear = 0x1218212A
+        c.shadowFar = 0x4018212A
     }
     ret c
 }
 
-const u32 closeHover = 0xDC2626    // red-600
-const u32 closePressed = 0xB91C1C  // red-700
+const u32 closeHover = 0xC42B1C
+const u32 closePressed = 0xA3241A
+const u32 scrim = 0x730A0F14  // over the content under a dialog
 
 u8 red(u32 rgb) {
     ret u8((rgb >> 16) & 0xFF)
@@ -4123,12 +4182,14 @@ void setDensity(ref WindowData window) {
         cromo_gui_font_free(window.strong)
         cromo_gui_font_free(window.heading)
         cromo_gui_font_free(window.caption)
+        cromo_gui_font_free(window.band)
     }
     window.font = cromo_gui_font(window.renderer, 0, titleSize, density)
-    window.body = cromo_gui_font(window.renderer, 0, bodySize, density)
-    window.strong = cromo_gui_font(window.renderer, 1, bodySize, density)
-    window.heading = cromo_gui_font(window.renderer, 1, headingSize, density)
-    window.caption = cromo_gui_font(window.renderer, 1, captionSize, density)
+    window.body = cromo_gui_font(window.renderer, 0, bodySize(), density)
+    window.strong = cromo_gui_font(window.renderer, 1, bodySize(), density)
+    window.heading = cromo_gui_font(window.renderer, 1, headingSize(), density)
+    window.caption = cromo_gui_font(window.renderer, 1, captionSize(), density)
+    window.band = cromo_gui_font(window.renderer, 1, bandSize(), density)
 }
 
 // On Android the window keeps the screen: its size and its state do not change (P45).
@@ -4184,11 +4245,13 @@ void shut(ref WindowData window) {
     cromo_gui_font_free(window.strong)
     cromo_gui_font_free(window.heading)
     cromo_gui_font_free(window.caption)
+    cromo_gui_font_free(window.band)
     window.font = none
     window.body = none
     window.strong = none
     window.heading = none
     window.caption = none
+    window.band = none
     cromo_gui_symbols_free(window.renderer)
     cromo_gui_boxes_free(window.renderer)
     cromo_gui_icons_free(window.renderer)
@@ -4734,7 +4797,7 @@ Rect snackBox(ref WindowData window) {
     f32 width = least(f32(contentWidth(window)) - 16, 560)
     f32 bottom = window.originY + f32(contentHeight(window)) - 8 - window.snackLift
     if (window.navigation != 0 && window.screenKeyboard == 0) {
-        bottom = bottom - navigationHeight
+        bottom = bottom - navigationHeight()
     }
     ret Rect(window.originX + (f32(contentWidth(window)) - width) / 2, bottom - snackHeight, width, snackHeight)
 }
@@ -4851,25 +4914,25 @@ void glide(ref WindowData window, ref list<PartData> parts) {
 
 // The row of a list at a point of the window, or -1.
 i64 rowAt(ref PartData view, f32 y) {
-    i64 row = i64((y - view.top + view.offsetY) / rowHeight)
+    i64 row = i64((y - view.top + view.offsetY) / rowHeight())
     ret row >= 0 && row < view.items.len() ? row : -1
 }
 
 // Scrolls a list so that a row is seen.
 void showRow(ref PartData view, i64 row) {
-    f32 top = f32(row) * rowHeight
+    f32 top = f32(row) * rowHeight()
     view.velocity = 0
     if (top < view.offsetY) {
         scrollBy(ref view, top - view.offsetY)
-    } else if (top + rowHeight > view.offsetY + f32(view.height)) {
-        scrollBy(ref view, top + rowHeight - f32(view.height) - view.offsetY)
+    } else if (top + rowHeight() > view.offsetY + f32(view.height)) {
+        scrollBy(ref view, top + rowHeight() - f32(view.height) - view.offsetY)
     }
 }
 
 // The keys of a list (P46): false for those it does not use.
 bool listKey(ref PartData view, Key key, ref list<Call> calls) {
     i64 n = view.items.len()
-    i64 page = i64(f32(view.height) / rowHeight)
+    i64 page = i64(f32(view.height) / rowHeight())
     i64 next = view.selected
     if (key.code == keyUp) {
         next = view.selected > 0 ? view.selected - 1 : 0
@@ -4908,7 +4971,7 @@ void chooseRow(ref PartData view, i64 row, ref list<Call> calls) {
 // items, from the left.
 i64 barItemAt(ref PartData bar, f32 x, f32 y) {
     if (bar.kind == kindAppBar) {
-        f32 middle = bar.top + appBarHeight / 2
+        f32 middle = bar.top + appBarHeight() / 2
         if (y < middle - 20 || y >= middle + 20) {
             ret -1
         }
@@ -4960,7 +5023,7 @@ void chooseItem(ref WindowData window, ref list<PartData> parts, i64 p, i64 item
 i64 rowsOf(ref WindowData window, ref PartData box) {
     f32 below = window.originY + f32(contentHeight(window)) - box.top - f32(box.height) - 8
     f32 above = box.top - window.originY - 8
-    i64 fit = i64((most(below, above) - 6) / itemHeight)
+    i64 fit = i64((most(below, above) - 6) / itemHeight())
     i64 rows = box.items.len() < listRows ? box.items.len() : listRows
     if (fit < rows) {
         rows = fit < 1 ? 1 : fit
@@ -4971,7 +5034,7 @@ i64 rowsOf(ref WindowData window, ref PartData box) {
 // Where the list is, in the content: below the combo box, or above it when there
 // is no room below.
 Rect listOf(ref WindowData window, ref PartData box) {
-    f32 h = f32(rowsOf(ref window, ref box)) * itemHeight + 6
+    f32 h = f32(rowsOf(ref window, ref box)) * itemHeight() + 6
     f32 top = box.top + f32(box.height) + 3
     if (top + h > window.originY + f32(contentHeight(window)) - 4 && box.top - 3 - h >= window.originY + 4) {
         top = box.top - 3 - h
@@ -4990,7 +5053,7 @@ i64 itemAt(ref WindowData window, ref PartData box, f32 x, f32 y) {
     if (x < area.x || x >= area.x + area.w || y < area.y + 3 || y >= area.y + area.h - 3) {
         ret -1
     }
-    i64 item = box.first + i64((y - area.y - 3) / itemHeight)
+    i64 item = box.first + i64((y - area.y - 3) / itemHeight())
     ret item < box.items.len() ? item : -1
 }
 
@@ -5412,8 +5475,8 @@ bool bringIntoView(ref list<PartData> parts, i64 id) {
 }
 
 // A dialog at the center of the content, at most as large as the content less 32
-// pixels, its buttons in a row at the bottom right, each as wide as its text and
-// 32 pixels, at least 72, the last indigo (P48).
+// pixels, its buttons in the band at the bottom right, each as wide as its text and 24
+// pixels, at least 64, 72 on a phone, the last the main one (P48, D479).
 void layoutDialog(ref WindowData window, ref list<PartData> parts, i64 card, Frame content) {
     placeDialog(ref parts[card], content)
     window.order.add(card)
@@ -5423,17 +5486,18 @@ void layoutDialog(ref WindowData window, ref list<PartData> parts, i64 card, Fra
             buttons.add(i)
         }
     }
-    f32 right = f32(parts[card].width) - 16
+    f32 right = f32(parts[card].width) - 12
+    f32 footer = dialogFooter()
     for (i64 k = buttons.len() - 1; k >= 0; k--) {
         i64 b = buttons[k]
-        f32 w = most(72, textWidth(window.strong, parts[b].text, parts[b].text.len()) + 32)
+        f32 w = most(comfortable() ? 72 : 64, textWidth(window.strong, parts[b].text, parts[b].text.len()) + 24)
         right = right - w
         parts[b].x = i32(right)
-        parts[b].y = parts[card].height - i32(16 + dialogButton)
+        parts[b].y = parts[card].height - i32((footer + dialogButton()) / 2)
         parts[b].width = i32(w)
-        parts[b].height = i32(dialogButton)
+        parts[b].height = i32(dialogButton())
         parts[b].action = k == buttons.len() - 1 ? 1 : 2
-        right = right - 8
+        right = right - (comfortable() ? 8 : 7)
     }
     Frame inner
     inner.left = parts[card].left
@@ -5501,7 +5565,7 @@ void layoutIn(ref WindowData window, ref list<PartData> parts, i64 group, Frame 
         parts[i].clipBottom = frame.clipBottom
         window.order.add(i)
         if (parts[i].kind == kindListView) {
-            parts[i].content = f32(parts[i].items.len()) * rowHeight
+            parts[i].content = f32(parts[i].items.len()) * rowHeight()
             clampScroll(ref parts[i])
         }
         if (parts[i].kind == kindGroup || parts[i].kind == kindPanel) {
@@ -5623,13 +5687,13 @@ void drawWindow(ref WindowData window, ref list<PartData> parts) {
     bool dark = window.theme == Theme.Dark || (window.theme == Theme.System && SDL_GetSystemTheme() == 2)
     Colors c = colorsOf(dark)
     addr r = window.renderer
-    fill(r, c.content, 0, 0, width, height)
+    fill(r, c.background, 0, 0, width, height)
     if (window.phone) {  // the bars of the system of the color of the bars of the app (D456)
-        fill(r, c.bar, 0, 0, width, window.originY)
-        fill(r, c.bar, 0, height - window.barsBottom, width, window.barsBottom)
+        fill(r, c.surface, 0, 0, width, window.originY)
+        fill(r, c.surface, 0, height - window.barsBottom, width, window.barsBottom)
         if (window.systemBars != (dark ? 1 : 0)) {
             window.systemBars = dark ? 1 : 0
-            cromo_gui_system_bars(c.bar, !dark)
+            cromo_gui_system_bars(c.surface, !dark)
         }
     }
 
@@ -5638,7 +5702,7 @@ void drawWindow(ref WindowData window, ref list<PartData> parts) {
     drawParts(ref window, ref parts, ref c, 0, window.dialogStart)
     if (window.dialog != 0) {  // the rest darkened under the dialog (D467)
         clipTo(r, window.originX, window.originY, f32(contentWidth(window)), f32(contentHeight(window)))
-        shade(r, dark ? 153 : 102, window.originX, window.originY, f32(contentWidth(window)), f32(contentHeight(window)))
+        shade(r, scrim, window.originX, window.originY, f32(contentWidth(window)), f32(contentHeight(window)))
         drawParts(ref window, ref parts, ref c, window.dialogStart, window.order.len())
     }
     i64 open = partNumber(ref parts, window.popup)
@@ -5648,7 +5712,7 @@ void drawWindow(ref WindowData window, ref list<PartData> parts) {
     }
     if (snackVisible(ref window)) {
         clipTo(r, window.originX, window.originY, f32(contentWidth(window)), f32(contentHeight(window)))
-        drawSnackbar(ref window)
+        drawSnackbar(ref window, ref c, dark)
     }
     addr none
     SDL_SetRenderClipRect(r, none)
@@ -5681,22 +5745,72 @@ void drawParts(ref WindowData window, ref list<PartData> parts, ref Colors c, i6
     }
 }
 
-// Black with an alpha over a rectangle.
-void shade(addr renderer, u8 alpha, f32 x, f32 y, f32 w, f32 h) {
+// A color, 0xAARRGGBB, over a rectangle.
+void shade(addr renderer, u32 argb, f32 x, f32 y, f32 w, f32 h) {
     SDL_SetRenderDrawBlendMode(renderer, 1)  // SDL_BLENDMODE_BLEND
-    SDL_SetRenderDrawColor(renderer, 0, 0, 0, alpha)
+    SDL_SetRenderDrawColor(renderer, red(argb), green(argb), blue(argb), u8(argb >> 24))
     Rect area = Rect(x, y, w, h)
     SDL_RenderFillRect(renderer, ref area)
 }
 
-// The snackbar (D468): gray-800, its text white and its action indigo-300, lighter
-// under the mouse.
-void drawSnackbar(ref WindowData window) {
+// The shadow of the cards, of the dialogs and of the lists (D479): a sharp one just
+// under the box, and a soft one, smaller than the box and further down.
+void cardShadow(addr renderer, f32 x, f32 y, f32 w, f32 h, f32 radius, f32 density, ref Colors c) {
+    cromo_gui_shadow(renderer, x, y, w, h, radius, density, c.shadowNear, 2, 1)
+    if (w > 36 && h > 26) {  // as 0 10px 26px -18px of CSS: hardly at the sides, softly under the box
+        cromo_gui_shadow(renderer, x + 18, y + 18, w - 36, h - 26, radius, density, c.shadowFar, 20, 0)
+    }
+}
+
+// The title of a band, as those of the groups and of the dialogs: small, semibold, in
+// capitals and spaced (D479), on the middle of the band, from x.
+void bandTitle(ref WindowData window, string title, f32 x, f32 top, f32 height, u32 rgb, bool enabled) {
+    f32 ascent = 0
+    f32 descent = 0
+    f32 gap = 0
+    cromo_gui_font_metrics(window.band, ref ascent, ref descent, ref gap)
+    f32 baseline = top + height / 2 + (ascent - descent) / 2
+    string upper = title.upper()
+    f32 spacing = bandSize() * 0.09
+    f32 at = x
+    i64 next = 0
+    for (i64 i = 0; i < upper.len(); i = next) {
+        u8 lead = upper[i]
+        next = least64(i + (lead < 0x80 ? 1 : lead < 0xE0 ? 2 : lead < 0xF0 ? 3 : 4), upper.len())
+        string letter = upper.slice(i, next)
+        text(window.band, letter, at, baseline, rgb, enabled)
+        at = at + textWidth(window.band, letter, letter.len()) + spacing
+    }
+}
+
+i64 least64(i64 a, i64 b) {
+    ret a < b ? a : b
+}
+
+// A card with a band at its top, as the groups and the dialogs: the band in the
+// second surface, with a line under it, and the rest of the card in the first.
+void bandCard(addr renderer, ref PartData part, f32 band, f32 radius, f32 density, ref Colors c, u32 border) {
+    f32 x = part.left
+    f32 y = part.top
+    f32 w = f32(part.width)
+    f32 h = f32(part.height)
+    cromo_gui_box(renderer, x, y, w, h, radius, 1, density, solid(c.surface, true), solid(border, true))
+    if (band > 0) {
+        clipInside(renderer, ref part, x, y, w, band)
+        cromo_gui_box(renderer, x, y, w, h, radius, 1, density, solid(c.surface2, true), solid(border, true))
+        clipPart(renderer, ref part)
+        fill(renderer, c.rule, x + 1, y + band - 1, w - 2, 1)
+    }
+}
+
+// The snackbar (D468): in the colors of the other theme, the text of the ink on the
+// ink, and its action in the accent of the other theme, which reads on it.
+void drawSnackbar(ref WindowData window, ref Colors c, bool dark) {
     addr r = window.renderer
     f32 d = window.density
     Rect box = snackBox(ref window)
-    cromo_gui_shadow(r, box.x, box.y, box.w, box.h, 8, d, 0x40000000, 8, 3)
-    cromo_gui_box(r, box.x, box.y, box.w, box.h, 8, 0, d, solid(0x1F2937, true), 0)
+    cardShadow(r, box.x, box.y, box.w, box.h, 8, d, ref c)
+    cromo_gui_box(r, box.x, box.y, box.w, box.h, 8, 0, d, solid(c.ink, true), 0)
     f32 ascent = 0
     f32 descent = 0
     f32 gap = 0
@@ -5707,21 +5821,21 @@ void drawSnackbar(ref WindowData window) {
         f32 size = textWidth(window.strong, window.snackAction, window.snackAction.len())
         right = right - size
         if (window.snackHot) {
-            cromo_gui_box(r, right - 8, box.y + 6, size + 16, box.h - 12, 6, 0, d, solid(0x374151, true), 0)
+            cromo_gui_box(r, right - 8, box.y + 6, size + 16, box.h - 12, 6, 0, d, solid(dark ? 0xD5DDE3 : 0x2A343B, true), 0)
         }
-        text(window.strong, window.snackAction, right, baseline, 0xA5B4FC, true)
+        text(window.strong, window.snackAction, right, baseline, dark ? 0x8A5A12 : 0xE0A64A, true)
         right = right - 16
     }
     clipTo(r, box.x + 16, box.y, most(right - box.x - 16, 0), box.h)
-    text(window.body, window.snackText, box.x + 16, baseline, 0xFFFFFF, true)
+    text(window.body, window.snackText, box.x + 16, baseline, c.surface, true)
 }
 
 // The title bar, its title and its buttons, and a line at the edges when the
 // window is not maximized (D431).
 void drawTitleBar(ref WindowData window, ref Colors c, f32 width, f32 height) {
     addr r = window.renderer
-    fill(r, c.bar, 0, 0, width, barHeight)
-    u32 title = window.focused ? c.title : c.inactive
+    fill(r, c.surface, 0, 0, width, barHeight)
+    u32 title = window.focused ? c.ink2 : c.ink3
     f32 ascent = 0
     f32 descent = 0
     f32 gap = 0
@@ -5736,26 +5850,31 @@ void drawTitleBar(ref WindowData window, ref Colors c, f32 width, f32 height) {
             fill(r, window.pressed == 2 ? closePressed : closeHover, x, 0, buttonWidth, barHeight)
             symbol = 0xFFFFFF
         } else if (b == window.hovered && !disabled) {
-            fill(r, window.pressed == b ? c.pressed : c.hover, x, 0, buttonWidth, barHeight)
+            fill(r, window.pressed == b ? c.surface3 : c.surface2, x, 0, buttonWidth, barHeight)
         }
         if (disabled) {
-            symbol = c.inactive
+            symbol = c.rule2
         }
         i32 kind = b == 2 ? 3 : b == 1 && window.maximized ? 2 : b
         cromo_gui_symbol(r, kind, x + buttonWidth / 2, barHeight / 2, window.density, red(symbol), green(symbol), blue(symbol))
     }
-    fill(r, c.separator, 0, barHeight - 1, width, 1)
+    fill(r, c.rule, 0, barHeight - 1, width, 1)
     if (!window.maximized) {
-        SDL_SetRenderDrawColor(r, red(c.border), green(c.border), blue(c.border), 255)
+        SDL_SetRenderDrawColor(r, red(c.rule2), green(c.rule2), blue(c.rule2), 255)
         Rect edge = Rect(0, 0, width, height)
         SDL_RenderRect(r, ref edge)
     }
 }
 
-// A component, in the look of D443: a soft shadow under it, buttons and check
-// boxes checked in a gradient with a line of light and a border of a deeper
-// color, a glow around the text box or the combo box in focus and a ring of 2
-// pixels around the other components in focus, the groups as cards.
+// The ring of the focus: 2 pixels in the blue of the selection, 1 pixel out of the
+// component (D479).
+void focusRing(addr renderer, f32 x, f32 y, f32 w, f32 h, f32 radius, f32 density, ref Colors c) {
+    cromo_gui_box(renderer, x - 3, y - 3, w + 6, h + 6, radius + 3, 2, density, 0, solid(c.selection, true))
+}
+
+// A component, in the look of D479: flat, with borders of 1 pixel; the main buttons
+// and the boxes checked in the accent; the groups and the dialogs as cards with a band
+// at the top; a ring of 2 pixels around the component in focus.
 void drawPart(ref WindowData window, ref PartData part, ref Colors c) {
     addr r = window.renderer
     f32 d = window.density
@@ -5772,55 +5891,55 @@ void drawPart(ref WindowData window, ref PartData part, ref Colors c) {
     cromo_gui_font_metrics(window.body, ref ascent, ref descent, ref gap)
     f32 baseline = y + h / 2 + (ascent - descent) / 2
     if (part.kind == kindLabel) {
-        text(window.body, part.text, x, baseline, c.label, on)
-    } else if (part.kind == kindButton && part.action == 2) {  // of a dialog, not the last
-        bool hot = window.hot == part.id && on
-        cromo_gui_shadow(r, x, y, w, h, corner, d, c.inputShadow, 2, 1)
-        cromo_gui_box(r, x, y, w, h, corner, 1, d, solid(hot ? c.hover : c.input, on), solid(c.inputBorder, on))
-        f32 size = textWidth(window.strong, part.text, part.text.len())
-        text(window.strong, part.text, x + (w - size) / 2, baseline, c.text, on)
-        if (ring) {
-            cromo_gui_box(r, x - 3, y - 3, w + 6, h + 6, corner + 3, 2, d, 0, solid(c.focus, true))
-        }
+        text(window.body, part.text, x, baseline, c.ink2, on)
     } else if (part.kind == kindSwitch) {
         drawSwitch(ref window, ref part, ref c, ring, baseline)
     } else if (part.kind == kindSlider) {
         drawSlider(ref window, ref part, ref c, ring)
     } else if (part.kind == kindDialog) {
-        cromo_gui_shadow(r, x, y, w, h, dialogCorner, d, 0x30000000, 10, 4)
-        cromo_gui_box(r, x, y, w, h, dialogCorner, 1, d, solid(c.card, true), solid(c.cardBorder, true))
-        f32 high = 0
-        f32 low = 0
-        f32 space = 0
-        cromo_gui_font_metrics(window.heading, ref high, ref low, ref space)
-        clipInside(r, ref part, x + dialogPadding, y, w - 2 * dialogPadding, dialogTop)
-        text(window.heading, part.text, x + dialogPadding, y + dialogPadding + high, c.text, true)
+        f32 radius = dialogCorner()
+        f32 band = bandHeight()
+        f32 footer = dialogFooter()
+        cardShadow(r, x, y, w, h, radius, d, ref c)
+        bandCard(r, ref part, band, radius, d, ref c, c.rule2)
+        clipInside(r, ref part, x, y + h - footer, w, footer)  // the band of the buttons
+        cromo_gui_box(r, x, y, w, h, radius, 1, d, solid(c.surface2, true), solid(c.rule2, true))
+        clipPart(r, ref part)
+        fill(r, c.rule, x + 1, y + h - footer, w - 2, 1)
+        clipInside(r, ref part, x + 12, y, w - 24, band)
+        bandTitle(ref window, part.text, x + 12, y, band, c.ink3, true)
         clipPart(r, ref part)
     } else if (part.kind == kindButton) {
         bool hot = window.hot == part.id && on
         bool down = window.held == part.id && hot
-        u32 top = hot ? c.hoverTop : c.buttonTop
-        u32 bottom = hot ? c.hoverBottom : c.buttonBottom
-        if (down) {
-            top = c.buttonBottom
-            bottom = c.buttonBottom
+        ButtonStyle style = part.action == 1 ? ButtonStyle.Primary : part.action == 2 ? ButtonStyle.Normal : part.style
+        u32 back = down ? c.surface3 : c.surface
+        u32 line = hot ? c.ink3 : c.rule2
+        u32 fore = hot ? c.ink : c.ink2
+        addr font = window.body
+        if (style == ButtonStyle.Primary) {
+            back = hot ? c.accent2 : c.accent
+            line = back
+            fore = c.onAccent
+            font = window.strong
+        } else if (style == ButtonStyle.Danger) {
+            back = hot ? c.danger : c.surface
+            line = hot ? c.danger : c.rule2
+            fore = hot ? c.onAccent : c.danger
         }
-        if (on) {
-            cromo_gui_shadow(r, x, y, w, h, corner, d, c.shadow, 3, 1.5)
-        }
-        cromo_gui_gradient(r, x, y, w, h, corner, 1, d, solid(top, on), solid(bottom, on), solid(c.buttonLine, on),
-            down || !on ? 0 : c.highlight)
-        f32 size = textWidth(window.strong, part.text, part.text.len())
+        cromo_gui_box(r, x, y, w, h, corner, 1, d, solid(back, on), solid(line, on))
+        f32 size = textWidth(font, part.text, part.text.len())
         if (part.icon != Icon.None) {
+            f32 icon = buttonIcon()
             f32 space = part.text.len() > 0 ? 6 : 0
-            f32 start = x + (w - buttonIcon - space - size) / 2
-            drawIcon(r, part.icon, start + buttonIcon / 2, y + h / 2, buttonIcon, d, c.buttonText, on)
-            text(window.strong, part.text, start + buttonIcon + space, baseline, c.buttonText, on)
+            f32 start = x + (w - icon - space - size) / 2
+            drawIcon(r, part.icon, start + icon / 2, y + h / 2, icon, d, fore, on)
+            text(font, part.text, start + icon + space, baseline, fore, on)
         } else {
-            text(window.strong, part.text, x + (w - size) / 2, baseline, c.buttonText, on)
+            text(font, part.text, x + (w - size) / 2, baseline, fore, on)
         }
         if (ring) {
-            cromo_gui_box(r, x - 3, y - 3, w + 6, h + 6, corner + 3, 2, d, 0, solid(c.focus, true))
+            focusRing(r, x, y, w, h, corner, d, ref c)
         }
     } else if (part.kind == kindTextBox) {
         drawField(ref window, ref part, ref c, focused)
@@ -5843,56 +5962,55 @@ void drawPart(ref WindowData window, ref PartData part, ref Colors c) {
             i64 high = part.caret < part.anchor ? part.anchor : part.caret
             f32 from = textWidth(window.body, part.text, low)
             f32 to = textWidth(window.body, part.text, high)
-            fill(r, c.selection, left + from, baseline - ascent - 1, to - from, ascent + descent + 2)
+            fill(r, c.selectionSoft, left + from, baseline - ascent - 1, to - from, ascent + descent + 2)
         }
         if (part.text.len() == 0) {
-            text(window.body, part.placeholder, x + padding, baseline, c.muted, on)
+            text(window.body, part.placeholder, x + padding, baseline, c.ink3, on)
         } else {
-            text(window.body, part.text, left, baseline, c.text, on)
+            text(window.body, part.text, left, baseline, c.ink, on)
         }
         bool blink = ((SDL_GetTicksNS() - window.caretStart) / 500000000) % 2 == 0
         if (focused && blink) {
-            fill(r, c.focus, left + caretX, baseline - ascent, 1, ascent + descent)
+            fill(r, c.ink, left + caretX, baseline - ascent, 1, ascent + descent)
         }
         clipPart(r, ref part)
     } else if (part.kind == kindCheckBox) {
         f32 top = y + (h - checkSide) / 2
-        if (on) {
-            cromo_gui_shadow(r, x, top, checkSide, checkSide, checkCorner, d, c.inputShadow, 2, 1)
-        }
+        bool hot = window.hot == part.id && on
         if (part.checked) {
-            cromo_gui_gradient(r, x, top, checkSide, checkSide, checkCorner, 1, d, solid(c.buttonTop, on), solid(c.buttonBottom, on),
-                solid(c.buttonLine, on), on ? c.highlight : 0)
-            cromo_gui_symbol(r, 4, x + checkSide / 2, top + checkSide / 2, d, red(c.buttonText), green(c.buttonText),
-                blue(c.buttonText))
+            u32 back = hot ? c.accent2 : c.accent
+            cromo_gui_box(r, x, top, checkSide, checkSide, checkCorner, 1, d, solid(back, on), solid(back, on))
+            cromo_gui_symbol(r, 4, x + checkSide / 2, top + checkSide / 2, d, red(c.onAccent), green(c.onAccent), blue(c.onAccent))
         } else {
-            cromo_gui_box(r, x, top, checkSide, checkSide, checkCorner, 1, d, solid(c.check, on), solid(c.checkBorder, on))
+            cromo_gui_box(r, x, top, checkSide, checkSide, checkCorner, 1, d, solid(c.surface, on), solid(hot ? c.ink3 : c.rule2, on))
         }
         if (ring) {
-            cromo_gui_box(r, x - 3, top - 3, checkSide + 6, checkSide + 6, checkCorner + 3, 2, d, 0, solid(c.focus, true))
+            focusRing(r, x, top, checkSide, checkSide, checkCorner, d, ref c)
         }
-        text(window.body, part.text, x + checkSide + 8, baseline, c.text, on)
+        text(window.body, part.text, x + checkSide + 8, baseline, c.ink, on)
     } else if (part.kind == kindGroup) {
-        cromo_gui_shadow(r, x, y, w, h, groupCorner, d, c.inputShadow, 2, 1)
-        cromo_gui_box(r, x, y, w, h, groupCorner, 1, d, solid(c.card, true), solid(c.cardBorder, true))
-        clipInside(r, ref part, x + 1, y + 1, w - 2, h - 2)
-        text(window.strong, part.text, x + 12, y + 17 + (ascent - descent) / 2, c.text, on)
-        clipPart(r, ref part)
+        f32 band = part.text.len() > 0 ? bandHeight() : 0
+        cardShadow(r, x, y, w, h, groupCorner, d, ref c)
+        bandCard(r, ref part, band, groupCorner, d, ref c, c.rule)
+        if (band > 0) {
+            clipInside(r, ref part, x + 12, y, w - 24, band)
+            bandTitle(ref window, part.text, x + 12, y, band, c.ink3, on)
+            clipPart(r, ref part)
+        }
     } else if (part.kind == kindComboBox) {
         drawField(ref window, ref part, ref c, focused || window.popup == part.id)
         clipInside(r, ref part, x + 2, y + 2, w - 28, h - 4)
         if (part.selected >= 0 && part.selected < part.items.len()) {
-            text(window.body, part.items[part.selected], x + padding, baseline, c.text, on)
+            text(window.body, part.items[part.selected], x + padding, baseline, c.ink, on)
         } else {
-            text(window.body, part.placeholder, x + padding, baseline, c.muted, on)
+            text(window.body, part.placeholder, x + padding, baseline, c.ink3, on)
         }
         clipPart(r, ref part)
-        u32 arrow = on ? c.label : c.muted
-        cromo_gui_symbol(r, 5, x + w - 14, y + h / 2, d, red(arrow), green(arrow), blue(arrow))
+        cromo_gui_symbol(r, 5, x + w - 14, y + h / 2, d, red(c.ink3), green(c.ink3), blue(c.ink3))
     } else if (part.kind == kindImageBox) {
         drawImage(ref window, ref part)
     } else if (part.kind == kindIconBox) {
-        drawIcon(r, part.icon, x + w / 2, y + h / 2, least(w, h), d, c.label, on)
+        drawIcon(r, part.icon, x + w / 2, y + h / 2, least(w, h), d, c.ink2, on)
     } else if (part.kind == kindListView) {
         drawListView(ref window, ref part, ref c)
     } else if (part.kind == kindAppBar) {
@@ -5902,8 +6020,8 @@ void drawPart(ref WindowData window, ref PartData part, ref Colors c) {
     }
 }
 
-// A switch: its text on the left, and at the right edge a track indigo when it is
-// on, gray when it is off, with a white knob that slides in 150 ms.
+// A switch: its text on the left, and at the right edge a track in the accent when it
+// is on, gray when it is off, with a white knob that slides in 150 ms.
 void drawSwitch(ref WindowData window, ref PartData part, ref Colors c, bool focused, f32 baseline) {
     addr r = window.renderer
     f32 d = window.density
@@ -5916,24 +6034,25 @@ void drawSwitch(ref WindowData window, ref PartData part, ref Colors c, bool foc
     if (part.flipped == 0) {
         at = part.checked ? 1 : 0
     }
-    u32 track = part.checked ? c.buttonBottom : c.checkBorder
+    u32 track = part.checked ? c.accent : c.rule2
     cromo_gui_box(r, x, y, switchWidth, switchHeight, switchHeight / 2, 0, d, solid(track, on), 0)
-    f32 kx = x + 2 + (switchWidth - knob - 4) * at
-    f32 ky = y + (switchHeight - knob) / 2
+    f32 side = switchHeight - 4
+    f32 kx = x + 2 + (switchWidth - side - 4) * at
+    f32 ky = y + 2
     if (on) {
-        cromo_gui_shadow(r, kx, ky, knob, knob, knob / 2, d, c.shadow, 2, 1)
+        cromo_gui_shadow(r, kx, ky, side, side, side / 2, d, c.shadowNear, 2, 1)
     }
-    cromo_gui_box(r, kx, ky, knob, knob, knob / 2, 0, d, solid(0xFFFFFF, on), 0)
+    cromo_gui_box(r, kx, ky, side, side, side / 2, 0, d, solid(0xFFFFFF, on), 0)
     if (focused) {
-        cromo_gui_box(r, x - 3, y - 3, switchWidth + 6, switchHeight + 6, switchHeight / 2 + 3, 2, d, 0, solid(c.focus, true))
+        focusRing(r, x, y, switchWidth, switchHeight, switchHeight / 2, d, ref c)
     }
     clipInside(r, ref part, part.left, part.top, most(f32(part.width) - switchWidth - 8, 0), f32(part.height))
-    text(window.body, part.text, part.left, baseline, c.text, on)
+    text(window.body, part.text, part.left, baseline, c.ink, on)
     clipPart(r, ref part)
 }
 
-// A slider: its track, indigo up to the knob, and a white knob with an indigo
-// border.
+// A slider: its track, in the accent up to the knob, and a knob in the accent with a
+// ring of the surface around it.
 void drawSlider(ref WindowData window, ref PartData part, ref Colors c, bool focused) {
     addr r = window.renderer
     f32 d = window.density
@@ -5942,21 +6061,23 @@ void drawSlider(ref WindowData window, ref PartData part, ref Colors c, bool foc
     f32 from = part.left + knob / 2
     f32 to = part.left + f32(part.width) - knob / 2
     f32 at = knobAt(ref part)
-    cromo_gui_box(r, from - 2, middle - 2, to - from + 4, 4, 2, 0, d, solid(c.checkBorder, on), 0)
-    cromo_gui_box(r, from - 2, middle - 2, at - from + 4, 4, 2, 0, d, solid(c.buttonBottom, on), 0)
-    if (on) {
-        cromo_gui_shadow(r, at - knob / 2, middle - knob / 2, knob, knob, knob / 2, d, c.shadow, 3, 1)
-    }
+    cromo_gui_box(r, from - 2, middle - 2, to - from + 4, 4, 2, 0, d, solid(c.rule2, on), 0)
+    cromo_gui_box(r, from - 2, middle - 2, at - from + 4, 4, 2, 0, d, solid(c.accent, on), 0)
     bool held = window.held == part.id
-    cromo_gui_box(r, at - knob / 2, middle - knob / 2, knob, knob, knob / 2, held ? 3 : 2, d, solid(0xFFFFFF, on),
-        solid(c.buttonBottom, on))
+    bool hot = window.hot == part.id && on
+    f32 side = knob - 2
+    if (on) {
+        cromo_gui_shadow(r, at - side / 2, middle - side / 2, side, side, side / 2, d, c.shadowNear, 2, 1)
+    }
+    cromo_gui_box(r, at - side / 2, middle - side / 2, side, side, side / 2, 2, d, solid(held || hot ? c.accent2 : c.accent, on),
+        solid(c.surface, on))
     if (focused) {
-        cromo_gui_box(r, at - knob / 2 - 4, middle - knob / 2 - 4, knob + 8, knob + 8, knob / 2 + 4, 2, d, 0, solid(c.focus, true))
+        focusRing(r, at - side / 2, middle - side / 2, side, side, side / 2, d, ref c)
     }
 }
 
 // The thin bar on the right of a panel or of a list that scrolls, while it moves and
-// while the mouse is over it, wider while it is dragged.
+// while the mouse is over it, wider and darker while it is dragged.
 void drawScrollBar(ref WindowData window, ref PartData part, ref Colors c) {
     f32 h = f32(part.height)
     f32 thumb = most(24, h * h / part.content)
@@ -5964,79 +6085,80 @@ void drawScrollBar(ref WindowData window, ref PartData part, ref Colors c) {
     bool held = window.scrolling == part.id && window.scrollBar
     f32 w = held ? 6 : 4
     cromo_gui_box(window.renderer, part.left + f32(part.width) - w - 3, at + 2, w, thumb - 4, w / 2, 0, window.density,
-        solid(c.checkBorder, true), 0)
+        solid(held ? c.ink3 : c.rule2, true), 0)
 }
 
-// A list: its rows that are seen, each with its icon, its title and the line under
-// it, its text on the right, and a line under the row; the item chosen on the color
-// of the pills, with a bar of the accent when the list has the keyboard.
+// A list, on the surface: its rows that are seen, each with its icon, its title and
+// the line under it, its text on the right, and a line under the row; the selected row
+// in the soft blue of the selection, with a bar of the selection on its left (D479).
 void drawListView(ref WindowData window, ref PartData view, ref Colors c) {
     addr r = window.renderer
     f32 d = window.density
     f32 x = view.left
     f32 w = f32(view.width)
     bool on = view.active
-    bool focused = window.focus == view.id && window.focused && window.keyboard
     f32 ascent = 0
     f32 descent = 0
     f32 gap = 0
     cromo_gui_font_metrics(window.body, ref ascent, ref descent, ref gap)
     f32 middle = (ascent - descent) / 2
     f32 bottom = view.top + f32(view.height)
+    f32 row = rowHeight()
+    f32 avatar = avatarSize()
     for (addr texture in view.dropped) {
         SDL_DestroyTexture(texture)
     }
     view.dropped.clear()
     clipInside(r, ref view, x, view.top, w, f32(view.height))
-    for (i64 row = i64(view.offsetY / rowHeight); row < view.items.len(); row++) {
-        f32 top = view.top + f32(row) * rowHeight - view.offsetY
+    fill(r, c.surface, x, view.top, w, f32(view.height))  // as a table in a card
+    for (i64 k = i64(view.offsetY / row); k < view.items.len(); k++) {
+        f32 top = view.top + f32(k) * row - view.offsetY
         if (top >= bottom) {
             break
         }
-        if (row == view.selected) {
-            fill(r, c.item, x, top, w, rowHeight)
-            if (focused) {
-                fill(r, c.focus, x, top, 3, rowHeight)
-            }
-        } else if (window.hot == view.id && window.hotItem == row && on) {
-            fill(r, c.hover, x, top, w, rowHeight)
+        if (k == view.selected) {
+            fill(r, c.selectionSoft, x, top, w, row)
+            fill(r, c.selection, x, top, 3, row)
+        } else if (window.hot == view.id && window.hotItem == k && on) {
+            fill(r, c.surface2, x, top, w, row)
         }
         f32 left = x + 16
         addr none
-        if (view.images[row] != none) {  // D469
-            if (view.textures[row] == none) {
-                view.textures[row] = SDL_CreateTexture(r, 0x16762004, 0, avatarPixels, avatarPixels)  // RGBA32, static
-                if (view.textures[row] != none) {
-                    SDL_SetTextureBlendMode(view.textures[row], 1)
-                    SDL_UpdateTexture(view.textures[row], none, view.images[row], avatarPixels * 4)
+        if (view.images[k] != none) {  // D469
+            if (view.textures[k] == none) {
+                view.textures[k] = SDL_CreateTexture(r, 0x16762004, 0, avatarPixels, avatarPixels)  // RGBA32, static
+                if (view.textures[k] != none) {
+                    SDL_SetTextureBlendMode(view.textures[k], 1)
+                    SDL_UpdateTexture(view.textures[k], none, view.images[k], avatarPixels * 4)
                 }
             }
-            if (view.textures[row] != none) {
-                Rect place = Rect(x + 16, top + (rowHeight - avatarSize) / 2, avatarSize, avatarSize)
-                SDL_RenderTexture(r, view.textures[row], none, ref place)
+            if (view.textures[k] != none) {
+                Rect place = Rect(x + 16, top + (row - avatar) / 2, avatar, avatar)
+                SDL_RenderTexture(r, view.textures[k], none, ref place)
             }
-            left = x + 72
-        } else if (view.icons[row] != Icon.None) {
-            drawIcon(r, view.icons[row], x + 28, top + rowHeight / 2, 24, d, c.label, on)
-            left = x + 56
+            left = x + 32 + avatar
+        } else if (view.icons[k] != Icon.None) {
+            f32 icon = comfortable() ? 24 : 20
+            drawIcon(r, view.icons[k], x + 16 + icon / 2, top + row / 2, icon, d, c.ink2, on)
+            left = x + 32 + icon
         }
         f32 right = x + w - 16
-        bool two = view.subtitles[row].len() > 0
-        f32 titleLine = two ? top + 20 + middle : top + rowHeight / 2 + middle
-        if (view.details[row].len() > 0) {
-            f32 size = textWidth(window.body, view.details[row], view.details[row].len())
-            text(window.body, view.details[row], right - size, titleLine, c.muted, on)
+        bool two = view.subtitles[k].len() > 0
+        f32 titleLine = two ? top + row * 0.36 + middle : top + row / 2 + middle
+        if (view.details[k].len() > 0) {
+            f32 size = textWidth(window.body, view.details[k], view.details[k].len())
+            text(window.body, view.details[k], right - size, titleLine, c.ink3, on)
             right = right - size - 12
         }
         f32 seen = most(top, view.top)
-        clipInside(r, ref view, left, seen, right - left, least(top + rowHeight, bottom) - seen)
-        text(window.body, view.items[row], left, titleLine, c.text, on)
+        clipInside(r, ref view, left, seen, right - left, least(top + row, bottom) - seen)
+        text(window.body, view.items[k], left, titleLine, c.ink, on)
         if (two) {
-            text(window.body, view.subtitles[row], left, top + 40 + middle, c.muted, on)
+            text(window.body, view.subtitles[k], left, top + row * 0.71 + middle, c.ink3, on)
         }
         clipInside(r, ref view, x, view.top, w, f32(view.height))
-        if (row + 1 < view.items.len()) {
-            fill(r, c.separator, left, top + rowHeight - 1, x + w - left, 1)
+        if (k + 1 < view.items.len()) {
+            fill(r, c.rule, left, top + row - 1, x + w - left, 1)
         }
     }
 }
@@ -6044,7 +6166,7 @@ void drawListView(ref WindowData window, ref PartData view, ref Colors c) {
 // The round background of an icon of a bar under the mouse, or pressed.
 void drawHover(ref WindowData window, ref PartData bar, ref Colors c, i64 item, f32 x, f32 y, f32 w, f32 h, f32 radius) {
     if (window.hot == bar.id && window.hotItem == item && bar.active) {
-        u32 back = window.held == bar.id && window.heldItem == item ? c.pressed : c.hover
+        u32 back = window.held == bar.id && window.heldItem == item ? c.surface3 : c.surface2
         cromo_gui_box(window.renderer, x, y, w, h, radius, 0, window.density, solid(back, true), 0)
     }
 }
@@ -6059,13 +6181,15 @@ void drawAppBar(ref WindowData window, ref PartData bar, ref Colors c) {
     f32 w = f32(bar.width)
     f32 h = f32(bar.height)
     bool on = bar.active
-    fill(r, c.bar, x, y, w, h)
-    fill(r, c.separator, x, y + h - 1, w, 1)
+    fill(r, c.surface, x, y, w, h)
+    fill(r, c.rule, x, y + h - 1, w, 1)
     f32 middle = y + h / 2
+    f32 icon = barIcon()
+    f32 round = least(40, h - 8)
     f32 left = x + 16
     if (bar.icon != Icon.None) {
-        drawHover(ref window, ref bar, ref c, 0, x + 8, middle - 20, 40, 40, 20)
-        drawIcon(r, bar.icon, x + 28, middle, 24, d, c.title, on)
+        drawHover(ref window, ref bar, ref c, 0, x + 28 - round / 2, middle - round / 2, round, round, round / 2)
+        drawIcon(r, bar.icon, x + 28, middle, icon, d, c.ink2, on)
         left = x + 60
     }
     f32 ascent = 0
@@ -6074,17 +6198,17 @@ void drawAppBar(ref WindowData window, ref PartData bar, ref Colors c) {
     cromo_gui_font_metrics(window.heading, ref ascent, ref descent, ref gap)
     f32 right = x + w - 8 - 44 * f32(bar.icons.len())
     clipInside(r, ref bar, left, y, right - left, h)
-    text(window.heading, bar.text, left, middle + (ascent - descent) / 2, c.text, on)
+    text(window.heading, bar.text, left, middle + (ascent - descent) / 2, c.ink, on)
     clipPart(r, ref bar)
     for (i64 k = 0; k < bar.icons.len(); k++) {
         f32 center = x + w - 28 - 44 * f32(k)
-        drawHover(ref window, ref bar, ref c, k + 1, center - 20, middle - 20, 40, 40, 20)
-        drawIcon(r, bar.icons[k], center, middle, 24, d, c.title, on)
+        drawHover(ref window, ref bar, ref c, k + 1, center - round / 2, middle - round / 2, round, round, round / 2)
+        drawIcon(r, bar.icons[k], center, middle, icon, d, c.ink2, on)
     }
 }
 
 // A navigation bar: its background, a line over it, and its items, the one chosen
-// with a pill behind its icon and in the color of the accent, as in Material 3.
+// in the accent, with a pill of the soft accent behind its icon.
 void drawNavigation(ref WindowData window, ref PartData bar, ref Colors c) {
     addr r = window.renderer
     f32 d = window.density
@@ -6093,21 +6217,22 @@ void drawNavigation(ref WindowData window, ref PartData bar, ref Colors c) {
     f32 w = f32(bar.width)
     f32 h = f32(bar.height)
     bool on = bar.active
-    fill(r, c.bar, x, y, w, h)
-    fill(r, c.separator, x, y, w, 1)
+    fill(r, c.surface, x, y, w, h)
+    fill(r, c.rule, x, y, w, 1)
+    f32 pill = y + (h - 48) / 2  // the top of the pill: 8 pixels in a bar of 64
     i64 n = bar.items.len()
     for (i64 k = 0; k < n; k++) {
         f32 center = x + w * (f32(k) + 0.5) / f32(n)
         bool chosen = k == bar.selected
         if (chosen) {
-            cromo_gui_box(r, center - 28, y + 8, 56, 28, 14, 0, d, solid(c.item, on), 0)
+            cromo_gui_box(r, center - 28, pill, 56, 28, 14, 0, d, solid(c.accentSoft, on), 0)
         } else {
-            drawHover(ref window, ref bar, ref c, k, center - 28, y + 8, 56, 28, 14)
+            drawHover(ref window, ref bar, ref c, k, center - 28, pill, 56, 28, 14)
         }
-        u32 color = chosen ? c.accent : c.label
-        drawIcon(r, bar.icons[k], center, y + 22, 22, d, color, on)
+        u32 color = chosen ? c.accent2 : c.ink3
+        drawIcon(r, bar.icons[k], center, pill + 14, 22, d, color, on)
         f32 size = textWidth(window.caption, bar.items[k], bar.items[k].len())
-        text(window.caption, bar.items[k], center - size / 2, y + 53, color, on)
+        text(window.caption, bar.items[k], center - size / 2, pill + 45, color, on)
     }
 }
 
@@ -6118,8 +6243,8 @@ void drawIcon(addr renderer, Icon which, f32 x, f32 y, f32 size, f32 density, u3
     }
 }
 
-// The box of a text box or of a combo box: in focus, with a border of indigo and a
-// glow around it.
+// The box of a text box or of a combo box: the surface with a border of 1 pixel, and
+// the ring of the focus around it while it has the keyboard.
 void drawField(ref WindowData window, ref PartData part, ref Colors c, bool lit) {
     addr r = window.renderer
     f32 d = window.density
@@ -6128,46 +6253,47 @@ void drawField(ref WindowData window, ref PartData part, ref Colors c, bool lit)
     f32 w = f32(part.width)
     f32 h = f32(part.height)
     bool on = part.active
+    bool hot = window.hot == part.id && on
+    cromo_gui_box(r, x, y, w, h, corner, 1, d, solid(c.surface, on), solid(hot && !lit ? c.ink3 : c.rule2, on))
     if (lit) {
-        cromo_gui_shadow(r, x, y, w, h, corner, d, c.glow, 4, 0)
-    } else if (on) {
-        cromo_gui_shadow(r, x, y, w, h, corner, d, c.inputShadow, 2, 1)
+        focusRing(r, x, y, w, h, corner, d, ref c)
     }
-    cromo_gui_box(r, x, y, w, h, corner, lit ? 2 : 1, d, solid(c.input, on), solid(lit ? c.focus : c.inputBorder, on))
 }
 
-// The list of an open combo box, over the other components: the item pointed at
-// on a light background, the one chosen semibold with a mark, and a bar on the
-// right when it scrolls.
+// The list of an open combo box, over the other components, as a menu: the item
+// pointed at in the soft accent, the one chosen semibold with a mark, and a bar on
+// the right when it scrolls.
 void drawList(ref WindowData window, ref PartData box, ref Colors c) {
     addr r = window.renderer
     f32 d = window.density
     Rect area = listOf(ref window, ref box)
     f32 x = area.x
     f32 y = area.y
-    cromo_gui_shadow(r, x, y, area.w, area.h, corner, d, c.listShadow, 8, 4)
-    cromo_gui_box(r, x, y, area.w, area.h, corner, 1, d, solid(c.input, true), solid(c.inputBorder, true))
+    cardShadow(r, x, y, area.w, area.h, menuCorner, d, ref c)
+    cromo_gui_box(r, x, y, area.w, area.h, menuCorner, 1, d, solid(c.surface, true), solid(c.rule2, true))
     f32 ascent = 0
     f32 descent = 0
     f32 gap = 0
     cromo_gui_font_metrics(window.body, ref ascent, ref descent, ref gap)
     i64 rows = rowsOf(ref window, ref box)
     bool scrolls = box.items.len() > rows
+    f32 item = itemHeight()
     for (i64 row = 0; row < rows; row++) {
-        i64 item = box.first + row
-        f32 top = y + 3 + f32(row) * itemHeight
+        i64 at = box.first + row
+        f32 top = y + 3 + f32(row) * item
         clipTo(r, x + 1, y + 1, area.w - 2, area.h - 2)
-        if (item == box.highlight) {
-            cromo_gui_box(r, x + 3, top, area.w - (scrolls ? 14 : 6), itemHeight, 5, 0, d, solid(c.item, true), 0)
+        bool lit = at == box.highlight
+        if (lit) {
+            cromo_gui_box(r, x + 3, top, area.w - (scrolls ? 14 : 6), item, 5, 0, d, solid(c.accentSoft, true), 0)
         }
-        bool chosen = item == box.selected
+        bool chosen = at == box.selected
         clipTo(r, x + 1, y + 1, area.w - 30, area.h - 2)
-        text(chosen ? window.strong : window.body, box.items[item], x + padding, top + itemHeight / 2 + (ascent - descent) / 2, c.text,
-            true)
+        text(chosen ? window.strong : window.body, box.items[at], x + padding + 4, top + item / 2 + (ascent - descent) / 2,
+            lit ? c.accent2 : c.ink, true)
         if (chosen) {
             clipTo(r, x + 1, y + 1, area.w - 2, area.h - 2)
-            cromo_gui_symbol(r, 4, x + area.w - (scrolls ? 26 : 18), top + itemHeight / 2, d, red(c.focus), green(c.focus),
-                blue(c.focus))
+            cromo_gui_symbol(r, 4, x + area.w - (scrolls ? 26 : 18), top + item / 2, d, red(c.accent), green(c.accent),
+                blue(c.accent))
         }
     }
     if (scrolls) {
@@ -6175,7 +6301,7 @@ void drawList(ref WindowData window, ref PartData box, ref Colors c) {
         f32 thumb = track * f32(rows) / f32(box.items.len())
         f32 at = y + 3 + (track - thumb) * f32(box.first) / f32(box.items.len() - rows)
         clipTo(r, x + 1, y + 1, area.w - 2, area.h - 2)
-        cromo_gui_box(r, x + area.w - 7, at, 4, thumb, 2, 0, d, solid(c.checkBorder, true), 0)
+        cromo_gui_box(r, x + area.w - 7, at, 4, thumb, 2, 0, d, solid(c.rule2, true), 0)
     }
 }
 

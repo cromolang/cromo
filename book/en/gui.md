@@ -1,6 +1,6 @@
 # Windows and apps
 
-`std.gui` makes windows with their components: labels, buttons, text boxes, lists, dialogs. It draws them itself, with SDL3 inside the program, so a window looks the same on Windows and on Linux, in the style of a dashboard made with Tailwind, light or dark. The same program, compiled with `--target android`, is an app for Android.
+`std.gui` makes windows with their components: labels, buttons, text boxes, lists, dialogs. It draws them itself, with SDL3 inside the program, so a window looks the same on Windows and on Linux: flat and quiet, with an ochre accent, light or dark, compact as a desktop application. The same program, compiled with `--target android`, is an app for Android.
 
 > How `std.gui` works is decided: components as handles, handlers on the thread of the window, positions in pixels with anchors. The names of the components and of their methods are still a draft, and can change before version 1.0.
 
@@ -16,6 +16,7 @@ i32 main() {
     gui.TextBox name = w.add(gui.TextBox("", 24, 48, 372, 32))
     name.setPlaceholder("Write your name")
     gui.Button greet = w.add(gui.Button("Greet", 24, 96, 100, 32))
+    greet.setStyle(gui.ButtonStyle.Primary)
     gui.Label answer = w.add(gui.Label("", 24, 148, 372, 20))
     greet.onClick([name, answer]() {
         answer.setText(format("Hello, {}!", name.text()))
@@ -31,6 +32,7 @@ i32 main() {
 - `w.add(...)` puts a component in the window and gives it back. A component is a *handle*: a small value that names it, and that can be copied freely. The lambda of `onClick` captures `name` and `answer` by copy, and reads and changes the components on the screen.
 - Positions and sizes are in logical pixels, from the top left corner of the content, under the title bar: `std.gui` scales them with the density of the screen.
 - The handlers run on the thread of the window, one at a time, and can change any component. A handler that takes long freezes the window: long work goes to a task, as in [Threads, tasks and channels](concurrency.md).
+- `setStyle(gui.ButtonStyle.Primary)` fills the button of the main action with the accent; `gui.ButtonStyle.Danger` is for an action that destroys, and the other buttons are light with a thin border.
 - `[[window]]` makes on Windows a program without a console, as programs with windows are; without it the console stays, which is handy for `println` while the program is being written. An icon `greet.ico` next to `greet.cro` goes into the executable.
 
 ## The components
@@ -38,14 +40,14 @@ i32 main() {
 | Component | What it is |
 |---|---|
 | `gui.Label(text, x, y, width, height)` | a line of text |
-| `gui.Button(text, ...)` | a button: `onClick`, and `setIcon` for an icon before the text |
+| `gui.Button(text, ...)` | a button: `onClick`, `setIcon` for an icon before the text, and `setStyle` |
 | `gui.TextBox(text, ...)` | a line to write in: `text()`, `setPlaceholder`, `onChange`, and `onEnter` for the Enter key |
 | `gui.CheckBox(text, ...)`, `gui.Switch(text, ...)` | on or off: `checked()` and `onChange` |
 | `gui.Slider(minimum, maximum, ...)` | an integer between the two: `value()` and `onChange` |
 | `gui.ComboBox(items, ...)` | one item of a list: `selected()`, `text()` and `onChange` |
 | `gui.ImageBox(file, ...)` | an image in PNG, JPEG, BMP or GIF, from a file, or from memory with `setBytes` |
 | `gui.IconBox(icon, ...)` | an icon |
-| `gui.GroupBox(text, ...)` | a card with a title, which holds other components |
+| `gui.GroupBox(text, ...)` | a card with its title in a band at the top, which holds other components |
 | `gui.Panel(...)` | a container with no look of its own, which scrolls when its components go below its bottom |
 | `gui.ListView(...)` | a list of items, each with an icon or an image, a title, a line and a detail |
 
@@ -120,9 +122,9 @@ i32 main() {
     gui.AppBar top = w.add(gui.AppBar("Inbox"))
     gui.NavigationBar bar = w.navigationBar()
 
-    // Each page fills the room between the two bars: 390 by 605 here.
+    // Each page fills the room between the two bars, and has its size at once.
     gui.Panel inbox = bar.addPage("Inbox", gui.Icon.Inbox)
-    gui.ListView messages = inbox.add(gui.ListView(0, 0, 390, 605))
+    gui.ListView messages = inbox.add(gui.ListView(0, 0, inbox.width(), inbox.height()))
     messages.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Stretch)
     messages.addItem(gui.Icon.User, "Ada Lovelace", "The notes on the engine", "10:42")
     messages.setItemImageBytes(0, embed("images/ada.png"))
@@ -132,8 +134,9 @@ i32 main() {
         messages.addItem(gui.Icon.Mail, "The workshop", format("The report of day {}", day), format("Oct {}", day))
     }
     messages.onChoose([messages](i64 index) { println("open {}", messages.itemTitle(index)) })
-    gui.Button write = inbox.add(gui.Button("Write", 262, 549, 112, 40))
+    gui.Button write = inbox.add(gui.Button("Write", inbox.width() - 128, inbox.height() - 56, 112, 40))
     write.setIcon(gui.Icon.Pencil)
+    write.setStyle(gui.ButtonStyle.Primary)
     write.setAnchor(gui.Horizontal.Right, gui.Vertical.Bottom)
 
     gui.Panel settings = bar.addPage("Settings", gui.Icon.Settings)
@@ -158,6 +161,7 @@ i32 main() {
 - `w.navigationBar()` gives the bar at the bottom. Each `addPage(text, icon)` adds an item to it and gives its page, a `gui.Panel` that fills the room between the two bars; the bar shows the page of the item chosen, and `onChange` says which one.
 - `gui.ListView` shows its items in rows: `addItem(icon, title, subtitle, detail)`, with `gui.Icon.None` and `""` for what an item does not have, `setItemImageBytes` for a round image in place of the icon, and `onChoose` when the user chooses one. A list scrolls with the wheel of the mouse, with the bar on its right or with a finger; so does a page whose components go below its bottom.
 - The button `Write` is anchored at the bottom right of its page: it stays there while the list scrolls under it.
+- On the desktop `std.gui` is compact, as the desktop applications; on a phone the text, the rows and the bars are larger, for the fingers. A page is lower on a phone, where the bars are higher: the list and the button take their places from `inbox.width()` and `inbox.height()`, so they are right on both.
 
 ## Dialogs and snackbars
 
@@ -168,13 +172,13 @@ import std.gui
 i32 main() {
 #     gui.Window w = gui.Window("Mail", 390, 760)
 #     gui.AppBar top = w.add(gui.AppBar("Inbox"))
-#     gui.ListView messages = w.add(gui.ListView(0, 56, 390, 669))
+#     gui.ListView messages = w.add(gui.ListView(0, top.height(), 390, 725 - top.height()))
 #     messages.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Stretch)
 #     messages.addItem(gui.Icon.Mail, "The workshop", "The report of the day", "10:42")
 #     messages.addItem(gui.Icon.Bell, "Reminder", "Send the letters", "Sun")
 #
     gui.Dialog ask = gui.Dialog("Delete the message?", 320, 156)
-    ask.add(gui.Label("It can be undone for a few seconds.", 0, 0, 272, 20))
+    ask.add(gui.Label("It can be undone for a few seconds.", 0, 0, 292, 20))
     ask.addButton("Cancel", [ask]() { ask.close() })
     ask.addButton("Delete", [w, ask, messages]() {
         ask.close()
