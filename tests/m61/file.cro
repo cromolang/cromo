@@ -1,0 +1,74 @@
+// A file open and read and written in pieces (D504): the modes, the position, reads and
+// writes at a position, beyond the end with zeros between, the size, and the errors.
+// expect-output: written 5 at 5, size 5
+// expect-output: read [104, 101] then [108, 108, 111] then []
+// expect-output: at 1: [101, 108], position 5
+// expect-output: size 10: [104, 101, 108, 108, 111, 0, 0, 33, 33, 33]
+// expect-output: updated: [104, 69, 108, 108, 111]
+// expect-output: appended: hello world
+// expect-output: cannot write 'm61-file-test/a.bin': it is open to read
+// expect-output: cannot read 'm61-file-test/c.txt': it is open to append
+// expect-output: cannot open 'm61-file-test/none.bin': no such file or folder
+// expect-output: moved: 10
+import std.fs
+
+fs.File reopen(string path) {
+    fs.File file = fs.File(path, fs.Mode.Read)
+    ret file
+}
+
+// A new file, written and read: it is closed when the function returns.
+void first(string path) {
+    fs.File file = fs.File(path, fs.Mode.Create)
+    file.write([104, 101, 108, 108, 111])  // "hello"
+    println("written {} at {}, size {}", i64(5), file.position(), file.size())
+    file.seek(0)
+    println("read {:?} then {:?} then {:?}", file.read(2), file.read(10), file.read(4))
+    println("at 1: {:?}, position {}", file.readAt(1, 2), file.position())
+    file.writeAt(7, [33, 33, 33])
+    file.sync()
+    println("size {}: {:?}", file.size(), file.readAt(0, 100))
+}
+
+i32 main() {
+    string base = "m61-file-test"
+    fs.removeAll(base)
+    fs.createFolders(base)
+    string path = format("{}/a.bin", base)
+    first(path)
+    second(path, base)
+    fs.removeAll(base)
+    ret 0
+}
+
+// The other modes, the errors, and a file moved out of a function.
+void second(string path, string base) {
+    fs.File update = fs.File(path, fs.Mode.Update)
+    update.writeAt(1, [69])
+    println("updated: {:?}", update.readAt(0, 5))
+
+    string text = format("{}/c.txt", base)
+    fs.writeText(text, "hello")
+    fs.File append = fs.File(text, fs.Mode.Append)
+    append.write(" world".bytes())
+    println("appended: {}", fs.readText(text))
+
+    fs.File read = fs.File(path, fs.Mode.Read)
+    try {
+        read.write([1])
+    } catch (Exception e) {
+        println("{}", e.message())
+    }
+    try {
+        append.read(1)
+    } catch (Exception e) {
+        println("{}", e.message())
+    }
+    try {
+        fs.File none = fs.File(format("{}/none.bin", base), fs.Mode.Read)
+    } catch (Exception e) {
+        println("{}", e.message())
+    }
+    fs.File moved = reopen(path)
+    println("moved: {}", moved.size())
+}

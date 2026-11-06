@@ -1,5 +1,6 @@
-// Files and folders: a file read or written whole, as text or as bytes, the folders
-// and what they hold, links, and the parts of a path. A path is a string, absolute
+// Files and folders: a file read or written whole, as text or as bytes, or open and
+// read and written in pieces (File), or mapped in memory (Mapping); the folders and
+// what they hold, links, and the parts of a path. A path is a string, absolute
 // or from the current folder, with '/' between the names on every system, and '\'
 // too on Windows.
 //
@@ -123,6 +124,246 @@ public void removeAll(string path) {
         ret
     }
     remove(path)
+}
+
+// How a file is opened (D504).
+public enum Mode {
+    Read    // to read: the file must exist
+    Update  // to read and write an existing file, which stays as it is
+    Create  // to read and write a new file, or an existing one emptied
+    Append  // to write at its end, created if it does not exist; it is not read
+}
+
+// A file open, read and written in pieces at a position, for the indices and the
+// databases too large to be read whole (D504). Its destructor closes it; it cannot be
+// copied, only moved. A function that fails throws an exception with the path.
+//
+// '''
+// fs.File index = fs.File("games.idx", fs.Mode.Read)
+// list<u8> entry = index.readAt(47 * 1024, 47)   // 47 bytes from that position
+// '''
+public struct File {
+    i64 handle = -1
+    string path
+    Mode mode
+
+    // Opens the file at the path, as 'mode' says. Throws if it cannot be opened.
+    public File(string name, Mode how) {
+        handle = fileOpen(name, how)
+        path = name
+        mode = how
+    }
+
+    ~File() {
+        if (handle != -1) {
+            fileClose(handle)
+        }
+    }
+
+    // Reads up to 'count' bytes from the position, which moves after them: fewer at the
+    // end of the file, none after it.
+    public list<u8> read(i64 count) {
+        ret readBytesAt(-1, count)
+    }
+
+    // Reads up to 'count' bytes from 'position', from 0, without moving the position:
+    // fewer at the end of the file.
+    public list<u8> readAt(i64 position, i64 count) {
+        if (position < 0) {
+            panic(format("the position in a file is from 0, found {}", position))
+        }
+        ret readBytesAt(position, count)
+    }
+
+    // Writes the bytes at the position, which moves after them; in a file opened to
+    // append, at its end.
+    public void write(list<u8> bytes) {
+        writeBytesAt(-1, bytes)
+    }
+
+    // Writes the bytes at 'position', from 0, without moving the position; beyond the
+    // end the file grows, with zeros between.
+    public void writeAt(i64 position, list<u8> bytes) {
+        if (position < 0) {
+            panic(format("the position in a file is from 0, found {}", position))
+        }
+        writeBytesAt(position, bytes)
+    }
+
+    // Moves the position to 'position', from 0; beyond the end too, where a write makes
+    // the file grow.
+    public void seek(i64 position) {
+        if (position < 0) {
+            panic(format("the position in a file is from 0, found {}", position))
+        }
+        fileSeek(handle, position, 0, path)
+    }
+
+    // The position, from 0, where the next read or write starts.
+    public i64 position() {
+        ret fileSeek(handle, 0, 1, path)
+    }
+
+    // The size of the file in bytes, now.
+    public i64 size() {
+        ret fileLength(handle, path)
+    }
+
+    // Sends what was written to the disk, before it returns: the data survive a fall of
+    // the system.
+    public void sync() {
+        fileSync(handle, path)
+    }
+
+    list<u8> readBytesAt(i64 position, i64 count) {
+        if (count < 0) {
+            panic(format("the bytes to read are from 0, found {}", count))
+        }
+        if (mode == Mode.Append) {
+            throw fileError("read", path, "it is open to append")
+        }
+        list<u8> bytes
+        if (count == 0) {
+            ret bytes
+        }
+        addr data = alloc(count)
+        try {
+            i64 done = fileRead(handle, data, count, position, path)
+            bytes.reserve(done)
+            for (i64 i = 0; i < done; i++) {
+                bytes.add(copyAt<u8>(offset(data, i)))
+            }
+        } finally {
+            free(data)
+        }
+        ret bytes
+    }
+
+    void writeBytesAt(i64 position, list<u8> bytes) {
+        if (mode == Mode.Read) {
+            throw fileError("write", path, "it is open to read")
+        }
+        if (bytes.len() == 0) {
+            ret
+        }
+        addr data = alloc(bytes.len())
+        for (i64 i = 0; i < bytes.len(); i++) {
+            put<u8>(offset(data, i), bytes[i])
+        }
+        try {
+            fileWrite(handle, data, bytes.len(), mode == Mode.Append ? -1 : position, path)
+        } finally {
+            free(data)
+        }
+    }
+}
+
+// A file mapped in memory, read only (D504): its bytes and its numbers are read at a
+// position, little-endian, with the check that they are inside it, which a panic stops
+// as an index out of a list. Fast for large files, which the system reads as they are
+// used. Its destructor unmaps it; it cannot be copied. A file that changes while it is
+// mapped may show the change.
+//
+// '''
+// fs.Mapping names = fs.Mapping("names.bin")
+// u32 count = names.u32At(0)
+// list<u8> first = names.bytes(4, 32)
+// '''
+public struct Mapping {
+    addr data
+    i64 length
+
+    // Maps the file at the path. Throws if it cannot be read.
+    public Mapping(string path) {
+        i64 size = 0
+        data = mapFile(path, ref size)
+        length = size
+    }
+
+    ~Mapping() {
+        if (length > 0) {
+            unmapFile(data, length)
+        }
+    }
+
+    // The size of the file in bytes.
+    public i64 size() const {
+        ret length
+    }
+
+    public u8 u8At(i64 position) const {
+        check(position, 1)
+        ret copyAt<u8>(offset(data, position))
+    }
+
+    public i8 i8At(i64 position) const {
+        ret i8(u8At(position))
+    }
+
+    public u16 u16At(i64 position) const {
+        ret u16(little(position, 2))
+    }
+
+    public i16 i16At(i64 position) const {
+        ret i16(u16(little(position, 2)))
+    }
+
+    public u32 u32At(i64 position) const {
+        ret u32(little(position, 4))
+    }
+
+    public i32 i32At(i64 position) const {
+        ret i32(u32(little(position, 4)))
+    }
+
+    public u64 u64At(i64 position) const {
+        ret little(position, 8)
+    }
+
+    public i64 i64At(i64 position) const {
+        ret i64(little(position, 8))
+    }
+
+    public f32 f32At(i64 position) const {
+        ret f32.fromBits(u32(little(position, 4)))
+    }
+
+    public f64 f64At(i64 position) const {
+        ret f64.fromBits(little(position, 8))
+    }
+
+    // 'count' bytes from 'position'.
+    public list<u8> bytes(i64 position, i64 count) const {
+        check(position, count)
+        list<u8> result
+        result.reserve(count)
+        for (i64 i = 0; i < count; i++) {
+            result.add(copyAt<u8>(offset(data, position + i)))
+        }
+        ret result
+    }
+
+    // 'count' bytes from 'position' as a text, which must be UTF-8.
+    public string text(i64 position, i64 count) const {
+        check(position, count)
+        ret string(offset(data, position), count)
+    }
+
+    void check(i64 position, i64 count) const {
+        if (position < 0 || count < 0 || position > length - count) {
+            panic(format("{} bytes from {} go beyond the {} bytes of the mapping", count, position, length))
+        }
+    }
+
+    // The bytes from the position, the first one the lowest: LLVM makes one read of them.
+    u64 little(i64 position, i64 count) const {
+        check(position, count)
+        u64 value = 0
+        for (i64 i = count - 1; i >= 0; i--) {
+            value = (value << 8) | u64(copyAt<u8>(offset(data, position + i)))
+        }
+        ret value
+    }
 }
 
 // The two paths with the separator of the system between them:

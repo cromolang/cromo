@@ -1,0 +1,49 @@
+// A file mapped in memory (D504): its numbers little-endian at any position, its bytes
+// and its text, an empty file, and a file that does not exist.
+// expect-output: size 27
+// expect-output: u8 1, u16 0x0302, u32 0x05040302, u64 0x0908070605040302
+// expect-output: i8 -1, i16 -2, i32 -2, f64 1.5
+// expect-output: bytes [104, 105], text 'hi'
+// expect-output: empty: 0
+// expect-output: cannot open 'm61-map-test/none.bin': no such file or folder
+import std.fs
+
+i32 main() {
+    string base = "m61-map-test"
+    fs.removeAll(base)
+    fs.createFolders(base)
+    string path = format("{}/a.bin", base)
+    // 0: 1; 1 to 8: 2 to 9; 9: i8 -1; 10: i16 -2; 12: 0; 13: i32 -2; 17: f64 1.5; 25: "hi"
+    list<u8> bytes = [1, 2, 3, 4, 5, 6, 7, 8, 9, 0xFF, 0xFE, 0xFF, 0x00, 0xFE, 0xFF, 0xFF, 0xFF]
+    u64 half = f64(1.5).bits()
+    for (i64 k = 0; k < 8; k++) {
+        bytes.add(u8((half >> u64(8 * k)) & 0xFF))
+    }
+    bytes.add(104)
+    bytes.add(105)
+    fs.writeBytes(path, bytes)
+    show(path)
+    string empty = fs.joinPath(base, "empty.bin")
+    fs.writeText(empty, "")
+    println("empty: {}", sizeOf(empty))
+    try {
+        fs.Mapping none = fs.Mapping(format("{}/none.bin", base))
+    } catch (Exception e) {
+        println("{}", e.message())
+    }
+    fs.removeAll(base)
+    ret 0
+}
+
+i64 sizeOf(string path) {
+    fs.Mapping mapped = fs.Mapping(path)
+    ret mapped.size()
+}
+
+void show(string path) {
+    fs.Mapping mapped = fs.Mapping(path)
+    println("size {}", mapped.size())
+    println("u8 {}, u16 {:#06x}, u32 {:#010x}, u64 {:#018x}", mapped.u8At(0), mapped.u16At(1), mapped.u32At(1), mapped.u64At(1))
+    println("i8 {}, i16 {}, i32 {}, f64 {}", mapped.i8At(9), mapped.i16At(10), mapped.i32At(13), mapped.f64At(17))
+    println("bytes {:?}, text '{}'", mapped.bytes(25, 2), mapped.text(25, 2))
+}

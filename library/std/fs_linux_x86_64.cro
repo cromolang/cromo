@@ -6,6 +6,13 @@ enum Call {
     Read = 0
     Write = 1
     Close = 3
+    Fstat = 5
+    Lseek = 8
+    Mmap = 9
+    Munmap = 11
+    Pread64 = 17
+    Pwrite64 = 18
+    Fsync = 74
     GetDents64 = 217
     OpenAt = 257
     MkdirAt = 258

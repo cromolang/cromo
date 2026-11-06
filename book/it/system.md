@@ -67,6 +67,33 @@ i32 main() {
 cannot read 'missing.txt': no such file or folder
 ```
 
+## File a pezzi
+
+```cromo
+import std.fs
+
+i32 main() {
+    fs.File file = fs.File("records.bin", fs.Mode.Create)
+    for (i32 i = 0; i < 100; i++) {
+        file.write([u8(i), u8(i * 2), 0, 0])  // a record of 4 bytes
+    }
+    list<u8> record = file.readAt(4 * 37, 4)  // the record 37, without reading the others
+    println("{} bytes, record 37: {:?}", file.size(), record)
+
+    fs.Mapping mapped = fs.Mapping("records.bin")
+    println("the second byte of the record 50: {}", mapped.u8At(4 * 50 + 1))
+    ret 0
+}
+```
+
+```output
+400 bytes, record 37: [37, 74, 0, 0]
+the second byte of the record 50: 100
+```
+
+- `fs.File(percorso, modo)` apre un file per leggerlo e scriverlo a pezzi: `fs.Mode.Read`, `Update` per un file esistente, `Create` per uno nuovo o svuotato, `Append` per scrivere in fondo. `read(quanti)` e `write(byte)` proseguono dalla posizione, `readAt` e `writeAt` lavorano a una posizione senza spostarla, e `seek`, `position`, `size` e `sync` completano. Il file si chiude quando la variabile finisce.
+- `fs.Mapping(percorso)` mappa un file in memoria, in sola lettura: `u8At`, `u16At`, `u32At`, `u64At`, quelli con segno, `f32At` e `f64At` leggono un numero a una posizione, little-endian, e `bytes` e `text` una parte. Per i file grandi il sistema legge solo ciò che si usa.
+
 ## L'ambiente
 
 `std.os` fornisce il nome del sistema, `"windows"` o `"linux"`, le variabili d'ambiente e la cartella corrente; `os.exit(code)` termina subito il programma. Gli argomenti del programma arrivano a `main`:

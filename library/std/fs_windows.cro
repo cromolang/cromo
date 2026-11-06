@@ -7,6 +7,11 @@ extern "kernel32" {
     i32 WriteFile(i64 file, addr data, u32 size, ref u32 done, addr overlapped)
     i32 CloseHandle(i64 handle)
     i32 GetFileSizeEx(i64 file, ref i64 size)
+    i32 SetFilePointerEx(i64 file, i64 distance, ref i64 position, u32 method)
+    i32 FlushFileBuffers(i64 file)
+    i64 CreateFileMappingW(i64 file, addr security, u32 protect, u32 high, u32 low, addr name)
+    addr MapViewOfFile(i64 mapping, u32 access, u32 high, u32 low, i64 size)
+    i32 UnmapViewOfFile(addr view)
     u32 GetLastError()
     i32 DeleteFileW(addr name)
     i32 RemoveDirectoryW(addr name)
@@ -29,7 +34,8 @@ extern "kernel32" {
 addr loadFile(string path, ref i64 size) {
     addr none
     addr name = wide(path)
-    i64 file = CreateFileW(name, 0x80000000, 1, none, 3, 0x80, none)  // GENERIC_READ, OPEN_EXISTING
+    // GENERIC_READ, OPEN_EXISTING, shared with those that read and write it, as an fs.File (D504)
+    i64 file = CreateFileW(name, 0x80000000, 3, none, 3, 0x80, none)
     free(name)
     if (file == -1) {
         throw failure("read", path, GetLastError())
@@ -69,7 +75,7 @@ void storeFile(string path, addr data, i64 size, bool append) {
         access = 4    // FILE_APPEND_DATA
         creation = 4  // OPEN_ALWAYS
     }
-    i64 file = CreateFileW(name, access, 1, none, creation, 0x80, none)
+    i64 file = CreateFileW(name, access, 3, none, creation, 0x80, none)  // shared as an fs.File (D504)
     free(name)
     if (file == -1) {
         throw failure("write", path, GetLastError())
@@ -437,4 +443,149 @@ string narrow(addr text, i32 count) {
     string result = string(buffer, i64(size))
     free(buffer)
     ret result
+}
+
+// ---- The files open, and the files mapped in memory (D504) ----
+
+// The handle of the file at the path, open as the mode says, shared with the others
+// that read and write it.
+i64 fileOpen(string path, Mode mode) {
+    addr none
+    u32 access = 0x80000000  // GENERIC_READ
+    u32 creation = 3         // OPEN_EXISTING
+    if (mode == Mode.Update) {
+        access = 0xC0000000  // GENERIC_READ | GENERIC_WRITE
+    } else if (mode == Mode.Create) {
+        access = 0xC0000000
+        creation = 2  // CREATE_ALWAYS
+    } else if (mode == Mode.Append) {
+        access = 4    // FILE_APPEND_DATA: each write at the end
+        creation = 4  // OPEN_ALWAYS
+    }
+    addr name = wide(path)
+    i64 file = CreateFileW(name, access, 3, none, creation, 0x80, none)  // FILE_SHARE_READ | FILE_SHARE_WRITE
+    free(name)
+    if (file == -1) {
+        throw failure("open", path, GetLastError())
+    }
+    ret file
+}
+
+void fileClose(i64 file) {
+    CloseHandle(file)
+}
+
+// Up to 'count' bytes into 'data', from the position, or at it with -1, which then
+// stays where it was: how many.
+i64 fileRead(i64 file, addr data, i64 count, i64 position, string path) {
+    addr none
+    i64 before = position >= 0 ? fileSeek(file, 0, 1, path) : 0
+    if (position >= 0) {
+        fileSeek(file, position, 0, path)
+    }
+    i64 total = 0
+    for (total < count) {
+        i64 chunk = count - total
+        if (chunk > 0x40000000) {
+            chunk = 0x40000000
+        }
+        u32 done = 0
+        if (ReadFile(file, offset(data, total), u32(chunk), ref done, none) == 0) {
+            u32 code = GetLastError()
+            if (code == 38) {  // ERROR_HANDLE_EOF
+                break
+            }
+            throw failure("read", path, code)
+        }
+        if (done == 0) {
+            break
+        }
+        total += i64(done)
+    }
+    if (position >= 0) {
+        fileSeek(file, before, 0, path)
+    }
+    ret total
+}
+
+void fileWrite(i64 file, addr data, i64 count, i64 position, string path) {
+    addr none
+    i64 before = position >= 0 ? fileSeek(file, 0, 1, path) : 0
+    if (position >= 0) {
+        fileSeek(file, position, 0, path)
+    }
+    i64 total = 0
+    for (total < count) {
+        i64 chunk = count - total
+        if (chunk > 0x40000000) {
+            chunk = 0x40000000
+        }
+        u32 done = 0
+        if (WriteFile(file, offset(data, total), u32(chunk), ref done, none) == 0) {
+            throw failure("write", path, GetLastError())
+        }
+        total += i64(done)
+    }
+    if (position >= 0) {
+        fileSeek(file, before, 0, path)
+    }
+}
+
+// SetFilePointerEx: 'from' 0 the start, 1 the position; the new position.
+i64 fileSeek(i64 file, i64 position, i32 from, string path) {
+    i64 now = 0
+    if (SetFilePointerEx(file, position, ref now, u32(from)) == 0) {
+        throw failure("seek in", path, GetLastError())
+    }
+    ret now
+}
+
+i64 fileLength(i64 file, string path) {
+    i64 size = 0
+    if (GetFileSizeEx(file, ref size) == 0) {
+        throw failure("read the size of", path, GetLastError())
+    }
+    ret size
+}
+
+void fileSync(i64 file, string path) {
+    if (FlushFileBuffers(file) == 0) {
+        throw failure("sync", path, GetLastError())
+    }
+}
+
+// The file mapped in memory, read only, and its size; nothing mapped for an empty file.
+// The view keeps the mapping: the handles are closed at once.
+addr mapFile(string path, ref i64 size) {
+    addr none
+    i64 file = fileOpen(path, Mode.Read)
+    i64 length = 0
+    if (GetFileSizeEx(file, ref length) == 0 || length == 0) {
+        u32 code = GetLastError()
+        CloseHandle(file)
+        if (length != 0) {
+            throw failure("map", path, code)
+        }
+        size = 0
+        ret none
+    }
+    i64 mapping = CreateFileMappingW(file, none, 2, 0, 0, none)  // PAGE_READONLY
+    if (mapping == 0) {
+        u32 code = GetLastError()
+        CloseHandle(file)
+        throw failure("map", path, code)
+    }
+    addr view = MapViewOfFile(mapping, 4, 0, 0, 0)  // FILE_MAP_READ
+    u32 code = GetLastError()
+    CloseHandle(mapping)
+    CloseHandle(file)
+    if (view == none) {
+        throw failure("map", path, code)
+    }
+    size = length
+    ret view
+}
+
+void unmapFile(addr data, i64 size) {
+    UnmapViewOfFile(data)
 }

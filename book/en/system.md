@@ -67,6 +67,33 @@ i32 main() {
 cannot read 'missing.txt': no such file or folder
 ```
 
+## Files in pieces
+
+```cromo
+import std.fs
+
+i32 main() {
+    fs.File file = fs.File("records.bin", fs.Mode.Create)
+    for (i32 i = 0; i < 100; i++) {
+        file.write([u8(i), u8(i * 2), 0, 0])  // a record of 4 bytes
+    }
+    list<u8> record = file.readAt(4 * 37, 4)  // the record 37, without reading the others
+    println("{} bytes, record 37: {:?}", file.size(), record)
+
+    fs.Mapping mapped = fs.Mapping("records.bin")
+    println("the second byte of the record 50: {}", mapped.u8At(4 * 50 + 1))
+    ret 0
+}
+```
+
+```output
+400 bytes, record 37: [37, 74, 0, 0]
+the second byte of the record 50: 100
+```
+
+- `fs.File(path, mode)` opens a file to read it and write it in pieces: `fs.Mode.Read`, `Update` for an existing file, `Create` for a new or emptied one, `Append` to write at its end. `read(count)` and `write(bytes)` go on from the position, `readAt` and `writeAt` work at a position without moving it, and `seek`, `position`, `size` and `sync` complete it. The file closes when the variable ends.
+- `fs.Mapping(path)` maps a file in memory, read only: `u8At`, `u16At`, `u32At`, `u64At`, their signed ones, `f32At` and `f64At` read a number at a position, little-endian, and `bytes` and `text` a part. For the large files, the system reads only what is used.
+
 ## The environment
 
 `std.os` gives the name of the system, `"windows"` or `"linux"`, the variables of the environment and the current folder; `os.exit(code)` ends the program at once. The arguments of the program arrive in `main`:

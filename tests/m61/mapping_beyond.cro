@@ -1,0 +1,13 @@
+// A reading beyond the end of a mapping is a panic, as an index out of a list (D504).
+// An empty file maps nothing, and can be removed while its mapping lives.
+// expect-exit: 101
+// expect-stderr: 4 bytes from 2 go beyond the 0 bytes of the mapping
+import std.fs
+
+i32 main() {
+    fs.writeText("m61-beyond.bin", "")
+    fs.Mapping mapped = fs.Mapping("m61-beyond.bin")
+    fs.remove("m61-beyond.bin")
+    u32 value = mapped.u32At(2)
+    ret 0
+}

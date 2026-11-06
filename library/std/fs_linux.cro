@@ -353,3 +353,135 @@ Error failure(string action, string path, i64 code) {
     }
     ret fileError(action, path, reason)
 }
+
+// ---- The files open, and the files mapped in memory (D504) ----
+
+// The descriptor of the file at the path, open as the mode says.
+i64 fileOpen(string path, Mode mode) {
+    i64 flags = 0x80000  // O_CLOEXEC, and O_RDONLY
+    if (mode == Mode.Update) {
+        flags |= 2  // O_RDWR
+    } else if (mode == Mode.Create) {
+        flags |= 2 | 0x40 | 0x200  // O_RDWR | O_CREAT | O_TRUNC
+    } else if (mode == Mode.Append) {
+        flags |= 1 | 0x40 | 0x400  // O_WRONLY | O_CREAT | O_APPEND
+    }
+    i64 file = systemCall(i64(Call.OpenAt), -100, path.cstring(), flags, 420, 0, 0)  // 0644
+    if (file < 0) {
+        throw failure("open", path, file)
+    }
+    if (isDescriptorFolder(file)) {
+        systemCall(i64(Call.Close), file, 0, 0, 0, 0, 0)
+        throw failure("open", path, -21)
+    }
+    ret file
+}
+
+bool isDescriptorFolder(i64 file) {
+    addr info = alloc(256)
+    i64 result = systemCall(i64(Call.Fstat), file, info, 0, 0, 0, 0)
+    bool folder = result == 0 && (modeOf(info) & 0xF000) == 0x4000  // S_IFDIR
+    free(info)
+    ret folder
+}
+
+void fileClose(i64 file) {
+    systemCall(i64(Call.Close), file, 0, 0, 0, 0, 0)
+}
+
+// Up to 'count' bytes into 'data', from the position, or at it with -1: how many.
+i64 fileRead(i64 file, addr data, i64 count, i64 position, string path) {
+    i64 total = 0
+    for (total < count) {
+        i64 done = 0
+        if (position < 0) {
+            done = systemCall(i64(Call.Read), file, offset(data, total), count - total, 0, 0, 0)
+        } else {
+            done = systemCall(i64(Call.Pread64), file, offset(data, total), count - total, position + total, 0, 0)
+        }
+        if (done == -4) {  // EINTR
+            continue
+        }
+        if (done < 0) {
+            throw failure("read", path, done)
+        }
+        if (done == 0) {
+            break
+        }
+        total += done
+    }
+    ret total
+}
+
+void fileWrite(i64 file, addr data, i64 count, i64 position, string path) {
+    i64 total = 0
+    for (total < count) {
+        i64 done = 0
+        if (position < 0) {
+            done = systemCall(i64(Call.Write), file, offset(data, total), count - total, 0, 0, 0)
+        } else {
+            done = systemCall(i64(Call.Pwrite64), file, offset(data, total), count - total, position + total, 0, 0)
+        }
+        if (done == -4) {
+            continue
+        }
+        if (done < 0) {
+            throw failure("write", path, done)
+        }
+        total += done
+    }
+}
+
+// lseek: 'from' 0 the start, 1 the position; the new position.
+i64 fileSeek(i64 file, i64 position, i32 from, string path) {
+    i64 result = systemCall(i64(Call.Lseek), file, position, i64(from), 0, 0, 0)
+    if (result < 0) {
+        throw failure("seek in", path, result)
+    }
+    ret result
+}
+
+i64 fileLength(i64 file, string path) {
+    addr info = alloc(256)
+    i64 result = systemCall(i64(Call.Fstat), file, info, 0, 0, 0, 0)
+    i64 size = copyAt<i64>(offset(info, 48))  // st_size, on x86-64 and on ARM64
+    free(info)
+    if (result < 0) {
+        throw failure("read the size of", path, result)
+    }
+    ret size
+}
+
+void fileSync(i64 file, string path) {
+    i64 result = systemCall(i64(Call.Fsync), file, 0, 0, 0, 0, 0)
+    if (result < 0) {
+        throw failure("sync", path, result)
+    }
+}
+
+// The file mapped in memory, read only, and its size; nothing mapped for an empty file.
+addr mapFile(string path, ref i64 size) {
+    i64 file = fileOpen(path, Mode.Read)
+    i64 length = 0
+    try {
+        length = fileLength(file, path)
+    } finally {
+        if (length == 0) {
+            fileClose(file)
+        }
+    }
+    size = length
+    if (length == 0) {
+        ret addr(0)
+    }
+    i64 result = systemCall(i64(Call.Mmap), 0, length, 1, 2, file, 0)  // PROT_READ, MAP_PRIVATE
+    fileClose(file)                                                    // the mapping stays
+    if (result < 0 && result > -4096) {
+        throw failure("map", path, result)
+    }
+    ret addr(result)
+}
+
+void unmapFile(addr data, i64 size) {
+    systemCall(i64(Call.Munmap), i64(data), size, 0, 0, 0, 0)
+}
