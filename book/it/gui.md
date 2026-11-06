@@ -42,6 +42,7 @@ i32 main() {
 | `gui.Label(testo, x, y, larghezza, altezza)` | una riga di testo |
 | `gui.Button(testo, ...)` | un pulsante: `onClick`, `setIcon` per un'icona prima del testo, e `setStyle` |
 | `gui.TextBox(testo, ...)` | una riga in cui scrivere: `text()`, `setPlaceholder`, `onChange`, e `onEnter` per il tasto Invio |
+| `gui.TextArea(testo, ...)` | un testo su più righe, che vanno a capo alla sua larghezza: `text()`, `setPlaceholder` e `onChange` |
 | `gui.CheckBox(testo, ...)`, `gui.Switch(testo, ...)` | acceso o spento: `checked()` e `onChange` |
 | `gui.Slider(minimo, massimo, ...)` | un intero tra i due: `value()` e `onChange` |
 | `gui.ComboBox(voci, ...)` | una voce di una lista: `selected()`, `text()` e `onChange` |
@@ -56,7 +57,7 @@ i32 main() {
 | `gui.TextView(...)` | testo ricco: stili, blocchi, piccole immagini e pezzi che l'utente clicca |
 | `gui.Canvas(...)` | una superficie su cui il programma disegna: `setDrawing`, e il mouse su di essa |
 
-Ogni componente ha `setPosition`, `setSize`, `setVisible`, `setEnabled` e `setAnchor`. I componenti di un gruppo o di un pannello prendono le posizioni dal suo angolo in alto a sinistra.
+Ogni componente ha `setPosition`, `setSize`, `setVisible`, `setEnabled` e `setAnchor`. I componenti di un gruppo o di un pannello prendono le posizioni dal suo angolo in alto a sinistra. Nelle caselle di testo e nelle aree di testo Ctrl+Z annulla e Ctrl+Y ripete; `examples/23_notepad.cro` è un blocco note.
 
 ## Le ancore
 

@@ -42,6 +42,7 @@ i32 main() {
 | `gui.Label(text, x, y, width, height)` | a line of text |
 | `gui.Button(text, ...)` | a button: `onClick`, `setIcon` for an icon before the text, and `setStyle` |
 | `gui.TextBox(text, ...)` | a line to write in: `text()`, `setPlaceholder`, `onChange`, and `onEnter` for the Enter key |
+| `gui.TextArea(text, ...)` | a text on more lines, which go to the next line at its width: `text()`, `setPlaceholder` and `onChange` |
 | `gui.CheckBox(text, ...)`, `gui.Switch(text, ...)` | on or off: `checked()` and `onChange` |
 | `gui.Slider(minimum, maximum, ...)` | an integer between the two: `value()` and `onChange` |
 | `gui.ComboBox(items, ...)` | one item of a list: `selected()`, `text()` and `onChange` |
@@ -56,7 +57,7 @@ i32 main() {
 | `gui.TextView(...)` | rich text: styles, blocks, small images and pieces that the user clicks |
 | `gui.Canvas(...)` | a surface on which the program draws: `setDrawing`, and the mouse on it |
 
-Every component has `setPosition`, `setSize`, `setVisible`, `setEnabled` and `setAnchor`. The components of a group or of a panel take their positions from its top left corner.
+Every component has `setPosition`, `setSize`, `setVisible`, `setEnabled` and `setAnchor`. The components of a group or of a panel take their positions from its top left corner. In the text boxes and in the text areas Ctrl+Z undoes and Ctrl+Y redoes; `examples/23_notepad.cro` is a notepad.
 
 ## Anchors
 

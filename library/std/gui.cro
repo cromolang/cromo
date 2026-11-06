@@ -767,9 +767,10 @@ public struct Button : Component {
 }
 
 // A line of text that the user writes, with the input method of the system and, on a
-// phone, the keyboard on the screen. The arrows, Home and End move in it, with Shift
-// they select, as the mouse does, and Backspace, Delete, Ctrl+A, Ctrl+C, Ctrl+X and
-// Ctrl+V do what they do in every program; a text pasted becomes one line. Its
+// phone, the keyboard on the screen. The arrows, Home and End move in it, with Ctrl a
+// word, with Shift they select, as the mouse does, and Backspace, Delete, Ctrl+A,
+// Ctrl+C, Ctrl+X and Ctrl+V do what they do in every program; a text pasted becomes one
+// line. Ctrl+Z and Ctrl+Y undo and redo (D498). Its
 // handlers of 'onChange' receive the text at each change, those of 'onEnter' when
 // Enter is pressed.
 //
@@ -821,7 +822,7 @@ public struct TextBox : Component {
     }
 
     // Replaces the text, with the cursor at its end, without calling the handlers of
-    // 'onChange'.
+    // 'onChange'; what Ctrl+Z could undo is forgotten.
     public void setText(string value) const {
         setPartText(id, value)
     }
@@ -1193,6 +1194,155 @@ public struct GroupBox : Component {
     }
 
     // How the group follows the top and the bottom edges of its parent: 'Vertical.Top' by
+    // default.
+    public Vertical verticalAnchor() const {
+        ret partVertical(id)
+    }
+}
+
+// A text on more lines that the user writes, as a note or a description (D498): Enter
+// starts a new line, and a line longer than the box goes on the next one at its spaces
+// (D499). The text scrolls up and down, with the wheel, its bar and a finger. The
+// arrows, Home, End, Page Up and Page Down move in it, with Ctrl a word or the whole
+// text, with Shift they select, as the mouse does; Backspace, Delete, Ctrl+A, Ctrl+C,
+// Ctrl+X and Ctrl+V do what they do in every program, and Ctrl+Z and Ctrl+Y undo and
+// redo. Tab gives the keyboard to the next component.
+//
+// '''
+// gui.TextArea note = w.add(gui.TextArea("", 16, 16, 400, 160))
+// note.setPlaceholder("A note")
+// note.onChange([](string text) { println("{} characters", text.len()) })
+// '''
+public struct TextArea : Component {
+    i64 id
+
+    // A text area with its first text, maybe "", in which "\n" starts a new line. 'x' and
+    // 'y' are in logical pixels from the top left corner of its parent, the window, the
+    // group, the panel or the dialog whose 'add' puts it there, and 'width' and 'height'
+    // its size.
+    public TextArea(string text, i32 x, i32 y, i32 width, i32 height) {
+        id = newPart(kindTextArea, text, x, y, width, height)
+    }
+
+    i64 componentId() const {
+        ret id
+    }
+
+    // Adds a handler, called on the thread of the windows with the new text at each
+    // change that the user makes: a character written or deleted, a text cut or pasted,
+    // an undo. 'setText' does not call it.
+    public void onChange(move func(string) handler) const {
+        addr box = alloc(sizeOf<func(string)>())
+        put<func(string)>(box, move handler)
+        addPartHandler(id, 1, box)
+    }
+
+    // Sets the text shown in gray while the area is empty, as a hint of what to write.
+    public void setPlaceholder(string value) const {
+        i64 me = id
+        withData([me, value](ref Shared data) { data.parts[partIndexOf(ref data, me)].placeholder = value })
+    }
+
+    // The text shown while the area is empty, "" by default.
+    public string placeholder() const {
+        ret partText(id, true)
+    }
+
+    // Replaces the text, with the cursor at its end, without calling the handlers of
+    // 'onChange'; what Ctrl+Z could undo is forgotten.
+    public void setText(string value) const {
+        setPartText(id, value)
+    }
+
+    // The text written in the area, with "\n" between its lines.
+    public string text() const {
+        ret partText(id, false)
+    }
+
+    // Moves the text area, in logical pixels from the top left corner of its parent: the content of
+    // the window, or the group, the panel or the dialog that holds it. Its anchors keep the
+    // distances from the edges that it has at the new place.
+    public void setPosition(i32 x, i32 y) const {
+        setPartBounds(id, x, y, -1, -1)
+    }
+
+    // Changes the width and the height of the text area, in logical pixels. Its anchors keep the
+    // distances from the edges that it has with the new size.
+    public void setSize(i32 width, i32 height) const {
+        setPartBounds(id, -1, -1, width, height)
+    }
+
+    // The distance of the text area from the left edge of its parent, in logical pixels, where its
+    // anchors have placed it now.
+    public i32 x() const {
+        ret partBound(id, 0)
+    }
+
+    // The distance of the text area from the top edge of its parent, in logical pixels, where its
+    // anchors have placed it now.
+    public i32 y() const {
+        ret partBound(id, 1)
+    }
+
+    // The width of the text area now, in logical pixels: a 'Stretch' anchor changes it with its
+    // parent.
+    public i32 width() const {
+        ret partBound(id, 2)
+    }
+
+    // The height of the text area now, in logical pixels: a 'Stretch' anchor changes it with its
+    // parent.
+    public i32 height() const {
+        ret partBound(id, 3)
+    }
+
+    // Sets the text that a small card shows when the mouse stays on the text area for a moment,
+    // or after a long press on a phone: "" for none, the default; "\n" starts a new line.
+    public void setTooltip(string text) const {
+        setPartTooltip(id, text)
+    }
+
+    // The text of the tooltip of the text area, "" for none.
+    public string tooltip() const {
+        ret partTooltip(id)
+    }
+
+    // Shows or hides the text area.
+    public void setVisible(bool value) const {
+        setPartFlag(id, 0, value)
+    }
+
+    // Whether the text area is visible, as 'setVisible' set it: true by default.
+    public bool visible() const {
+        ret partFlag(id, 0)
+    }
+
+    // Enables or disables the text area: disabled, it is drawn at half its opacity.
+    public void setEnabled(bool value) const {
+        setPartFlag(id, 1, value)
+    }
+
+    // Whether the text area is enabled, as 'setEnabled' set it: true by default.
+    public bool enabled() const {
+        ret partFlag(id, 1)
+    }
+
+    // Sets which edges of its parent the text area follows when the parent changes size: the
+    // window, or the group, the panel or the dialog that holds it. It keeps the distances from
+    // those edges that it has now, as 'setAnchor(gui.Horizontal.Right, gui.Vertical.Bottom)' in
+    // the bottom right corner. By default it is anchored to the left and to the top, and does
+    // not move.
+    public void setAnchor(Horizontal horizontal, Vertical vertical) const {
+        setPartAnchor(id, horizontal, vertical)
+    }
+
+    // How the text area follows the left and the right edges of its parent: 'Horizontal.Left' by
+    // default.
+    public Horizontal horizontalAnchor() const {
+        ret partHorizontal(id)
+    }
+
+    // How the text area follows the top and the bottom edges of its parent: 'Vertical.Top' by
     // default.
     public Vertical verticalAnchor() const {
         ret partVertical(id)
@@ -4344,6 +4494,7 @@ const i32 kindTable = 17
 const i32 kindTextView = 18
 const i32 kindTabView = 19
 const i32 kindSegmented = 20
+const i32 kindTextArea = 21
 
 // A component: its kind, its window and its group once added, its properties, for
 // a text box where its cursor and the other end of its selection are, as indices
@@ -4427,10 +4578,21 @@ struct PartData {
     TextLayout laid     // its lines
     f32 textSize        // 0 for that of the components
     f32 lineSpacing = 1.5
-    i64 marked = -1     // the piece marked
-    i64 reveal = -1     // the piece to show after the next layout
-    list<addr> pieces   // func(i64, Mouse), of a text view
-    string tooltip      // shown when the mouse stays on it (D497)
+    i64 marked = -1         // the piece marked
+    i64 reveal = -1         // the piece to show after the next layout
+    list<addr> pieces       // func(i64, Mouse), of a text view
+    string tooltip          // shown when the mouse stays on it (D497)
+    list<string> undoTexts  // of a text box or a text area: the texts before the last edits (D498)
+    list<i64> undoCarets
+    list<string> redoTexts
+    list<i64> redoCarets
+    i32 lastEdit          // 1 writing, 2 deleting, 3 another edit, 0 something else
+    list<i64> wrapStarts  // of a text area: its lines at its width (D499)
+    list<i64> wrapEnds
+    string wrapText
+    f32 wrapWidth = -1
+    f32 goalX = -1      // where Up and Down go on the next line
+    bool revealCaret    // the area scrolls to show the cursor at the next frame
     list<f32> tabSpans  // of a tab view: the left and the width of each tab, from its left (D494)
     addr svg            // of an image box with an SVG image, and its size in bytes (D484)
     i64 svgSize
@@ -4544,6 +4706,8 @@ void setPartText(i64 id, string value) {
         data.parts[p].text = value
         data.parts[p].caret = value.len()
         data.parts[p].anchor = value.len()
+        data.parts[p].revealCaret = true
+        forgetEdits(ref data.parts[p])
     })
 }
 
@@ -6150,7 +6314,7 @@ void route(ref WindowData window, ref list<PartData> parts, addr event, u32 kind
     i32 h = 0
     SDL_GetWindowSize(window.window, ref w, ref h)
     f32 width = f32(w) / toWindow(ref window)
-    if (window.menuOpen && menuEvent(ref window, event, kind, ref calls)) {  // D496
+    if (window.menuOpen && menuEvent(ref window, ref parts, event, kind, ref calls)) {  // D496
         ret
     }
     if (kind == 0x400) {  // SDL_EVENT_MOUSE_MOTION
@@ -6179,7 +6343,8 @@ void route(ref WindowData window, ref list<PartData> parts, addr event, u32 kind
         if (hotId != window.hot || hand != window.hand) {
             window.hot = hotId
             window.hand = hand
-            bool typing = hot >= 0 && hot != open && parts[hot].kind == kindTextBox && parts[hot].active
+            bool typing = hot >= 0 && hot != open && (parts[hot].kind == kindTextBox || parts[hot].kind == kindTextArea) &&
+                parts[hot].active
             SDL_SetCursor(hand ? pointer : typing ? beam : arrow)
         }
         window.snackHot = snackAt(ref window, x, y)
@@ -6197,7 +6362,12 @@ void route(ref WindowData window, ref list<PartData> parts, addr event, u32 kind
         if (window.dragging != 0) {
             i64 d = partNumber(ref parts, window.dragging)
             if (d >= 0) {
-                parts[d].caret = indexAt(window.body, parts[d].text, x - parts[d].left - padding + parts[d].scroll)
+                if (parts[d].kind == kindTextArea) {
+                    parts[d].caret = areaIndexAt(ref window, ref parts[d], x, y)
+                    parts[d].revealCaret = true
+                } else {
+                    parts[d].caret = indexAt(window.body, parts[d].text, x - parts[d].left - padding + parts[d].scroll)
+                }
                 window.caretStart = SDL_GetTicksNS()
             }
         }
@@ -6369,8 +6539,10 @@ void route(ref WindowData window, ref list<PartData> parts, addr event, u32 kind
         }
     } else if (kind == 0x303) {  // SDL_EVENT_TEXT_INPUT, in UTF-8
         i64 f = partNumber(ref parts, window.focus)
-        if (f >= 0 && parts[f].kind == kindTextBox && parts[f].active) {
+        if (f >= 0 && (parts[f].kind == kindTextBox || parts[f].kind == kindTextArea) && parts[f].active) {
+            remember(ref parts[f], 1)
             insert(ref parts[f], cText(take<addr>(offset(event, 24))))
+            parts[f].revealCaret = true
             window.caretStart = SDL_GetTicksNS()
             changed(ref parts[f], ref calls)
         }
@@ -6434,7 +6606,7 @@ bool inside(ref PartData part, f32 x, f32 y) {
 bool focusable(ref PartData part) {
     bool takes = part.kind == kindButton || part.kind == kindTextBox || part.kind == kindCheckBox || part.kind == kindComboBox ||
         part.kind == kindListView || part.kind == kindSwitch || part.kind == kindSlider || part.kind == kindTable ||
-        part.kind == kindTabView || part.kind == kindSegmented
+        part.kind == kindTabView || part.kind == kindSegmented || part.kind == kindTextArea
     ret takes && part.shown && part.active
 }
 
@@ -6450,8 +6622,8 @@ void focusTo(ref WindowData window, ref list<PartData> parts, i64 id) {
     }
     i64 old = partNumber(ref parts, window.focus)
     i64 now = partNumber(ref parts, id)
-    bool wasText = old >= 0 && parts[old].kind == kindTextBox
-    bool isText = now >= 0 && parts[now].kind == kindTextBox
+    bool wasText = old >= 0 && (parts[old].kind == kindTextBox || parts[old].kind == kindTextArea)
+    bool isText = now >= 0 && (parts[now].kind == kindTextBox || parts[now].kind == kindTextArea)
     window.focus = id
     if (isText && window.screenKeyboard > 0) {
         window.revealFocus = true
@@ -6503,6 +6675,13 @@ void pressPart(ref WindowData window, ref list<PartData> parts, f32 x, f32 y, re
     if (parts[p].kind == kindTextBox) {
         parts[p].caret = indexAt(window.body, parts[p].text, x - parts[p].left - padding + parts[p].scroll)
         parts[p].anchor = parts[p].caret
+        parts[p].lastEdit = 0
+        window.dragging = parts[p].id
+    } else if (parts[p].kind == kindTextArea) {
+        parts[p].caret = areaIndexAt(ref window, ref parts[p], x, y)
+        parts[p].anchor = parts[p].caret
+        parts[p].goalX = -1
+        parts[p].lastEdit = 0
         window.dragging = parts[p].id
     } else if (parts[p].kind == kindComboBox) {
         openList(ref window, ref parts[p])
@@ -7047,6 +7226,10 @@ bool keyOfPart(ref WindowData window, ref list<PartData> parts, Key key, ref lis
         window.caretStart = SDL_GetTicksNS()
         ret edit(ref parts[f], key, ref calls)
     }
+    if (parts[f].kind == kindTextArea) {
+        window.caretStart = SDL_GetTicksNS()
+        ret areaKey(ref window, ref parts[f], key, ref calls)
+    }
     if (parts[f].kind == kindComboBox) {
         ret comboKey(ref window, ref parts[f], key, ref calls)
     }
@@ -7084,6 +7267,7 @@ const i64 keyDown = 0x40000051
 bool edit(ref PartData box, Key key, ref list<Call> calls) {
     i64 code = key.code
     if (code == 8) {  // Backspace
+        remember(ref box, 2)
         if (!removeSelection(ref box) && box.caret > 0) {
             i64 from = previousCharacter(box.text, box.caret)
             box.text = box.text.slice(0, from).concat(box.text.slice(box.caret, box.text.len()))
@@ -7092,6 +7276,7 @@ bool edit(ref PartData box, Key key, ref list<Call> calls) {
         }
         changed(ref box, ref calls)
     } else if (code == 0x7F) {  // Delete
+        remember(ref box, 2)
         if (!removeSelection(ref box) && box.caret < box.text.len()) {
             i64 to = nextCharacter(box.text, box.caret)
             box.text = box.text.slice(0, box.caret).concat(box.text.slice(to, box.text.len()))
@@ -7100,7 +7285,11 @@ bool edit(ref PartData box, Key key, ref list<Call> calls) {
     } else if (code == keyLeft || code == keyRight || code == keyHome || code == keyEnd) {
         i64 low = box.caret < box.anchor ? box.caret : box.anchor
         i64 high = box.caret < box.anchor ? box.anchor : box.caret
-        if (code == keyLeft) {
+        if (code == keyLeft && key.control) {  // a word
+            box.caret = wordLeft(box.text, box.caret)
+        } else if (code == keyRight && key.control) {
+            box.caret = wordRight(box.text, box.caret)
+        } else if (code == keyLeft) {
             box.caret = !key.shift && low != high ? low : previousCharacter(box.text, box.caret)
         } else if (code == keyRight) {
             box.caret = !key.shift && low != high ? high : nextCharacter(box.text, box.caret)
@@ -7112,6 +7301,7 @@ bool edit(ref PartData box, Key key, ref list<Call> calls) {
         if (!key.shift) {
             box.anchor = box.caret
         }
+        box.lastEdit = 0
     } else if (code == 13 || code == keyEnter) {
         Call call = callOf(7, box.enter)
         call.text = box.text
@@ -7123,6 +7313,7 @@ bool edit(ref PartData box, Key key, ref list<Call> calls) {
         if (box.caret != box.anchor) {
             SDL_SetClipboardText(selection(ref box).cstring())
             if (code == 120) {
+                remember(ref box, 3)
                 removeSelection(ref box)
                 changed(ref box, ref calls)
             }
@@ -7133,9 +7324,12 @@ bool edit(ref PartData box, Key key, ref list<Call> calls) {
         if (pasted != none) {
             string line = cText(pasted).replace("\r\n", " ").replace("\n", " ").replace("\r", " ")
             SDL_free(pasted)
+            remember(ref box, 3)
             insert(ref box, line)
             changed(ref box, ref calls)
         }
+    } else if (key.control && (code == 122 || code == 121)) {  // Ctrl+Z, and Ctrl+Y or Ctrl+Shift+Z
+        undo(ref box, code == 121 || key.shift, ref calls)
     } else {
         ret !key.control && !key.alt && code >= 32 && code < 127
     }
@@ -7435,7 +7629,7 @@ void layoutIn(ref WindowData window, ref list<PartData> parts, i64 group, Frame 
             parts[i].content = tableHeader() + f32(parts[i].tableRows) * tableRow()
             clampScroll(ref parts[i])
         }
-        if (parts[i].kind == kindTextView) {  // D490: its height from its last layout
+        if (parts[i].kind == kindTextView || parts[i].kind == kindTextArea) {  // D490, D499: from the last frame
             clampScroll(ref parts[i])
         }
         if (parts[i].kind == kindGroup || parts[i].kind == kindPanel || parts[i].kind == kindTabView) {
@@ -7499,8 +7693,8 @@ void scrollBy(ref PartData part, f32 delta) {
 }
 
 bool scrolls(ref PartData part) {
-    ret (part.kind == kindPanel || part.kind == kindListView || part.kind == kindTable || part.kind == kindTextView) &&
-        part.content > f32(part.height)
+    ret (part.kind == kindPanel || part.kind == kindListView || part.kind == kindTable || part.kind == kindTextView ||
+        part.kind == kindTextArea) && part.content > f32(part.height)
 }
 
 // The position and the size of a component, for the size of its parent now.
@@ -7908,6 +8102,8 @@ void drawPart(ref WindowData window, ref PartData part, ref Colors c, ref list<I
         drawTable(ref window, ref part, ref c)
     } else if (part.kind == kindTextView) {
         drawTextView(ref window, ref part, ref c, ref images)
+    } else if (part.kind == kindTextArea) {
+        drawTextArea(ref window, ref part, ref c, focused)
     } else if (part.kind == kindTabView) {
         drawTabView(ref window, ref part, ref c, ring)
     } else if (part.kind == kindSegmented) {
@@ -8826,7 +9022,10 @@ void chooseMenuItem(ref WindowData window, i64 k, ref list<Call> calls) {
 
 // The events of a window while its menu is open: the mouse and the keys go to the menu,
 // and a press out of it closes it and does nothing else. True when the event is taken.
-bool menuEvent(ref WindowData window, addr event, u32 kind, ref list<Call> calls) {
+bool menuEvent(ref WindowData window, ref list<PartData> parts, addr event, u32 kind, ref list<Call> calls) {
+    if (!window.menuPlaced) {  // an event before its first frame
+        placeMenu(ref window, ref parts)
+    }
     if (kind == 0x20F) {  // FOCUS_LOST
         closeMenu(ref window)
         ret false
@@ -9034,6 +9233,322 @@ void checkLongPress(ref WindowData window, ref list<PartData> parts) {
     }
     window.held = 0
     window.heldItem = -1
+}
+
+// ---- The text areas, and undo (D498, D499) ----
+
+f32 areaLine() {  // the height of a line of a text area
+    ret comfortable() ? 21 : 20
+}
+
+const f32 areaPad = 6  // the text of a text area from its top and bottom edges
+const i64 undoSteps = 100
+
+// Before an edit: the text as it was, to undo. The characters written one after the
+// other are one step; 1 writing, 2 deleting, 3 another edit.
+void remember(ref PartData box, i32 kind) {
+    if (kind != 3 && kind == box.lastEdit) {
+        ret
+    }
+    box.undoTexts.add(box.text)
+    box.undoCarets.add(box.caret)
+    if (box.undoTexts.len() > undoSteps) {
+        box.undoTexts.remove(0)
+        box.undoCarets.remove(0)
+    }
+    box.redoTexts.clear()
+    box.redoCarets.clear()
+    box.lastEdit = kind
+}
+
+// Ctrl+Z, and Ctrl+Y with redo: false when there is nothing to undo or to redo.
+bool undo(ref PartData box, bool redo, ref list<Call> calls) {
+    i64 n = redo ? box.redoTexts.len() : box.undoTexts.len()
+    if (n == 0) {
+        ret false
+    }
+    string back = redo ? box.redoTexts.remove(n - 1) : box.undoTexts.remove(n - 1)
+    i64 caret = redo ? box.redoCarets.remove(n - 1) : box.undoCarets.remove(n - 1)
+    if (redo) {
+        box.undoTexts.add(box.text)
+        box.undoCarets.add(box.caret)
+    } else {
+        box.redoTexts.add(box.text)
+        box.redoCarets.add(box.caret)
+    }
+    box.text = back
+    box.caret = caret < back.len() ? caret : back.len()
+    box.anchor = box.caret
+    box.lastEdit = 0
+    box.revealCaret = true
+    changed(ref box, ref calls)
+    ret true
+}
+
+void forgetEdits(ref PartData box) {
+    box.undoTexts.clear()
+    box.undoCarets.clear()
+    box.redoTexts.clear()
+    box.redoCarets.clear()
+    box.lastEdit = 0
+}
+
+bool isSpace(u8 b) {
+    ret b == 32 || b == 10 || b == 9
+}
+
+// Ctrl+Left: the start of the word before; Ctrl+Right: the end of the word after.
+i64 wordLeft(string s, i64 at) {
+    i64 i = at
+    for (i > 0 && isSpace(s[i - 1])) {
+        i--
+    }
+    for (i > 0 && !isSpace(s[i - 1])) {
+        i--
+    }
+    ret i
+}
+
+i64 wordRight(string s, i64 at) {
+    i64 i = at
+    for (i < s.len() && isSpace(s[i])) {
+        i++
+    }
+    for (i < s.len() && !isSpace(s[i])) {
+        i++
+    }
+    ret i
+}
+
+// The lines of a text area at its width: the first byte of each one, and its end without
+// the "\n" that ends it. A line breaks after its spaces, or between two letters when a
+// word is wider than the line; the spaces at its end may go beyond the edge.
+void wrapArea(ref WindowData window, ref PartData area) {
+    f32 width = most(f32(area.width) - 2 * padding - 4, 8)
+    if (area.wrapWidth == width && area.wrapText == area.text) {
+        ret
+    }
+    area.wrapStarts.clear()
+    area.wrapEnds.clear()
+    string s = area.text
+    i64 start = 0
+    for (true) {
+        i64 end = start
+        for (end < s.len() && s[end] != 10) {
+            end++
+        }
+        wrapParagraph(ref window, ref area, s, start, end, width)
+        if (end >= s.len()) {
+            break
+        }
+        start = end + 1
+    }
+    area.wrapWidth = width
+    area.wrapText = area.text
+}
+
+void wrapParagraph(ref WindowData window, ref PartData area, string s, i64 start, i64 end, f32 width) {
+    i64 line = start
+    i64 lastBreak = -1
+    f32 x = 0
+    f32 sinceBreak = 0  // from the last place where the line can break
+    i64 next = start
+    for (i64 i = start; i < end; i = next) {
+        next = nextCharacter(s, i)
+        f32 w = textWidth(window.body, s.slice(i, next), next - i)
+        bool space = s[i] == 32
+        if (!space && x + w > width && i > line) {
+            if (lastBreak > line) {
+                area.wrapStarts.add(line)
+                area.wrapEnds.add(lastBreak)
+                line = lastBreak
+                x = sinceBreak
+            } else {
+                area.wrapStarts.add(line)
+                area.wrapEnds.add(i)
+                line = i
+                x = 0
+            }
+            lastBreak = -1
+            sinceBreak = 0
+        }
+        x = x + w
+        sinceBreak = sinceBreak + w
+        if (space) {
+            lastBreak = next
+            sinceBreak = 0
+        }
+    }
+    area.wrapStarts.add(line)
+    area.wrapEnds.add(end)
+}
+
+// The line of the cursor: the last one that starts at it or before.
+i64 caretLine(ref PartData area, i64 caret) {
+    i64 k = 0
+    for (i64 i = 0; i < area.wrapStarts.len(); i++) {
+        if (area.wrapStarts[i] <= caret) {
+            k = i
+        }
+    }
+    ret k
+}
+
+f32 caretLeft(ref WindowData window, ref PartData area, i64 caret) {
+    i64 k = caretLine(ref area, caret)
+    i64 from = area.wrapStarts[k]
+    ret textWidth(window.body, area.text.slice(from, caret), caret - from)
+}
+
+// The byte of the text at x on a line, from the left of the text.
+i64 indexOnLine(ref WindowData window, ref PartData area, i64 k, f32 x) {
+    i64 from = area.wrapStarts[k]
+    i64 to = area.wrapEnds[k]
+    i64 at = from + indexAt(window.body, area.text.slice(from, to), x)
+    if (at == to && k + 1 < area.wrapStarts.len() && area.wrapStarts[k + 1] == to && to > from) {
+        at = previousCharacter(area.text, to)  // on a line that broke by itself, before its last space
+    }
+    ret at
+}
+
+// The byte of the text at a point of the window.
+i64 areaIndexAt(ref WindowData window, ref PartData area, f32 x, f32 y) {
+    wrapArea(ref window, ref area)
+    i64 k = i64((y - area.top - areaPad + area.offsetY) / areaLine())
+    if (k < 0) {
+        ret 0
+    }
+    if (k >= area.wrapStarts.len()) {
+        ret area.text.len()
+    }
+    ret indexOnLine(ref window, ref area, k, x - area.left - padding)
+}
+
+// The keys of a text area: those of a text box, Enter a new line, and Up, Down, Page Up
+// and Page Down by lines.
+bool areaKey(ref WindowData window, ref PartData area, Key key, ref list<Call> calls) {
+    wrapArea(ref window, ref area)
+    i64 code = key.code
+    i64 k = caretLine(ref area, area.caret)
+    if (code == keyUp || code == keyDown || code == keyPageUp || code == keyPageDown) {
+        if (area.goalX < 0) {
+            area.goalX = caretLeft(ref window, ref area, area.caret)
+        }
+        i64 page = most64(i64((f32(area.height) - 2 * areaPad) / areaLine()) - 1, 1)
+        i64 step = code == keyUp ? -1 : code == keyDown ? 1 : code == keyPageUp ? -page : page
+        i64 to = k + step
+        if (to < 0) {
+            area.caret = 0
+        } else if (to >= area.wrapStarts.len()) {
+            area.caret = area.text.len()
+        } else {
+            area.caret = indexOnLine(ref window, ref area, to, area.goalX)
+        }
+        if (!key.shift) {
+            area.anchor = area.caret
+        }
+        area.lastEdit = 0
+        area.revealCaret = true
+        ret true
+    }
+    area.goalX = -1
+    if ((code == keyHome || code == keyEnd) && !key.control) {
+        area.caret = code == keyHome ? area.wrapStarts[k] : area.wrapEnds[k]
+        if (code == keyEnd && k + 1 < area.wrapStarts.len() && area.wrapStarts[k + 1] == area.caret && area.caret > area.wrapStarts[k]) {
+            area.caret = previousCharacter(area.text, area.caret)
+        }
+        if (!key.shift) {
+            area.anchor = area.caret
+        }
+        area.lastEdit = 0
+        area.revealCaret = true
+        ret true
+    }
+    if (code == 13 || code == keyEnter) {
+        remember(ref area, 3)
+        insert(ref area, "\n")
+        changed(ref area, ref calls)
+        area.revealCaret = true
+        ret true
+    }
+    if (key.control && code == 118) {  // Ctrl+V: the lines as they are
+        addr none
+        addr pasted = SDL_GetClipboardText()
+        if (pasted != none) {
+            string lines = cText(pasted).replace("\r\n", "\n").replace("\r", "\n")
+            SDL_free(pasted)
+            remember(ref area, 3)
+            insert(ref area, lines)
+            changed(ref area, ref calls)
+        }
+        area.revealCaret = true
+        ret true
+    }
+    bool used = edit(ref area, key, ref calls)
+    area.revealCaret = true
+    ret used
+}
+
+// A text area: the field of the text boxes, its lines that are seen, the selection in
+// the soft blue and the cursor that blinks; the placeholder in ink 3 while it is empty.
+void drawTextArea(ref WindowData window, ref PartData area, ref Colors c, bool focused) {
+    addr r = window.renderer
+    f32 x = area.left
+    f32 y = area.top
+    f32 w = f32(area.width)
+    f32 h = f32(area.height)
+    bool on = area.active
+    wrapArea(ref window, ref area)
+    f32 line = areaLine()
+    area.content = f32(area.wrapStarts.len()) * line + 2 * areaPad
+    clampScroll(ref area)
+    if (area.revealCaret) {
+        f32 top = f32(caretLine(ref area, area.caret)) * line
+        if (top < area.offsetY) {
+            scrollBy(ref area, top - area.offsetY)
+        } else if (top + line + 2 * areaPad > area.offsetY + h) {
+            scrollBy(ref area, top + line + 2 * areaPad - h - area.offsetY)
+        }
+        area.revealCaret = false
+    }
+    drawField(ref window, ref area, ref c, focused)
+    f32 ascent = 0
+    f32 descent = 0
+    f32 gap = 0
+    cromo_gui_font_metrics(window.body, ref ascent, ref descent, ref gap)
+    clipInside(r, ref area, x + 2, y + 2, w - 4, h - 4)
+    f32 left = x + padding
+    if (area.text.len() == 0) {
+        text(window.body, area.placeholder, left, y + areaPad + line / 2 + (ascent - descent) / 2, c.ink3, on)
+    }
+    i64 low = area.caret < area.anchor ? area.caret : area.anchor
+    i64 high = area.caret < area.anchor ? area.anchor : area.caret
+    i64 caretAt = caretLine(ref area, area.caret)
+    bool blink = ((SDL_GetTicksNS() - window.caretStart) / 500000000) % 2 == 0
+    for (i64 k = i64(area.offsetY / line); k < area.wrapStarts.len(); k++) {
+        f32 top = y + areaPad + f32(k) * line - area.offsetY
+        if (top >= y + h) {
+            break
+        }
+        i64 from = area.wrapStarts[k]
+        i64 to = area.wrapEnds[k]
+        string value = area.text.slice(from, to)
+        f32 baseline = top + line / 2 + (ascent - descent) / 2
+        if (low < high && low <= to && high >= from) {
+            i64 a = low > from ? low : from
+            i64 b = high < to ? high : to
+            f32 sx = textWidth(window.body, value, a - from)
+            f32 ex = textWidth(window.body, value, b - from)
+            bool more = high > to && (k + 1 >= area.wrapStarts.len() || area.wrapStarts[k + 1] > to)  // the "\n" too
+            fill(r, c.selectionSoft, left + sx, top + 1, ex - sx + (more ? 5 : 0), line - 2)
+        }
+        text(window.body, value, left, baseline, c.ink, on)
+        if (focused && blink && k == caretAt) {
+            f32 cx = textWidth(window.body, value, area.caret - from)
+            fill(r, c.ink, left + cx, baseline - ascent, 1, ascent + descent)
+        }
+    }
+    clipPart(r, ref area)
 }
 
 // ---- The tabs and the segmented controls (D494, D495) ----

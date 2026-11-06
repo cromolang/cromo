@@ -2372,6 +2372,35 @@ view.onClick([w](i64 piece, gui.Mouse m) {
 ### D497. The tooltips: light, as the menu
 *2026-11-06.* Chosen by the author. A component with `setTooltip(text)` shows the text when the mouse stays on it, in a small card on the surface with a border and a light shadow, the text in ink 2, as the tooltips of the system that the browsers show, and as the menu.
 
+### D498. Text on more lines: `gui.TextArea`, and undo
+*2026-11-06.* Chosen by the author. `gui.TextArea` is a component of its own for a text on more lines, as a note or a description: Enter starts a new line, the text scrolls up and down, and the mouse and Shift with the keys select as in a text box. Ctrl+Z undoes and Ctrl+Y redoes, in the text areas and in the text boxes, which did not have them. One flag that changed the keys of `gui.TextBox` would be harder to explain.
+
+```cromo
+// draft: the names of the API of the text area are not decided
+gui.TextArea note = w.add(gui.TextArea("", 16, 16, 400, 160))
+note.setPlaceholder("A note")
+note.onChange([](string text) { println("{} characters", text.len()) })
+```
+
+### D499. The long lines of a text area go to the next line
+*2026-11-06.* Chosen by the author. A line longer than the width of the text area goes on the next one, at its spaces, as in a notepad that wraps: the text area is for notes and texts, not for code, and scrolls only up and down.
+
+### D500. The dialogs of the files are those of the system
+*2026-11-06.* Chosen by the author. To open a file, more files or a folder, and to save one, `std.gui` shows the dialogs of the system, through SDL3: those of Windows, of the portal of the desktop or of zenity on Linux, the picker of the documents on Android, with the recent folders and the places that the user knows. The handler of the program receives the paths chosen, none when the user cancels, on the thread of the windows.
+
+```cromo
+// draft: the names of the API of the dialogs are not decided
+w.openFile([gui.FileType("Images", "png;jpg")], [](list<string> files) {
+    if (files.len() > 0) {
+        println("open {}", files[0])
+    }
+})
+w.saveFile([gui.FileType("Text", "txt")], "notes.txt", [](string file) { println("save {}", file) })
+```
+
+### D501. On Android `std.fs` reads the documents chosen
+*2026-11-06.* Chosen by the author. The picker of Android gives names as `content://...`, not paths: on Android `std.fs` reads and writes them too, through SDL, so that a program opens and saves the files chosen in a dialog with the same functions on every system.
+
 ---
 
 ## Proposed
@@ -2625,6 +2654,12 @@ A component keeps the distances from the edges of its parent, the content of the
 - The look: a card on the surface, with the border of the controls, corners of 8 and the shadow of the cards; the items 4 pixels from its edges, 30 pixels high on the desktop and 44 on a phone, their text 12 pixels from the left, after an icon of 16 when they have one; at least 190 pixels wide; the item under the mouse or chosen with the keys in a box of the soft accent with corners of 5, its text and its icon in accent 2; the disabled items in ink 3; a separator 9 pixels high with a line of rule.
 - A long press: a finger held still for 0.5 seconds on a piece of a text view is a click of the right button there; on another component with a tooltip it shows the tooltip until the finger is lifted. Its release then clicks nothing.
 - `setTooltip(text)` and `tooltip()` are on all the components but the app bar and the navigation bar. On the desktop the tooltip shows when the mouse stays 0.6 seconds on the component, without a press or a key since it came there, and not while a menu or the list of a combo box is open: 22 pixels under the mouse, or above it when there is no room; on a phone after a long press, above the finger. The look: a card on the surface, with the border of the controls, corners of 4 and the near shadow; its text 12 pixels high, 13 on a phone, in ink 2, 8 pixels from its sides, with lines of 1.45 times the size; `"\n"` starts a new line.
+
+### P59. The text area and undo (D498, D499)
+- `gui.TextArea(text, x, y, w, h)`: `onChange(func(string))`, `setPlaceholder`, `placeholder()`, `setText`, which puts the cursor at the end, shows it and forgets the edits, and `text()`, with `"\n"` between the lines.
+- The keys: the characters and Enter write, Backspace and Delete delete, the arrows move by characters and with Ctrl by words, Up and Down by lines at the same distance from the left, Page Up and Page Down by the lines seen less one, Home and End to the ends of the line and with Ctrl of the text; Shift selects; Ctrl+A, Ctrl+C, Ctrl+X and Ctrl+V, which keeps the lines of the text pasted; Tab gives the keyboard to the next component. A click puts the cursor, and the mouse held selects; the wheel, the bar and a finger scroll. The text area scrolls to show the cursor after each key.
+- The lines: a line breaks after its spaces, or between two letters when a word is wider than it; the spaces at its end may go beyond the edge. The text is 8 pixels from the sides and 6 from the top and the bottom, its lines 20 pixels high on the desktop and 21 on a phone; the field, the selection, the cursor and the placeholder are those of a text box.
+- Undo, in the text boxes and in the text areas: the text before each edit is kept, up to 100 steps; the characters written one after the other are one step, as the deletions one after the other, and the cut, the paste and Enter are a step each. Ctrl+Z undoes, Ctrl+Y and Ctrl+Shift+Z redo, and a new edit forgets what could be redone; an undo calls `onChange`. In a text box Ctrl and the arrows move by words too.
 
 ---
 

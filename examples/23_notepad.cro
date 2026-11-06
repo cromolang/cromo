@@ -1,0 +1,44 @@
+// Example 23: a notepad. The text goes to the next line at the width of the window, and
+// the bar at the bottom counts its lines, its words and its characters while it is
+// written; Ctrl+Z and Ctrl+Y undo and redo.
+//
+// Decided: the text area and undo (D498), its lines that go to the next line (D499),
+//          the look (D479)
+// Draft:   the names of the text area and of its methods
+import std.gui
+
+// The lines, the words and the characters of a text.
+string summary(string text) {
+    i64 lines = text.len() > 0 ? 1 : 0
+    i64 words = 0
+    i64 characters = 0
+    bool inWord = false
+    for (i64 i = 0; i < text.len(); i++) {
+        u8 b = text[i]
+        if (b == 10) {
+            lines++
+        }
+        if ((b & 0xC0) != 0x80) {
+            characters++
+        }
+        bool space = b == 32 || b == 10 || b == 9
+        if (!space && !inWord) {
+            words++
+        }
+        inWord = !space
+    }
+    ret format("{} lines, {} words, {} characters", lines, words, characters)
+}
+
+[[window]]
+i32 main() {
+    gui.Window w = gui.Window("Notepad", 560, 420)
+    gui.TextArea text = w.add(gui.TextArea("", 16, 16, 528, 321))
+    text.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Stretch)
+    text.setPlaceholder("Write here")
+    gui.Label status = w.add(gui.Label(summary(""), 16, 353, 528, 20))
+    status.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Bottom)
+    text.onChange([status](string value) { status.setText(summary(value)) })
+    w.start()
+    ret 0
+}
