@@ -1,0 +1,10 @@
+// A polygon needs three corners (D483): fewer is a panic.
+// expect-exit: 101
+// expect-stderr: a polygon needs the x and the y of three corners at least, not 4 numbers
+import std.gui
+
+i32 main() {
+    gui.Drawing d
+    d.polygon([0.0, 0.0, 10.0, 10.0], gui.rgb(0x000000))
+    ret 0
+}

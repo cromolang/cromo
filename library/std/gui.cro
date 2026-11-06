@@ -127,6 +127,8 @@ extern "cromo" {
     addr cromo_gui_image_decode(addr bytes, i64 size, ref i32 width, ref i32 height, addr reason, i64 room)
     void cromo_gui_image_free(addr pixels)
     addr cromo_gui_image_round(addr pixels, i32 width, i32 height, i32 size)
+    bool cromo_gui_svg_size(addr bytes, i64 size, ref f32 width, ref f32 height)
+    addr cromo_gui_svg_draw(addr bytes, i64 size, i32 width, i32 height)
     void cromo_gui_icon(addr renderer, i32 code, f32 x, f32 y, f32 size, f32 density, u8 r, u8 g, u8 b, u8 alpha)
     void cromo_gui_icons_free(addr renderer)
     void cromo_gui_system_bars(u32 rgb, bool light)
@@ -188,6 +190,61 @@ public enum Scale {
     Fill     // the whole box, covered by the image with its proportions, cut at the edges
     Stretch  // the size of the box, without the proportions of the image
     Center   // the size of the image, a pixel of it for each logical pixel
+}
+
+// A color with its opacity, for the drawings of a canvas (D483): 'rgb(0x2F6E8F)' is
+// opaque, and 'rgba(0x2F6E8F, 115)' lets what is under it show through.
+public struct Color {
+    public u8 red
+    public u8 green
+    public u8 blue
+    public u8 alpha  // 255 opaque, 0 transparent
+}
+
+// An opaque color from its value 0xRRGGBB, as in CSS: 'gui.rgb(0xB4761C)'.
+public Color rgb(u32 value) {
+    ret rgba(value, 255)
+}
+
+// A color from its value 0xRRGGBB and its opacity, from 0, transparent, to 255,
+// opaque: 'gui.rgba(0x2F6E8F, 115)' is about 45% opaque.
+public Color rgba(u32 value, u8 alpha) {
+    Color c
+    c.red = u8((value >> 16) & 0xFF)
+    c.green = u8((value >> 8) & 0xFF)
+    c.blue = u8(value & 0xFF)
+    c.alpha = alpha
+    ret c
+}
+
+// An image for the drawings of a canvas: PNG, JPEG, BMP, GIF or SVG, read once from
+// its bytes and kept for the whole program. It is a handle, as a component: its
+// copies name the same image, and a lambda captures it by copy. An SVG image is drawn
+// again at the size where it is shown, sharp at every size and density.
+//
+// '''
+// gui.Image logo = gui.Image(embed("images/logo.svg"))
+// gui.Drawing d
+// d.image(logo, 16, 16, 64, 64)
+// '''
+public struct Image {
+    i64 id
+
+    // Reads the image from its bytes, as 'embed' and 'fs.readBytes' give them. Bytes that
+    // are not an image that can be read throw an Error with the reason.
+    public Image(list<u8> bytes) {
+        id = newImage(bytes)
+    }
+
+    // The width of the image in pixels: that of its file, or the one written in the SVG.
+    public f32 width() const {
+        ret imageSize(id, true)
+    }
+
+    // The height of the image in pixels: that of its file, or the one written in the SVG.
+    public f32 height() const {
+        ret imageSize(id, false)
+    }
 }
 
 // ---- The icons (D448, D449), written by tools/lucide.py ----
@@ -352,10 +409,11 @@ public enum Icon {
 // ---- The end of the icons ----
 
 // Where the mouse is, and which button changed, for the handlers of 'onMouseMove',
-// 'onMouseDown' and 'onMouseUp' of a window. A finger on a phone is the left button.
+// 'onMouseDown' and 'onMouseUp' of a window or of a canvas. A finger on a phone is the
+// left button.
 public struct Mouse {
-    public f32 x       // in logical pixels from the left edge of the content of the window
-    public f32 y       // in logical pixels from the top of the content, under the title bar
+    public f32 x       // in logical pixels from the left edge of the content, or of the canvas
+    public f32 y       // in logical pixels from the top of the content, or of the canvas
     public i32 button  // 1 left, 2 middle, 3 right, 0 when the mouse moves
 }
 
@@ -1226,9 +1284,10 @@ public struct ComboBox : Component {
     }
 }
 
-// An image in PNG, JPEG, BMP or GIF, of which a GIF shows its first frame, from a file
-// or from bytes in memory, placed in its box as 'setScale' says: by default the whole
-// image, as large as the box allows. The image is read and decoded by the thread that
+// An image in PNG, JPEG, BMP, GIF or SVG, of which a GIF shows its first frame, from a
+// file or from bytes in memory, placed in its box as 'setScale' says: by default the
+// whole image, as large as the box allows. An SVG image is drawn at the size where it
+// is shown, sharp at every size. The image is read and decoded by the thread that
 // sets it, which receives the errors as exceptions. An app on a phone has no files
 // next to it: there the images come from 'embed'.
 //
@@ -2451,6 +2510,271 @@ public struct Slider : Component {
     }
 }
 
+// What a canvas shows (D483): its shapes, each drawn over the ones before it. The
+// positions are in logical pixels from the top left corner of the canvas. A drawing is
+// a value: the program builds it, on any thread, and hands it to the canvas with
+// 'Canvas.setDrawing', which keeps it until the next one.
+//
+// '''
+// gui.Drawing d
+// d.rect(0, 0, 320, 200, gui.rgb(0xFFFFFF))
+// d.polyline([20.0, 180.0, 120.0, 90.0, 300.0, 40.0], 3, gui.rgb(0xB4761C))
+// d.circle(300, 40, 6, gui.rgb(0x2F6E8F))
+// d.text("Sales", 20, 20, 13, gui.rgb(0x18212A), gui.Horizontal.Left)
+// chart.setDrawing(move d)
+// '''
+public struct Drawing {
+    list<Shape> shapes
+
+    // A rectangle filled with a color.
+    public void rect(f32 x, f32 y, f32 width, f32 height, Color color) {
+        Shape s = shapeOf(1, x, y, width, height, color)
+        shapes.add(move s)
+    }
+
+    // A rectangle with round corners of 'radius' pixels, filled with a color.
+    public void roundRect(f32 x, f32 y, f32 width, f32 height, f32 radius, Color color) {
+        Shape s = shapeOf(1, x, y, width, height, color)
+        s.radius = radius
+        shapes.add(move s)
+    }
+
+    // The outline of a rectangle: a line 'thickness' pixels wide inside its edges.
+    public void frame(f32 x, f32 y, f32 width, f32 height, f32 thickness, Color color) {
+        Shape s = shapeOf(2, x, y, width, height, color)
+        s.thickness = thickness
+        shapes.add(move s)
+    }
+
+    // A circle with its center at x, y, filled with a color.
+    public void circle(f32 x, f32 y, f32 radius, Color color) {
+        Shape s = shapeOf(3, x - radius, y - radius, 2 * radius, 2 * radius, color)
+        s.radius = radius
+        shapes.add(move s)
+    }
+
+    // The outline of a circle with its center at x, y: a line 'thickness' pixels wide
+    // inside its radius.
+    public void ring(f32 x, f32 y, f32 radius, f32 thickness, Color color) {
+        Shape s = shapeOf(4, x - radius, y - radius, 2 * radius, 2 * radius, color)
+        s.radius = radius
+        s.thickness = thickness
+        shapes.add(move s)
+    }
+
+    // A segment from x1, y1 to x2, y2, 'thickness' pixels wide, with round ends.
+    public void line(f32 x1, f32 y1, f32 x2, f32 y2, f32 thickness, Color color) {
+        Shape s = shapeOf(5, 0, 0, 0, 0, color)
+        s.thickness = thickness
+        s.points = [x1, y1, x2, y2]
+        shapes.add(move s)
+    }
+
+    // A polygon filled with a color: 'points' are its corners, the x and the y of each
+    // one after the other. Fewer than three corners, or an odd number of values, is a
+    // panic.
+    public void polygon(list<f32> points, Color color) {
+        if (points.len() < 6 || points.len() % 2 != 0) {
+            panic(format("a polygon needs the x and the y of three corners at least, not {} numbers", points.len()))
+        }
+        Shape s = shapeOf(6, 0, 0, 0, 0, color)
+        s.points = points
+        shapes.add(move s)
+    }
+
+    // A line through 'points', the x and the y of each one after the other, 'thickness'
+    // pixels wide, with round joins and ends. Fewer than two points, or an odd number
+    // of values, is a panic.
+    public void polyline(list<f32> points, f32 thickness, Color color) {
+        if (points.len() < 4 || points.len() % 2 != 0) {
+            panic(format("a polyline needs the x and the y of two points at least, not {} numbers", points.len()))
+        }
+        Shape s = shapeOf(7, 0, 0, 0, 0, color)
+        s.thickness = thickness
+        s.points = points
+        shapes.add(move s)
+    }
+
+    // An image in the rectangle, as large as the rectangle allows with its proportions,
+    // at its center.
+    public void image(Image picture, f32 x, f32 y, f32 width, f32 height) {
+        Shape s = shapeOf(8, x, y, width, height, rgb(0xFFFFFF))
+        s.image = picture.id
+        shapes.add(move s)
+    }
+
+    // A line of text in Inter, 'size' pixels high. 'y' is the middle of the line, and 'x'
+    // its left edge, its center or its right edge, as 'align' says: 'Horizontal.Left',
+    // 'Center' or 'Right'.
+    public void text(string value, f32 x, f32 y, f32 size, Color color, Horizontal align) {
+        Shape s = shapeOf(9, x, y, 0, size, color)
+        s.text = value
+        s.align = align
+        shapes.add(move s)
+    }
+
+    // Removes all the shapes.
+    public void clear() {
+        shapes.clear()
+    }
+
+    // The number of shapes.
+    public i64 len() const {
+        ret shapes.len()
+    }
+}
+
+// A surface on which the program draws (D483): a chart, a map, a diagram, a game. It
+// shows the 'Drawing' given to 'setDrawing', and draws it again by itself whenever it
+// must; it tells where the mouse is pressed, moves and is released, so that the program
+// can drag what it draws, and a new drawing takes the place of the old one. A canvas
+// draws nothing else: under its shapes its parent shows.
+//
+// '''
+// gui.Canvas chart = w.add(gui.Canvas(16, 16, 480, 320))
+// gui.Drawing d
+// d.rect(0, 0, 480, 320, gui.rgb(0xFFFFFF))
+// d.circle(240, 160, 40, gui.rgba(0x2F6E8F, 115))
+// chart.setDrawing(move d)
+// chart.onMouseDown([](gui.Mouse m) { println("pressed at {}, {}", m.x, m.y) })
+// '''
+public struct Canvas : Component {
+    i64 id
+
+    // A canvas. 'x' and 'y' are in logical pixels from the top left corner of its parent,
+    // the window, the group, the panel or the dialog whose 'add' puts it there, and
+    // 'width' and 'height' its size.
+    public Canvas(i32 x, i32 y, i32 width, i32 height) {
+        id = newPart(kindCanvas, "", x, y, width, height)
+    }
+
+    i64 componentId() const {
+        ret id
+    }
+
+    // Shows the drawing, in place of the one shown before. It can be called from any
+    // thread, as often as the drawing changes: while the mouse drags a shape, at each of
+    // its moves.
+    public void setDrawing(move Drawing drawing) const {
+        addr box = alloc(sizeOf<Drawing>())
+        put<Drawing>(box, move drawing)
+        i64 me = id
+        withData([me, box](ref Shared data) {
+            i64 p = partIndexOf(ref data, me)
+            data.parts[p].drawing = take<Drawing>(box)
+            data.parts[p].drawingChanged = true
+        })
+        free(box)
+    }
+
+    // Adds a handler, called on the thread of the windows when a button of the mouse, or
+    // a finger, is pressed on the canvas. The position of 'gui.Mouse' is from the top left
+    // corner of the canvas, and its button 1 left, 2 middle, 3 right. Until the button is
+    // released, the canvas has the mouse: its moves and its release come to it, also
+    // outside it.
+    public void onMouseDown(move func(Mouse) handler) const {
+        addr box = alloc(sizeOf<func(Mouse)>())
+        put<func(Mouse)>(box, move handler)
+        addPartHandler(id, 4, box)
+    }
+
+    // Adds a handler, called on the thread of the windows when the mouse moves over the
+    // canvas, or anywhere while a button pressed on it is held. The position is from the
+    // top left corner of the canvas, and the button 0.
+    public void onMouseMove(move func(Mouse) handler) const {
+        addr box = alloc(sizeOf<func(Mouse)>())
+        put<func(Mouse)>(box, move handler)
+        addPartHandler(id, 5, box)
+    }
+
+    // Adds a handler, called on the thread of the windows when the button pressed on the
+    // canvas is released, wherever the mouse is. The position is from the top left
+    // corner of the canvas.
+    public void onMouseUp(move func(Mouse) handler) const {
+        addr box = alloc(sizeOf<func(Mouse)>())
+        put<func(Mouse)>(box, move handler)
+        addPartHandler(id, 6, box)
+    }
+
+    // Moves the canvas, in logical pixels from the top left corner of its parent: the content of
+    // the window, or the group, the panel or the dialog that holds it. Its anchors keep the
+    // distances from the edges that it has at the new place.
+    public void setPosition(i32 x, i32 y) const {
+        setPartBounds(id, x, y, -1, -1)
+    }
+
+    // Changes the width and the height of the canvas, in logical pixels. Its anchors keep the
+    // distances from the edges that it has with the new size.
+    public void setSize(i32 width, i32 height) const {
+        setPartBounds(id, -1, -1, width, height)
+    }
+
+    // The distance of the canvas from the left edge of its parent, in logical pixels, where its
+    // anchors have placed it now.
+    public i32 x() const {
+        ret partBound(id, 0)
+    }
+
+    // The distance of the canvas from the top edge of its parent, in logical pixels, where its
+    // anchors have placed it now.
+    public i32 y() const {
+        ret partBound(id, 1)
+    }
+
+    // The width of the canvas now, in logical pixels: a 'Stretch' anchor changes it with its
+    // parent.
+    public i32 width() const {
+        ret partBound(id, 2)
+    }
+
+    // The height of the canvas now, in logical pixels: a 'Stretch' anchor changes it with its
+    // parent.
+    public i32 height() const {
+        ret partBound(id, 3)
+    }
+
+    // Shows or hides the canvas.
+    public void setVisible(bool value) const {
+        setPartFlag(id, 0, value)
+    }
+
+    // Whether the canvas is visible, as 'setVisible' set it: true by default.
+    public bool visible() const {
+        ret partFlag(id, 0)
+    }
+
+    // Enables or disables the canvas: disabled, it is drawn at half its opacity.
+    public void setEnabled(bool value) const {
+        setPartFlag(id, 1, value)
+    }
+
+    // Whether the canvas is enabled, as 'setEnabled' set it: true by default.
+    public bool enabled() const {
+        ret partFlag(id, 1)
+    }
+
+    // Sets which edges of its parent the canvas follows when the parent changes size: the
+    // window, or the group, the panel or the dialog that holds it. It keeps the distances from
+    // those edges that it has now, as 'setAnchor(gui.Horizontal.Right, gui.Vertical.Bottom)' in
+    // the bottom right corner. By default it is anchored to the left and to the top, and does
+    // not move.
+    public void setAnchor(Horizontal horizontal, Vertical vertical) const {
+        setPartAnchor(id, horizontal, vertical)
+    }
+
+    // How the canvas follows the left and the right edges of its parent: 'Horizontal.Left' by
+    // default.
+    public Horizontal horizontalAnchor() const {
+        ret partHorizontal(id)
+    }
+
+    // How the canvas follows the top and the bottom edges of its parent: 'Vertical.Top' by
+    // default.
+    public Vertical verticalAnchor() const {
+        ret partVertical(id)
+    }
+}
+
 // A dialog: a card with a title, its components and its buttons at the bottom, which
 // 'Window.showDialog' opens at the center of the window, over the rest darkened, which
 // the mouse and the keys do not reach until it closes. It is drawn inside the window,
@@ -2644,11 +2968,14 @@ struct WindowData {
     bool focused = true
     bool maximized
     bool minimized
-    i64 focus          // the component with the keyboard, or 0
-    i64 hot            // the component under the mouse
-    i64 held           // the component pressed with the mouse
-    i64 dragging       // the text box whose text the mouse selects
-    i64 popup          // the combo box whose list is open
+    i64 focus            // the component with the keyboard, or 0
+    i64 hot              // the component under the mouse
+    i64 held             // the component pressed with the mouse
+    i64 dragging         // the text box whose text the mouse selects
+    i64 popup            // the combo box whose list is open
+    i64 canvasHeld       // the canvas that has the mouse while the button pressed on it is held (D483)
+    list<f32> fontSizes  // of the texts of the drawings, with their fonts
+    list<addr> fonts
     i64 appBar         // its bar at the top, or 0
     i64 navigation     // its bar at the bottom, or 0
     i64 hotItem = -1   // the item of a bar or the row of a list under the mouse
@@ -2696,6 +3023,7 @@ const i32 kindListView = 12
 const i32 kindSwitch = 13
 const i32 kindSlider = 14
 const i32 kindDialog = 15
+const i32 kindCanvas = 16
 
 // A component: its kind, its window and its group once added, its properties, for
 // a text box where its cursor and the other end of its selection are, as indices
@@ -2753,8 +3081,20 @@ struct PartData {
     i64 value            // of a slider, between its minimum and its maximum
     i64 minimum
     i64 maximum
-    u64 flipped         // when the user changed a switch, for its knob
-    i32 action          // a button of a dialog: 1 the last, the main one, 2 the others
+    u64 flipped                        // when the user changed a switch, for its knob
+    i32 action                         // a button of a dialog: 1 the last, the main one, 2 the others
+    Drawing drawing                    // of a canvas (D483)
+    bool drawingChanged                // since its layers were drawn
+    f32 drawnDensity                   // at which its layers were drawn
+    list<CanvasLayer> layers           // of a canvas: its vector shapes, drawn by nanosvg
+    list<CanvasTexture> imageTextures  // of a canvas: its images
+    list<addr> downs                   // func(Mouse), of a canvas
+    list<addr> moves
+    list<addr> ups
+    addr svg  // of an image box with an SVG image, and its size in bytes (D484)
+    i64 svgSize
+    i32 textureWidth  // the size in pixels of the texture of an SVG image
+    i32 textureHeight
     ButtonStyle style   // of a button (D482)
     i64 inner           // of a dialog, the panel of its components
     list<addr> closing  // func(), of a dialog
@@ -2779,6 +3119,7 @@ struct PartData {
 struct Shared {
     list<WindowData> windows
     list<PartData> parts
+    list<ImageData> images  // of the drawings, by their number less 1 (D483)
     i64 next
     bool running        // the thread of the GUI
     list<Call> pending  // handlers to call on the thread of the GUI, as onClose of a dialog
@@ -2946,8 +3287,14 @@ void addPartHandler(i64 id, i32 which, addr box) {
             data.parts[p].change.add(box)
         } else if (which == 2) {
             data.parts[p].enter.add(box)
-        } else {
+        } else if (which == 3) {
             data.parts[p].closing.add(box)
+        } else if (which == 4) {
+            data.parts[p].downs.add(box)
+        } else if (which == 5) {
+            data.parts[p].moves.add(box)
+        } else {
+            data.parts[p].ups.add(box)
         }
     })
 }
@@ -3228,17 +3575,36 @@ void loadImage(i64 id, string path) {
 // which makes its texture.
 void setImage(i64 id, string file, list<u8> bytes) {
     addr pixels
+    addr svg
+    i64 svgSize = 0
     i32 w = 0
     i32 h = 0
-    if (bytes.len() > 0) {
+    if (bytes.len() > 0 && isSvg(bytes)) {  // D484: drawn at the size where it is shown
+        svg = memoryOf(bytes)
+        f32 fw = 0
+        f32 fh = 0
+        if (!cromo_gui_svg_size(svg, bytes.len(), ref fw, ref fh)) {
+            free(svg)
+            string what = file.len() > 0 ? format("the image {}", file) : "the image"
+            throw Error(format("cannot read {}: it is not an SVG image that can be read, or it has no size", what))
+        }
+        svgSize = bytes.len()
+        w = i32(fw + 0.5)
+        h = i32(fh + 0.5)
+    } else if (bytes.len() > 0) {
         pixels = decodeImage(file, bytes, ref w, ref h)
     }
-    withData([id, file, pixels, w, h](ref Shared data) {
+    withData([id, file, pixels, svg, svgSize, w, h](ref Shared data) {
         i64 p = partIndexOf(ref data, id)
         addr none
         if (data.parts[p].pixels != none) {
             cromo_gui_image_free(data.parts[p].pixels)
         }
+        if (data.parts[p].svg != none) {
+            free(data.parts[p].svg)
+        }
+        data.parts[p].svg = svg
+        data.parts[p].svgSize = svgSize
         data.parts[p].text = file
         data.parts[p].pixels = pixels
         data.parts[p].imageWidth = w
@@ -4153,6 +4519,9 @@ void resetTextures(ref WindowData window, ref list<PartData> parts) {
 
 // The textures of the round images of a list, made again when they are drawn.
 void freeItemTextures(ref PartData part) {
+    if (part.kind == kindCanvas) {
+        freeCanvasTextures(ref part)
+    }
     addr none
     for (i64 i = 0; i < part.textures.len(); i++) {
         if (part.textures[i] != none) {
@@ -4184,6 +4553,7 @@ void setDensity(ref WindowData window) {
         cromo_gui_font_free(window.caption)
         cromo_gui_font_free(window.band)
     }
+    freeFonts(ref window)
     window.font = cromo_gui_font(window.renderer, 0, titleSize, density)
     window.body = cromo_gui_font(window.renderer, 0, bodySize(), density)
     window.strong = cromo_gui_font(window.renderer, 1, bodySize(), density)
@@ -4246,6 +4616,7 @@ void shut(ref WindowData window) {
     cromo_gui_font_free(window.heading)
     cromo_gui_font_free(window.caption)
     cromo_gui_font_free(window.band)
+    freeFonts(ref window)
     window.font = none
     window.body = none
     window.strong = none
@@ -4402,6 +4773,13 @@ void route(ref WindowData window, ref list<PartData> parts, addr event, u32 kind
             SDL_SetCursor(hot >= 0 && hot != open && parts[hot].kind == kindTextBox && parts[hot].active ? beam : arrow)
         }
         window.snackHot = snackAt(ref window, x, y)
+        i64 held = partNumber(ref parts, window.canvasHeld)
+        i64 over = held >= 0 ? held : hot >= 0 && hot != open && parts[hot].kind == kindCanvas && parts[hot].active ? hot : -1
+        if (over >= 0 && parts[over].moves.len() > 0) {  // D483
+            Call moved = callOf(1, parts[over].moves)
+            moved.mouse = canvasMouse(ref parts[over], x, y, 0)
+            calls.add(move moved)
+        }
         i64 sliding = partNumber(ref parts, window.held)
         if (sliding >= 0 && parts[sliding].kind == kindSlider && parts[sliding].active) {
             slideTo(ref parts[sliding], x, ref calls)
@@ -4423,7 +4801,27 @@ void route(ref WindowData window, ref list<PartData> parts, addr event, u32 kind
         f32 y = take<f32>(offset(event, 32))
         i32 button = i32(take<u8>(offset(event, 24)))
         i32 on = window.phone ? -1 : buttonAt(x, y, width)
-        if (kind == 0x401 && button == 1 && on >= 0) {
+        i64 canvas = -1
+        if (kind == 0x402) {
+            canvas = partNumber(ref parts, window.canvasHeld)
+        } else if (on < 0 && y >= window.originY) {
+            canvas = canvasAt(ref window, ref parts, x, y)
+        }
+        if (canvas >= 0) {  // D483: the canvas has the mouse until the button is released
+            if (kind == 0x401) {
+                window.keyboard = false
+                focusTo(ref window, ref parts, 0)
+                window.canvasHeld = parts[canvas].id
+            } else {
+                window.canvasHeld = 0
+            }
+            Call pressed = callOf(kind == 0x401 ? 2 : 3, kind == 0x401 ? parts[canvas].downs : parts[canvas].ups)
+            pressed.mouse = canvasMouse(ref parts[canvas], x, y, button)
+            calls.add(move pressed)
+            Call call = callOf(kind == 0x401 ? 2 : 3, kind == 0x401 ? window.mouseDown : window.mouseUp)
+            call.mouse = mouseAt(ref window, x, y, button)
+            calls.add(move call)
+        } else if (kind == 0x401 && button == 1 && on >= 0) {
             window.pressed = on
         } else if (kind == 0x402 && window.pressed >= 0) {
             if (button == 1 && on == window.pressed) {
@@ -5663,7 +6061,7 @@ void draw() {
         for (ref WindowData window in data.windows) {
             addr none
             if (window.window != none && !window.closing) {
-                drawWindow(ref window, ref data.parts)
+                drawWindow(ref window, ref data.parts, ref data.images)
             }
         }
     })
@@ -5671,7 +6069,7 @@ void draw() {
 
 // The content with its components, the title bar with its title and its buttons,
 // and a line at the edges when the window is not maximized (D431).
-void drawWindow(ref WindowData window, ref list<PartData> parts) {
+void drawWindow(ref WindowData window, ref list<PartData> parts, ref list<ImageData> images) {
     i32 w = 0
     i32 h = 0
     SDL_GetWindowSize(window.window, ref w, ref h)
@@ -5699,11 +6097,11 @@ void drawWindow(ref WindowData window, ref list<PartData> parts) {
 
     glide(ref window, ref parts)
     layout(ref window, ref parts)
-    drawParts(ref window, ref parts, ref c, 0, window.dialogStart)
+    drawParts(ref window, ref parts, ref c, 0, window.dialogStart, ref images)
     if (window.dialog != 0) {  // the rest darkened under the dialog (D467)
         clipTo(r, window.originX, window.originY, f32(contentWidth(window)), f32(contentHeight(window)))
         shade(r, scrim, window.originX, window.originY, f32(contentWidth(window)), f32(contentHeight(window)))
-        drawParts(ref window, ref parts, ref c, window.dialogStart, window.order.len())
+        drawParts(ref window, ref parts, ref c, window.dialogStart, window.order.len(), ref images)
     }
     i64 open = partNumber(ref parts, window.popup)
     if (open >= 0) {
@@ -5724,13 +6122,13 @@ void drawWindow(ref WindowData window, ref list<PartData> parts) {
 
 // The components from first to end, excluded, in order, then the bars of those that
 // scroll, over them.
-void drawParts(ref WindowData window, ref list<PartData> parts, ref Colors c, i64 first, i64 end) {
+void drawParts(ref WindowData window, ref list<PartData> parts, ref Colors c, i64 first, i64 end, ref list<ImageData> images) {
     addr r = window.renderer
     for (i64 k = first; k < end; k++) {
         i64 i = window.order[k]
         if (parts[i].shown && parts[i].clipRight > parts[i].clipLeft && parts[i].clipBottom > parts[i].clipTop) {
             clipPart(r, ref parts[i])
-            drawPart(ref window, ref parts[i], ref c)
+            drawPart(ref window, ref parts[i], ref c, ref images)
         }
     }
     u64 now = SDL_GetTicksNS()
@@ -5875,7 +6273,7 @@ void focusRing(addr renderer, f32 x, f32 y, f32 w, f32 h, f32 radius, f32 densit
 // A component, in the look of D479: flat, with borders of 1 pixel; the main buttons
 // and the boxes checked in the accent; the groups and the dialogs as cards with a band
 // at the top; a ring of 2 pixels around the component in focus.
-void drawPart(ref WindowData window, ref PartData part, ref Colors c) {
+void drawPart(ref WindowData window, ref PartData part, ref Colors c, ref list<ImageData> images) {
     addr r = window.renderer
     f32 d = window.density
     f32 x = part.left
@@ -6017,6 +6415,8 @@ void drawPart(ref WindowData window, ref PartData part, ref Colors c) {
         drawAppBar(ref window, ref part, ref c)
     } else if (part.kind == kindNavigation) {
         drawNavigation(ref window, ref part, ref c)
+    } else if (part.kind == kindCanvas) {
+        drawCanvas(ref window, ref part, ref images)
     }
 }
 
@@ -6306,7 +6706,8 @@ void drawList(ref WindowData window, ref PartData box, ref Colors c) {
 }
 
 // An image: its texture is made from its pixels the first time it is drawn after
-// it is set; the pixels stay, for when the renderer loses its textures.
+// it is set; the pixels stay, for when the renderer loses its textures. An SVG image
+// is drawn again by nanosvg when the size at which it is shown changes (D484).
 void drawImage(ref WindowData window, ref PartData part) {
     addr r = window.renderer
     addr none
@@ -6322,9 +6723,10 @@ void drawImage(ref WindowData window, ref PartData part) {
                 SDL_UpdateTexture(part.texture, none, part.pixels, part.imageWidth * 4)
             }
         }
+        part.textureWidth = 0
         part.imageChanged = false
     }
-    if (part.texture == none) {
+    if (part.imageWidth <= 0 || part.imageHeight <= 0) {
         ret
     }
     f32 x = part.left
@@ -6347,9 +6749,430 @@ void drawImage(ref WindowData window, ref PartData part) {
         dw = iw
         dh = ih
     }
+    if (part.svg != none) {
+        i32 pw = i32(dw * window.density + 0.5)
+        i32 ph = i32(dh * window.density + 0.5)
+        if (part.texture == none || part.textureWidth != pw || part.textureHeight != ph) {
+            if (part.texture != none) {
+                SDL_DestroyTexture(part.texture)
+            }
+            part.texture = textureOf(r, cromo_gui_svg_draw(part.svg, part.svgSize, pw, ph), pw, ph)
+            part.textureWidth = pw
+            part.textureHeight = ph
+        }
+    }
+    if (part.texture == none) {
+        ret
+    }
     Rect target = Rect(x + (w - dw) / 2, y + (h - dh) / 2, dw, dh)
     clipInside(r, ref part, x, y, w, h)
     SDL_SetTextureAlphaMod(part.texture, part.active ? 255 : 128)
     SDL_RenderTexture(r, part.texture, none, ref target)
     clipPart(r, ref part)
+}
+
+// ---- The canvas and the images of the drawings (D483, D484) ----
+
+// A shape of a drawing: 1 a rectangle, 2 the outline of one, 3 a circle, 4 the outline
+// of one, 5 a segment, 6 a polygon, 7 a polyline, 8 an image, 9 a text. A circle has
+// the square around it; a text has its x, the middle of its line and its size in h.
+struct Shape {
+    i32 kind
+    f32 x
+    f32 y
+    f32 w
+    f32 h
+    f32 radius
+    f32 thickness
+    Color color
+    list<f32> points
+    i64 image
+    string text
+    Horizontal align
+}
+
+Shape shapeOf(i32 kind, f32 x, f32 y, f32 w, f32 h, Color color) {
+    Shape s
+    s.kind = kind
+    s.x = x
+    s.y = y
+    s.w = w
+    s.h = h
+    s.color = color
+    ret s
+}
+
+// An image of the drawings, kept for the whole program: the pixels of a raster image,
+// or the bytes of an SVG image, with its size.
+struct ImageData {
+    addr pixels
+    addr svg
+    i64 svgSize
+    f32 width
+    f32 height
+}
+
+// The texture of an image as a canvas draws it, of the size in pixels of the display
+// at which it was made, for the images of SVG; the others are made once.
+struct CanvasTexture {
+    i64 image
+    i32 w
+    i32 h
+    addr texture
+    bool used
+}
+
+// The segments, polygons and polylines of a drawing that follow one another, from
+// `first` to `end`, drawn by nanosvg into one texture, smoothed, over the rectangle
+// that holds them.
+struct CanvasLayer {
+    i64 first
+    i64 end
+    f32 x
+    f32 y
+    f32 w
+    f32 h
+    addr texture
+}
+
+// Bytes that start with '<', after the spaces and the mark of UTF-8, are SVG.
+bool isSvg(list<u8> bytes) {
+    for (i64 i = 0; i < bytes.len(); i++) {
+        u8 b = bytes[i]
+        bool skipped = b == 32 || b == 9 || b == 10 || b == 13 || (i < 3 && (b == 0xEF || b == 0xBB || b == 0xBF))
+        if (!skipped) {
+            ret b == 60
+        }
+    }
+    ret false
+}
+
+// The bytes in memory of C, which the caller frees.
+addr memoryOf(list<u8> bytes) {
+    addr data = alloc(most64(bytes.len(), 1))
+    for (i64 i = 0; i < bytes.len(); i++) {
+        put<u8>(offset(data, i), bytes[i])
+    }
+    ret data
+}
+
+i64 most64(i64 a, i64 b) {
+    ret a > b ? a : b
+}
+
+i64 newImage(list<u8> bytes) {
+    ImageData image
+    if (isSvg(bytes)) {
+        addr data = memoryOf(bytes)
+        f32 w = 0
+        f32 h = 0
+        if (!cromo_gui_svg_size(data, bytes.len(), ref w, ref h)) {
+            free(data)
+            throw Error("cannot read the image: it is not an SVG image that can be read, or it has no size")
+        }
+        image.svg = data
+        image.svgSize = bytes.len()
+        image.width = w
+        image.height = h
+    } else {
+        i32 w = 0
+        i32 h = 0
+        image.pixels = decodeImage("", bytes, ref w, ref h)
+        image.width = f32(w)
+        image.height = f32(h)
+    }
+    addr box = alloc(sizeOf<ImageData>())
+    put<ImageData>(box, move image)
+    i64 made = 0
+    withData([box, ref made](ref Shared data) {
+        data.images.add(take<ImageData>(box))
+        made = data.images.len()
+    })
+    free(box)
+    ret made
+}
+
+f32 imageSize(i64 id, bool wide) {
+    f32 size = 0
+    withData([id, wide, ref size](ref Shared data) {
+        if (id >= 1 && id <= data.images.len()) {
+            size = wide ? data.images[id - 1].width : data.images[id - 1].height
+        }
+    })
+    ret size
+}
+
+// The font of the texts of the drawings at a size, made the first time it is used.
+addr fontFor(ref WindowData window, f32 size) {
+    for (i64 i = 0; i < window.fontSizes.len(); i++) {
+        if (window.fontSizes[i] == size) {
+            ret window.fonts[i]
+        }
+    }
+    addr font = cromo_gui_font(window.renderer, 0, size, window.density)
+    window.fontSizes.add(size)
+    window.fonts.add(font)
+    ret font
+}
+
+void freeFonts(ref WindowData window) {
+    for (addr font in window.fonts) {
+        cromo_gui_font_free(font)
+    }
+    window.fonts.clear()
+    window.fontSizes.clear()
+}
+
+// The textures of a canvas, as when its renderer loses them or its window closes.
+void freeCanvasTextures(ref PartData part) {
+    for (ref CanvasTexture t in part.imageTextures) {
+        SDL_DestroyTexture(t.texture)
+    }
+    part.imageTextures.clear()
+    dropLayers(ref part)
+    part.drawingChanged = true
+}
+
+void dropLayers(ref PartData part) {
+    addr none
+    for (ref CanvasLayer layer in part.layers) {
+        if (layer.texture != none) {
+            SDL_DestroyTexture(layer.texture)
+        }
+    }
+    part.layers.clear()
+}
+
+u32 argbOf(Color c) {
+    ret (u32(c.alpha) << 24) | (u32(c.red) << 16) | (u32(c.green) << 8) | u32(c.blue)
+}
+
+bool isVector(i32 kind) {
+    ret kind >= 5 && kind <= 7
+}
+
+// A texture from pixels R, G, B, A, which it frees; none without them.
+addr textureOf(addr renderer, addr pixels, i32 w, i32 h) {
+    addr none
+    if (pixels == none) {
+        ret none
+    }
+    addr texture = SDL_CreateTexture(renderer, 0x16762004, 0, w, h)  // RGBA32, static
+    if (texture != none) {
+        SDL_SetTextureBlendMode(texture, 1)
+        SDL_UpdateTexture(texture, none, pixels, w * 4)
+    }
+    cromo_gui_image_free(pixels)
+    ret texture
+}
+
+string svgNumber(f32 v) {
+    ret format("{:.2f}", v)
+}
+
+string svgPaint(Color c) {
+    ret format("#{:02x}{:02x}{:02x}", c.red, c.green, c.blue)
+}
+
+string svgOpacity(Color c) {
+    ret format("{:.3f}", f32(c.alpha) / 255)
+}
+
+string svgPoints(list<f32> points) {
+    string text
+    for (i64 i = 0; i + 1 < points.len(); i += 2) {
+        text += format("{}{},{}", i > 0 ? " " : "", svgNumber(points[i]), svgNumber(points[i + 1]))
+    }
+    ret text
+}
+
+// The vector shapes of a drawing from `first`, as long as they follow one another, as
+// one layer: the rectangle that holds them, and the texture that nanosvg draws of them
+// at the density of the display (D484).
+CanvasLayer vectorLayer(ref WindowData window, ref list<Shape> shapes, i64 first) {
+    CanvasLayer layer
+    layer.first = first
+    f32 left = 1e30
+    f32 top = 1e30
+    f32 right = -1e30
+    f32 bottom = -1e30
+    i64 end = first
+    for (i64 k = first; k < shapes.len() && isVector(shapes[k].kind); k++) {
+        end = k + 1
+        f32 grow = shapes[k].kind == 6 ? 1 : shapes[k].thickness / 2 + 1
+        for (i64 i = 0; i + 1 < shapes[k].points.len(); i += 2) {
+            left = least(left, shapes[k].points[i] - grow)
+            right = most(right, shapes[k].points[i] + grow)
+            top = least(top, shapes[k].points[i + 1] - grow)
+            bottom = most(bottom, shapes[k].points[i + 1] + grow)
+        }
+    }
+    layer.end = end
+    layer.x = f32(i64(left) - 1)
+    layer.y = f32(i64(top) - 1)
+    layer.w = f32(i64(right - layer.x) + 2)
+    layer.h = f32(i64(bottom - layer.y) + 2)
+    string svg = format("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{}\" height=\"{}\" viewBox=\"{} {} {} {}\">",
+        svgNumber(layer.w), svgNumber(layer.h), svgNumber(layer.x), svgNumber(layer.y), svgNumber(layer.w),
+        svgNumber(layer.h))
+    for (i64 k = first; k < end; k++) {
+        Color c = shapes[k].color
+        if (shapes[k].kind == 5) {
+            svg += format("<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" stroke=\"{}\" stroke-opacity=\"{}\" stroke-width=\"{}\" stroke-linecap=\"round\"/>",
+                svgNumber(shapes[k].points[0]), svgNumber(shapes[k].points[1]), svgNumber(shapes[k].points[2]),
+                svgNumber(shapes[k].points[3]), svgPaint(c), svgOpacity(c), svgNumber(shapes[k].thickness))
+        } else if (shapes[k].kind == 6) {
+            svg += format("<polygon points=\"{}\" fill=\"{}\" fill-opacity=\"{}\"/>", svgPoints(shapes[k].points), svgPaint(c),
+                svgOpacity(c))
+        } else {
+            svg += format("<polyline points=\"{}\" fill=\"none\" stroke=\"{}\" stroke-opacity=\"{}\" stroke-width=\"{}\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>",
+                svgPoints(shapes[k].points), svgPaint(c), svgOpacity(c), svgNumber(shapes[k].thickness))
+        }
+    }
+    svg += "</svg>"
+    i32 pw = i32(layer.w * window.density + 0.999)
+    i32 ph = i32(layer.h * window.density + 0.999)
+    addr pixels = cromo_gui_svg_draw(svg.cstring(), svg.len(), pw, ph)
+    layer.texture = textureOf(window.renderer, pixels, pw, ph)
+    ret layer
+}
+
+// The texture of an image as a canvas draws it at `w` by `h` pixels of the display:
+// the same one for a raster image, one for each size for an SVG image.
+addr imageTexture(ref WindowData window, ref PartData part, ref list<ImageData> images, i64 id, i32 w, i32 h) {
+    addr none
+    if (id < 1 || id > images.len()) {
+        ret none
+    }
+    bool vector = images[id - 1].svg != none
+    for (ref CanvasTexture t in part.imageTextures) {
+        if (t.image == id && (!vector || (t.w == w && t.h == h))) {
+            t.used = true
+            ret t.texture
+        }
+    }
+    CanvasTexture made
+    made.image = id
+    made.w = w
+    made.h = h
+    made.used = true
+    if (vector) {
+        made.texture = textureOf(window.renderer, cromo_gui_svg_draw(images[id - 1].svg, images[id - 1].svgSize, w, h), w, h)
+    } else {
+        made.texture = SDL_CreateTexture(window.renderer, 0x16762004, 0, i32(images[id - 1].width), i32(images[id - 1].height))
+        if (made.texture != none) {
+            SDL_SetTextureBlendMode(made.texture, 1)
+            SDL_UpdateTexture(made.texture, none, images[id - 1].pixels, i32(images[id - 1].width) * 4)
+        }
+    }
+    addr texture = made.texture
+    if (texture != none) {
+        part.imageTextures.add(move made)
+    }
+    ret texture
+}
+
+// A canvas: its shapes in order, the rectangles and the circles as the boxes of the
+// components, the vector shapes in their layers, the images and the texts (D483).
+void drawCanvas(ref WindowData window, ref PartData part, ref list<ImageData> images) {
+    addr r = window.renderer
+    f32 d = window.density
+    f32 x0 = part.left
+    f32 y0 = part.top
+    clipInside(r, ref part, x0, y0, f32(part.width), f32(part.height))
+    if (part.drawingChanged || part.drawnDensity != d) {
+        dropLayers(ref part)
+        for (i64 i = 0; i < part.drawing.shapes.len(); i++) {
+            if (isVector(part.drawing.shapes[i].kind) && (i == 0 || !isVector(part.drawing.shapes[i - 1].kind))) {
+                CanvasLayer made = vectorLayer(ref window, ref part.drawing.shapes, i)
+                part.layers.add(move made)
+            }
+        }
+        part.drawingChanged = false
+        part.drawnDensity = d
+    }
+    for (ref CanvasTexture t in part.imageTextures) {
+        t.used = false
+    }
+    addr none
+    i64 layer = 0
+    for (i64 i = 0; i < part.drawing.shapes.len(); i++) {
+        i32 kind = part.drawing.shapes[i].kind
+        Color c = part.drawing.shapes[i].color
+        f32 x = x0 + part.drawing.shapes[i].x
+        f32 y = y0 + part.drawing.shapes[i].y
+        f32 w = part.drawing.shapes[i].w
+        f32 h = part.drawing.shapes[i].h
+        if (kind == 1 || kind == 3) {
+            cromo_gui_box(r, x, y, w, h, part.drawing.shapes[i].radius, 0, d, argbOf(c), 0)
+        } else if (kind == 2 || kind == 4) {
+            f32 radius = kind == 4 ? part.drawing.shapes[i].radius : 0
+            cromo_gui_box(r, x, y, w, h, radius, part.drawing.shapes[i].thickness, d, 0, argbOf(c))
+        } else if (isVector(kind)) {
+            if (layer < part.layers.len() && part.layers[layer].first == i) {
+                if (part.layers[layer].texture != none) {
+                    f32 pw = f32(i32(part.layers[layer].w * d + 0.999)) / d
+                    f32 ph = f32(i32(part.layers[layer].h * d + 0.999)) / d
+                    Rect place = Rect(x0 + part.layers[layer].x, y0 + part.layers[layer].y, pw, ph)
+                    SDL_RenderTexture(r, part.layers[layer].texture, none, ref place)
+                }
+                layer++
+            }
+        } else if (kind == 8) {
+            i64 id = part.drawing.shapes[i].image
+            if (id >= 1 && id <= images.len() && w > 0 && h > 0) {
+                f32 iw = images[id - 1].width
+                f32 ih = images[id - 1].height
+                f32 k = least(w / iw, h / ih)
+                f32 dw = iw * k
+                f32 dh = ih * k
+                addr texture = imageTexture(ref window, ref part, ref images, id, i32(dw * d + 0.5), i32(dh * d + 0.5))
+                if (texture != none) {
+                    Rect place = Rect(x + (w - dw) / 2, y + (h - dh) / 2, dw, dh)
+                    SDL_RenderTexture(r, texture, none, ref place)
+                }
+            }
+        } else if (kind == 9 && h > 0) {
+            addr font = fontFor(ref window, h)
+            string value = part.drawing.shapes[i].text
+            f32 ascent = 0
+            f32 descent = 0
+            f32 gap = 0
+            cromo_gui_font_metrics(font, ref ascent, ref descent, ref gap)
+            f32 size = textWidth(font, value, value.len())
+            Horizontal align = part.drawing.shapes[i].align
+            f32 left = align == Horizontal.Center ? x - size / 2 : align == Horizontal.Right ? x - size : x
+            cromo_gui_text(font, value.cstring(), value.len(), left, y + (ascent - descent) / 2, c.red, c.green, c.blue, c.alpha)
+        }
+    }
+    for (i64 k = part.imageTextures.len() - 1; k >= 0; k--) {
+        if (!part.imageTextures[k].used) {
+            SDL_DestroyTexture(part.imageTextures[k].texture)
+            part.imageTextures.remove(k)
+        }
+    }
+    clipPart(r, ref part)
+}
+
+// The canvas that a press at x, y reaches, or -1: not under the snackbar, the list of a
+// combo box or a dialog.
+i64 canvasAt(ref WindowData window, ref list<PartData> parts, f32 x, f32 y) {
+    if (snackAt(ref window, x, y)) {
+        ret -1
+    }
+    i64 open = partNumber(ref parts, window.popup)
+    if (open >= 0) {
+        ret -1
+    }
+    i64 p = partAt(ref window, ref parts, x, y)
+    ret p >= 0 && parts[p].kind == kindCanvas && parts[p].active ? p : -1
+}
+
+// The mouse from the top left corner of a canvas.
+Mouse canvasMouse(ref PartData part, f32 x, f32 y, i32 button) {
+    Mouse m
+    m.x = x - part.left
+    m.y = y - part.top
+    m.button = button
+    ret m
 }

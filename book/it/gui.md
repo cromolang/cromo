@@ -45,11 +45,12 @@ i32 main() {
 | `gui.CheckBox(testo, ...)`, `gui.Switch(testo, ...)` | acceso o spento: `checked()` e `onChange` |
 | `gui.Slider(minimo, massimo, ...)` | un intero tra i due: `value()` e `onChange` |
 | `gui.ComboBox(voci, ...)` | una voce di una lista: `selected()`, `text()` e `onChange` |
-| `gui.ImageBox(file, ...)` | un'immagine PNG, JPEG, BMP o GIF, da un file, o dalla memoria con `setBytes` |
+| `gui.ImageBox(file, ...)` | un'immagine PNG, JPEG, BMP, GIF o SVG, da un file, o dalla memoria con `setBytes` |
 | `gui.IconBox(icona, ...)` | un'icona |
 | `gui.GroupBox(testo, ...)` | una scheda con il titolo in una fascia in alto, che contiene altri componenti |
 | `gui.Panel(...)` | un contenitore senza aspetto proprio, che scorre quando i suoi componenti vanno oltre il fondo |
 | `gui.ListView(...)` | una lista di voci, ognuna con un'icona o un'immagine, un titolo, una riga e un dettaglio |
+| `gui.Canvas(...)` | una superficie su cui il programma disegna: `setDrawing`, e il mouse su di essa |
 
 Ogni componente ha `setPosition`, `setSize`, `setVisible`, `setEnabled` e `setAnchor`. I componenti di un gruppo o di un pannello prendono le posizioni dal suo angolo in alto a sinistra.
 
@@ -209,6 +210,55 @@ i32 main() {
 - `gui.Dialog(titolo, larghezza, altezza)` è una scheda con un titolo, i suoi componenti, aggiunti con `add`, e i suoi pulsanti, aggiunti con `addButton(testo, gestore)`: l'ultimo è quello principale. `w.showDialog(d)` la apre al centro della finestra, sopra il resto scurito, che mouse e tasti non raggiungono finché non si chiude. `d.close()` la chiude, e così Esc e il tasto indietro di un telefono.
 - `w.showSnackbar(testo)` mostra un breve messaggio in basso per 4 secondi, sopra i pulsanti ancorati lì; `w.showSnackbarAction(testo, azione, gestore)` aggiunge un'azione, come `Undo`, che chiama il gestore.
 - La lambda di `Undo` prende le stringhe della voce rimossa con `move`: la finestra la conserva, e una lambda conservata deve possedere ciò che cattura, come spiega [Funzioni anonime](lambdas.md).
+
+## Disegnare su un canvas
+
+```cromo norun
+import std.gui
+
+// Una scheda bianca, una curva per i valori, il logo e un anello sul punto acceso.
+gui.Drawing chartOf(list<f32> values, i64 lit, gui.Image logo) {
+    gui.Drawing d
+    d.roundRect(0, 0, 400, 240, 8, gui.rgb(0xFFFFFF))
+    d.image(logo, 360, 8, 32, 32)
+    list<f32> points
+    for (i64 i = 0; i < values.len(); i++) {
+        points.add(40 + f32(i) * 64)
+        points.add(210 - values[i] * 5)
+    }
+    d.polyline(points, 3, gui.rgb(0xB4761C))
+    if (lit >= 0) {
+        f32 x = points[2 * lit]
+        f32 y = points[2 * lit + 1]
+        d.ring(x, y, 8, 2, gui.rgb(0x2F6E8F))
+        d.text(format("{}", values[lit]), x, y - 22, 13, gui.rgb(0x18212A), gui.Horizontal.Center)
+    }
+    ret d
+}
+
+[[window]]
+i32 main() {
+    list<f32> values = [12.0, 18.0, 15.0, 24.0, 21.0, 30.0]
+    gui.Image logo = gui.Image(embed("images/cromo.svg"))
+    gui.Window w = gui.Window("Chart", 432, 307)
+    gui.Canvas chart = w.add(gui.Canvas(16, 16, 400, 240))
+    chart.setDrawing(chartOf(values, -1, logo))
+    chart.onMouseMove([chart, logo, move values](gui.Mouse m) {
+        i64 lit = i64((m.x - 40) / 64 + 0.5)
+        chart.setDrawing(chartOf(values, lit >= 0 && lit < values.len() ? lit : -1, logo))
+    })
+    w.start()
+    ret 0
+}
+```
+
+![La curva, con il mouse sul suo quarto punto](images/canvas.png)
+
+- `gui.Canvas(x, y, larghezza, altezza)` è una superficie su cui il programma disegna: un grafico, una mappa, un diagramma, un gioco. Mostra un `gui.Drawing`, che il programma costruisce e consegna con `setDrawing(move d)`; il canvas lo tiene e lo ridisegna da sé, finché un nuovo disegno non prende il suo posto.
+- Un disegno ha rettangoli, `rect` e `roundRect`, contorni, `frame` e `ring`, cerchi, segmenti, `line`, `polygon` e `polyline`, immagini e testi, ciascuno disegnato sopra i precedenti. Le posizioni sono in pixel logici dall'angolo in alto a sinistra del canvas, e `gui.rgb(0xB4761C)` e `gui.rgba(0x2F6E8F, 115)` danno i colori, il secondo con la sua opacità.
+- `gui.Image(byte)` legge un'immagine una volta sola: PNG, JPEG, BMP, GIF o SVG. Un'immagine SVG è disegnata alla misura in cui è mostrata, nitida a ogni misura, e anche `ImageBox` la accetta.
+- `onMouseDown`, `onMouseMove` e `onMouseUp` danno la posizione dall'angolo in alto a sinistra del canvas. Mentre un pulsante premuto sul canvas resta premuto, i suoi movimenti e il suo rilascio arrivano al canvas anche fuori da esso: così il programma può trascinare ciò che disegna.
+- Il gestore non può cambiare le variabili di `main`: possiede le sue copie, spostate dentro di lui con `move`, e a ogni movimento ridisegna da quelle e dalla posizione del mouse.
 
 ## Lo stesso programma su Android
 

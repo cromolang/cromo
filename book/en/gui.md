@@ -45,11 +45,12 @@ i32 main() {
 | `gui.CheckBox(text, ...)`, `gui.Switch(text, ...)` | on or off: `checked()` and `onChange` |
 | `gui.Slider(minimum, maximum, ...)` | an integer between the two: `value()` and `onChange` |
 | `gui.ComboBox(items, ...)` | one item of a list: `selected()`, `text()` and `onChange` |
-| `gui.ImageBox(file, ...)` | an image in PNG, JPEG, BMP or GIF, from a file, or from memory with `setBytes` |
+| `gui.ImageBox(file, ...)` | an image in PNG, JPEG, BMP, GIF or SVG, from a file, or from memory with `setBytes` |
 | `gui.IconBox(icon, ...)` | an icon |
 | `gui.GroupBox(text, ...)` | a card with its title in a band at the top, which holds other components |
 | `gui.Panel(...)` | a container with no look of its own, which scrolls when its components go below its bottom |
 | `gui.ListView(...)` | a list of items, each with an icon or an image, a title, a line and a detail |
+| `gui.Canvas(...)` | a surface on which the program draws: `setDrawing`, and the mouse on it |
 
 Every component has `setPosition`, `setSize`, `setVisible`, `setEnabled` and `setAnchor`. The components of a group or of a panel take their positions from its top left corner.
 
@@ -209,6 +210,55 @@ i32 main() {
 - `gui.Dialog(title, width, height)` is a card with a title, its components, added with `add`, and its buttons, added with `addButton(text, handler)`: the last one is the main one. `w.showDialog(d)` opens it at the center of the window, over the rest darkened, which the mouse and the keys do not reach until it closes. `d.close()` closes it, and so do Esc and the back key of a phone.
 - `w.showSnackbar(text)` shows a short message at the bottom for 4 seconds, above the buttons anchored there; `w.showSnackbarAction(text, action, handler)` adds an action, as `Undo`, which calls the handler.
 - The lambda of `Undo` takes the strings of the item removed with `move`: the window keeps it, and a lambda that is kept must own what it captures, as [Anonymous functions](lambdas.md) explains.
+
+## Drawing on a canvas
+
+```cromo norun
+import std.gui
+
+// A white card, a curve through the values, the logo, and a ring on the point lit.
+gui.Drawing chartOf(list<f32> values, i64 lit, gui.Image logo) {
+    gui.Drawing d
+    d.roundRect(0, 0, 400, 240, 8, gui.rgb(0xFFFFFF))
+    d.image(logo, 360, 8, 32, 32)
+    list<f32> points
+    for (i64 i = 0; i < values.len(); i++) {
+        points.add(40 + f32(i) * 64)
+        points.add(210 - values[i] * 5)
+    }
+    d.polyline(points, 3, gui.rgb(0xB4761C))
+    if (lit >= 0) {
+        f32 x = points[2 * lit]
+        f32 y = points[2 * lit + 1]
+        d.ring(x, y, 8, 2, gui.rgb(0x2F6E8F))
+        d.text(format("{}", values[lit]), x, y - 22, 13, gui.rgb(0x18212A), gui.Horizontal.Center)
+    }
+    ret d
+}
+
+[[window]]
+i32 main() {
+    list<f32> values = [12.0, 18.0, 15.0, 24.0, 21.0, 30.0]
+    gui.Image logo = gui.Image(embed("images/cromo.svg"))
+    gui.Window w = gui.Window("Chart", 432, 307)
+    gui.Canvas chart = w.add(gui.Canvas(16, 16, 400, 240))
+    chart.setDrawing(chartOf(values, -1, logo))
+    chart.onMouseMove([chart, logo, move values](gui.Mouse m) {
+        i64 lit = i64((m.x - 40) / 64 + 0.5)
+        chart.setDrawing(chartOf(values, lit >= 0 && lit < values.len() ? lit : -1, logo))
+    })
+    w.start()
+    ret 0
+}
+```
+
+![The curve, with the mouse on its fourth point](images/canvas.png)
+
+- `gui.Canvas(x, y, width, height)` is a surface on which the program draws: a chart, a map, a diagram, a game. It shows a `gui.Drawing`, which the program builds and hands over with `setDrawing(move d)`; the canvas keeps it and draws it again by itself, until a new drawing takes its place.
+- A drawing has rectangles, `rect` and `roundRect`, outlines, `frame` and `ring`, circles, segments, `line`, `polygon` and `polyline`, images and texts, each drawn over the ones before. The positions are in logical pixels from the top left corner of the canvas, and `gui.rgb(0xB4761C)` and `gui.rgba(0x2F6E8F, 115)` give the colors, the second with its opacity.
+- `gui.Image(bytes)` reads an image once: PNG, JPEG, BMP, GIF or SVG. An SVG image is drawn at the size where it is shown, sharp at every size, and `ImageBox` takes it too.
+- `onMouseDown`, `onMouseMove` and `onMouseUp` give the position from the top left corner of the canvas. While a button pressed on the canvas is held, its moves and its release come to the canvas also outside it: so the program can drag what it draws.
+- The handler cannot change the variables of `main`: it owns its copies, moved into it with `move`, and at each move it draws again from them and from the mouse.
 
 ## The same program on Android
 

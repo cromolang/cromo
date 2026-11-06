@@ -1,0 +1,87 @@
+// Example 19: a chart drawn on a canvas, which lights the month under the mouse, with
+// the logo of Cromo as an SVG image.
+//
+// Decided: the canvas with a drawing handed over, and the mouse on it (D483), the
+//          images in SVG (D484), the look (D479)
+// Draft:   the names of the canvas, of the drawing and of their methods (P53)
+import std.gui
+
+const f32 width = 608
+const f32 height = 352
+const f32 left = 56  // the plot, inside the card
+const f32 right = 584
+const f32 top = 64
+const f32 bottom = 304
+const f32 most = 35  // the value at the top of the plot
+
+f32 xOf(i64 month) {
+    ret left + (right - left) * f32(month) / 11
+}
+
+f32 yOf(f32 value) {
+    ret bottom - (bottom - top) * value / most
+}
+
+// The chart of the sales, with the month `lit` in evidence, or none when it is -1.
+gui.Drawing chartOf(list<f32> sales, list<string> months, i64 lit, gui.Image logo) {
+    gui.Drawing d
+    d.roundRect(0, 0, width, height, 8, gui.rgb(0xFFFFFF))
+    d.text("Sales of the year, in thousands", 20, 28, 15, gui.rgb(0x18212A), gui.Horizontal.Left)
+    d.image(logo, width - 48, 12, 32, 32)
+    for (i64 step = 0; step <= 7; step++) {
+        f32 value = f32(step) * 5
+        d.line(left, yOf(value), right, yOf(value), 1, gui.rgb(0xE7ECF0))
+        d.text(format("{}", step * 5), left - 12, yOf(value), 11, gui.rgb(0x7A8B99), gui.Horizontal.Right)
+    }
+    list<f32> curve
+    list<f32> area = [left, bottom]
+    for (i64 m = 0; m < sales.len(); m++) {
+        curve.add(xOf(m))
+        curve.add(yOf(sales[m]))
+        area.add(xOf(m))
+        area.add(yOf(sales[m]))
+        d.text(months[m], xOf(m), bottom + 20, 11, gui.rgb(0x7A8B99), gui.Horizontal.Center)
+    }
+    area.add(right)
+    area.add(bottom)
+    d.polygon(area, gui.rgba(0xB4761C, 40))
+    d.polyline(curve, 3, gui.rgb(0xB4761C))
+    for (i64 m = 0; m < sales.len(); m++) {
+        d.circle(xOf(m), yOf(sales[m]), 4, gui.rgb(0xB4761C))
+    }
+    if (lit >= 0) {
+        f32 x = xOf(lit)
+        f32 y = yOf(sales[lit])
+        d.line(x, top, x, bottom, 1, gui.rgba(0x2F6E8F, 140))
+        d.ring(x, y, 8, 2, gui.rgb(0x2F6E8F))
+        string label = format("{} {:.1f}", months[lit], sales[lit])
+        f32 boxX = x < right - 90 ? x + 12 : x - 102
+        d.roundRect(boxX, y - 34, 90, 24, 4, gui.rgb(0x18212A))
+        d.text(label, boxX + 45, y - 22, 12, gui.rgb(0xFFFFFF), gui.Horizontal.Center)
+    }
+    ret d
+}
+
+[[window]]
+i32 main() {
+    list<f32> sales = [12.0, 15.5, 14.0, 18.2, 21.0, 19.4, 24.8, 23.1, 26.5, 25.0, 29.3, 31.8]
+    list<string> months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+    gui.Image logo = gui.Image(embed("images/cromo.svg"))
+
+    gui.Window w = gui.Window("Example 19", 640, 420)
+    gui.Canvas chart = w.add(gui.Canvas(16, 16, i32(width), i32(height)))
+    chart.setDrawing(chartOf(sales, months, -1, logo))
+
+    // The handler owns its copies of the data, moved into it: it draws the chart again
+    // with the month nearest to the mouse, at each of its moves.
+    chart.onMouseMove([chart, logo, move sales, move months](gui.Mouse m) {
+        i64 lit = -1
+        if (m.x >= left - 20 && m.x <= right + 20 && m.y >= top && m.y <= bottom) {
+            lit = i64((m.x - left) / (right - left) * 11 + 0.5)
+            lit = lit < 0 ? 0 : lit > 11 ? 11 : lit
+        }
+        chart.setDrawing(chartOf(sales, months, lit, logo))
+    })
+    w.start()
+    ret 0
+}

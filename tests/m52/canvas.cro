@@ -1,0 +1,49 @@
+// The canvas (D483) and the images of the drawings (D484): a drawing with every
+// shape, an SVG image and a PNG image, drawn by a window and then replaced; the
+// images keep their sizes, and the colors their numbers.
+// target: windows linux-x86_64
+// program-env: SDL_VIDEO_DRIVER=offscreen
+// expect-output: svg 24x16, png 3x2
+// expect-output: color 47 110 143 115, opaque 255
+// expect-output: 10 shapes, then 0, then 2
+// expect-output: drawn twice
+import std.gui
+import std.time
+
+i32 main() {
+    gui.Image badge = gui.Image("<svg xmlns='http://www.w3.org/2000/svg' width='24' height='16'><rect width='24' height='16' rx='4' fill='#B4761C'/></svg>".bytes())
+    gui.Image dot = gui.Image(embed("../m39/images/tiny.png"))
+    println("svg {}x{}, png {}x{}", badge.width(), badge.height(), dot.width(), dot.height())
+    gui.Color c = gui.rgba(0x2F6E8F, 115)
+    println("color {} {} {} {}, opaque {}", c.red, c.green, c.blue, c.alpha, gui.rgb(0x2F6E8F).alpha)
+
+    gui.Window w = gui.Window("canvas", 400, 300)
+    gui.Canvas chart = w.add(gui.Canvas(10, 10, 380, 240))
+    gui.Drawing d
+    d.rect(0, 0, 380, 240, gui.rgb(0xFFFFFF))
+    d.roundRect(10, 10, 100, 40, 6, gui.rgba(0xB4761C, 80))
+    d.frame(120, 10, 100, 40, 2, gui.rgb(0x2F6E8F))
+    d.circle(260, 30, 20, gui.rgb(0x2E7D51))
+    d.ring(320, 30, 20, 3, gui.rgb(0xB0453C))
+    d.line(10, 200, 370, 80, 4, gui.rgb(0x18212A))
+    d.polygon([10.0, 230.0, 60.0, 180.0, 110.0, 230.0], gui.rgba(0x2F6E8F, 128))
+    d.polyline([150.0, 230.0, 200.0, 170.0, 250.0, 210.0, 300.0, 150.0], 3, gui.rgb(0xB4761C))
+    d.image(badge, 300, 190, 48, 32)
+    d.text("Sales", 190, 120, 14, gui.rgb(0x18212A), gui.Horizontal.Center)
+    print("{} shapes, ", d.len())
+    chart.setDrawing(move d)
+    w.start()
+    time.msleep(100)
+    gui.Drawing other
+    other.image(dot, 0, 0, 30, 20)
+    other.clear()
+    print("then {}, ", other.len())
+    other.image(dot, 0, 0, 30, 20)
+    other.line(0, 0, 100, 100, 1, gui.rgb(0x000000))
+    println("then {}", other.len())
+    chart.setDrawing(move other)
+    time.msleep(100)
+    println("drawn twice")
+    w.close()
+    ret 0
+}

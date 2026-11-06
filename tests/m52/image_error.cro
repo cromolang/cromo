@@ -1,0 +1,22 @@
+// An image that cannot be read throws an Error with the reason (D484), and an image
+// box takes an SVG image with its size.
+// target: windows linux-x86_64
+// program-env: SDL_VIDEO_DRIVER=offscreen
+// expect-output: cannot read the image: it is not an SVG image that can be read, or it has no size
+// expect-output: the image box: 40x20
+import std.gui
+
+i32 main() {
+    try {
+        gui.Image broken = gui.Image("<svg xmlns='http://www.w3.org/2000/svg'></svg>".bytes())
+        println("read {}", broken.width())
+    } catch (Error e) {
+        println("{}", e.message())
+    }
+    gui.Window w = gui.Window("images", 300, 200)
+    gui.ImageBox logo = w.add(gui.ImageBox("", 10, 10, 80, 40))
+    logo.setBytes("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 20'><circle cx='20' cy='10' r='8'/></svg>".bytes())
+    println("the image box: {}x{}", logo.imageWidth(), logo.imageHeight())
+    w.close()
+    ret 0
+}

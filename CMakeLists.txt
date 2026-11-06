@@ -98,8 +98,10 @@ set(CROMO_TLS_FLAGS -nostdlibinc -isystem "${CMAKE_SOURCE_DIR}/runtime/libc" "-I
 # ARM64, which has no SDL yet.
 set(CROMO_GUI_SOURCES runtime/gui/gui.c runtime/gui/fonts.S third_party/stb/stb_truetype.h
     third_party/inter/Inter-Regular.ttf third_party/inter/Inter-SemiBold.ttf third_party/lucide/lucide-icons.ttf)
-set(CROMO_GUI_IMAGE_SOURCES runtime/gui/image.c third_party/stb/stb_image.h)
-set(CROMO_GUI_IMAGE_FLAGS -nostdlibinc -isystem "${CMAKE_SOURCE_DIR}/runtime/libc" "-I${CMAKE_SOURCE_DIR}/third_party/stb")
+set(CROMO_GUI_IMAGE_SOURCES runtime/gui/image.c third_party/stb/stb_image.h third_party/nanosvg/nanosvg.h
+    third_party/nanosvg/nanosvgrast.h)
+set(CROMO_GUI_IMAGE_FLAGS -nostdlibinc -isystem "${CMAKE_SOURCE_DIR}/runtime/libc" "-I${CMAKE_SOURCE_DIR}/third_party/stb"
+    "-I${CMAKE_SOURCE_DIR}/third_party/nanosvg")
 add_custom_command(
   OUTPUT "${CROMO_RT_DIR}/gui.obj" "${CROMO_RT_DIR}/gui_fonts.obj"
   COMMAND "${CROMO_CLANG}" ${CROMO_RT_FLAGS} "-I${CMAKE_SOURCE_DIR}/third_party/stb" -c "${CMAKE_SOURCE_DIR}/runtime/gui/gui.c" -o "${CROMO_RT_DIR}/gui.obj"
