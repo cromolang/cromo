@@ -1,0 +1,15 @@
+// A column that the table does not have is a panic (D489).
+// target: windows linux-x86_64
+// program-env: SDL_VIDEO_DRIVER=offscreen
+// expect-exit: 101
+// expect-stderr: the table has no column 2
+import std.gui
+
+i32 main() {
+    gui.Window w = gui.Window("table", 400, 335)
+    gui.Table t = w.add(gui.Table(0, 0, 400, 300))
+    t.addColumn("A", 100, gui.Horizontal.Left)
+    t.addColumn("B", 100, gui.Horizontal.Left)
+    t.setColumnVisible(2, false)
+    ret 0
+}

@@ -2292,6 +2292,27 @@ canvas.onMouseMove([held](gui.Mouse m) {
 })
 ```
 
+### D486. The table asks for its rows
+*2026-11-06.* `gui.Table` shows rows of cells in columns, also millions of them. It knows how many rows it has, `setRowCount(n)`, and asks for the rows it must show and does not have with `onNeedRows(first, count)`; the program answers with `setRows(first, rows)`, also later and from a task that reads a database. No code of the program runs while the table is drawn, and the window never waits for the data: a row not yet given is empty. A small table gives all its rows at once.
+
+```cromo
+// draft: the names of the API of the table are not decided
+gui.Table orders = w.add(gui.Table(16, 16, 600, 400))
+orders.addColumn("Customer", 160, gui.Horizontal.Left)
+orders.addColumn("Total", 80, gui.Horizontal.Right)
+orders.setRowCount(10000000)
+orders.onNeedRows([orders, db](i64 first, i64 count) { orders.setRows(first, rowsOf(db, first, count)) })
+```
+
+### D487. The program sorts the table
+*2026-11-06.* A click on the title of a column calls `onSort(column, descending)`, and a second click on the same column reverses it: the program sorts its data, the only ones that can sort millions of rows, as a database, and gives the rows again. The table shows the arrow of the order on the title.
+
+### D488. One row or more
+*2026-11-06.* A click chooses a row, Ctrl and a click add or remove one, Shift and a click choose those between; the arrows, Page Up, Page Down, Home and End move the row chosen. A double click or Enter opens it. `selectedRows()` gives the rows chosen.
+
+### D489. The widths of the columns
+*2026-11-06.* The program gives the width of each column, and a column can take the room that the others leave; a column can be hidden. The user does not drag them: that can come later.
+
 ---
 
 ## Proposed
@@ -2515,6 +2536,13 @@ A component keeps the distances from the edges of its parent, the content of the
 ### P54. `thread.Shared<T>` (D485)
 - `thread.Shared<T>(value)` moves the value into memory of its own, after a lock of the system as that of `Mutex`, and holds only its address: a struct of one `addr`, without a destructor, a simple type whatever `T` is. The value stays until the end of the program, and its destructor never runs.
 - `lock(func(ref T))` is that of `Mutex`: one at a time, the lock released also when an exception goes through, and locking it again inside waits for ever. A `Shared` declared without a value has none, and `lock` on it is a panic.
+
+### P55. The table (D486-D489)
+- `gui.Table(x, y, w, h)`: `addColumn(title, width, align)`, a width of 0 for the room left, shared among those columns and at least 40 pixels each; `columnCount()`, `setColumnVisible(index, visible)`, an index out of the columns a panic. `setRowCount(n)`, `rowCount()`, `setRows(first, rows)` with a list of strings for each row, from any thread, the rows beyond the number ignored; `clearRows()` forgets the rows given and the blocks asked for; `cell(row, column)`, `""` for a row not given.
+- The table asks with `onNeedRows(first, count)` for the blocks of 100 rows near those it shows, from 100 rows before them to 100 after, once each until `clearRows`; it keeps at most about 3000 rows, and forgets those far from the ones shown. Its requests are made while it is drawn, and the handlers are called before the next frame, out of the lock of the windows.
+- `onSort(column, descending)`: the first click on a title is ascending, the second on the same title descending; `setSort(column, descending)` shows the order without calling the handlers, and `sortColumn()`, -1 for none, and `sortDescending()` read it. The arrow is the chevron of Lucide, up or down, after the title.
+- The rows chosen are ranges, so Shift can choose millions of rows: a click chooses one, Ctrl and a click add or remove one, Shift and a click choose from the row where the last click without Shift was, Ctrl and Shift add those; the keys move the last row chosen, with Shift from the same row; Ctrl+A chooses all, Enter and a double click call `onChoose(row)`; `onChange(row)` is called at each change, with the last row chosen. `selected()`, `setSelected(index)` with -1 for none, `selectedRows()` in order, `scrollTo(index)`. A table takes the keyboard as a list.
+- The look: the titles as those of the bands, small, semibold, in capitals and spaced, in ink 3, ink 2 under the mouse, on the surface with a line of rule 2 under them; the rows on the surface, 26 pixels high on the desktop and 44 on a phone, under titles of 30 and 40, with a line of rule between them; the rows chosen in the soft selection, and the last one chosen with a bar of the selection on its left; the row under the mouse in surface 2. The cells are the text of the components, 8 pixels from the edges of their column, cut at its edges.
 ---
 
 ## Open

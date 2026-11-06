@@ -1,0 +1,94 @@
+// Example 20: a table of 200000 orders, which asks only for the rows it shows, sorted
+// by the program when a title is clicked, with one row chosen or more.
+//
+// Decided: the table asks for its rows (D486), the program sorts them (D487), one
+//          row or more (D488), the widths of the columns (D489), the state of the
+//          handlers in a thread.Shared (D485)
+// Draft:   the names of the table and of its methods
+import std.gui
+import std.thread
+
+struct Order {
+    i64 number
+    string customer
+    string city
+    i64 cents
+}
+
+// The orders, made up: the same ones at every run.
+list<Order> ordersOf(i64 count) {
+    list<string> names = ["Ada", "Alan", "Barbara", "Charles", "Dennis", "Edsger", "Grace", "Ken", "Linus", "Margaret"]
+    list<string> cities = ["Bologna", "Milano", "Napoli", "Palermo", "Roma", "Torino", "Trieste", "Venezia"]
+    list<Order> orders
+    orders.reserve(count)
+    u64 seed = 7
+    for (i64 i = 0; i < count; i++) {
+        seed = wrapAdd(wrapMul(seed, 6364136223846793005), 1442695040888963407)
+        Order o
+        o.number = i + 1
+        o.customer = format("{} {}", names[i64((seed >> 20) % 10)], i64((seed >> 40) % 900) + 100)
+        o.city = cities[i64((seed >> 30) % 8)]
+        o.cents = i64((seed >> 10) % 100000)
+        orders.add(move o)
+    }
+    ret orders
+}
+
+// -1, 0 or 1, as `a` comes before `b`, with it or after it in the column.
+i32 compare(Order a, Order b, i64 column) {
+    if (column == 0) {
+        ret a.number < b.number ? -1 : a.number > b.number ? 1 : 0
+    }
+    if (column == 1) {
+        ret a.customer < b.customer ? -1 : a.customer > b.customer ? 1 : 0
+    }
+    if (column == 2) {
+        ret a.city < b.city ? -1 : a.city > b.city ? 1 : 0
+    }
+    ret a.cents < b.cents ? -1 : a.cents > b.cents ? 1 : 0
+}
+
+string money(i64 cents) {
+    ret format("{}.{:02}", cents / 100, cents % 100)
+}
+
+[[window]]
+i32 main() {
+    thread.Shared<list<Order>> data = thread.Shared<list<Order>>(ordersOf(200000))
+    gui.Window w = gui.Window("Example 20", 720, 520)
+    gui.Table table = w.add(gui.Table(16, 16, 688, 416))
+    table.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Stretch)
+    table.addColumn("Number", 96, gui.Horizontal.Right)
+    table.addColumn("Customer", 0, gui.Horizontal.Left)  // the room left
+    table.addColumn("City", 140, gui.Horizontal.Left)
+    table.addColumn("Total", 120, gui.Horizontal.Right)
+    table.setRowCount(200000)
+    gui.Label status = w.add(gui.Label("200000 orders", 16, 448, 688, 20))
+    status.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Bottom)
+
+    // The table asks for the rows it shows; the handler gives them from the data.
+    table.onNeedRows([table, data](i64 first, i64 count) {
+        list<list<string>> rows
+        data.lock([first, count, ref rows](ref list<Order> orders) {
+            for (i64 i = first; i < first + count && i < orders.len(); i++) {
+                rows.add([format("{}", orders[i].number), orders[i].customer, orders[i].city, money(orders[i].cents)])
+            }
+        })
+        table.setRows(first, rows)
+    })
+
+    // A click on a title sorts the data, and the table asks again for its rows.
+    table.onSort([table, data](i64 column, bool descending) {
+        data.lock([column, descending](ref list<Order> orders) {
+            sortBy(ref orders, [column, descending](Order a, Order b) bool {
+                i32 c = compare(a, b, column)
+                ret descending ? c > 0 : c < 0
+            })
+        })
+        table.clearRows()
+    })
+    table.onChange([table, status](i64 row) { status.setText(format("Orders chosen: {}", table.selectedRows().len())) })
+    table.onChoose([table, status](i64 row) { status.setText(format("Order {} opened", table.cell(row, 0))) })
+    w.start()
+    ret 0
+}

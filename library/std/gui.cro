@@ -98,6 +98,7 @@ extern "SDL3" {
     void SDL_free(addr memory)
     addr SDL_GetPlatform()
     bool SDL_SetHint(addr name, addr value)
+    u16 SDL_GetModState()
     bool SDL_GetWindowSafeArea(addr window, addr rect)
     addr SDL_CreateSystemCursor(u32 kind)
     bool SDL_SetCursor(addr cursor)
@@ -2510,6 +2511,337 @@ public struct Slider : Component {
     }
 }
 
+// Rows of cells in columns, with their titles at the top (D486-D489): also millions
+// of rows, since the table keeps only those near the ones shown. It knows how many
+// rows it has, and asks for those it must show and does not have with 'onNeedRows';
+// the program gives them with 'setRows', also later and from another thread, and a
+// row not given yet is empty. A small table gives all its rows at once.
+//
+// A click on the title of a column calls 'onSort', and the program sorts its rows and
+// gives them again. A click chooses a row, Ctrl and a click add or remove one, Shift
+// and a click choose those between; the arrows, Page Up, Page Down, Home and End move
+// the row chosen, and a double click or Enter opens it, with 'onChoose'.
+//
+// '''
+// gui.Table orders = w.add(gui.Table(16, 16, 600, 400))
+// orders.addColumn("Customer", 0, gui.Horizontal.Left)    // the room left
+// orders.addColumn("Total", 96, gui.Horizontal.Right)
+// orders.setRowCount(1000000)
+// orders.onNeedRows([orders](i64 first, i64 count) {
+//     list<list<string>> rows
+//     for (i64 i = first; i < first + count; i++) {
+//         rows.add([format("Customer {}", i), format("{}.00", i % 1000)])
+//     }
+//     orders.setRows(first, rows)
+// })
+// '''
+public struct Table : Component {
+    i64 id
+
+    // A table without columns and without rows. 'x' and 'y' are in logical pixels from
+    // the top left corner of its parent, the window, the group, the panel or the dialog
+    // whose 'add' puts it there, and 'width' and 'height' its size.
+    public Table(i32 x, i32 y, i32 width, i32 height) {
+        id = newPart(kindTable, "", x, y, width, height)
+    }
+
+    i64 componentId() const {
+        ret id
+    }
+
+    // Adds a column at the right of the others, with its title and its width in logical
+    // pixels; a width of 0 takes the room that the others leave, shared among the
+    // columns of width 0. 'align' places the title and the cells: 'Horizontal.Left',
+    // 'Center' or 'Right'.
+    public void addColumn(string title, i32 width, Horizontal align) const {
+        i64 me = id
+        withData([me, title, width, align](ref Shared data) {
+            TableColumn column
+            column.title = title
+            column.width = width
+            column.align = align
+            data.parts[partIndexOf(ref data, me)].columns.add(move column)
+        })
+    }
+
+    // The number of the columns, also those hidden.
+    public i64 columnCount() const {
+        i64 me = id
+        i64 count = 0
+        withData([me, ref count](ref Shared data) { count = data.parts[partIndexOf(ref data, me)].columns.len() })
+        ret count
+    }
+
+    // Shows or hides the column at 'index', from 0; the others take its place. An index
+    // out of the columns is a panic.
+    public void setColumnVisible(i64 index, bool visible) const {
+        i64 me = id
+        withData([me, index, visible](ref Shared data) {
+            i64 p = partIndexOf(ref data, me)
+            if (index < 0 || index >= data.parts[p].columns.len()) {
+                panic(format("the table has no column {}", index))
+            }
+            data.parts[p].columns[index].visible = visible
+        })
+    }
+
+    // Changes the number of the rows. The rows already given stay, those beyond the
+    // number are forgotten, and so are the chosen ones beyond it.
+    public void setRowCount(i64 count) const {
+        i64 me = id
+        withData([me, count](ref Shared data) {
+            i64 p = partIndexOf(ref data, me)
+            data.parts[p].tableRows = count > 0 ? count : 0
+            trimSelection(ref data.parts[p])
+            forgetBeyond(ref data.parts[p])
+        })
+    }
+
+    // The number of the rows.
+    public i64 rowCount() const {
+        i64 me = id
+        i64 count = 0
+        withData([me, ref count](ref Shared data) { count = data.parts[partIndexOf(ref data, me)].tableRows })
+        ret count
+    }
+
+    // Gives the cells of the rows from 'first', a list of strings for each row, in the
+    // order of the columns. It can be called from any thread, as the answer to
+    // 'onNeedRows' or before; the rows beyond the number of the rows are ignored.
+    public void setRows(i64 first, list<list<string>> rows) const {
+        i64 me = id
+        withData([me, first, rows](ref Shared data) {
+            i64 p = partIndexOf(ref data, me)
+            for (i64 k = 0; k < rows.len(); k++) {
+                i64 row = first + k
+                if (row >= 0 && row < data.parts[p].tableRows) {
+                    data.parts[p].cells[row] = rows[k]
+                }
+            }
+        })
+    }
+
+    // Forgets all the rows given, as after the rows were sorted or filtered: the table
+    // asks again for those it shows. The rows chosen stay.
+    public void clearRows() const {
+        i64 me = id
+        withData([me](ref Shared data) {
+            i64 p = partIndexOf(ref data, me)
+            map<i64, list<string>> none
+            map<i64, bool> nothing
+            data.parts[p].cells = move none
+            data.parts[p].asked = move nothing
+        })
+    }
+
+    // The cell of a row and a column, from 0, or "" when the row has not been given.
+    public string cell(i64 row, i64 column) const {
+        i64 me = id
+        string value
+        withData([me, row, column, ref value](ref Shared data) {
+            i64 p = partIndexOf(ref data, me)
+            if (data.parts[p].cells.contains(row)) {
+                list<string> cells = data.parts[p].cells[row]
+                if (column >= 0 && column < cells.len()) {
+                    value = cells[column]
+                }
+            }
+        })
+        ret value
+    }
+
+    // Adds a handler, called on the thread of the windows when the table shows rows that
+    // it does not have: 'first' and 'count', the rows to give with 'setRows'. It asks
+    // for each row once, in blocks of 100, until 'clearRows'.
+    public void onNeedRows(move func(i64, i64) handler) const {
+        addr box = alloc(sizeOf<func(i64, i64)>())
+        put<func(i64, i64)>(box, move handler)
+        addPartHandler(id, 7, box)
+    }
+
+    // Adds a handler, called on the thread of the windows when the user clicks the title
+    // of a column: the column, from 0, and whether the order is descending, true at the
+    // second click on the same column. The table shows the order with an arrow; the
+    // program sorts its rows and gives them again.
+    public void onSort(move func(i64, bool) handler) const {
+        addr box = alloc(sizeOf<func(i64, bool)>())
+        put<func(i64, bool)>(box, move handler)
+        addPartHandler(id, 8, box)
+    }
+
+    // Shows the order of a column, -1 for none, without calling the handlers of 'onSort'.
+    public void setSort(i64 column, bool descending) const {
+        i64 me = id
+        withData([me, column, descending](ref Shared data) {
+            i64 p = partIndexOf(ref data, me)
+            data.parts[p].sortColumn = column
+            data.parts[p].sortDescending = descending
+        })
+    }
+
+    // The column of the order, or -1.
+    public i64 sortColumn() const {
+        i64 me = id
+        i64 column = -1
+        withData([me, ref column](ref Shared data) { column = data.parts[partIndexOf(ref data, me)].sortColumn })
+        ret column
+    }
+
+    // Whether the order is descending.
+    public bool sortDescending() const {
+        i64 me = id
+        bool descending = false
+        withData([me, ref descending](ref Shared data) { descending = data.parts[partIndexOf(ref data, me)].sortDescending })
+        ret descending
+    }
+
+    // Adds a handler, called on the thread of the windows when the row chosen changes,
+    // with a click or with the keys: the row, from 0. With Ctrl and Shift the rows chosen
+    // can be more: 'selectedRows' gives them all.
+    public void onChange(move func(i64) handler) const {
+        addr box = alloc(sizeOf<func(i64)>())
+        put<func(i64)>(box, move handler)
+        addPartHandler(id, 1, box)
+    }
+
+    // Adds a handler, called on the thread of the windows when the user opens a row: a
+    // double click on it, or Enter while the table has the keyboard.
+    public void onChoose(move func(i64) handler) const {
+        addr box = alloc(sizeOf<func(i64)>())
+        put<func(i64)>(box, move handler)
+        addPartHandler(id, 9, box)
+    }
+
+    // Chooses only the row at 'index', or none with -1, and scrolls to show it, without
+    // calling the handlers of 'onChange'. An index out of the rows is a panic.
+    public void setSelected(i64 index) const {
+        i64 me = id
+        withData([me, index](ref Shared data) {
+            i64 p = partIndexOf(ref data, me)
+            if (index < -1 || index >= data.parts[p].tableRows) {
+                panic(format("the table has no row {}: it has {}", index, data.parts[p].tableRows))
+            }
+            selectOnly(ref data.parts[p], index)
+            if (index >= 0) {
+                showTableRow(ref data.parts[p], index)
+            }
+        })
+    }
+
+    // The row chosen last, from 0, or -1 for none.
+    public i64 selected() const {
+        i64 me = id
+        i64 row = -1
+        withData([me, ref row](ref Shared data) { row = data.parts[partIndexOf(ref data, me)].selected })
+        ret row
+    }
+
+    // All the rows chosen, in order. Shift and a click on a table of millions of rows
+    // can choose millions of them.
+    public list<i64> selectedRows() const {
+        i64 me = id
+        list<i64> rows
+        withData([me, ref rows](ref Shared data) {
+            i64 p = partIndexOf(ref data, me)
+            for (i64 k = 0; k + 1 < data.parts[p].ranges.len(); k += 2) {
+                for (i64 row = data.parts[p].ranges[k]; row < data.parts[p].ranges[k + 1]; row++) {
+                    rows.add(row)
+                }
+            }
+        })
+        ret rows
+    }
+
+    // Scrolls the table to show the row at 'index', from 0.
+    public void scrollTo(i64 index) const {
+        i64 me = id
+        withData([me, index](ref Shared data) {
+            i64 p = partIndexOf(ref data, me)
+            if (index >= 0 && index < data.parts[p].tableRows) {
+                showTableRow(ref data.parts[p], index)
+            }
+        })
+    }
+
+    // Moves the table, in logical pixels from the top left corner of its parent: the content of
+    // the window, or the group, the panel or the dialog that holds it. Its anchors keep the
+    // distances from the edges that it has at the new place.
+    public void setPosition(i32 x, i32 y) const {
+        setPartBounds(id, x, y, -1, -1)
+    }
+
+    // Changes the width and the height of the table, in logical pixels. Its anchors keep the
+    // distances from the edges that it has with the new size.
+    public void setSize(i32 width, i32 height) const {
+        setPartBounds(id, -1, -1, width, height)
+    }
+
+    // The distance of the table from the left edge of its parent, in logical pixels, where its
+    // anchors have placed it now.
+    public i32 x() const {
+        ret partBound(id, 0)
+    }
+
+    // The distance of the table from the top edge of its parent, in logical pixels, where its
+    // anchors have placed it now.
+    public i32 y() const {
+        ret partBound(id, 1)
+    }
+
+    // The width of the table now, in logical pixels: a 'Stretch' anchor changes it with its
+    // parent.
+    public i32 width() const {
+        ret partBound(id, 2)
+    }
+
+    // The height of the table now, in logical pixels: a 'Stretch' anchor changes it with its
+    // parent.
+    public i32 height() const {
+        ret partBound(id, 3)
+    }
+
+    // Shows or hides the table.
+    public void setVisible(bool value) const {
+        setPartFlag(id, 0, value)
+    }
+
+    // Whether the table is visible, as 'setVisible' set it: true by default.
+    public bool visible() const {
+        ret partFlag(id, 0)
+    }
+
+    // Enables or disables the table: disabled, it is drawn at half its opacity.
+    public void setEnabled(bool value) const {
+        setPartFlag(id, 1, value)
+    }
+
+    // Whether the table is enabled, as 'setEnabled' set it: true by default.
+    public bool enabled() const {
+        ret partFlag(id, 1)
+    }
+
+    // Sets which edges of its parent the table follows when the parent changes size: the
+    // window, or the group, the panel or the dialog that holds it. It keeps the distances from
+    // those edges that it has now, as 'setAnchor(gui.Horizontal.Right, gui.Vertical.Bottom)' in
+    // the bottom right corner. By default it is anchored to the left and to the top, and does
+    // not move.
+    public void setAnchor(Horizontal horizontal, Vertical vertical) const {
+        setPartAnchor(id, horizontal, vertical)
+    }
+
+    // How the table follows the left and the right edges of its parent: 'Horizontal.Left' by
+    // default.
+    public Horizontal horizontalAnchor() const {
+        ret partHorizontal(id)
+    }
+
+    // How the table follows the top and the bottom edges of its parent: 'Vertical.Top' by
+    // default.
+    public Vertical verticalAnchor() const {
+        ret partVertical(id)
+    }
+}
+
 // What a canvas shows (D483): its shapes, each drawn over the ones before it. The
 // positions are in logical pixels from the top left corner of the canvas. A drawing is
 // a value: the program builds it, on any thread, and hands it to the canvas with
@@ -2974,6 +3306,8 @@ struct WindowData {
     i64 dragging         // the text box whose text the mouse selects
     i64 popup            // the combo box whose list is open
     i64 canvasHeld       // the canvas that has the mouse while the button pressed on it is held (D483)
+    i32 clicks           // of the last press of the mouse: 2 for a double click
+    list<Call> requests  // the rows that the tables ask for while they are drawn (D486)
     list<f32> fontSizes  // of the texts of the drawings, with their fonts
     list<addr> fonts
     i64 appBar         // its bar at the top, or 0
@@ -3024,6 +3358,7 @@ const i32 kindSwitch = 13
 const i32 kindSlider = 14
 const i32 kindDialog = 15
 const i32 kindCanvas = 16
+const i32 kindTable = 17
 
 // A component: its kind, its window and its group once added, its properties, for
 // a text box where its cursor and the other end of its selection are, as indices
@@ -3091,7 +3426,18 @@ struct PartData {
     list<addr> downs                   // func(Mouse), of a canvas
     list<addr> moves
     list<addr> ups
-    addr svg  // of an image box with an SVG image, and its size in bytes (D484)
+    list<TableColumn> columns     // of a table (D486)
+    i64 tableRows                 // its number of rows
+    map<i64, list<string>> cells  // the rows given, near those shown
+    map<i64, bool> asked          // the blocks of rows asked for
+    list<i64> ranges              // the rows chosen: the first and the end of each range
+    i64 anchorRow = -1            // where Shift starts
+    i64 sortColumn = -1
+    bool sortDescending
+    list<addr> needs    // func(i64, i64), of a table
+    list<addr> sorts    // func(i64, bool)
+    list<addr> chooses  // func(i64)
+    addr svg            // of an image box with an SVG image, and its size in bytes (D484)
     i64 svgSize
     i32 textureWidth  // the size in pixels of the texture of an SVG image
     i32 textureHeight
@@ -3293,8 +3639,14 @@ void addPartHandler(i64 id, i32 which, addr box) {
             data.parts[p].downs.add(box)
         } else if (which == 5) {
             data.parts[p].moves.add(box)
-        } else {
+        } else if (which == 6) {
             data.parts[p].ups.add(box)
+        } else if (which == 7) {
+            data.parts[p].needs.add(box)
+        } else if (which == 8) {
+            data.parts[p].sorts.add(box)
+        } else {
+            data.parts[p].chooses.add(box)
         }
     })
 }
@@ -4653,6 +5005,7 @@ struct Call {
     string text
     bool value
     i64 index
+    i64 second  // the second number of a func(i64, i64)
 }
 
 void handle(addr event) {
@@ -4728,6 +5081,20 @@ void dispatch(ref Call call) {
             } finally {
                 put<func(i64)>(box, move handler)
             }
+        } else if (call.kind == 10) {
+            func(i64, i64) handler = take<func(i64, i64)>(box)
+            try {
+                handler(call.index, call.second)
+            } finally {
+                put<func(i64, i64)>(box, move handler)
+            }
+        } else if (call.kind == 11) {
+            func(i64, bool) handler = take<func(i64, bool)>(box)
+            try {
+                handler(call.index, call.value)
+            } finally {
+                put<func(i64, bool)>(box, move handler)
+            }
         }
     }
 }
@@ -4800,6 +5167,9 @@ void route(ref WindowData window, ref list<PartData> parts, addr event, u32 kind
         f32 x = take<f32>(offset(event, 28))
         f32 y = take<f32>(offset(event, 32))
         i32 button = i32(take<u8>(offset(event, 24)))
+        if (kind == 0x401) {
+            window.clicks = i32(take<u8>(offset(event, 26)))
+        }
         i32 on = window.phone ? -1 : buttonAt(x, y, width)
         i64 canvas = -1
         if (kind == 0x402) {
@@ -5006,7 +5376,7 @@ bool inside(ref PartData part, f32 x, f32 y) {
 
 bool focusable(ref PartData part) {
     bool takes = part.kind == kindButton || part.kind == kindTextBox || part.kind == kindCheckBox || part.kind == kindComboBox ||
-        part.kind == kindListView || part.kind == kindSwitch || part.kind == kindSlider
+        part.kind == kindListView || part.kind == kindSwitch || part.kind == kindSlider || part.kind == kindTable
     ret takes && part.shown && part.active
 }
 
@@ -5082,6 +5452,8 @@ void pressPart(ref WindowData window, ref list<PartData> parts, f32 x, f32 y, re
         slideTo(ref parts[p], x, ref calls)
     } else if (parts[p].kind == kindAppBar || parts[p].kind == kindNavigation || parts[p].kind == kindListView) {
         window.heldItem = barItemAt(ref parts[p], x, y)
+    } else if (parts[p].kind == kindTable) {
+        window.heldItem = tableItemAt(ref parts[p], x, y)
     }
 }
 
@@ -5104,6 +5476,10 @@ void releasePart(ref WindowData window, ref list<PartData> parts, f32 x, f32 y, 
         if (parts[p].kind == kindListView) {
             if (item >= 0 && rowAt(ref parts[p], y) == item) {
                 chooseRow(ref parts[p], item, ref calls)
+            }
+        } else if (parts[p].kind == kindTable) {
+            if (item != -1 && tableItemAt(ref parts[p], x, y) == item) {
+                tableClick(ref window, ref parts[p], item, ref calls)
             }
         } else if (parts[p].kind == kindAppBar || parts[p].kind == kindNavigation) {
             if (item >= 0 && barItemAt(ref parts[p], x, y) == item) {
@@ -5387,6 +5763,9 @@ i64 barItemAt(ref PartData bar, f32 x, f32 y) {
     if (bar.kind == kindListView) {
         ret rowAt(ref bar, y)
     }
+    if (bar.kind == kindTable) {
+        ret tableItemAt(ref bar, x, y)
+    }
     if (bar.kind == kindNavigation && bar.items.len() > 0 && bar.width > 0) {
         i64 item = i64((x - bar.left) * f32(bar.items.len()) / f32(bar.width))
         ret item >= 0 && item < bar.items.len() ? item : -1
@@ -5597,6 +5976,9 @@ bool keyOfPart(ref WindowData window, ref list<PartData> parts, Key key, ref lis
     }
     if (parts[f].kind == kindListView) {
         ret listKey(ref parts[f], key, ref calls)
+    }
+    if (parts[f].kind == kindTable) {
+        ret tableKey(ref parts[f], key, ref calls)
     }
     if (parts[f].kind == kindSlider) {
         ret sliderKey(ref parts[f], key, ref calls)
@@ -5966,6 +6348,10 @@ void layoutIn(ref WindowData window, ref list<PartData> parts, i64 group, Frame 
             parts[i].content = f32(parts[i].items.len()) * rowHeight()
             clampScroll(ref parts[i])
         }
+        if (parts[i].kind == kindTable) {  // D486: the titles, then the rows
+            parts[i].content = tableHeader() + f32(parts[i].tableRows) * tableRow()
+            clampScroll(ref parts[i])
+        }
         if (parts[i].kind == kindGroup || parts[i].kind == kindPanel) {
             Frame inner
             inner.left = parts[i].left
@@ -6027,7 +6413,7 @@ void scrollBy(ref PartData part, f32 delta) {
 }
 
 bool scrolls(ref PartData part) {
-    ret (part.kind == kindPanel || part.kind == kindListView) && part.content > f32(part.height)
+    ret (part.kind == kindPanel || part.kind == kindListView || part.kind == kindTable) && part.content > f32(part.height)
 }
 
 // The position and the size of a component, for the size of its parent now.
@@ -6062,6 +6448,10 @@ void draw() {
             addr none
             if (window.window != none && !window.closing) {
                 drawWindow(ref window, ref data.parts, ref data.images)
+                for (ref Call call in window.requests) {  // D486: called before the next frame
+                    data.pending.add(move call)
+                }
+                window.requests.clear()
             }
         }
     })
@@ -6417,6 +6807,8 @@ void drawPart(ref WindowData window, ref PartData part, ref Colors c, ref list<I
         drawNavigation(ref window, ref part, ref c)
     } else if (part.kind == kindCanvas) {
         drawCanvas(ref window, ref part, ref images)
+    } else if (part.kind == kindTable) {
+        drawTable(ref window, ref part, ref c)
     }
 }
 
@@ -6769,6 +7161,426 @@ void drawImage(ref WindowData window, ref PartData part) {
     SDL_SetTextureAlphaMod(part.texture, part.active ? 255 : 128)
     SDL_RenderTexture(r, part.texture, none, ref target)
     clipPart(r, ref part)
+}
+
+// ---- The table (D486-D489) ----
+
+// A column of a table: its title, its width, 0 for the room left, and how its title
+// and its cells are placed.
+struct TableColumn {
+    string title
+    i32 width
+    Horizontal align
+    bool visible = true
+}
+
+f32 tableRow() {  // the height of a row of a table
+    ret comfortable() ? 44 : 26
+}
+
+f32 tableHeader() {  // the height of the titles of a table
+    ret comfortable() ? 40 : 30
+}
+
+const i64 tablePage = 100   // the rows that a table asks for at once
+const i64 tableKept = 3000  // the rows that it keeps at most, near those shown
+
+// The rows chosen are ranges, the first and the end of each one after the other, in
+// order and apart: so Shift can choose millions of rows.
+bool isChosen(ref PartData table, i64 row) {
+    for (i64 k = 0; k + 1 < table.ranges.len(); k += 2) {
+        if (row >= table.ranges[k] && row < table.ranges[k + 1]) {
+            ret true
+        }
+    }
+    ret false
+}
+
+void selectOnly(ref PartData table, i64 row) {
+    table.ranges.clear()
+    if (row >= 0) {
+        table.ranges.add(row)
+        table.ranges.add(row + 1)
+    }
+    table.selected = row
+    table.anchorRow = row
+}
+
+// The rows from `low` to `high`, both included, added to those chosen.
+void chooseRange(ref PartData table, i64 low, i64 high) {
+    list<i64> merged
+    i64 from = low
+    i64 to = high + 1
+    bool placed = false
+    for (i64 k = 0; k + 1 < table.ranges.len(); k += 2) {
+        i64 a = table.ranges[k]
+        i64 b = table.ranges[k + 1]
+        if (b < from) {
+            merged.add(a)
+            merged.add(b)
+        } else if (a > to) {
+            if (!placed) {
+                merged.add(from)
+                merged.add(to)
+                placed = true
+            }
+            merged.add(a)
+            merged.add(b)
+        } else {  // they touch: one range
+            from = a < from ? a : from
+            to = b > to ? b : to
+        }
+    }
+    if (!placed) {
+        merged.add(from)
+        merged.add(to)
+    }
+    table.ranges = merged
+}
+
+// A row removed from those chosen, or added when it was not.
+void toggleRow(ref PartData table, i64 row) {
+    if (!isChosen(ref table, row)) {
+        chooseRange(ref table, row, row)
+        ret
+    }
+    list<i64> split
+    for (i64 k = 0; k + 1 < table.ranges.len(); k += 2) {
+        i64 a = table.ranges[k]
+        i64 b = table.ranges[k + 1]
+        if (row >= a && row < b) {
+            if (row > a) {
+                split.add(a)
+                split.add(row)
+            }
+            if (row + 1 < b) {
+                split.add(row + 1)
+                split.add(b)
+            }
+        } else {
+            split.add(a)
+            split.add(b)
+        }
+    }
+    table.ranges = split
+}
+
+// The rows chosen beyond the number of the rows are no more.
+void trimSelection(ref PartData table) {
+    list<i64> kept
+    for (i64 k = 0; k + 1 < table.ranges.len(); k += 2) {
+        i64 b = table.ranges[k + 1] < table.tableRows ? table.ranges[k + 1] : table.tableRows
+        if (table.ranges[k] < b) {
+            kept.add(table.ranges[k])
+            kept.add(b)
+        }
+    }
+    table.ranges = kept
+    if (table.selected >= table.tableRows) {
+        table.selected = table.tableRows - 1
+    }
+}
+
+// The rows and the blocks asked for beyond the number of the rows are forgotten.
+void forgetBeyond(ref PartData table) {
+    list<i64> rows
+    for (i64 row, ref list<string> cells in table.cells) {
+        if (row >= table.tableRows) {
+            rows.add(row)
+        }
+    }
+    for (i64 row in rows) {
+        table.cells.remove(row)
+    }
+    list<i64> pages
+    for (i64 page, ref bool asked in table.asked) {
+        if (page * tablePage >= table.tableRows) {
+            pages.add(page)
+        }
+    }
+    for (i64 page in pages) {
+        table.asked.remove(page)
+    }
+}
+
+void showTableRow(ref PartData table, i64 row) {
+    f32 seen = f32(table.height) - tableHeader()
+    f32 top = f32(row) * tableRow()
+    table.velocity = 0
+    if (top < table.offsetY) {
+        scrollBy(ref table, top - table.offsetY)
+    } else if (top + tableRow() > table.offsetY + seen) {
+        scrollBy(ref table, top + tableRow() - seen - table.offsetY)
+    }
+}
+
+// The left edges and the widths of the columns shown, from the left of the table: the
+// columns of width 0 share the room left, at least 40 pixels each.
+void columnPlaces(ref PartData table, ref list<f32> lefts, ref list<f32> widths) {
+    f32 fixed = 0
+    i64 free = 0
+    for (ref TableColumn c in table.columns) {
+        if (c.visible) {
+            fixed = fixed + f32(c.width)
+            free = c.width == 0 ? free + 1 : free
+        }
+    }
+    f32 share = free > 0 ? most((f32(table.width) - fixed) / f32(free), 40) : 0
+    f32 at = 0
+    for (ref TableColumn c in table.columns) {
+        f32 w = c.visible ? (c.width == 0 ? share : f32(c.width)) : 0
+        lefts.add(at)
+        widths.add(w)
+        at = at + w
+    }
+}
+
+// What a point of a table is: -2 less the column for a title, the row for a row, or
+// -1 for nothing.
+i64 tableItemAt(ref PartData table, f32 x, f32 y) {
+    if (y < table.top + tableHeader()) {
+        list<f32> lefts
+        list<f32> widths
+        columnPlaces(ref table, ref lefts, ref widths)
+        for (i64 k = 0; k < table.columns.len(); k++) {
+            if (widths[k] > 0 && x >= table.left + lefts[k] && x < table.left + lefts[k] + widths[k]) {
+                ret -2 - k
+            }
+        }
+        ret -1
+    }
+    i64 row = i64((y - table.top - tableHeader() + table.offsetY) / tableRow())
+    ret row >= 0 && row < table.tableRows ? row : -1
+}
+
+// A click released on what it was pressed on: a title sorts, a row is chosen as the
+// keys of Ctrl and Shift say, and a double click opens it (D487, D488).
+void tableClick(ref WindowData window, ref PartData table, i64 item, ref list<Call> calls) {
+    if (item <= -2) {
+        i64 column = -2 - item
+        table.sortDescending = table.sortColumn == column ? !table.sortDescending : false
+        table.sortColumn = column
+        Call call = callOf(11, table.sorts)
+        call.index = column
+        call.value = table.sortDescending
+        calls.add(move call)
+        ret
+    }
+    u32 keys = u32(SDL_GetModState())
+    bool control = (keys & 0xC0) != 0
+    bool shift = (keys & 0x3) != 0
+    if (shift && table.anchorRow >= 0) {
+        if (!control) {
+            table.ranges.clear()
+        }
+        chooseRange(ref table, table.anchorRow < item ? table.anchorRow : item, table.anchorRow < item ? item : table.anchorRow)
+        table.selected = item
+    } else if (control) {
+        toggleRow(ref table, item)
+        table.selected = item
+        table.anchorRow = item
+    } else {
+        selectOnly(ref table, item)
+    }
+    Call call = callOf(9, table.change)
+    call.index = item
+    calls.add(move call)
+    if (window.clicks >= 2 && !shift && !control) {
+        Call open = callOf(9, table.chooses)
+        open.index = item
+        calls.add(move open)
+    }
+}
+
+// The keys of a table that has the keyboard: the arrows, Page Up and Down, Home and
+// End move the row chosen, with Shift those between; Enter opens it; Ctrl+A chooses
+// all the rows.
+bool tableKey(ref PartData table, Key key, ref list<Call> calls) {
+    i64 n = table.tableRows
+    if (n == 0) {
+        ret false
+    }
+    if (key.code == 13 || key.code == keyEnter) {
+        if (table.selected >= 0) {
+            Call open = callOf(9, table.chooses)
+            open.index = table.selected
+            calls.add(move open)
+        }
+        ret true
+    }
+    if (key.control && key.code == 97) {  // Ctrl+A
+        table.ranges = [0, n]
+        ret true
+    }
+    i64 page = most64(i64((f32(table.height) - tableHeader()) / tableRow()) - 1, 1)
+    i64 at = table.selected
+    i64 next = at
+    if (key.code == keyUp) {
+        next = at > 0 ? at - 1 : 0
+    } else if (key.code == keyDown) {
+        next = at < n - 1 ? at + 1 : n - 1
+    } else if (key.code == keyHome) {
+        next = 0
+    } else if (key.code == keyEnd) {
+        next = n - 1
+    } else if (key.code == keyPageUp) {
+        next = at - page > 0 ? at - page : 0
+    } else if (key.code == keyPageDown) {
+        next = at + page < n - 1 ? at + page : n - 1
+    } else {
+        ret false
+    }
+    if (key.shift && table.anchorRow >= 0) {
+        table.ranges.clear()
+        chooseRange(ref table, table.anchorRow < next ? table.anchorRow : next, table.anchorRow < next ? next : table.anchorRow)
+        table.selected = next
+    } else {
+        selectOnly(ref table, next)
+    }
+    showTableRow(ref table, next)
+    Call call = callOf(9, table.change)
+    call.index = next
+    calls.add(move call)
+    ret true
+}
+
+// A line of text in a cell or a title, placed as its column says, inside the width.
+void cellText(addr renderer, addr font, string value, f32 x, f32 w, f32 baseline, u32 rgb, bool enabled, Horizontal align) {
+    f32 size = textWidth(font, value, value.len())
+    f32 left = x + 8
+    if (align == Horizontal.Right) {
+        left = x + w - 8 - size
+    } else if (align == Horizontal.Center) {
+        left = x + (w - size) / 2
+    }
+    text(font, value, most(left, x + 8), baseline, rgb, enabled)
+}
+
+// A table: its titles, in capitals as those of the bands, with the arrow of the order;
+// its rows that are seen, the chosen ones in the soft blue of the selection and the
+// last one chosen with a bar on its left; the rows not given are empty, and asked for.
+void drawTable(ref WindowData window, ref PartData table, ref Colors c) {
+    addr r = window.renderer
+    f32 d = window.density
+    f32 x = table.left
+    f32 y = table.top
+    f32 w = f32(table.width)
+    f32 h = f32(table.height)
+    bool on = table.active
+    f32 header = tableHeader()
+    f32 row = tableRow()
+    list<f32> lefts
+    list<f32> widths
+    columnPlaces(ref table, ref lefts, ref widths)
+    f32 ascent = 0
+    f32 descent = 0
+    f32 gap = 0
+    cromo_gui_font_metrics(window.body, ref ascent, ref descent, ref gap)
+    f32 middle = (ascent - descent) / 2
+    clipInside(r, ref table, x, y, w, h)
+    fill(r, c.surface, x, y, w, h)
+
+    // The rows that are seen, under the titles.
+    i64 first = i64(table.offsetY / row)
+    i64 last = first
+    clipInside(r, ref table, x, y + header, w, h - header)
+    for (i64 k = first; k < table.tableRows; k++) {
+        f32 top = y + header + f32(k) * row - table.offsetY
+        if (top >= y + h) {
+            break
+        }
+        last = k
+        if (isChosen(ref table, k)) {
+            fill(r, c.selectionSoft, x, top, w, row)
+        } else if (window.hot == table.id && window.hotItem == k && on) {
+            fill(r, c.surface2, x, top, w, row)
+        }
+        if (k == table.selected && (isChosen(ref table, k) || window.focus == table.id)) {
+            fill(r, c.selection, x, top, 3, row)
+        }
+        if (table.cells.contains(k)) {
+            list<string> cells = table.cells[k]
+            for (i64 col = 0; col < table.columns.len() && col < cells.len(); col++) {
+                if (widths[col] > 0) {
+                    clipInside(r, ref table, x + lefts[col], most(top, y + header), widths[col], least(row, y + h - top))
+                    cellText(r, window.body, cells[col], x + lefts[col], widths[col], top + row / 2 + middle, c.ink, on,
+                        table.columns[col].align)
+                }
+            }
+            clipInside(r, ref table, x, y + header, w, h - header)
+        }
+        fill(r, c.rule, x, top + row - 1, w, 1)
+    }
+
+    // The titles, over the rows.
+    clipInside(r, ref table, x, y, w, header)
+    fill(r, c.surface, x, y, w, header)
+    fill(r, c.rule2, x, y + header - 1, w, 1)
+    for (i64 col = 0; col < table.columns.len(); col++) {
+        if (widths[col] <= 0) {
+            continue
+        }
+        f32 cx = x + lefts[col]
+        bool hot = window.hot == table.id && window.hotItem == -2 - col && on
+        string title = table.columns[col].title.upper()
+        f32 spacing = bandSize() * 0.07
+        f32 size = 0
+        i64 next = 0
+        for (i64 i = 0; i < title.len(); i = next) {
+            u8 lead = title[i]
+            next = least64(i + (lead < 0x80 ? 1 : lead < 0xE0 ? 2 : lead < 0xF0 ? 3 : 4), title.len())
+            size = size + textWidth(window.band, title.slice(i, next), next - i) + spacing
+        }
+        bool sorted = table.sortColumn == col
+        f32 arrow = sorted ? 16 : 0
+        f32 left = cx + 8
+        Horizontal align = table.columns[col].align
+        if (align == Horizontal.Right) {
+            left = cx + widths[col] - 8 - size - arrow
+        } else if (align == Horizontal.Center) {
+            left = cx + (widths[col] - size - arrow) / 2
+        }
+        clipInside(r, ref table, cx, y, widths[col], header)
+        bandTitle(ref window, table.columns[col].title, most(left, cx + 8), y, header, hot ? c.ink2 : c.ink3, on)
+        if (sorted) {
+            drawIcon(r, table.sortDescending ? Icon.ChevronDown : Icon.ChevronUp, most(left, cx + 8) + size + 10, y + header / 2,
+                12, d, c.ink2, on)
+        }
+    }
+    clipPart(r, ref table)
+
+    // The rows seen and those near them that are not given are asked for, in blocks;
+    // the rows far from them are forgotten when they are too many.
+    i64 from = most64(first - tablePage, 0)
+    i64 to = last + tablePage
+    for (i64 page = from / tablePage; page * tablePage < table.tableRows && page * tablePage <= to; page++) {
+        if (!table.asked.contains(page)) {
+            i64 start = page * tablePage
+            bool missing = false
+            for (i64 k = start; k < start + tablePage && k < table.tableRows && !missing; k++) {
+                missing = !table.cells.contains(k)
+            }
+            table.asked[page] = true
+            if (missing && table.needs.len() > 0) {
+                Call call = callOf(10, table.needs)
+                call.index = start
+                call.second = least64(tablePage, table.tableRows - start)
+                window.requests.add(move call)
+            }
+        }
+    }
+    if (table.cells.len() > tableKept) {
+        list<i64> far
+        for (i64 k, ref list<string> cells in table.cells) {
+            if (k < first - tableKept / 3 || k > last + tableKept / 3) {
+                far.add(k)
+            }
+        }
+        for (i64 k in far) {
+            table.cells.remove(k)
+            table.asked.remove(k / tablePage)
+        }
+    }
 }
 
 // ---- The canvas and the images of the drawings (D483, D484) ----

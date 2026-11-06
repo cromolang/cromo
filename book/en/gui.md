@@ -50,6 +50,7 @@ i32 main() {
 | `gui.GroupBox(text, ...)` | a card with its title in a band at the top, which holds other components |
 | `gui.Panel(...)` | a container with no look of its own, which scrolls when its components go below its bottom |
 | `gui.ListView(...)` | a list of items, each with an icon or an image, a title, a line and a detail |
+| `gui.Table(...)` | rows of cells in columns, also millions, asked for as they are shown |
 | `gui.Canvas(...)` | a surface on which the program draws: `setDrawing`, and the mouse on it |
 
 Every component has `setPosition`, `setSize`, `setVisible`, `setEnabled` and `setAnchor`. The components of a group or of a panel take their positions from its top left corner.
@@ -210,6 +211,41 @@ i32 main() {
 - `gui.Dialog(title, width, height)` is a card with a title, its components, added with `add`, and its buttons, added with `addButton(text, handler)`: the last one is the main one. `w.showDialog(d)` opens it at the center of the window, over the rest darkened, which the mouse and the keys do not reach until it closes. `d.close()` closes it, and so do Esc and the back key of a phone.
 - `w.showSnackbar(text)` shows a short message at the bottom for 4 seconds, above the buttons anchored there; `w.showSnackbarAction(text, action, handler)` adds an action, as `Undo`, which calls the handler.
 - The lambda of `Undo` takes the strings of the item removed with `move`: the window keeps it, and a lambda that is kept must own what it captures, as [Anonymous functions](lambdas.md) explains.
+
+## Tables
+
+```cromo norun
+import std.gui
+
+[[window]]
+i32 main() {
+    gui.Window w = gui.Window("Orders", 560, 360)
+    gui.Table orders = w.add(gui.Table(16, 16, 528, 293))
+    orders.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Stretch)
+    orders.addColumn("Number", 96, gui.Horizontal.Right)
+    orders.addColumn("Customer", 0, gui.Horizontal.Left)
+    orders.addColumn("Total", 112, gui.Horizontal.Right)
+    orders.setRowCount(1000000)
+    orders.onNeedRows([orders](i64 first, i64 count) {
+        list<list<string>> rows
+        for (i64 i = first; i < first + count; i++) {
+            rows.add([format("{}", i + 1), format("Customer {}", i % 977), format("{}.{:02}", i % 1000, i % 100)])
+        }
+        orders.setRows(first, rows)
+    })
+    orders.onChoose([orders](i64 row) { println("order {}", orders.cell(row, 0)) })
+    w.start()
+    ret 0
+}
+```
+
+![A table of a million rows](images/table.png)
+
+- `gui.Table` shows rows of cells in columns: `addColumn(title, width, align)`, with a width of 0 for the room that the other columns leave.
+- It can have millions of rows: `setRowCount` says how many, and the table asks with `onNeedRows(first, count)` for those it shows and does not have, in blocks of 100. The program gives them with `setRows(first, rows)`, also later and from a task that reads them from a file or a database; a row not given yet is empty.
+- A click on a title calls `onSort(column, descending)`: the program sorts its data, calls `clearRows()`, and the table asks again for its rows. The table shows the order with an arrow.
+- A click chooses a row, Ctrl adds one, Shift those between; `selectedRows()` gives them, `onChange` says when they change, and a double click or Enter calls `onChoose`.
+- The data that the handlers read and sort go in a `thread.Shared`, as in `examples/20_table.cro`.
 
 ## Drawing on a canvas
 

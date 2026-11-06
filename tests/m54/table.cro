@@ -1,0 +1,56 @@
+// The table (D486-D489): a million rows, of which it asks only for the blocks near
+// those it shows, once each; the rows given, the order shown, the row chosen.
+// target: windows linux-x86_64
+// program-env: SDL_VIDEO_DRIVER=offscreen
+// expect-output: 2 columns, 1000000 rows
+// expect-output: asked for 0 100
+// expect-output: asked for 100 100
+// expect-output: cell 5: 'Customer 5' '5.00', row 900: ''
+// expect-output: sorted by 1, descending true
+// expect-output: chosen 3: [3]
+// expect-output: 10 rows: chosen 3, [3]
+// expect-output: asked for 0 10
+// expect-output: given again: 'Customer 5'
+// expect-output: chosen -1: []
+import std.gui
+import std.time
+
+// Until the table has asked for its rows and has them, at most 5 seconds.
+void waitFor(gui.Table table) {
+    for (i32 i = 0; i < 500 && table.cell(5, 0).len() == 0; i++) {
+        time.msleep(10)
+    }
+}
+
+i32 main() {
+    gui.Window w = gui.Window("table", 400, 335)
+    gui.Table orders = w.add(gui.Table(0, 0, 400, 300))
+    orders.addColumn("Customer", 0, gui.Horizontal.Left)
+    orders.addColumn("Total", 96, gui.Horizontal.Right)
+    orders.setRowCount(1000000)
+    println("{} columns, {} rows", orders.columnCount(), orders.rowCount())
+    orders.onNeedRows([orders](i64 first, i64 count) {
+        println("asked for {} {}", first, count)
+        list<list<string>> rows
+        for (i64 i = first; i < first + count; i++) {
+            rows.add([format("Customer {}", i), format("{}.00", i % 1000)])
+        }
+        orders.setRows(first, rows)
+    })
+    w.start()
+    waitFor(orders)  // the window takes a few hundred milliseconds to start
+    println("cell 5: '{}' '{}', row 900: '{}'", orders.cell(5, 0), orders.cell(5, 1), orders.cell(900, 0))
+    orders.setSort(1, true)
+    println("sorted by {}, descending {}", orders.sortColumn(), orders.sortDescending())
+    orders.setSelected(3)
+    println("chosen {}: {:?}", orders.selected(), orders.selectedRows())
+    orders.setRowCount(10)
+    println("10 rows: chosen {}, {:?}", orders.selected(), orders.selectedRows())
+    orders.clearRows()
+    waitFor(orders)
+    println("given again: '{}'", orders.cell(5, 0))
+    orders.setSelected(-1)
+    println("chosen {}: {:?}", orders.selected(), orders.selectedRows())
+    w.close()
+    ret 0
+}

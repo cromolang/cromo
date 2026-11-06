@@ -50,6 +50,7 @@ i32 main() {
 | `gui.GroupBox(testo, ...)` | una scheda con il titolo in una fascia in alto, che contiene altri componenti |
 | `gui.Panel(...)` | un contenitore senza aspetto proprio, che scorre quando i suoi componenti vanno oltre il fondo |
 | `gui.ListView(...)` | una lista di voci, ognuna con un'icona o un'immagine, un titolo, una riga e un dettaglio |
+| `gui.Table(...)` | righe di celle in colonne, anche milioni, chieste mentre sono mostrate |
 | `gui.Canvas(...)` | una superficie su cui il programma disegna: `setDrawing`, e il mouse su di essa |
 
 Ogni componente ha `setPosition`, `setSize`, `setVisible`, `setEnabled` e `setAnchor`. I componenti di un gruppo o di un pannello prendono le posizioni dal suo angolo in alto a sinistra.
@@ -210,6 +211,41 @@ i32 main() {
 - `gui.Dialog(titolo, larghezza, altezza)` è una scheda con un titolo, i suoi componenti, aggiunti con `add`, e i suoi pulsanti, aggiunti con `addButton(testo, gestore)`: l'ultimo è quello principale. `w.showDialog(d)` la apre al centro della finestra, sopra il resto scurito, che mouse e tasti non raggiungono finché non si chiude. `d.close()` la chiude, e così Esc e il tasto indietro di un telefono.
 - `w.showSnackbar(testo)` mostra un breve messaggio in basso per 4 secondi, sopra i pulsanti ancorati lì; `w.showSnackbarAction(testo, azione, gestore)` aggiunge un'azione, come `Undo`, che chiama il gestore.
 - La lambda di `Undo` prende le stringhe della voce rimossa con `move`: la finestra la conserva, e una lambda conservata deve possedere ciò che cattura, come spiega [Funzioni anonime](lambdas.md).
+
+## Tabelle
+
+```cromo norun
+import std.gui
+
+[[window]]
+i32 main() {
+    gui.Window w = gui.Window("Orders", 560, 360)
+    gui.Table orders = w.add(gui.Table(16, 16, 528, 293))
+    orders.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Stretch)
+    orders.addColumn("Number", 96, gui.Horizontal.Right)
+    orders.addColumn("Customer", 0, gui.Horizontal.Left)
+    orders.addColumn("Total", 112, gui.Horizontal.Right)
+    orders.setRowCount(1000000)
+    orders.onNeedRows([orders](i64 first, i64 count) {
+        list<list<string>> rows
+        for (i64 i = first; i < first + count; i++) {
+            rows.add([format("{}", i + 1), format("Customer {}", i % 977), format("{}.{:02}", i % 1000, i % 100)])
+        }
+        orders.setRows(first, rows)
+    })
+    orders.onChoose([orders](i64 row) { println("order {}", orders.cell(row, 0)) })
+    w.start()
+    ret 0
+}
+```
+
+![Una tabella di un milione di righe](images/table.png)
+
+- `gui.Table` mostra righe di celle in colonne: `addColumn(titolo, larghezza, allineamento)`, con una larghezza di 0 per lo spazio che le altre colonne lasciano.
+- Può avere milioni di righe: `setRowCount` dice quante, e la tabella chiede con `onNeedRows(primo, quante)` quelle che mostra e non ha, a blocchi di 100. Il programma le dà con `setRows(primo, righe)`, anche più tardi e da un task che le legge da un file o da un database; una riga non ancora data è vuota.
+- Un clic su un titolo chiama `onSort(colonna, discendente)`: il programma ordina i suoi dati, chiama `clearRows()`, e la tabella chiede di nuovo le sue righe. La tabella mostra l'ordine con una freccia.
+- Un clic sceglie una riga, Ctrl ne aggiunge una, Maiusc quelle in mezzo; `selectedRows()` le dà, `onChange` dice quando cambiano, e un doppio clic o Invio chiamano `onChoose`.
+- I dati che i gestori leggono e ordinano vanno in un `thread.Shared`, come in `examples/20_table.cro`.
 
 ## Disegnare su un canvas
 
