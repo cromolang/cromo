@@ -75,8 +75,18 @@ i32 main() {
     note.setPlaceholder("A note")
     gui.TextBox name = w.add(gui.TextBox("Hello world", 0, 200, 400, 28))
     println("placeholder '{}', text '{}'", note.placeholder(), note.text())
+    gui.TextView view = w.add(gui.TextView(0, 250, 400, 40))  // it scrolls once the window is drawn
+    gui.RichText t
+    for (i64 i = 0; i < 20; i++) {
+        t.link(i, format("line {}\n", i), gui.TextStyle(gui.Ink.Normal))
+    }
+    view.setText(move t)
+    view.setMarked(19)
     w.start()
-    time.msleep(800)  // the window starts
+    for (i32 i = 0; i < 500 && view.scrollY() == 0; i++) {  // at most 5 seconds
+        time.msleep(10)
+    }
+    time.msleep(300)
 
     click(100, 35 + 50)  // the title bar is 35 pixels high
     write("abc")

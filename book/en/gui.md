@@ -353,6 +353,34 @@ i32 main() {
 - `w.showMenu(move menu)` opens it where the mouse is: the place of the menu of the right button, as in `onClick` of a text view with `m.button == 3`. `w.showMenuUnder(move menu, component)` opens it under a component, as the list of a button. It goes away when an item is chosen, and then its handler is called, with Esc, or with a click out of it; on a phone a long press on a piece of rich text is the right button.
 - `setTooltip(text)` gives a component a tooltip: the text shows in a small card when the mouse stays on it for a moment, and on a phone after a long press.
 
+## Opening and saving files
+
+```cromo norun
+import std.fs
+import std.gui
+
+[[window]]
+i32 main() {
+    gui.Window w = gui.Window("Notes", 480, 300)
+    gui.Button open = w.add(gui.Button("Open", 16, 16, 96, 28))
+    gui.TextArea text = w.add(gui.TextArea("", 16, 56, 448, 193))
+    open.onClick([w, text]() {
+        w.openFile([gui.FileType("Text", "txt;md")], [text](list<string> files) {
+            if (files.len() > 0) {
+                text.setText(fs.readText(files[0]))
+            }
+        })
+    })
+    w.start()
+    ret 0
+}
+```
+
+- `w.openFile(types, handler)` shows the dialog of the system to open a file: that of Windows, of the desktop on Linux, the picker of the documents on Android. It returns at once, and the handler is called later with the path chosen in a list, or with an empty list when the user cancels. `gui.FileType("Text", "txt;md")` is a kind of file that the dialog shows, and an empty list shows every file.
+- `w.openFiles` lets the user choose more files, `w.saveFile(types, "notes.txt", handler)` asks where to save, with a name proposed, and `w.openFolder(handler)` asks for a folder; the handler of these receives the path, or `""`.
+- The program reads and writes the files with `std.fs`. On Android the picker gives names as `content://...` instead of paths: `fs.readText`, `fs.readBytes`, `fs.writeText` and `fs.writeBytes` read and write them too, in a program with windows.
+- `examples/23_notepad.cro` is a notepad that opens and saves its text.
+
 ## Drawing on a canvas
 
 ```cromo norun

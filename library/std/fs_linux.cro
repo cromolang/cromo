@@ -4,8 +4,17 @@
 // -100 is AT_FDCWD: a path from the current folder.
 import unsafe
 
+extern "cromo" {
+    addr cromo_content_load(addr name, ref i64 size)  // a document of Android (D501), in memory of SDL
+    i32 cromo_content_save(addr name, addr data, i64 size)
+    void cromo_content_free(addr data)
+}
+
 // The bytes of a file, in memory to be freed, and how many they are.
 addr loadFile(string path, ref i64 size) {
+    if (path.startsWith("content://")) {
+        ret loadDocument(path, ref size)
+    }
     i64 file = systemCall(i64(Call.OpenAt), -100, path.cstring(), 0x80000, 0, 0, 0)  // O_RDONLY | O_CLOEXEC
     if (file < 0) {
         throw failure("read", path, file)
@@ -38,6 +47,10 @@ addr loadFile(string path, ref i64 size) {
 }
 
 void storeFile(string path, addr data, i64 size, bool append) {
+    if (path.startsWith("content://")) {
+        storeDocument(path, data, size, append)
+        ret
+    }
     i64 flags = 0x80000 | 0x40 | 1  // O_CLOEXEC | O_CREAT | O_WRONLY
     if (append) {
         flags |= 0x400  // O_APPEND
@@ -61,6 +74,30 @@ void storeFile(string path, addr data, i64 size, bool append) {
         done += count
     }
     systemCall(i64(Call.Close), file, 0, 0, 0, 0, 0)
+}
+
+// On Android a document that its picker gave, "content://...", which SDL reads and
+// writes for std.gui (D501): whole, and only in a program with windows.
+addr loadDocument(string path, ref i64 size) {
+    i64 total = 0
+    addr held = cromo_content_load(path.cstring(), ref total)
+    if (held == addr(0)) {
+        throw Error(format("cannot read '{}': a document of Android is read by a program with windows, which can reach it", path))
+    }
+    addr data = alloc(total > 0 ? total : 1)
+    copyMemory(data, held, total)
+    cromo_content_free(held)
+    size = total
+    ret data
+}
+
+void storeDocument(string path, addr data, i64 size, bool append) {
+    if (append) {
+        throw Error(format("cannot append to '{}': a document of Android is written whole", path))
+    }
+    if (cromo_content_save(path.cstring(), data, size) == 0) {
+        throw Error(format("cannot write '{}': a document of Android is written by a program with windows, which can reach it", path))
+    }
 }
 
 // Whether a file or a folder exists at the path. It never throws: a path that

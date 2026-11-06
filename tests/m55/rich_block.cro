@@ -1,4 +1,5 @@
 // A block ended without a block started is a panic (D490).
+// target: windows linux-x86_64
 // expect-exit: 101
 // expect-stderr: endBlock without a block started with startBlock
 import std.gui

@@ -353,6 +353,34 @@ i32 main() {
 - `w.showMenu(move menu)` lo apre dove è il mouse: il posto del menu del tasto destro, come in `onClick` di una vista di testo con `m.button == 3`. `w.showMenuUnder(move menu, componente)` lo apre sotto un componente, come la lista di un pulsante. Sparisce quando si sceglie una voce, e allora il suo gestore viene chiamato, con Esc, o con un clic fuori; sul telefono una pressione lunga su un pezzo di testo ricco vale come tasto destro.
 - `setTooltip(testo)` dà un tooltip a un componente: il testo compare in una piccola card quando il mouse resta un momento su di esso, e sul telefono dopo una pressione lunga.
 
+## Aprire e salvare file
+
+```cromo norun
+import std.fs
+import std.gui
+
+[[window]]
+i32 main() {
+    gui.Window w = gui.Window("Notes", 480, 300)
+    gui.Button open = w.add(gui.Button("Open", 16, 16, 96, 28))
+    gui.TextArea text = w.add(gui.TextArea("", 16, 56, 448, 193))
+    open.onClick([w, text]() {
+        w.openFile([gui.FileType("Text", "txt;md")], [text](list<string> files) {
+            if (files.len() > 0) {
+                text.setText(fs.readText(files[0]))
+            }
+        })
+    })
+    w.start()
+    ret 0
+}
+```
+
+- `w.openFile(tipi, gestore)` mostra il dialogo del sistema per aprire un file: quello di Windows, del desktop su Linux, il selettore dei documenti su Android. Ritorna subito, e il gestore viene chiamato più tardi con il percorso scelto in una lista, o con una lista vuota quando l'utente annulla. `gui.FileType("Text", "txt;md")` è un tipo di file che il dialogo mostra, e una lista vuota mostra tutti i file.
+- `w.openFiles` lascia scegliere più file, `w.saveFile(tipi, "notes.txt", gestore)` chiede dove salvare, con un nome proposto, e `w.openFolder(gestore)` chiede una cartella; il gestore di questi riceve il percorso, o `""`.
+- Il programma legge e scrive i file con `std.fs`. Su Android il selettore dà nomi come `content://...` invece di percorsi: `fs.readText`, `fs.readBytes`, `fs.writeText` e `fs.writeBytes` leggono e scrivono anche quelli, in un programma con finestre.
+- `examples/23_notepad.cro` è un blocco note che apre e salva il suo testo.
+
 ## Disegnare su un canvas
 
 ```cromo norun

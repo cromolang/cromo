@@ -2,7 +2,8 @@
 // C; the text, with stb_truetype and the fonts of Inter in fonts.S (D433, D440);
 // the symbols of the buttons of the title bar (D431), of the check boxes and of
 // the combo boxes; the boxes with rounded corners of the components (D439), their
-// shadows and their gradients (D443); and what the end of main waits for (D442).
+// shadows and their gradients (D443); what the end of main waits for (D442); and the
+// dialogs of the files of the system (D500).
 // Without the C library and without the headers of SDL, as the rest of the
 // runtime: the functions of SDL are declared here, and stb_truetype takes its
 // mathematics from SDL. The icons of Lucide are a third font (D448); the images
@@ -421,6 +422,170 @@ void cromo_gui_text(void* data, const u8* text, i64 length, f32 x, f32 y, u8 r, 
         pen += glyph->advance;
         previous = code;
     }
+}
+
+// ---- The dialogs of the files (D500) ----
+//
+// SDL shows the dialogs of the system and calls back, maybe on another thread, with the
+// paths chosen: the callback keeps them in its request, which the thread of the GUI
+// reads at each frame with cromo_gui_dialog_poll. The filters stay with the request
+// until the callback, as SDL wants.
+
+typedef struct {
+    const char* name;
+    const char* pattern;
+} FileFilter;
+
+typedef struct FileRequest {
+    struct FileRequest* next;
+    i64 id;
+    i32 done;
+    i32 count;  // the paths chosen, 0 when the user cancels
+    char* paths;
+    i64 size;
+    char* text;  // the names and the patterns of the filters, each ended by a zero
+    FileFilter* filters;
+} FileRequest;
+
+void* SDL_CreateMutex(void);
+void SDL_LockMutex(void* mutex);
+void SDL_UnlockMutex(void* mutex);
+typedef void (*DialogCallback)(void* data, const char* const* files, i32 filter);
+void SDL_ShowOpenFileDialog(DialogCallback callback, void* data, void* window, const FileFilter* filters, i32 count,
+                            const char* location, _Bool many);
+void SDL_ShowSaveFileDialog(DialogCallback callback, void* data, void* window, const FileFilter* filters, i32 count,
+                            const char* location);
+void SDL_ShowOpenFolderDialog(DialogCallback callback, void* data, void* window, const char* location, _Bool many);
+
+static FileRequest* fileRequests;
+static void* fileLock;
+static i64 fileNext;
+
+static void fileChosen(void* data, const char* const* files, i32 filter) {
+    (void)filter;
+    FileRequest* request = data;
+    i64 size = 0;
+    i32 count = 0;
+    for (i32 i = 0; files && files[i]; ++i) {
+        size += (i64)SDL_strlen(files[i]) + 1;
+        count++;
+    }
+    char* paths = SDL_malloc((size_t)size + 1);
+    i64 at = 0;
+    for (i32 i = 0; paths && files && files[i]; ++i) {
+        size_t length = SDL_strlen(files[i]);
+        memcpy(paths + at, files[i], length + 1);
+        at += (i64)length + 1;
+    }
+    SDL_LockMutex(fileLock);
+    request->paths = paths;
+    request->size = paths ? size : 0;
+    request->count = paths ? count : 0;
+    request->done = 1;
+    SDL_UnlockMutex(fileLock);
+}
+
+// Shows a dialog of the system, on the thread of the GUI: kind 0 to open a file, 1 more
+// files, 2 to save one, 3 to open a folder; the filters as lines, a name and its
+// patterns, as "Images\npng;jpg\n"; the location, or "". Gives the number of the
+// request, or 0 without memory.
+i64 cromo_gui_dialog(void* window, i32 kind, const u8* filters, i64 length, const u8* location) {
+    if (!fileLock) fileLock = SDL_CreateMutex();
+    FileRequest* request = SDL_calloc(1, sizeof(FileRequest));
+    if (!request || !fileLock) {
+        SDL_free(request);
+        return 0;
+    }
+    request->text = SDL_malloc((size_t)length + 1);
+    i32 lines = 0;
+    for (i64 i = 0; i < length; ++i) lines += filters[i] == '\n';
+    request->filters = SDL_calloc((size_t)(lines / 2 + 1), sizeof(FileFilter));
+    if (!request->text || !request->filters) {
+        SDL_free(request->text);
+        SDL_free(request->filters);
+        SDL_free(request);
+        return 0;
+    }
+    i32 count = 0;
+    i32 pattern = 0;  // the line is the name of a filter, or its patterns
+    char* line = request->text;
+    for (i64 i = 0; i < length; ++i) {
+        request->text[i] = filters[i] == '\n' ? 0 : (char)filters[i];
+        if (filters[i] == '\n') {
+            if (pattern) {
+                request->filters[count++].pattern = line;
+            } else {
+                request->filters[count].name = line;
+            }
+            pattern = !pattern;
+            line = request->text + i + 1;
+        }
+    }
+    request->text[length] = 0;
+    request->id = ++fileNext;
+    request->next = fileRequests;
+    fileRequests = request;
+    const char* place = location && location[0] ? (const char*)location : 0;
+    if (kind == 3) {
+        SDL_ShowOpenFolderDialog(fileChosen, request, window, place, 0);
+    } else if (kind == 2) {
+        SDL_ShowSaveFileDialog(fileChosen, request, window, count ? request->filters : 0, count, place);
+    } else {
+        SDL_ShowOpenFileDialog(fileChosen, request, window, count ? request->filters : 0, count, place, kind == 1);
+    }
+    return request->id;
+}
+
+// The paths of a request once the user chose, one after the other, each ended by a
+// zero, in memory that cromo_gui_dialog_free frees, and their number: 0 when the user
+// canceled, -1 while the dialog is open. Once given, the request is forgotten.
+char* cromo_gui_dialog_poll(i64 id, i32* number, i64* size) {
+    char* paths = 0;
+    *number = -1;
+    *size = 0;
+    if (!fileLock) return 0;
+    SDL_LockMutex(fileLock);
+    FileRequest** link = &fileRequests;
+    for (; *link && (*link)->id != id; link = &(*link)->next) {
+    }
+    FileRequest* request = *link;
+    i32 count = -1;
+    if (request && request->done) {
+        *link = request->next;
+        count = request->count;
+        paths = request->paths;
+        *size = request->size;
+    } else if (!request) {
+        count = 0;
+    }
+    SDL_UnlockMutex(fileLock);
+    if (count >= 0 && request) {
+        SDL_free(request->text);
+        SDL_free(request->filters);
+        SDL_free(request);
+    }
+    *number = count;
+    return paths;
+}
+
+void cromo_gui_dialog_free(void* paths) { SDL_free(paths); }
+
+// ---- The documents of Android (D501) ----
+//
+// The picker of Android gives names as content://, which SDL reads and writes: std.gui
+// gives its functions to the runtime when it starts, and std.fs uses them for those
+// names.
+
+#ifdef __ANDROID__
+void* SDL_LoadFile(const char* file, size_t* size);
+_Bool SDL_SaveFile(const char* file, const void* data, size_t size);
+void cromo_content_hooks(void* load, void* save, void* release);
+#endif
+
+void cromo_gui_documents(void) {
+#ifdef __ANDROID__
+    cromo_content_hooks((void*)SDL_LoadFile, (void*)SDL_SaveFile, (void*)SDL_free);
+#endif
 }
 
 // ---- The icons (D448) ----

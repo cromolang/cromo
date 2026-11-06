@@ -1,10 +1,13 @@
-// Example 23: a notepad. The text goes to the next line at the width of the window, and
-// the bar at the bottom counts its lines, its words and its characters while it is
-// written; Ctrl+Z and Ctrl+Y undo and redo.
+// Example 23: a notepad. Open and Save show the dialogs of the files of the system, the
+// text goes to the next line at the width of the window, and the bar at the bottom
+// counts its lines, its words and its characters while it is written; Ctrl+Z and
+// Ctrl+Y undo and redo.
 //
 // Decided: the text area and undo (D498), its lines that go to the next line (D499),
-//          the look (D479)
-// Draft:   the names of the text area and of its methods
+//          the dialogs of the files of the system (D500), the documents of Android
+//          read by std.fs (D501), the look (D479)
+// Draft:   the names of the text area, of the dialogs and of their methods
+import std.fs
 import std.gui
 
 // The lines, the words and the characters of a text.
@@ -27,18 +30,65 @@ string summary(string text) {
         }
         inWord = !space
     }
-    ret format("{} lines, {} words, {} characters", lines, words, characters)
+    ret format("{} {}, {} {}, {} {}", lines, lines == 1 ? "line" : "lines", words, words == 1 ? "word" : "words", characters,
+        characters == 1 ? "character" : "characters")
+}
+
+// The name of a file chosen; on Android the picker gives a document, whose name is not a
+// path (D501).
+string nameOf(string path) {
+    ret path.startsWith("content://") ? "the document" : fs.fileName(path)
+}
+
+list<gui.FileType> types() {
+    ret [gui.FileType("Text", "txt;md"), gui.FileType("All the files", "*")]
 }
 
 [[window]]
 i32 main() {
     gui.Window w = gui.Window("Notepad", 560, 420)
-    gui.TextArea text = w.add(gui.TextArea("", 16, 16, 528, 321))
+    gui.Button open = w.add(gui.Button("Open", 16, 16, 96, 28))
+    open.setIcon(gui.Icon.FolderOpen)
+    open.setTooltip("Opens a text file")
+    gui.Button save = w.add(gui.Button("Save", 120, 16, 96, 28))
+    save.setIcon(gui.Icon.Save)
+    save.setTooltip("Saves the text in a file")
+    gui.Label file = w.add(gui.Label("A new note", 232, 16, 312, 28))
+    file.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Top)
+    gui.TextArea text = w.add(gui.TextArea("", 16, 56, 528, 281))
     text.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Stretch)
     text.setPlaceholder("Write here")
     gui.Label status = w.add(gui.Label(summary(""), 16, 353, 528, 20))
     status.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Bottom)
     text.onChange([status](string value) { status.setText(summary(value)) })
+
+    open.onClick([w, text, file, status]() {
+        w.openFile(types(), [text, file, status](list<string> chosen) {
+            if (chosen.len() == 0) {
+                ret  // the user canceled
+            }
+            try {
+                text.setText(fs.readText(chosen[0]))
+                file.setText(nameOf(chosen[0]))
+                status.setText(summary(text.text()))
+            } catch (Exception e) {
+                file.setText(e.message())
+            }
+        })
+    })
+    save.onClick([w, text, file]() {
+        w.saveFile(types(), "note.txt", [text, file](string chosen) {
+            if (chosen.len() == 0) {
+                ret
+            }
+            try {
+                fs.writeText(chosen, text.text())
+                file.setText(format("Saved in {}", nameOf(chosen)))
+            } catch (Exception e) {
+                file.setText(e.message())
+            }
+        })
+    })
     w.start()
     ret 0
 }

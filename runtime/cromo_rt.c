@@ -291,6 +291,35 @@ i64 cromo_fork(void) {
 i64 cromo_fork(void) { return systemCall(SYS_clone, 17, 0, 0, 0, 0, 0); }
 #endif
 
+// The documents of Android (D501): the names content:// that its picker gives, which
+// SDL reads and writes. std.gui gives its functions when it starts; without it, as in a
+// program without windows, these fail.
+static void* (*contentLoad)(const char* name, u64* size);
+static _Bool (*contentSave)(const char* name, const void* data, u64 size);
+static void (*contentFree)(void* data);
+
+void cromo_content_hooks(void* load, void* save, void* release) {
+    contentLoad = (void* (*)(const char*, u64*))load;
+    contentSave = (_Bool (*)(const char*, const void*, u64))save;
+    contentFree = (void (*)(void*))release;
+}
+
+// The bytes of a document, in memory that cromo_content_free frees, or 0.
+void* cromo_content_load(const u8* name, i64* size) {
+    u64 length = 0;
+    void* data = contentLoad ? contentLoad((const char*)name, &length) : 0;
+    *size = (i64)length;
+    return data;
+}
+
+i32 cromo_content_save(const u8* name, const void* data, i64 size) {
+    return contentSave && contentSave((const char*)name, data, (u64)size);
+}
+
+void cromo_content_free(void* data) {
+    if (contentFree) contentFree(data);
+}
+
 #ifndef CROMO_BIONIC
 // Outside an app of Android the output goes to its descriptor (runtime_linux.cro).
 i32 cromo_app_write(i64 stream, const u8* data, i64 size) {

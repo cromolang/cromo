@@ -1,0 +1,13 @@
+// The kinds of file of the dialogs (D500).
+// target: windows linux-x86_64
+// expect-output: Images png;jpg
+// expect-output: 2 kinds, the second All the files *
+import std.gui
+
+i32 main() {
+    gui.FileType images = gui.FileType("Images", "png;jpg")
+    println("{} {}", images.name, images.extensions)
+    list<gui.FileType> kinds = [images, gui.FileType("All the files", "*")]
+    println("{} kinds, the second {} {}", kinds.len(), kinds[1].name, kinds[1].extensions)
+    ret 0
+}

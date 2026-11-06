@@ -116,6 +116,10 @@ extern "cromo" {
     void cromo_gui_chrome_free(addr chrome)
     addr cromo_gui_font(addr renderer, i32 face, f32 size, f32 density)
     void cromo_gui_font_free(addr font)
+    i64 cromo_gui_dialog(addr window, i32 kind, addr filters, i64 length, addr location)  // D500
+    addr cromo_gui_dialog_poll(i64 id, ref i32 count, ref i64 size)
+    void cromo_gui_dialog_free(addr paths)
+    void cromo_gui_documents()  // D501
     void cromo_gui_font_metrics(addr font, ref f32 ascent, ref f32 descent, ref f32 gap)
     f32 cromo_gui_text_width(addr font, addr text, i64 length)
     void cromo_gui_text(addr font, addr text, i64 length, f32 x, f32 y, u8 r, u8 g, u8 b, u8 alpha)
@@ -150,6 +154,25 @@ public enum ButtonStyle {
     Normal   // light, with a thin border: the default
     Primary  // filled with the accent, for the main action of a window or of a group
     Danger   // in the color of danger, for an action that destroys, as Delete
+}
+
+// A kind of file for the dialogs of the files (D500): its name, as "Images", and its
+// extensions without the dot, between ';', as "png;jpg", or "*" for every file.
+//
+// '''
+// w.openFile([gui.FileType("Images", "png;jpg"), gui.FileType("All the files", "*")], [](list<string> files) {
+//     println("{}", files)
+// })
+// '''
+public struct FileType {
+    public string name
+    public string extensions
+
+    // A kind of file with its name and its extensions.
+    public FileType(string kind, string patterns) {
+        name = kind
+        extensions = patterns
+    }
 }
 
 // The color of a piece of rich text (D491): a role of the theme, which follows the light
@@ -4439,6 +4462,8 @@ struct WindowData {
     f32 tipY
     i64 longPart  // the component held with a finger, for a long press (D496)
     i64 longPiece = -1
+    list<FileRequest> fileAsks   // the dialogs of the files asked (D500)
+    list<FileRequest> fileWaits  // and those shown
     u64 longStart
     f32 longX
     f32 longY
@@ -5489,6 +5514,45 @@ public struct Window {
         })
     }
 
+    // Shows the dialog of the system to open a file (D500), with the kinds of file that it
+    // lets the user choose, the first one at the start, or every file with an empty list.
+    // It returns at once; the handler is called later on the thread of the windows with
+    // the path chosen in a list, or with an empty list when the user cancels. On Android
+    // the path is the name of a document, "content://...", which 'std.fs' reads (D501).
+    public void openFile(list<FileType> types, move func(list<string>) handler) const {
+        addr box = alloc(sizeOf<func(list<string>)>())
+        put<func(list<string>)>(box, move handler)
+        askFile(id, 0, types, "", box)
+    }
+
+    // Shows the dialog of the system to open one file or more, as 'openFile' does: the
+    // handler receives all the paths chosen.
+    public void openFiles(list<FileType> types, move func(list<string>) handler) const {
+        addr box = alloc(sizeOf<func(list<string>)>())
+        put<func(list<string>)>(box, move handler)
+        askFile(id, 1, types, "", box)
+    }
+
+    // Shows the dialog of the system to save a file, with the kinds of file and the name
+    // proposed, as "notes.txt", or a path. It returns at once; the handler is called later
+    // on the thread of the windows with the path chosen, or "" when the user cancels. The
+    // program writes the file, with 'std.fs'.
+    public void saveFile(list<FileType> types, string name, move func(string) handler) const {
+        addr box = alloc(sizeOf<func(string)>())
+        put<func(string)>(box, move handler)
+        askFile(id, 2, types, name, box)
+    }
+
+    // Shows the dialog of the system to choose a folder. It returns at once; the handler
+    // is called later on the thread of the windows with the path of the folder, or ""
+    // when the user cancels.
+    public void openFolder(move func(string) handler) const {
+        addr box = alloc(sizeOf<func(string)>())
+        put<func(string)>(box, move handler)
+        list<FileType> none
+        askFile(id, 3, none, "", box)
+    }
+
     // Opens a menu where the mouse is, or where the finger is on a phone, over everything,
     // and on the left of the mouse or above it when there is no room (D496). It takes the
     // place of the menu open, and a menu without entries closes it. It can be called from
@@ -5865,6 +5929,7 @@ void run() {
     }
     arrow = SDL_CreateSystemCursor(0)     // SDL_SYSTEM_CURSOR_DEFAULT
     beam = SDL_CreateSystemCursor(1)      // SDL_SYSTEM_CURSOR_TEXT
+    cromo_gui_documents()                 // std.fs reads the documents of Android with SDL (D501)
     pointer = SDL_CreateSystemCursor(11)  // SDL_SYSTEM_CURSOR_POINTER
     addr event = alloc(128)               // SDL_Event, a union of 128 bytes
     for (true) {
@@ -5923,6 +5988,7 @@ i32 prepare() {
                 continue
             }
             apply(ref window)
+            fileDialogs(ref window, ref pending)
             if (window.fps > fps) {
                 fps = window.fps
             }
@@ -6186,7 +6252,7 @@ i32 buttonAt(f32 x, f32 y, f32 width) {
 // A call of handlers, made under the lock and run after it.
 struct Call {
     i32 kind  // 1 mouse move, 2 mouse down, 3 mouse up, 4 key, 5 resize, 6 click, 7 text, 8 check, 9 choice,
-    // 10 func(i64, i64), 11 func(i64, bool), 12 func(i64, Mouse)
+    // 10 func(i64, i64), 11 func(i64, bool), 12 func(i64, Mouse), 13 func(list<string>)
     list<addr> boxes
     Mouse mouse
     Key key
@@ -6195,7 +6261,9 @@ struct Call {
     string text
     bool value
     i64 index
-    i64 second  // the second number of a func(i64, i64)
+    i64 second          // the second number of a func(i64, i64)
+    list<string> texts  // of a func(list<string>)
+    bool once           // the handler is called once, and freed after (D500)
 }
 
 void handle(addr event) {
@@ -6255,7 +6323,11 @@ void dispatch(ref Call call) {
             try {
                 handler(call.text)
             } finally {
-                put<func(string)>(box, move handler)
+                if (call.once) {
+                    free(box)
+                } else {
+                    put<func(string)>(box, move handler)
+                }
             }
         } else if (call.kind == 8) {
             func(bool) handler = take<func(bool)>(box)
@@ -6284,6 +6356,17 @@ void dispatch(ref Call call) {
                 handler(call.index, call.value)
             } finally {
                 put<func(i64, bool)>(box, move handler)
+            }
+        } else if (call.kind == 13) {
+            func(list<string>) handler = take<func(list<string>)>(box)
+            try {
+                handler(call.texts)
+            } finally {
+                if (call.once) {
+                    free(box)
+                } else {
+                    put<func(list<string>)>(box, move handler)
+                }
             }
         } else if (call.kind == 12) {
             func(i64, Mouse) handler = take<func(i64, Mouse)>(box)
@@ -8870,6 +8953,79 @@ void drawTable(ref WindowData window, ref PartData table, ref Colors c) {
         for (i64 k in far) {
             table.cells.remove(k)
             table.asked.remove(k / tablePage)
+        }
+    }
+}
+
+// ---- The dialogs of the files (D500) ----
+
+// A dialog asked by the program: 0 to open a file, 1 more files, 2 to save, 3 a folder,
+// its filters as lines, its location, its handler, and the number that the glue of C
+// gives it once it is shown.
+struct FileRequest {
+    i32 kind
+    string filters
+    string location
+    addr box
+    i64 id
+}
+
+void askFile(i64 window, i32 kind, list<FileType> types, string location, addr box) {
+    FileRequest request
+    request.kind = kind
+    for (FileType t in types) {
+        request.filters += format("{}\n{}\n", t.name, t.extensions)
+    }
+    request.location = location
+    request.box = box
+    addr held = alloc(sizeOf<FileRequest>())
+    put<FileRequest>(held, move request)
+    withData([window, held](ref Shared data) { data.windows[indexOf(ref data, window)].fileAsks.add(take<FileRequest>(held)) })
+    free(held)
+}
+
+// On the thread of the GUI, at each frame: the dialogs asked are shown, and those that
+// the user closed call their handlers, once, after the lock.
+void fileDialogs(ref WindowData window, ref list<Call> calls) {
+    for (window.fileAsks.len() > 0) {
+        FileRequest request = window.fileAsks.remove(0)
+        request.id = cromo_gui_dialog(window.window, request.kind, request.filters.cstring(), request.filters.len(),
+            request.location.cstring())
+        if (request.id != 0) {
+            window.fileWaits.add(move request)
+        }
+    }
+    for (i64 k = window.fileWaits.len() - 1; k >= 0; k--) {
+        i32 count = 0
+        i64 size = 0
+        addr paths = cromo_gui_dialog_poll(window.fileWaits[k].id, ref count, ref size)
+        if (count < 0) {
+            continue
+        }
+        list<string> chosen
+        i64 at = 0
+        for (i32 n = 0; n < count; n++) {
+            string path = cText(offset(paths, at))
+            at = at + path.len() + 1
+            chosen.add(move path)
+        }
+        addr none
+        if (paths != none) {
+            cromo_gui_dialog_free(paths)
+        }
+        FileRequest done = window.fileWaits.remove(k)
+        list<addr> boxes
+        boxes.add(done.box)
+        if (done.kind <= 1) {
+            Call call = callOf(13, boxes)
+            call.texts = move chosen
+            call.once = true
+            calls.add(move call)
+        } else {
+            Call call = callOf(7, boxes)
+            call.text = chosen.len() > 0 ? chosen[0] : ""
+            call.once = true
+            calls.add(move call)
         }
     }
 }

@@ -1,0 +1,28 @@
+// A document of Android, "content://...", is read and written by std.fs only in a
+// program with windows, whose std.gui gives it the functions of SDL (D501); appending
+// to one is never possible.
+// target: linux
+// expect-output: cannot read 'content://com.example/document/1': a document of Android is read by a program with windows, which can reach it
+// expect-output: cannot write 'content://com.example/document/1': a document of Android is written by a program with windows, which can reach it
+// expect-output: cannot append to 'content://com.example/document/1': a document of Android is written whole
+import std.fs
+
+i32 main() {
+    string name = "content://com.example/document/1"
+    try {
+        fs.readText(name)
+    } catch (Exception e) {
+        println("{}", e.message())
+    }
+    try {
+        fs.writeText(name, "text")
+    } catch (Exception e) {
+        println("{}", e.message())
+    }
+    try {
+        fs.appendText(name, "text")
+    } catch (Exception e) {
+        println("{}", e.message())
+    }
+    ret 0
+}
