@@ -114,6 +114,8 @@ extern "cromo" {
     addr cromo_gui_chrome(addr window)
     void cromo_gui_chrome_size(addr chrome, f32 bar, f32 buttons, f32 edge, bool resizable)
     void cromo_gui_chrome_free(addr chrome)
+    void cromo_gui_chrome_holes(addr chrome, i32 count)  // D509
+    void cromo_gui_chrome_hole(addr chrome, i32 index, f32 x, f32 y, f32 w, f32 h)
     addr cromo_gui_font(addr renderer, i32 face, f32 size, f32 density)
     void cromo_gui_font_free(addr font)
     i64 cromo_gui_dialog(addr window, i32 kind, addr filters, i64 length, addr location)  // D500
@@ -476,9 +478,12 @@ public enum Icon {
 // 'onMouseDown' and 'onMouseUp' of a window or of a canvas. A finger on a phone is the
 // left button.
 public struct Mouse {
-    public f32 x       // in logical pixels from the left edge of the content, or of the canvas
-    public f32 y       // in logical pixels from the top of the content, or of the canvas
-    public i32 button  // 1 left, 2 middle, 3 right, 0 when the mouse moves
+    public f32 x         // in logical pixels from the left edge of the content, or of the canvas
+    public f32 y         // in logical pixels from the top of the content, or of the canvas
+    public i32 button    // 1 left, 2 middle, 3 right, 0 when the mouse moves
+    public bool shift    // a Shift key is held
+    public bool control  // a Ctrl key is held
+    public bool alt      // an Alt key is held
 }
 
 // A key pressed, for the handlers of 'onKeyDown' of a window.
@@ -2090,6 +2095,22 @@ public struct AppBar : Component {
         })
     }
 
+    // Gives the action at 'index', from 0 in the order they were added, a tooltip, shown
+    // when the mouse stays on it (D497). An index out of the actions is a panic.
+    public void setActionTooltip(i64 index, string text) const {
+        i64 me = id
+        withData([me, index, text](ref Shared data) {
+            i64 p = partIndexOf(ref data, me)
+            if (index < 0 || index >= data.parts[p].icons.len()) {
+                panic(format("the app bar has no action {}", index))
+            }
+            for (data.parts[p].tips.len() <= index) {
+                data.parts[p].tips.add("")
+            }
+            data.parts[p].tips[index] = text
+        })
+    }
+
     // The distance of the app bar from the left edge of the content: 0.
     public i32 x() const {
         ret partBound(id, 0)
@@ -3255,7 +3276,8 @@ public struct Table : Component {
 // '''
 public struct RichText {
     list<Run> runs
-    i64 open  // the blocks started and not ended
+    map<i64, string> tips  // of the pieces
+    i64 open               // the blocks started and not ended
 
     // Adds a text in a style. It breaks into lines at its spaces, and "\n" starts a new
     // line.
@@ -3330,9 +3352,16 @@ public struct RichText {
         open--
     }
 
+    // Gives the piece with that number a tooltip, shown when the mouse stays on it (D497).
+    public void tooltip(i64 piece, string text) {
+        tips[piece] = text
+    }
+
     // Removes everything.
     public void clear() {
         runs.clear()
+        map<i64, string> none
+        tips = move none
         open = 0
     }
 
@@ -3930,7 +3959,8 @@ public struct Segmented : Component {
 // program builds when it needs it, with a handler for each item, which captures what the
 // menu is about, and opens with 'Window.showMenu' where the mouse is. It goes away when
 // an item is chosen, with Esc, or with a click out of it; Up, Down and Enter choose with
-// the keys. On a phone a long press on a piece of rich text is the right button.
+// the keys. An item can open a submenu. On a phone a long press on a piece of rich text is
+// the right button.
 //
 // '''
 // view.onClick([w](i64 piece, gui.Mouse m) {
@@ -3946,6 +3976,7 @@ public struct Segmented : Component {
 public struct Menu {
     list<MenuItem> items
     list<func()> actions
+    list<i64> entries  // the indices in items of the entries of the menu, not of its submenus
 
     // Adds an item with its text under the others, and its handler, called on the thread
     // of the windows when the user chooses it, after the menu has gone away.
@@ -3954,6 +3985,7 @@ public struct Menu {
         item.text = text
         item.action = actions.len()
         actions.add(move handler)
+        entries.add(items.len())
         items.add(move item)
     }
 
@@ -3964,6 +3996,7 @@ public struct Menu {
         item.icon = icon
         item.action = actions.len()
         actions.add(move handler)
+        entries.add(items.len())
         items.add(move item)
     }
 
@@ -3971,28 +4004,60 @@ public struct Menu {
     public void addSeparator() {
         MenuItem line
         line.separator = true
+        entries.add(items.len())
         items.add(move line)
     }
 
-    // Enables or disables the entry at 'index', from 0, counting the separators too: a
-    // disabled item is gray and cannot be chosen. An index out of the entries, or that of
-    // a separator, is a panic.
-    public void setEnabled(i64 index, bool enabled) {
-        if (index < 0 || index >= items.len() || items[index].separator) {
-            panic(format("the menu has no item {}", index))
+    // Adds an item that opens a submenu, with its text: the entries of 'submenu' show on
+    // its right when the mouse is on it, or with the Right arrow, and Left closes it. A
+    // submenu has no submenus: one is a panic.
+    public void addSubmenu(string text, move Menu submenu) {
+        Menu sub = move submenu
+        MenuItem item
+        item.text = text
+        item.opens = true
+        i64 at = items.len()
+        entries.add(at)
+        items.add(move item)
+        i64 base = actions.len()
+        for (i64 k = 0; k < sub.items.len(); k++) {
+            if (sub.items[k].opens) {
+                panic("a submenu has no submenus")
+            }
+            MenuItem entry
+            entry.text = sub.items[k].text
+            entry.icon = sub.items[k].icon
+            entry.enabled = sub.items[k].enabled
+            entry.separator = sub.items[k].separator
+            entry.action = sub.items[k].action >= 0 ? base + sub.items[k].action : -1
+            entry.parent = at
+            items.add(move entry)
         }
-        items[index].enabled = enabled
+        for (sub.actions.len() > 0) {
+            actions.add(sub.actions.remove(0))
+        }
     }
 
-    // The number of the entries: the items and the separators.
+    // Enables or disables the entry at 'index', from 0, counting the separators and the
+    // items with a submenu too: a disabled item is gray and cannot be chosen. An index out
+    // of the entries, or that of a separator, is a panic.
+    public void setEnabled(i64 index, bool enabled) {
+        if (index < 0 || index >= entries.len() || items[entries[index]].separator) {
+            panic(format("the menu has no item {}", index))
+        }
+        items[entries[index]].enabled = enabled
+    }
+
+    // The number of the entries: the items, the separators and the items with a submenu.
     public i64 len() const {
-        ret items.len()
+        ret entries.len()
     }
 
     // Removes all the entries.
     public void clear() {
         items.clear()
         actions.clear()
+        entries.clear()
     }
 }
 
@@ -4490,6 +4555,16 @@ public struct Canvas : Component {
         addPartHandler(id, 6, box)
     }
 
+    // Adds a handler, called on the thread of the windows when the wheel of the mouse turns
+    // over the canvas: where the mouse is, with the keys held, and the steps, more than 0
+    // away from the user, as to zoom in, less than 0 toward. Without handlers the wheel
+    // scrolls the panel that holds the canvas.
+    public void onWheel(move func(Mouse, f32) handler) const {
+        addr box = alloc(sizeOf<func(Mouse, f32)>())
+        put<func(Mouse, f32)>(box, move handler)
+        addPartHandler(id, 11, box)
+    }
+
     // Moves the canvas, in logical pixels from the top left corner of its parent: the content of
     // the window, or the group, the panel or the dialog that holds it. Its anchors keep the
     // distances from the edges that it has at the new place.
@@ -4798,9 +4873,16 @@ struct WindowData {
     f32 menuH
     i64 menuHot = -1   // the item under the mouse, or chosen with the keys
     i64 menuHeld = -1  // the item pressed
-    u64 hotSince       // when the mouse came on the component under it (D497)
-    bool tipBlocked    // a press since then: no tooltip until it goes on another one
-    i64 tipPart        // on a phone, the component whose tooltip a long press shows
+    i64 menuSub = -1   // the item whose submenu is open
+    f32 subX           // its place and its size
+    f32 subY
+    f32 subW
+    f32 subH
+    i64 titlePanel    // the panel in the title bar (D509), or 0
+    i64 tipItem = -1  // the item under the mouse when the tooltip started to wait
+    u64 hotSince      // when the mouse came on the component under it (D497)
+    bool tipBlocked   // a press since then: no tooltip until it goes on another one
+    i64 tipPart       // on a phone, the component whose tooltip a long press shows
     f32 tipX
     f32 tipY
     i64 longPart  // the component held with a finger, for a long press (D496)
@@ -4953,6 +5035,10 @@ struct PartData {
     list<addr> pieces       // func(i64, Mouse), of a text view
     string tooltip          // shown when the mouse stays on it (D497)
     bool toggle             // a button with two states, pressed when checked (D507)
+    list<string> tips       // of the actions of an app bar
+    list<addr> wheels       // func(Mouse, f32), of a canvas
+    bool titleBar           // the panel in the title bar of its window (D509)
+    bool inTitle            // in that panel, or that panel: drawn after the title bar
     f64 done                // of a progress bar, from 0 to 1; checked when it is busy (D508)
     list<string> undoTexts  // of a text box or a text area: the texts before the last edits (D498)
     list<i64> undoCarets
@@ -5179,8 +5265,10 @@ void addPartHandler(i64 id, i32 which, addr box) {
             data.parts[p].sorts.add(box)
         } else if (which == 9) {
             data.parts[p].chooses.add(box)
-        } else {
+        } else if (which == 10) {
             data.parts[p].pieces.add(box)
+        } else {
+            data.parts[p].wheels.add(box)
         }
     })
 }
@@ -5833,6 +5921,30 @@ public struct Window {
         put<func(i32, i32)>(box, move handler)
         i64 me = id
         withData([me, box](ref Shared data) { data.windows[indexOf(ref data, me)].resize.add(box) })
+    }
+
+    // The panel in the title bar of the window, made the first time that it is called
+    // (D509): it takes the bar from its left edge to the buttons of the window, and is as
+    // high as the bar; its components are drawn over the bar, and where there is none the
+    // bar still moves the window. The title stays at the center of the bar, under them. On
+    // a phone, without a title bar, the panel is not shown.
+    public Panel titleBar() const {
+        i64 me = id
+        i64 made = 0
+        withData([me, ref made](ref Shared data) {
+            i64 i = indexOf(ref data, me)
+            if (data.windows[i].titlePanel == 0) {
+                i64 panel = makePart(ref data, kindPanel, "", 0, 0, 0, 0)
+                i64 p = partIndexOf(ref data, panel)
+                data.parts[p].window = me
+                data.parts[p].titleBar = true
+                data.windows[i].titlePanel = panel
+            }
+            made = data.windows[i].titlePanel
+        })
+        Panel panel
+        panel.id = made
+        ret panel
     }
 
     // Opens a dialog at the center of the content, over the rest darkened, which the
@@ -6610,6 +6722,7 @@ struct Call {
     i64 index
     i64 second          // the second number of a func(i64, i64)
     list<string> texts  // of a func(list<string>)
+    f32 amount          // of a func(Mouse, f32): the steps of the wheel
     bool once           // the handler is called once, and freed after (D500)
 }
 
@@ -6715,6 +6828,13 @@ void dispatch(ref Call call) {
                     put<func(list<string>)>(box, move handler)
                 }
             }
+        } else if (call.kind == 14) {
+            func(Mouse, f32) handler = take<func(Mouse, f32)>(box)
+            try {
+                handler(call.mouse, call.amount)
+            } finally {
+                put<func(Mouse, f32)>(box, move handler)
+            }
         } else if (call.kind == 12) {
             func(i64, Mouse) handler = take<func(i64, Mouse)>(box)
             try {
@@ -6754,7 +6874,10 @@ void route(ref WindowData window, ref list<PartData> parts, addr event, u32 kind
         window.pointerX = x
         window.pointerY = y
         dragScroll(ref window, ref parts, y)
-        i64 hot = y >= window.originY && !window.dragMoved ? partAt(ref window, ref parts, x, y) : -1
+        i64 hot = !window.dragMoved ? partAt(ref window, ref parts, x, y) : -1
+        if (hot >= 0 && y < window.originY && !parts[hot].inTitle) {  // the title bar, but its components (D509)
+            hot = -1
+        }
         i64 open = partNumber(ref parts, window.popup)
         if (open >= 0 && inList(ref window, ref parts[open], x, y)) {
             hot = open
@@ -6766,9 +6889,12 @@ void route(ref WindowData window, ref list<PartData> parts, addr event, u32 kind
         i64 hotId = hot >= 0 ? parts[hot].id : 0
         window.hotItem = hot >= 0 && hot != open ? barItemAt(ref parts[hot], x, y) : -1
         bool hand = hot >= 0 && hot != open && parts[hot].kind == kindTextView && parts[hot].active && window.hotItem >= 0
-        if (hotId != window.hot) {  // D497: the tooltip waits from here
+        if (hotId != window.hot || window.hotItem != window.tipItem) {  // D497: the tooltip waits from here
             window.hotSince = SDL_GetTicksNS()
-            window.tipBlocked = false
+            if (hotId != window.hot) {
+                window.tipBlocked = false
+            }
+            window.tipItem = window.hotItem
         }
         if (hotId != window.hot || hand != window.hand) {
             window.hot = hotId
@@ -6845,7 +6971,7 @@ void route(ref WindowData window, ref list<PartData> parts, addr event, u32 kind
                 press(ref window, on)
             }
             window.pressed = -1
-        } else if (y >= window.originY) {
+        } else if (y >= window.originY || inTitleParts(ref window, ref parts, x, y)) {
             bool finger = take<u32>(offset(event, 20)) == 0xFFFFFFFF  // SDL_TOUCH_MOUSEID
             if (kind == 0x401) {
                 window.keyboard = false
@@ -6896,7 +7022,17 @@ void route(ref WindowData window, ref list<PartData> parts, addr event, u32 kind
             parts[open].first = parts[open].first - (flipped ? -ticks : ticks)
             reveal(ref window, ref parts[open], false)
         } else {
-            i64 s = scrollerAt(ref window, ref parts, take<f32>(offset(event, 36)), take<f32>(offset(event, 40)))
+            f32 wx = take<f32>(offset(event, 36))
+            f32 wy = take<f32>(offset(event, 40))
+            i64 canvas = canvasAt(ref window, ref parts, wx, wy)
+            i64 s = canvas >= 0 && parts[canvas].wheels.len() > 0 ? -1 : scrollerAt(ref window, ref parts, wx, wy)
+            if (canvas >= 0 && parts[canvas].wheels.len() > 0) {  // the wheel on a canvas, to its handlers
+                f32 steps = take<f32>(offset(event, 28))
+                Call call = callOf(14, parts[canvas].wheels)
+                call.mouse = canvasMouse(ref parts[canvas], wx, wy, 0)
+                call.amount = flipped ? -steps : steps
+                calls.add(move call)
+            }
             if (s >= 0) {
                 f32 steps = take<f32>(offset(event, 28))
                 parts[s].velocity = 0
@@ -6985,7 +7121,22 @@ Mouse mouseAt(ref WindowData window, f32 x, f32 y, i32 button) {
     m.x = x - window.originX
     m.y = y - window.originY
     m.button = button
+    withKeys(ref m)
     ret m
+}
+
+// The keys held with the mouse.
+void withKeys(ref Mouse m) {
+    u32 keys = u32(SDL_GetModState())
+    m.shift = (keys & 0x3) != 0
+    m.control = (keys & 0xC0) != 0
+    m.alt = (keys & 0x300) != 0
+}
+
+// A point on a component in the title bar (D509).
+bool inTitleParts(ref WindowData window, ref list<PartData> parts, f32 x, f32 y) {
+    i64 p = partAt(ref window, ref parts, x, y)
+    ret p >= 0 && parts[p].inTitle && !parts[p].titleBar
 }
 
 // A click on a button of the title bar.
@@ -7858,6 +8009,7 @@ struct Frame {
     f32 clipRight
     f32 clipBottom
     f32 scrolled  // how far its panel is scrolled
+    bool inTitle  // in the panel of the title bar (D509)
 }
 
 // Places the components of a window in its content, each group before its
@@ -8056,6 +8208,20 @@ void layoutIn(ref WindowData window, ref list<PartData> parts, i64 group, Frame 
         parts[i].clipTop = frame.clipTop
         parts[i].clipRight = frame.clipRight
         parts[i].clipBottom = frame.clipBottom
+        parts[i].inTitle = frame.inTitle || parts[i].titleBar
+        if (parts[i].titleBar) {  // D509: the bar, from its left edge to the buttons
+            parts[i].x = 0
+            parts[i].y = 0
+            parts[i].width = window.width > i32(3 * buttonWidth) ? window.width - i32(3 * buttonWidth) : 0
+            parts[i].height = i32(barHeight)
+            parts[i].left = 0
+            parts[i].top = 0
+            parts[i].shown = parts[i].visible && !window.phone
+            parts[i].clipLeft = 0
+            parts[i].clipTop = 0
+            parts[i].clipRight = f32(parts[i].width)
+            parts[i].clipBottom = barHeight
+        }
         window.order.add(i)
         if (parts[i].kind == kindListView) {
             parts[i].content = f32(parts[i].items.len()) * rowHeight()
@@ -8082,10 +8248,17 @@ void layoutIn(ref WindowData window, ref list<PartData> parts, i64 group, Frame 
             inner.height = parts[i].height
             inner.shown = parts[i].shown
             inner.active = parts[i].active
+            inner.inTitle = parts[i].inTitle
             inner.clipLeft = most(frame.clipLeft, parts[i].left)
             inner.clipTop = most(frame.clipTop, parts[i].top)
             inner.clipRight = least(frame.clipRight, parts[i].left + f32(parts[i].width))
             inner.clipBottom = least(frame.clipBottom, parts[i].top + f32(parts[i].height))
+            if (parts[i].titleBar) {  // the bar, not the content (D509)
+                inner.clipLeft = parts[i].clipLeft
+                inner.clipTop = parts[i].clipTop
+                inner.clipRight = parts[i].clipRight
+                inner.clipBottom = parts[i].clipBottom
+            }
             layoutIn(ref window, ref parts, parts[i].id, inner)
         }
     }
@@ -8224,15 +8397,16 @@ void drawWindow(ref WindowData window, ref list<PartData> parts, ref list<ImageD
         clipTo(r, window.originX, window.originY, f32(contentWidth(window)), f32(contentHeight(window)))
         drawMenu(ref window, ref parts, ref c)
     }
-    i64 tip = tipPart(ref window, ref parts)
-    if (tip >= 0) {  // D497
+    string tip = tipText(ref window, ref parts)
+    if (tip.len() > 0) {  // D497
         clipTo(r, window.originX, window.originY, f32(contentWidth(window)), f32(contentHeight(window)))
-        drawTooltip(ref window, ref c, parts[tip].tooltip)
+        drawTooltip(ref window, ref c, tip)
     }
     addr none
     SDL_SetRenderClipRect(r, none)
     if (!window.phone) {
         drawTitleBar(ref window, ref c, width, height)
+        drawTitleParts(ref window, ref parts, ref c, ref images, scale)
     }
     SDL_RenderPresent(r)
 }
@@ -8243,7 +8417,7 @@ void drawParts(ref WindowData window, ref list<PartData> parts, ref Colors c, i6
     addr r = window.renderer
     for (i64 k = first; k < end; k++) {
         i64 i = window.order[k]
-        if (parts[i].shown && parts[i].clipRight > parts[i].clipLeft && parts[i].clipBottom > parts[i].clipTop) {
+        if (parts[i].shown && !parts[i].inTitle && parts[i].clipRight > parts[i].clipLeft && parts[i].clipBottom > parts[i].clipTop) {
             clipPart(r, ref parts[i])
             drawPart(ref window, ref parts[i], ref c, ref images)
         }
@@ -8253,7 +8427,7 @@ void drawParts(ref WindowData window, ref list<PartData> parts, ref Colors c, i6
         i64 i = window.order[k]
         bool seen = now - parts[i].scrollShown < 1000000000 || window.scrolling == parts[i].id ||
             !window.phone && inside(ref parts[i], window.pointerX, window.pointerY)
-        if (parts[i].shown && scrolls(ref parts[i]) && seen) {
+        if (parts[i].shown && !parts[i].inTitle && scrolls(ref parts[i]) && seen) {
             clipPart(r, ref parts[i])
             drawScrollBar(ref window, ref parts[i], ref c)
         }
@@ -8379,6 +8553,31 @@ void drawTitleBar(ref WindowData window, ref Colors c, f32 width, f32 height) {
         Rect edge = Rect(0, 0, width, height)
         SDL_RenderRect(r, ref edge)
     }
+}
+
+// The components in the title bar, over it (D509), and where they are for the hit test,
+// which does not drag the window there.
+void drawTitleParts(ref WindowData window, ref list<PartData> parts, ref Colors c, ref list<ImageData> images, f32 scale) {
+    addr r = window.renderer
+    i32 holes = 0
+    for (i64 k = 0; k < window.order.len(); k++) {
+        i64 i = window.order[k]
+        if (!parts[i].inTitle || !parts[i].shown) {
+            continue
+        }
+        if (parts[i].clipRight > parts[i].clipLeft && parts[i].clipBottom > parts[i].clipTop) {
+            clipPart(r, ref parts[i])
+            drawPart(ref window, ref parts[i], ref c, ref images)
+        }
+        if (!parts[i].titleBar) {
+            cromo_gui_chrome_hole(window.chrome, holes, parts[i].left * scale, parts[i].top * scale, f32(parts[i].width) * scale,
+                f32(parts[i].height) * scale)
+            holes++
+        }
+    }
+    addr none
+    SDL_SetRenderClipRect(r, none)
+    cromo_gui_chrome_holes(window.chrome, holes)
 }
 
 // The ring of the focus: 2 pixels in the blue of the selection, 1 pixel out of the
@@ -9394,13 +9593,16 @@ void fileDialogs(ref WindowData window, ref list<Call> calls) {
 // ---- The menus and the tooltips (D496, D497) ----
 
 // An entry of a menu: an item with its text, its icon and the index of its handler, or
-// a separator.
+// a separator, or an item that opens a submenu; the entries of a submenu have the index
+// of that item as their parent, those of the menu -1.
 struct MenuItem {
     string text
     Icon icon
     bool enabled = true
     bool separator
+    bool opens  // a submenu, whose entries follow it
     i64 action = -1
+    i64 parent = -1
 }
 
 f32 menuRow() {  // an item of a menu
@@ -9439,6 +9641,7 @@ void openMenu(i64 window, move Menu menu, i64 anchor) {
         data.windows[i].menuAnchor = anchor
         data.windows[i].menuHot = -1
         data.windows[i].menuHeld = -1
+        data.windows[i].menuSub = -1
         data.windows[i].popup = 0
     })
     free(box)
@@ -9449,23 +9652,47 @@ void closeMenu(ref WindowData window) {
     window.menuOpen = false
     window.menuHot = -1
     window.menuHeld = -1
+    window.menuSub = -1
     window.menu.clear()
+}
+
+// The size of the entries of a level: the menu with -1, a submenu with its item.
+void levelSize(ref WindowData window, i64 parent, ref f32 w, ref f32 h) {
+    w = menuWidth
+    h = 2 * menuPad
+    for (ref MenuItem item in window.menu.items) {
+        if (item.parent != parent) {
+            continue
+        }
+        if (item.separator) {
+            h = h + menuLine
+        } else {
+            f32 icon = item.icon != Icon.None ? 24 : 0
+            f32 arrow = item.opens ? 20 : 0
+            w = most(w, textWidth(window.body, item.text, item.text.len()) + icon + arrow + 2 * menuPad + 36)
+            h = h + menuRow()
+        }
+    }
+}
+
+// The top of the item at `index` in its level, from the top of its card.
+f32 itemTop(ref WindowData window, i64 index) {
+    f32 at = menuPad
+    i64 parent = window.menu.items[index].parent
+    for (i64 k = 0; k < index; k++) {
+        if (window.menu.items[k].parent == parent) {
+            at = at + (window.menu.items[k].separator ? menuLine : menuRow())
+        }
+    }
+    ret at
 }
 
 // The size of the menu, from its texts, and its place: at the mouse, on its left or above
 // it when there is no room, or under its component, or above it; inside the content.
 void placeMenu(ref WindowData window, ref list<PartData> parts) {
-    f32 w = menuWidth
-    f32 h = 2 * menuPad
-    for (ref MenuItem item in window.menu.items) {
-        if (item.separator) {
-            h = h + menuLine
-        } else {
-            f32 icon = item.icon != Icon.None ? 24 : 0
-            w = most(w, textWidth(window.body, item.text, item.text.len()) + icon + 2 * menuPad + 36)
-            h = h + menuRow()
-        }
-    }
+    f32 w = 0
+    f32 h = 0
+    levelSize(ref window, -1, ref w, ref h)
     f32 left = window.originX + 4
     f32 top = window.originY + 4
     f32 right = window.originX + f32(contentWidth(window)) - 4
@@ -9497,18 +9724,55 @@ void placeMenu(ref WindowData window, ref list<PartData> parts) {
     window.menuPlaced = true
 }
 
-bool inMenu(ref WindowData window, f32 x, f32 y) {
-    ret window.menuPlaced && x >= window.menuX && x < window.menuX + window.menuW && y >= window.menuY &&
-        y < window.menuY + window.menuH
+// Opens the submenu of an item: on the right of the menu, at the height of the item, or
+// on its left when there is no room.
+void openSub(ref WindowData window, i64 item) {
+    f32 w = 0
+    f32 h = 0
+    levelSize(ref window, item, ref w, ref h)
+    f32 right = window.originX + f32(contentWidth(window)) - 4
+    f32 bottom = window.originY + f32(contentHeight(window)) - 4
+    f32 x = window.menuX + window.menuW - 4
+    if (x + w > right) {
+        x = window.menuX - w + 4
+    }
+    f32 y = window.menuY + itemTop(ref window, item) - menuPad
+    if (y + h > bottom) {
+        y = bottom - h
+    }
+    window.menuSub = item
+    window.subX = most(x, window.originX + 4)
+    window.subY = most(y, window.originY + 4)
+    window.subW = w
+    window.subH = h
 }
 
-// The entry of the menu at a point of the window, or -1.
+bool inMenu(ref WindowData window, f32 x, f32 y) {
+    bool main = window.menuPlaced && x >= window.menuX && x < window.menuX + window.menuW && y >= window.menuY &&
+        y < window.menuY + window.menuH
+    ret main || inSub(ref window, x, y)
+}
+
+bool inSub(ref WindowData window, f32 x, f32 y) {
+    ret window.menuSub >= 0 && x >= window.subX && x < window.subX + window.subW && y >= window.subY &&
+        y < window.subY + window.subH
+}
+
+// The entry of the menu or of the submenu open at a point of the window, or -1.
 i64 menuItemAt(ref WindowData window, f32 x, f32 y) {
-    if (!inMenu(ref window, x, y)) {
+    if (!window.menuPlaced) {
         ret -1
     }
-    f32 at = window.menuY + menuPad
+    i64 parent = inSub(ref window, x, y) ? window.menuSub : -1
+    f32 top = parent >= 0 ? window.subY : window.menuY
+    if (parent < 0 && !inMenu(ref window, x, y)) {
+        ret -1
+    }
+    f32 at = top + menuPad
     for (i64 k = 0; k < window.menu.items.len(); k++) {
+        if (window.menu.items[k].parent != parent) {
+            continue
+        }
         f32 tall = window.menu.items[k].separator ? menuLine : menuRow()
         if (y >= at && y < at + tall) {
             ret k
@@ -9537,6 +9801,24 @@ void chooseMenuItem(ref WindowData window, i64 k, ref list<Call> calls) {
     closeMenu(ref window)
 }
 
+// The mouse on an entry: an item with a submenu opens it, another item of the menu closes
+// the one open.
+void pointMenu(ref WindowData window, i64 k) {
+    window.menuHot = choosable(ref window, k) ? k : -1
+    if (k < 0) {
+        ret
+    }
+    if (window.menu.items[k].parent < 0) {
+        if (window.menu.items[k].opens && window.menu.items[k].enabled) {
+            if (window.menuSub != k) {
+                openSub(ref window, k)
+            }
+        } else {
+            window.menuSub = -1
+        }
+    }
+}
+
 // The events of a window while its menu is open: the mouse and the keys go to the menu,
 // and a press out of it closes it and does nothing else. True when the event is taken.
 bool menuEvent(ref WindowData window, ref list<PartData> parts, addr event, u32 kind, ref list<Call> calls) {
@@ -9549,13 +9831,18 @@ bool menuEvent(ref WindowData window, ref list<PartData> parts, addr event, u32 
     }
     if (kind == 0x206) {  // RESIZED: placed again in the new content
         window.menuPlaced = false
+        window.menuSub = -1
         ret false
     }
     if (kind == 0x400) {
         window.pointerX = take<f32>(offset(event, 28))
         window.pointerY = take<f32>(offset(event, 32))
         i64 k = menuItemAt(ref window, window.pointerX, window.pointerY)
-        window.menuHot = choosable(ref window, k) ? k : -1
+        if (k >= 0) {
+            pointMenu(ref window, k)
+        } else {
+            window.menuHot = -1
+        }
         window.hot = 0
         window.hotItem = -1
         ret true
@@ -9569,8 +9856,9 @@ bool menuEvent(ref WindowData window, ref list<PartData> parts, addr event, u32 
                 closeMenu(ref window)
             } else {
                 window.menuHeld = k
+                pointMenu(ref window, k)
             }
-        } else if (k >= 0 && k == window.menuHeld && choosable(ref window, k)) {
+        } else if (k >= 0 && k == window.menuHeld && choosable(ref window, k) && !window.menu.items[k].opens) {
             chooseMenuItem(ref window, k, ref calls)
         } else {
             window.menuHeld = -1
@@ -9588,65 +9876,84 @@ bool menuEvent(ref WindowData window, ref list<PartData> parts, addr event, u32 
     ret false
 }
 
-// Up, Down, Home and End move among the items that can be chosen; Enter and Space choose,
+// Up, Down, Home and End move among the items that can be chosen of the level of the item
+// pointed at; Right opens its submenu, Left closes the one open; Enter and Space choose,
 // Esc closes.
 void menuKey(ref WindowData window, i64 code, ref list<Call> calls) {
-    i64 n = window.menu.items.len()
     if (code == 27 || (window.phone && code == keyBack)) {
         closeMenu(ref window)
         ret
     }
-    if ((code == 13 || code == 32 || code == keyEnter) && choosable(ref window, window.menuHot)) {
-        chooseMenuItem(ref window, window.menuHot, ref calls)
+    i64 hot = window.menuHot
+    if ((code == 13 || code == 32 || code == keyEnter || code == keyRight) && choosable(ref window, hot) &&
+        window.menu.items[hot].opens) {
+        openSub(ref window, hot)
+        window.menuHot = firstAt(ref window, hot, 1, -1)
+        ret
+    }
+    if ((code == 13 || code == 32 || code == keyEnter) && choosable(ref window, hot)) {
+        chooseMenuItem(ref window, hot, ref calls)
+        ret
+    }
+    if (code == keyLeft && window.menuSub >= 0) {
+        window.menuHot = window.menuSub
+        window.menuSub = -1
         ret
     }
     i64 step = code == keyDown || code == keyHome ? 1 : code == keyUp || code == keyEnd ? -1 : 0
     if (step == 0) {
         ret
     }
-    i64 at = code == keyHome ? -1 : code == keyEnd ? n : window.menuHot
-    if (at < 0 && step < 0) {
-        at = n
+    i64 parent = hot >= 0 ? window.menu.items[hot].parent : -1
+    i64 from = code == keyHome || code == keyEnd || hot < 0 ? -1 : hot
+    i64 next = firstAt(ref window, parent, step, from)
+    if (next >= 0) {
+        window.menuHot = next
+        if (parent < 0) {
+            window.menuSub = -1
+        }
     }
+}
+
+// The next item that can be chosen of a level, after `from` in the direction of `step`,
+// round; from -1, the first or the last.
+i64 firstAt(ref WindowData window, i64 parent, i64 step, i64 from) {
+    i64 n = window.menu.items.len()
+    i64 at = from >= 0 ? from : (step > 0 ? -1 : n)
     for (i64 k = 0; k < n; k++) {
         at = at + step
         if (at < 0 || at >= n) {
             at = step > 0 ? 0 : n - 1
         }
-        if (choosable(ref window, at)) {
-            window.menuHot = at
-            ret
+        if (window.menu.items[at].parent == parent && choosable(ref window, at)) {
+            ret at
         }
     }
+    ret -1
 }
 
-// The menu: a card on the surface, with the border of the controls and the shadow of the
-// cards; the item under the mouse in accent 2 on the soft accent, the disabled ones in
-// ink 3, a line of rule for a separator (D496).
-void drawMenu(ref WindowData window, ref list<PartData> parts, ref Colors c) {
+// The entries of a level in their card.
+void drawLevel(ref WindowData window, ref Colors c, i64 parent, f32 x, f32 y, f32 w, f32 h) {
     addr r = window.renderer
     f32 d = window.density
-    if (!window.menuPlaced) {
-        placeMenu(ref window, ref parts)
-    }
-    f32 x = window.menuX
-    f32 y = window.menuY
-    f32 w = window.menuW
-    cardShadow(r, x, y, w, window.menuH, menuCorner, d, ref c)
-    cromo_gui_box(r, x, y, w, window.menuH, menuCorner, 1, d, solid(c.surface, true), solid(c.rule2, true))
+    cardShadow(r, x, y, w, h, menuCorner, d, ref c)
+    cromo_gui_box(r, x, y, w, h, menuCorner, 1, d, solid(c.surface, true), solid(c.rule2, true))
     f32 ascent = 0
     f32 descent = 0
     f32 gap = 0
     cromo_gui_font_metrics(window.body, ref ascent, ref descent, ref gap)
     f32 at = y + menuPad
     for (i64 k = 0; k < window.menu.items.len(); k++) {
+        if (window.menu.items[k].parent != parent) {
+            continue
+        }
         if (window.menu.items[k].separator) {
             fill(r, c.rule, x + 1, at + menuLine / 2, w - 2, 1)
             at = at + menuLine
             continue
         }
         bool enabled = window.menu.items[k].enabled
-        bool hot = k == window.menuHot && enabled
+        bool hot = (k == window.menuHot || k == window.menuSub) && enabled
         if (hot) {
             cromo_gui_box(r, x + menuPad, at, w - 2 * menuPad, menuRow(), 5, 0, d, solid(c.accentSoft, true), 0)
         }
@@ -9656,6 +9963,9 @@ void drawMenu(ref WindowData window, ref list<PartData> parts, ref Colors c) {
             drawIcon(r, window.menu.items[k].icon, left + 8, at + menuRow() / 2, 16, d, hot ? c.accent2 : enabled ? c.ink2 : c.ink3, true)
             left = left + 24
         }
+        if (window.menu.items[k].opens) {
+            drawIcon(r, Icon.ChevronRight, x + w - menuPad - 14, at + menuRow() / 2, 14, d, ink, true)
+        }
         clipTo(r, left, at, x + w - menuPad - 12 - left, menuRow())
         text(window.body, window.menu.items[k].text, left, at + menuRow() / 2 + (ascent - descent) / 2, ink, true)
         clipTo(r, window.originX, window.originY, f32(contentWidth(window)), f32(contentHeight(window)))
@@ -9663,22 +9973,47 @@ void drawMenu(ref WindowData window, ref list<PartData> parts, ref Colors c) {
     }
 }
 
-// The component whose tooltip shows now, or -1: on the desktop the one under the mouse
-// since 0.6 s, without a press since it came there; on a phone the one of a long press.
-i64 tipPart(ref WindowData window, ref list<PartData> parts) {
+// The menu: a card on the surface, with the border of the controls and the shadow of the
+// cards; the item under the mouse in accent 2 on the soft accent, the disabled ones in
+// ink 3, a line of rule for a separator, an arrow for a submenu, which opens on the right
+// (D496).
+void drawMenu(ref WindowData window, ref list<PartData> parts, ref Colors c) {
+    if (!window.menuPlaced) {
+        placeMenu(ref window, ref parts)
+    }
+    drawLevel(ref window, ref c, -1, window.menuX, window.menuY, window.menuW, window.menuH)
+    if (window.menuSub >= 0) {
+        drawLevel(ref window, ref c, window.menuSub, window.subX, window.subY, window.subW, window.subH)
+    }
+}
+
+// The text of the tooltip that shows now, or "": on the desktop that of the component, of
+// the piece of rich text or of the action of an app bar under the mouse since 0.6 s,
+// without a press since it came there; on a phone that of a long press.
+string tipText(ref WindowData window, ref list<PartData> parts) {
     if (window.menuOpen || window.popup != 0) {
-        ret -1
+        ret ""
     }
     if (window.phone) {
         i64 p = partNumber(ref parts, window.tipPart)
-        ret p >= 0 && parts[p].shown && parts[p].tooltip.len() > 0 ? p : -1
+        ret p >= 0 && parts[p].shown ? parts[p].tooltip : ""
     }
     if (window.hot == 0 || window.tipBlocked || window.held != 0 || window.canvasHeld != 0 || window.scrolling != 0 ||
         SDL_GetTicksNS() - window.hotSince < tipDelay) {
-        ret -1
+        ret ""
     }
     i64 p = partNumber(ref parts, window.hot)
-    ret p >= 0 && parts[p].shown && parts[p].tooltip.len() > 0 ? p : -1
+    if (p < 0 || !parts[p].shown) {
+        ret ""
+    }
+    i64 item = window.hotItem
+    if (parts[p].kind == kindTextView && item >= 0 && parts[p].rich.tips.contains(item)) {
+        ret parts[p].rich.tips[item]
+    }
+    if (parts[p].kind == kindAppBar && item >= 1 && item - 1 < parts[p].tips.len() && parts[p].tips[item - 1].len() > 0) {
+        ret parts[p].tips[item - 1]
+    }
+    ret parts[p].tooltip
 }
 
 // A tooltip: a small card on the surface, with the border of the controls and a light
@@ -11350,5 +11685,6 @@ Mouse canvasMouse(ref PartData part, f32 x, f32 y, i32 button) {
     m.x = x - part.left
     m.y = y - part.top
     m.button = button
+    withKeys(ref m)
     ret m
 }

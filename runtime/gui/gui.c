@@ -91,11 +91,15 @@ void* memset(void* target, i32 value, size_t size);
 // SDL gives these to the system. The sizes are in the coordinates of the window,
 // which std.gui updates at every frame; the buttons stay to the program.
 
+#define HOLES 32  // the components in the title bar (D509)
+
 typedef struct {
     f32 bar;      // the height of the title bar
     f32 buttons;  // the width of its buttons, on the right
     f32 edge;     // the width of the edges that resize
     i32 resizable;
+    i32 holes;    // where the components of the bar are: there the bar is not dragged
+    FRect hole[HOLES];
 } Chrome;
 
 static i32 hitTest(void* window, const Point* point, void* data) {
@@ -115,6 +119,10 @@ static i32 hitTest(void* window, const Point* point, void* data) {
         if (bottom) return 7;
         if (left) return 9;
     }
+    for (i32 i = 0; i < chrome->holes; ++i) {
+        const FRect* r = &chrome->hole[i];
+        if (x >= r->x && x < r->x + r->w && y >= r->y && y < r->y + r->h) return 0;
+    }
     if (y < chrome->bar && x < w - chrome->buttons) return 1;  // SDL_HITTEST_DRAGGABLE
     return 0;                                                   // SDL_HITTEST_NORMAL
 }
@@ -131,6 +139,20 @@ void cromo_gui_chrome_size(void* data, f32 bar, f32 buttons, f32 edge, _Bool res
     chrome->buttons = buttons;
     chrome->edge = edge;
     chrome->resizable = resizable;
+}
+
+// The components in the title bar, in the coordinates of the window: `count` of them,
+// then each with cromo_gui_chrome_hole.
+void cromo_gui_chrome_holes(void* data, i32 count) {
+    Chrome* chrome = data;
+    chrome->holes = count < HOLES ? count : HOLES;
+}
+
+void cromo_gui_chrome_hole(void* data, i32 index, f32 x, f32 y, f32 w, f32 h) {
+    Chrome* chrome = data;
+    if (index < 0 || index >= HOLES) return;
+    FRect r = {x, y, w, h};
+    chrome->hole[index] = r;
 }
 
 void cromo_gui_chrome_free(void* chrome) { SDL_free(chrome); }

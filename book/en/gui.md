@@ -387,6 +387,9 @@ i32 main() {
 - `w.showMenu(move menu)` opens it where the mouse is: the place of the menu of the right button, as in `onClick` of a text view with `m.button == 3`. `w.showMenuUnder(move menu, component)` opens it under a component, as the list of a button. It goes away when an item is chosen, and then its handler is called, with Esc, or with a click out of it; on a phone a long press on a piece of rich text is the right button.
 - `setTooltip(text)` gives a component a tooltip: the text shows in a small card when the mouse stays on it for a moment, and on a phone after a long press.
 
+- `w.titleBar()` gives a panel in the title bar, where buttons, segmented controls or labels go, over the bar: where there is no component the bar still moves the window.
+- `menu.addSubmenu(text, move submenu)` adds an item that opens a submenu on its right; `RichText.tooltip(piece, text)` and `AppBar.setActionTooltip(index, text)` give tooltips to pieces and actions; `canvas.onWheel` receives the wheel, and `gui.Mouse` says which keys are held, `shift`, `control` and `alt`.
+
 ## Opening and saving files
 
 ```cromo norun
