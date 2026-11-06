@@ -1,0 +1,10 @@
+// The number of a piece of rich text is from 0 (D490).
+// expect-exit: 101
+// expect-stderr: the number of a piece of rich text is from 0, found -1
+import std.gui
+
+i32 main() {
+    gui.RichText t
+    t.link(-1, "x", gui.TextStyle(gui.Ink.Normal))
+    ret 0
+}

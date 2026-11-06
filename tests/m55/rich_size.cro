@@ -1,0 +1,13 @@
+// The size of the text of a view is from 6 to 72 (D490).
+// target: windows linux-x86_64
+// program-env: SDL_VIDEO_DRIVER=offscreen
+// expect-exit: 101
+// expect-stderr: the size of the text is from 6 to 72, found 100
+import std.gui
+
+i32 main() {
+    gui.Window w = gui.Window("rich", 400, 335)
+    gui.TextView view = w.add(gui.TextView(0, 0, 400, 300))
+    view.setTextSize(100)
+    ret 0
+}

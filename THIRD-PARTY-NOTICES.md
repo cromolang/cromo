@@ -56,6 +56,10 @@ The programs that show images with the library contain stb_image 2.30, by Sean B
 
 The programs that use the windows of the library contain the font Inter 4.1, by The Inter Project Authors: <https://rsms.me/inter>. Licensed under the SIL Open Font License 1.1. Its license is in `licenses/inter.txt` (`third_party/inter/LICENSE.txt` in the repository).
 
+## JetBrains Mono
+
+The programs that use the windows of the library contain the font JetBrains Mono 2.304, without its hinting, by The JetBrains Mono Project Authors: <https://github.com/JetBrains/JetBrainsMono>. Licensed under the SIL Open Font License 1.1. Its license is in `licenses/jetbrains-mono.txt` (`third_party/jetbrains-mono/OFL.txt` in the repository).
+
 ## Lucide
 
 The programs that use the windows of the library contain a part of the icons of Lucide 1.68.0, by Lucide Icons and Contributors: <https://lucide.dev>. Licensed under the ISC license, and the icons derived from Feather under the MIT license. Its license is in `licenses/lucide.txt` (`third_party/lucide/LICENSE` in the repository).

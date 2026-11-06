@@ -1,0 +1,129 @@
+// Example 21: a discussion with its replies, in a view of rich text: the authors are
+// pieces that the user clicks, the replies are blocks with a line along them, the
+// quotes are in italic, the code is monospaced, and two buttons change the size of the
+// text.
+//
+// Decided: the rich text handed over (D490), the styles as roles of the theme (D491),
+//          the monospaced font (D492), the italic from Inter (D493), the look (D479)
+// Draft:   the names of the rich text, of the view and of their methods
+import std.gui
+
+struct Message {
+    i64 depth  // 0 for a message, 1 for a reply to it, 2 for a reply to the reply
+    string author
+    string time
+    string quote  // the words it answers, or ""
+    string text   // the code between single quotes
+}
+
+Message message(i64 depth, string author, string time, string quote, string text) {
+    Message m
+    m.depth = depth
+    m.author = author
+    m.time = time
+    m.quote = quote
+    m.text = text
+    ret m
+}
+
+// A text with its code between single quotes, monospaced.
+void words(ref gui.RichText t, string text, gui.TextStyle plain, gui.TextStyle code) {
+    list<string> parts = text.split("'")
+    for (i64 i = 0; i < parts.len(); i++) {
+        t.text(parts[i], i % 2 == 1 ? code : plain)
+    }
+}
+
+gui.RichText thread(list<Message> messages, gui.Image logo) {
+    gui.TextStyle title = gui.TextStyle(gui.Ink.Normal)
+    title.strong = true
+    title.scale = 1.25
+    gui.TextStyle plain = gui.TextStyle(gui.Ink.Normal)
+    gui.TextStyle faint = gui.TextStyle(gui.Ink.Faint)
+    gui.TextStyle author = gui.TextStyle(gui.Ink.Normal)
+    author.strong = true
+    gui.TextStyle time = gui.TextStyle(gui.Ink.Faint)
+    time.mono = true
+    time.scale = 0.9
+    gui.TextStyle quote = gui.TextStyle(gui.Ink.Selection)
+    quote.italic = true
+    gui.TextStyle code = gui.TextStyle(gui.Ink.Accent)
+    code.mono = true
+
+    gui.RichText t
+    t.image(logo, 20, 20)
+    t.gap(8)
+    t.text("What should come after the release?\n", title)
+    t.text(format("{} messages, the newest at the bottom\n", messages.len()), faint)
+    i64 depth = 0
+    for (i64 i = 0; i < messages.len(); i++) {
+        for (depth > messages[i].depth) {
+            t.endBlock()
+            depth--
+        }
+        for (depth < messages[i].depth) {
+            t.startBlock(14, gui.BlockLine.Plain)
+            depth++
+        }
+        t.newLine()
+        t.link(i, messages[i].author, author)
+        t.gap(8)
+        t.text(messages[i].time, time)
+        if (messages[i].quote.len() > 0) {
+            t.startBlock(0, gui.BlockLine.Selection)
+            t.text(messages[i].quote, quote)
+            t.endBlock()
+        } else {
+            t.newLine()
+        }
+        words(ref t, messages[i].text, plain, code)
+        t.newLine()
+    }
+    ret t
+}
+
+[[window]]
+i32 main() {
+    list<Message> messages = [
+        message(0, "Ada", "09:12", "", "The notes of the release are out. What comes next: a debugger, or faster builds?"),
+        message(1, "Grace", "09:30", "", "A debugger. Stepping through 'main' would have saved me an afternoon last week."),
+        message(2, "Ken", "09:41", "Stepping through main",
+            "The values print with 'println(\"{:?}\", value)', and that is quicker than a debugger."),
+        message(3, "Grace", "09:55", "", "Quicker to start, slower to finish."),
+        message(1, "Linus", "10:02", "", "Faster builds: the library is compiled again at every change, and that takes two seconds."),
+        message(2, "Barbara", "10:20", "", "Keeping the modules that did not change, in 'build/cache', would save most of it."),
+        message(1, "Edsger", "11:07", "", "Neither: the messages of the errors first. A good message is worth more than a debugger.")
+    ]
+    gui.Image logo = gui.Image(embed("images/cromo.svg"))
+
+    gui.Window w = gui.Window("Discussion", 560, 440)
+    gui.TextView view = w.add(gui.TextView(16, 16, 528, 333))
+    view.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Stretch)
+    view.setText(thread(messages, logo))
+    gui.Label status = w.add(gui.Label("Click an author: the right button opens a menu", 16, 365, 330, 28))
+    status.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Bottom)
+    gui.Button smaller = w.add(gui.Button("Smaller", 362, 365, 88, 28))
+    smaller.setAnchor(gui.Horizontal.Right, gui.Vertical.Bottom)
+    gui.Button larger = w.add(gui.Button("Larger", 456, 365, 88, 28))
+    larger.setAnchor(gui.Horizontal.Right, gui.Vertical.Bottom)
+
+    view.onClick([view, status, move messages](i64 piece, gui.Mouse m) {
+        string who = messages[piece].author
+        if (m.button == 3) {
+            status.setText(format("A menu for the message of {}", who))
+        } else {
+            view.setMarked(piece)
+            i64 count = 0
+            for (Message other in messages) {
+                if (other.author == who) {
+                    count++
+                }
+            }
+            status.setText(format("{} wrote {} {}", who, count, count == 1 ? "message" : "messages"))
+        }
+    })
+    smaller.onClick([view]() { view.setTextSize(view.textSize() > 10 ? view.textSize() - 1 : 10) })
+    larger.onClick([view]() { view.setTextSize(view.textSize() < 24 ? view.textSize() + 1 : 24) })
+    w.start()
+    ret 0
+}

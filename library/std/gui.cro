@@ -152,6 +152,25 @@ public enum ButtonStyle {
     Danger   // in the color of danger, for an action that destroys, as Delete
 }
 
+// The color of a piece of rich text (D491): a role of the theme, which follows the light
+// or the dark one by itself.
+public enum Ink {
+    Normal     // the text
+    Secondary  // the text that matters less
+    Faint      // muted, as numbers and remarks on the side
+    Accent     // the accent, darker for the text: what must stand out
+    Selection  // the blue of the selection, as notes and links
+    Danger     // errors and warnings
+}
+
+// The line along the left edge of a block of rich text, set with 'RichText.startBlock'.
+public enum BlockLine {
+    None       // no line: only the margin
+    Plain      // gray, as the borders of the components
+    Selection  // the soft blue of the selection
+    Accent     // the accent
+}
+
 // How a component follows the left and the right edges of its parent, the window or
 // the group, the panel or the dialog that holds it, when the parent changes width. The
 // component keeps the distances that it has when its anchors, its position or its size
@@ -216,6 +235,27 @@ public Color rgba(u32 value, u8 alpha) {
     c.blue = u8(value & 0xFF)
     c.alpha = alpha
     ret c
+}
+
+// How a piece of rich text looks (D491): its color, a role of the theme; semibold,
+// italic and monospaced; and its size, from that of the text of the view.
+//
+// '''
+// gui.TextStyle note = gui.TextStyle(gui.Ink.Faint)
+// note.italic = true
+// note.scale = 0.9   // 90% of the text of the view
+// '''
+public struct TextStyle {
+    public Ink ink
+    public bool strong    // semibold
+    public bool italic    // slanted (D493)
+    public bool mono      // JetBrains Mono, whose letters are all equally wide (D492)
+    public f32 scale = 1  // the size, from that of the text of the view: more than 0
+
+    // A style in a color, regular, of the size of the text of the view.
+    public TextStyle(Ink color) {
+        ink = color
+    }
 }
 
 // An image for the drawings of a canvas: PNG, JPEG, BMP, GIF or SVG, read once from
@@ -2842,6 +2882,312 @@ public struct Table : Component {
     }
 }
 
+// Rich text, which a 'TextView' shows (D490): pieces of text in their styles, which go
+// to the next line by themselves, at the spaces and at the gaps; small images among
+// them; new lines; and blocks, with a margin on their left and a line along it. A
+// piece made with 'link' has a number, and the view says when the user clicks it. A
+// rich text is a value: the program builds it, on any thread, and hands it to the view
+// with 'TextView.setText', which keeps it until the next one.
+//
+// '''
+// gui.TextStyle plain = gui.TextStyle(gui.Ink.Normal)
+// gui.TextStyle code = gui.TextStyle(gui.Ink.Accent)
+// code.mono = true
+// gui.RichText t
+// t.text("Call ", plain)
+// t.link(1, "connect()", code)
+// t.text(" before you send.", plain)
+// t.startBlock(14, gui.BlockLine.Selection)
+// t.text("It waits at most 5 seconds.", plain)
+// t.endBlock()
+// view.setText(move t)
+// '''
+public struct RichText {
+    list<Run> runs
+    i64 open  // the blocks started and not ended
+
+    // Adds a text in a style. It breaks into lines at its spaces, and "\n" starts a new
+    // line.
+    public void text(string value, TextStyle style) {
+        addRuns(ref runs, -1, value, style)
+    }
+
+    // Adds a text that the user can click, with the number of its piece, from 0: the
+    // texts and the images that follow one another with the same number are one piece,
+    // which does not break into lines, is lit under the mouse and is marked as a whole.
+    // A number less than 0 is a panic.
+    public void link(i64 piece, string value, TextStyle style) {
+        if (piece < 0) {
+            panic(format("the number of a piece of rich text is from 0, found {}", piece))
+        }
+        addRuns(ref runs, piece, value, style)
+    }
+
+    // Adds an image among the words, as large as 'width' by 'height' logical pixels allow
+    // with its proportions, in the middle of the line.
+    public void image(Image picture, f32 width, f32 height) {
+        runs.add(imageRun(-1, picture, width, height))
+    }
+
+    // Adds an image that the user can click, as a part of the piece with that number, as
+    // 'link' does with a text.
+    public void linkImage(i64 piece, Image picture, f32 width, f32 height) {
+        if (piece < 0) {
+            panic(format("the number of a piece of rich text is from 0, found {}", piece))
+        }
+        runs.add(imageRun(piece, picture, width, height))
+    }
+
+    // Adds an empty space 'width' logical pixels wide, where the line can break, as a
+    // space can.
+    public void gap(f32 width) {
+        Run r
+        r.kind = 3
+        r.width = width > 0 ? width : 0
+        runs.add(move r)
+    }
+
+    // Ends the line: what follows starts on the next one. Two new lines leave an empty
+    // line between.
+    public void newLine() {
+        Run r
+        r.kind = 4
+        runs.add(move r)
+    }
+
+    // Starts a block on a new line, 'indent' logical pixels from the left of the text
+    // around it, with a line along its left edge, as 'line' says; its text starts 10
+    // pixels after the line. Blocks can be inside blocks.
+    public void startBlock(f32 indent, BlockLine line) {
+        Run r
+        r.kind = 5
+        r.width = indent > 0 ? indent : 0
+        r.line = line
+        runs.add(move r)
+        open++
+    }
+
+    // Ends the last block started: what follows goes on under it, at the left of the text
+    // around it. Without a block started it is a panic.
+    public void endBlock() {
+        if (open == 0) {
+            panic("endBlock without a block started with startBlock")
+        }
+        Run r
+        r.kind = 6
+        runs.add(move r)
+        open--
+    }
+
+    // Removes everything.
+    public void clear() {
+        runs.clear()
+        open = 0
+    }
+
+    // The number of the parts added: texts, images, gaps, new lines, starts and ends of
+    // blocks.
+    public i64 len() const {
+        ret runs.len()
+    }
+}
+
+// A view of rich text (D490), as an article, a log, a discussion or a list of links: it
+// shows the 'RichText' given to 'setText' on the surface, goes to the next line
+// by itself at its width, and scrolls when the text is longer than its height. It says
+// which piece the user clicks, with any button, and marks one piece, as the current one,
+// in the accent.
+//
+// '''
+// gui.TextView notes = w.add(gui.TextView(16, 16, 360, 240))
+// notes.setText(move t)
+// notes.onClick([notes](i64 piece, gui.Mouse m) { notes.setMarked(piece) })
+// '''
+public struct TextView : Component {
+    i64 id
+
+    // A text view, empty. 'x' and 'y' are in logical pixels from the top left corner of its
+    // parent, the window, the group, the panel or the dialog whose 'add' puts it there, and
+    // 'width' and 'height' its size.
+    public TextView(i32 x, i32 y, i32 width, i32 height) {
+        id = newPart(kindTextView, "", x, y, width, height)
+    }
+
+    i64 componentId() const {
+        ret id
+    }
+
+    // Shows the rich text, in place of the one shown before, and stays where it was
+    // scrolled. It can be called from any thread; the blocks not ended end with the text.
+    public void setText(move RichText text) const {
+        addr box = alloc(sizeOf<RichText>())
+        put<RichText>(box, move text)
+        i64 me = id
+        withData([me, box](ref Shared data) {
+            i64 p = partIndexOf(ref data, me)
+            data.parts[p].rich = take<RichText>(box)
+            data.parts[p].richChanged = true
+        })
+        free(box)
+    }
+
+    // Adds a handler, called on the thread of the windows when the user clicks a piece made
+    // with 'link' or 'linkImage', with any button of the mouse: the number of the piece, and
+    // where the mouse is, from the top left corner of the view, with its button, 1 left, 2
+    // middle, 3 right. A click is a press and a release on the same piece.
+    public void onClick(move func(i64, Mouse) handler) const {
+        addr box = alloc(sizeOf<func(i64, Mouse)>())
+        put<func(i64, Mouse)>(box, move handler)
+        addPartHandler(id, 10, box)
+    }
+
+    // Marks the piece with that number in the accent, semibold, as the current one, and
+    // scrolls as little as it takes to show it; -1 marks none. A number that the text does
+    // not have marks nothing.
+    public void setMarked(i64 piece) const {
+        i64 me = id
+        withData([me, piece](ref Shared data) {
+            i64 p = partIndexOf(ref data, me)
+            data.parts[p].marked = piece >= 0 ? piece : -1
+            data.parts[p].reveal = piece
+        })
+    }
+
+    // The number of the piece marked, or -1.
+    public i64 marked() const {
+        i64 me = id
+        i64 piece = -1
+        withData([me, ref piece](ref Shared data) { piece = data.parts[partIndexOf(ref data, me)].marked })
+        ret piece
+    }
+
+    // Scrolls the view as little as it takes to show the piece with that number.
+    public void scrollTo(i64 piece) const {
+        i64 me = id
+        withData([me, piece](ref Shared data) { data.parts[partIndexOf(ref data, me)].reveal = piece })
+    }
+
+    // How far the view is scrolled, in logical pixels from the top: 0 when it is not.
+    public i32 scrollY() const {
+        ret i32(partScroll(id))
+    }
+
+    // Sets the size of the text, in logical pixels, from 6 to 72, to which the scale of the
+    // styles applies: by default that of the text of the components, 13 on the desktop
+    // and 14 on a phone. A size out of the range is a panic.
+    public void setTextSize(f32 size) const {
+        if (size < 6 || size > 72) {
+            panic(format("the size of the text is from 6 to 72, found {}", size))
+        }
+        i64 me = id
+        withData([me, size](ref Shared data) { data.parts[partIndexOf(ref data, me)].textSize = size })
+    }
+
+    // The size of the text, in logical pixels.
+    public f32 textSize() const {
+        i64 me = id
+        f32 size = 0
+        withData([me, ref size](ref Shared data) { size = data.parts[partIndexOf(ref data, me)].textSize })
+        ret size > 0 ? size : bodySize()
+    }
+
+    // Sets the height of the lines, from the size of their text: from 1 to 3, 1.5 by
+    // default. A value out of the range is a panic.
+    public void setLineSpacing(f32 value) const {
+        if (value < 1 || value > 3) {
+            panic(format("the spacing of the lines is from 1 to 3, found {}", value))
+        }
+        i64 me = id
+        withData([me, value](ref Shared data) { data.parts[partIndexOf(ref data, me)].lineSpacing = value })
+    }
+
+    // The height of the lines, from the size of their text.
+    public f32 lineSpacing() const {
+        i64 me = id
+        f32 value = 0
+        withData([me, ref value](ref Shared data) { value = data.parts[partIndexOf(ref data, me)].lineSpacing })
+        ret value
+    }
+
+    // Moves the view, in logical pixels from the top left corner of its parent: the content of
+    // the window, or the group, the panel or the dialog that holds it. Its anchors keep the
+    // distances from the edges that it has at the new place.
+    public void setPosition(i32 x, i32 y) const {
+        setPartBounds(id, x, y, -1, -1)
+    }
+
+    // Changes the width and the height of the view, in logical pixels. Its anchors keep the
+    // distances from the edges that it has with the new size.
+    public void setSize(i32 width, i32 height) const {
+        setPartBounds(id, -1, -1, width, height)
+    }
+
+    // The distance of the view from the left edge of its parent, in logical pixels, where its
+    // anchors have placed it now.
+    public i32 x() const {
+        ret partBound(id, 0)
+    }
+
+    // The distance of the view from the top edge of its parent, in logical pixels, where its
+    // anchors have placed it now.
+    public i32 y() const {
+        ret partBound(id, 1)
+    }
+
+    // The width of the view now, in logical pixels: a 'Stretch' anchor changes it with its
+    // parent.
+    public i32 width() const {
+        ret partBound(id, 2)
+    }
+
+    // The height of the view now, in logical pixels: a 'Stretch' anchor changes it with its
+    // parent.
+    public i32 height() const {
+        ret partBound(id, 3)
+    }
+
+    // Shows or hides the view.
+    public void setVisible(bool value) const {
+        setPartFlag(id, 0, value)
+    }
+
+    // Whether the view is visible, as 'setVisible' set it: true by default.
+    public bool visible() const {
+        ret partFlag(id, 0)
+    }
+
+    // Enables or disables the view: disabled, it is drawn at half its opacity.
+    public void setEnabled(bool value) const {
+        setPartFlag(id, 1, value)
+    }
+
+    // Whether the view is enabled, as 'setEnabled' set it: true by default.
+    public bool enabled() const {
+        ret partFlag(id, 1)
+    }
+
+    // Sets which edges of its parent the view follows when the parent changes size: the
+    // window, or the group, the panel or the dialog that holds it. It keeps the distances from
+    // those edges that it has now, as 'setAnchor(gui.Horizontal.Right, gui.Vertical.Bottom)' in
+    // the bottom right corner. By default it is anchored to the left and to the top, and does
+    // not move.
+    public void setAnchor(Horizontal horizontal, Vertical vertical) const {
+        setPartAnchor(id, horizontal, vertical)
+    }
+
+    // How the view follows the left and the right edges of its parent: 'Horizontal.Left' by
+    // default.
+    public Horizontal horizontalAnchor() const {
+        ret partHorizontal(id)
+    }
+
+    // How the view follows the top and the bottom edges of its parent: 'Vertical.Top' by
+    // default.
+    public Vertical verticalAnchor() const {
+        ret partVertical(id)
+    }
+}
+
 // What a canvas shows (D483): its shapes, each drawn over the ones before it. The
 // positions are in logical pixels from the top left corner of the canvas. A drawing is
 // a value: the program builds it, on any thread, and hands it to the canvas with
@@ -3308,8 +3654,13 @@ struct WindowData {
     i64 canvasHeld       // the canvas that has the mouse while the button pressed on it is held (D483)
     i32 clicks           // of the last press of the mouse: 2 for a double click
     list<Call> requests  // the rows that the tables ask for while they are drawn (D486)
-    list<f32> fontSizes  // of the texts of the drawings, with their fonts
+    list<f32> fontSizes  // of the texts of the drawings and of the rich text, with their faces and their fonts
+    list<i32> fontFaces
     list<addr> fonts
+    bool hand     // the mouse is on a piece of a text view: the cursor is a hand (D490)
+    i64 sideView  // the text view and the piece pressed with another button than the left one
+    i64 sidePiece = -1
+    i32 sideButton
     i64 appBar         // its bar at the top, or 0
     i64 navigation     // its bar at the bottom, or 0
     i64 hotItem = -1   // the item of a bar or the row of a list under the mouse
@@ -3359,6 +3710,7 @@ const i32 kindSlider = 14
 const i32 kindDialog = 15
 const i32 kindCanvas = 16
 const i32 kindTable = 17
+const i32 kindTextView = 18
 
 // A component: its kind, its window and its group once added, its properties, for
 // a text box where its cursor and the other end of its selection are, as indices
@@ -3437,7 +3789,15 @@ struct PartData {
     list<addr> needs    // func(i64, i64), of a table
     list<addr> sorts    // func(i64, bool)
     list<addr> chooses  // func(i64)
-    addr svg            // of an image box with an SVG image, and its size in bytes (D484)
+    RichText rich       // of a text view (D490)
+    bool richChanged    // since it was laid out
+    TextLayout laid     // its lines
+    f32 textSize        // 0 for that of the components
+    f32 lineSpacing = 1.5
+    i64 marked = -1    // the piece marked
+    i64 reveal = -1    // the piece to show after the next layout
+    list<addr> pieces  // func(i64, Mouse), of a text view
+    addr svg           // of an image box with an SVG image, and its size in bytes (D484)
     i64 svgSize
     i32 textureWidth  // the size in pixels of the texture of an SVG image
     i32 textureHeight
@@ -3477,7 +3837,8 @@ addr guiThread    // the thread of the GUI, in the runtime
 addr guardThread  // the thread that waits for it (D437)
 addr arrow        // the cursors of the mouse, made by the thread of the GUI
 addr beam
-i32[4] clip  // the SDL_Rect of SDL_SetRenderClipRect
+addr pointer  // the hand, on the pieces of the rich text
+i32[4] clip   // the SDL_Rect of SDL_SetRenderClipRect
 
 // The data under the lock, as a Mutex (D216).
 void withData(func(ref Shared) body) {
@@ -3645,8 +4006,10 @@ void addPartHandler(i64 id, i32 which, addr box) {
             data.parts[p].needs.add(box)
         } else if (which == 8) {
             data.parts[p].sorts.add(box)
-        } else {
+        } else if (which == 9) {
             data.parts[p].chooses.add(box)
+        } else {
+            data.parts[p].pieces.add(box)
         }
     })
 }
@@ -4675,9 +5038,10 @@ void run() {
     if (!SDL_Init(0x20)) {  // SDL_INIT_VIDEO
         panic(format("cannot start the windows: {}", cText(SDL_GetError())))
     }
-    arrow = SDL_CreateSystemCursor(0)  // SDL_SYSTEM_CURSOR_DEFAULT
-    beam = SDL_CreateSystemCursor(1)   // SDL_SYSTEM_CURSOR_TEXT
-    addr event = alloc(128)            // SDL_Event, a union of 128 bytes
+    arrow = SDL_CreateSystemCursor(0)     // SDL_SYSTEM_CURSOR_DEFAULT
+    beam = SDL_CreateSystemCursor(1)      // SDL_SYSTEM_CURSOR_TEXT
+    pointer = SDL_CreateSystemCursor(11)  // SDL_SYSTEM_CURSOR_POINTER
+    addr event = alloc(128)               // SDL_Event, a union of 128 bytes
     for (true) {
         u64 start = SDL_GetTicksNS()
         i32 fps = prepare()
@@ -4871,7 +5235,7 @@ void resetTextures(ref WindowData window, ref list<PartData> parts) {
 
 // The textures of the round images of a list, made again when they are drawn.
 void freeItemTextures(ref PartData part) {
-    if (part.kind == kindCanvas) {
+    if (part.kind == kindCanvas || part.kind == kindTextView) {
         freeCanvasTextures(ref part)
     }
     addr none
@@ -4996,7 +5360,8 @@ i32 buttonAt(f32 x, f32 y, f32 width) {
 
 // A call of handlers, made under the lock and run after it.
 struct Call {
-    i32 kind  // 1 mouse move, 2 mouse down, 3 mouse up, 4 key, 5 resize, 6 click, 7 text, 8 check, 9 choice
+    i32 kind  // 1 mouse move, 2 mouse down, 3 mouse up, 4 key, 5 resize, 6 click, 7 text, 8 check, 9 choice,
+    // 10 func(i64, i64), 11 func(i64, bool), 12 func(i64, Mouse)
     list<addr> boxes
     Mouse mouse
     Key key
@@ -5095,6 +5460,13 @@ void dispatch(ref Call call) {
             } finally {
                 put<func(i64, bool)>(box, move handler)
             }
+        } else if (call.kind == 12) {
+            func(i64, Mouse) handler = take<func(i64, Mouse)>(box)
+            try {
+                handler(call.index, call.mouse)
+            } finally {
+                put<func(i64, Mouse)>(box, move handler)
+            }
         }
     }
 }
@@ -5135,9 +5507,12 @@ void route(ref WindowData window, ref list<PartData> parts, addr event, u32 kind
         }
         i64 hotId = hot >= 0 ? parts[hot].id : 0
         window.hotItem = hot >= 0 && hot != open ? barItemAt(ref parts[hot], x, y) : -1
-        if (hotId != window.hot) {
+        bool hand = hot >= 0 && hot != open && parts[hot].kind == kindTextView && parts[hot].active && window.hotItem >= 0
+        if (hotId != window.hot || hand != window.hand) {
             window.hot = hotId
-            SDL_SetCursor(hot >= 0 && hot != open && parts[hot].kind == kindTextBox && parts[hot].active ? beam : arrow)
+            window.hand = hand
+            bool typing = hot >= 0 && hot != open && parts[hot].kind == kindTextBox && parts[hot].active
+            SDL_SetCursor(hand ? pointer : typing ? beam : arrow)
         }
         window.snackHot = snackAt(ref window, x, y)
         i64 held = partNumber(ref parts, window.canvasHeld)
@@ -5227,6 +5602,8 @@ void route(ref WindowData window, ref list<PartData> parts, addr event, u32 kind
                     window.hot = 0
                     window.hotItem = -1
                 }
+            } else if (button != 1) {  // D490: the other buttons click the pieces of the rich text
+                otherButton(ref window, ref parts, kind == 0x401, button, x, y, ref calls)
             }
             Call call = callOf(kind == 0x401 ? 2 : 3, kind == 0x401 ? window.mouseDown : window.mouseUp)
             call.mouse = mouseAt(ref window, x, y, button)
@@ -5454,6 +5831,8 @@ void pressPart(ref WindowData window, ref list<PartData> parts, f32 x, f32 y, re
         window.heldItem = barItemAt(ref parts[p], x, y)
     } else if (parts[p].kind == kindTable) {
         window.heldItem = tableItemAt(ref parts[p], x, y)
+    } else if (parts[p].kind == kindTextView) {
+        window.heldItem = pieceAt(ref parts[p], x, y)
     }
 }
 
@@ -5480,6 +5859,10 @@ void releasePart(ref WindowData window, ref list<PartData> parts, f32 x, f32 y, 
         } else if (parts[p].kind == kindTable) {
             if (item != -1 && tableItemAt(ref parts[p], x, y) == item) {
                 tableClick(ref window, ref parts[p], item, ref calls)
+            }
+        } else if (parts[p].kind == kindTextView) {
+            if (item >= 0 && pieceAt(ref parts[p], x, y) == item) {
+                pieceClick(ref parts[p], item, x, y, 1, ref calls)
             }
         } else if (parts[p].kind == kindAppBar || parts[p].kind == kindNavigation) {
             if (item >= 0 && barItemAt(ref parts[p], x, y) == item) {
@@ -5765,6 +6148,9 @@ i64 barItemAt(ref PartData bar, f32 x, f32 y) {
     }
     if (bar.kind == kindTable) {
         ret tableItemAt(ref bar, x, y)
+    }
+    if (bar.kind == kindTextView) {
+        ret pieceAt(ref bar, x, y)
     }
     if (bar.kind == kindNavigation && bar.items.len() > 0 && bar.width > 0) {
         i64 item = i64((x - bar.left) * f32(bar.items.len()) / f32(bar.width))
@@ -6352,6 +6738,9 @@ void layoutIn(ref WindowData window, ref list<PartData> parts, i64 group, Frame 
             parts[i].content = tableHeader() + f32(parts[i].tableRows) * tableRow()
             clampScroll(ref parts[i])
         }
+        if (parts[i].kind == kindTextView) {  // D490: its height from its last layout
+            clampScroll(ref parts[i])
+        }
         if (parts[i].kind == kindGroup || parts[i].kind == kindPanel) {
             Frame inner
             inner.left = parts[i].left
@@ -6413,7 +6802,8 @@ void scrollBy(ref PartData part, f32 delta) {
 }
 
 bool scrolls(ref PartData part) {
-    ret (part.kind == kindPanel || part.kind == kindListView || part.kind == kindTable) && part.content > f32(part.height)
+    ret (part.kind == kindPanel || part.kind == kindListView || part.kind == kindTable || part.kind == kindTextView) &&
+        part.content > f32(part.height)
 }
 
 // The position and the size of a component, for the size of its parent now.
@@ -6809,6 +7199,8 @@ void drawPart(ref WindowData window, ref PartData part, ref Colors c, ref list<I
         drawCanvas(ref window, ref part, ref images)
     } else if (part.kind == kindTable) {
         drawTable(ref window, ref part, ref c)
+    } else if (part.kind == kindTextView) {
+        drawTextView(ref window, ref part, ref c, ref images)
     }
 }
 
@@ -7583,6 +7975,614 @@ void drawTable(ref WindowData window, ref PartData table, ref Colors c) {
     }
 }
 
+// ---- The rich text (D490-D493) ----
+
+const f32 viewPadX = 10    // the text of a text view from its left and right edges
+const f32 viewPadY = 8     // from its top and bottom edges
+const f32 blockGap = 3     // above and under a block
+const f32 blockInset = 10  // from the line of a block to its text
+
+// A part of a rich text: 1 a text, 2 an image, 3 a gap, 4 a new line, 5 the start of a
+// block, 6 its end.
+struct Run {
+    i32 kind
+    string text
+    TextStyle style
+    i64 piece = -1
+    i64 image
+    f32 width   // of an image or of a gap, the indent of a block
+    f32 height  // of an image
+    BlockLine line
+}
+
+// The runs of a text, a new line for each "\n".
+void addRuns(ref list<Run> runs, i64 piece, string value, TextStyle style) {
+    if (!(style.scale > 0)) {
+        panic(format("the scale of a style of rich text is more than 0, found {}", style.scale))
+    }
+    i64 start = 0
+    for (i64 i = 0; i <= value.len(); i++) {
+        if (i == value.len() || value[i] == 10) {
+            if (i > start) {
+                Run r
+                r.kind = 1
+                r.text = value.slice(start, i)
+                r.style = style
+                r.piece = piece
+                runs.add(move r)
+            }
+            if (i < value.len()) {
+                Run line
+                line.kind = 4
+                runs.add(move line)
+            }
+            start = i + 1
+        }
+    }
+}
+
+Run imageRun(i64 piece, Image picture, f32 width, f32 height) {
+    Run r
+    r.kind = 2
+    r.piece = piece
+    r.image = picture.id
+    r.width = width > 0 ? width : 0
+    r.height = height > 0 ? height : 0
+    ret r
+}
+
+// A part of a run as the layout places it on a line: its x from the left of the text.
+struct Placed {
+    i64 run
+    string text  // of a text, its part on the line
+    i64 piece
+    i32 face  // of its font, and its size
+    f32 size
+    f32 x
+    f32 width
+    f32 ascent  // of its font, for its line
+    f32 descent
+    f32 tall    // the height of the line that it needs
+    bool space  // spaces or a gap, where a line can break
+}
+
+// A line of the layout: its top from the top of the text, its height, its baseline and
+// the middle of its letters from its top, and its parts, from first to end.
+struct TextLine {
+    f32 top
+    f32 height
+    f32 baseline
+    f32 middle
+    i64 first
+    i64 end
+}
+
+// The line along a block, from the left and the top of the text.
+struct BlockMark {
+    f32 x
+    f32 top
+    f32 bottom
+    BlockLine line
+}
+
+// The layout of a text view, made for its width, the piece marked, the size and the
+// spacing of its text and the density of its display, which it keeps until they change.
+struct TextLayout {
+    list<Placed> placed
+    list<TextLine> lines
+    list<BlockMark> blocks
+    f32 width = -1
+    i64 marked = -1
+    f32 size
+    f32 spacing
+    f32 density
+}
+
+// Where the layout is: the line that it fills, and the parts since the last place where
+// a line can break, which go on this line or on the next one together.
+struct Flow {
+    f32 width  // of the text
+    f32 left   // the margin of the blocks open
+    f32 x      // where the next part goes, from the margin
+    f32 y      // the top of the line
+    i64 first  // the first part of the line
+    f32 ascent
+    f32 descent
+    f32 tall
+    bool empty = true
+    bool wrapped    // the line comes after one that broke by itself
+    i64 piece = -1  // of the last text or image, for the room around the pieces
+    list<Placed> unit
+    f32 unitWidth
+    f32 unitInk     // without the spaces at its end
+    f32 baseAscent  // of the text of the view, for the lines without text
+    f32 baseDescent
+    f32 baseTall
+    list<f32> lefts  // of the blocks open: the margin before them, their top, their line
+    list<f32> tops
+    list<f32> bars
+    list<BlockLine> kinds
+}
+
+u32 inkOf(Ink ink, ref Colors c) {
+    if (ink == Ink.Secondary) {
+        ret c.ink2
+    }
+    if (ink == Ink.Faint) {
+        ret c.ink3
+    }
+    if (ink == Ink.Accent) {
+        ret c.accent2
+    }
+    if (ink == Ink.Selection) {
+        ret c.selection
+    }
+    if (ink == Ink.Danger) {
+        ret c.danger
+    }
+    ret c.ink
+}
+
+u32 blockColor(BlockLine line, ref Colors c) {
+    if (line == BlockLine.Selection) {
+        ret c.selectionSoft
+    }
+    if (line == BlockLine.Accent) {
+        ret c.accent
+    }
+    ret c.rule2
+}
+
+// The face of the font of a style: 0 Inter, 3 JetBrains Mono, 1 more for semibold, as
+// a piece marked, and 8 more for the italic (D492, D493).
+i32 faceOf(TextStyle style, bool marked) {
+    i32 face = style.mono ? 3 : 0
+    if (style.strong || marked) {
+        face = face + 1
+    }
+    if (style.italic) {
+        face = face + 8
+    }
+    ret face
+}
+
+f32 viewSize(ref PartData view) {
+    ret view.textSize > 0 ? view.textSize : bodySize()
+}
+
+// Lays out the rich text of a view, when it, its width, its piece marked, its size, its
+// spacing or the density changed.
+void layoutText(ref WindowData window, ref PartData view) {
+    f32 size = viewSize(ref view)
+    f32 width = most(f32(view.width) - 2 * viewPadX, 1)
+    if (!view.richChanged && view.laid.width == width && view.laid.marked == view.marked && view.laid.size == size &&
+        view.laid.spacing == view.lineSpacing && view.laid.density == window.density) {
+        ret
+    }
+    TextLayout laid
+    laid.width = width
+    laid.marked = view.marked
+    laid.size = size
+    laid.spacing = view.lineSpacing
+    laid.density = window.density
+    Flow f
+    f.width = width
+    f32 ascent = 0
+    f32 descent = 0
+    f32 gap = 0
+    cromo_gui_font_metrics(faceFor(ref window, 0, size), ref ascent, ref descent, ref gap)
+    f.baseAscent = ascent
+    f.baseDescent = descent
+    f.baseTall = size * view.lineSpacing
+    for (i64 r = 0; r < view.rich.runs.len(); r++) {
+        i32 kind = view.rich.runs[r].kind
+        i64 piece = kind == 1 || kind == 2 ? view.rich.runs[r].piece : -1
+        if (piece != f.piece) {  // 2 pixels on each side of a piece, inside its box
+            if (f.piece >= 0) {
+                padPiece(ref window, ref f, ref laid)
+            }
+            if (piece >= 0) {
+                padPiece(ref window, ref f, ref laid)
+            }
+            f.piece = piece
+        }
+        if (kind == 1) {
+            flowText(ref window, ref f, ref laid, ref view, r, size)
+        } else if (kind == 2 || kind == 3) {
+            Placed p
+            p.run = r
+            p.piece = view.rich.runs[r].piece
+            p.width = view.rich.runs[r].width
+            p.space = kind == 3
+            p.tall = kind == 2 ? view.rich.runs[r].height + 4 : 0
+            flowPart(ref window, ref f, ref laid, p)
+        } else if (kind == 4) {
+            commitUnit(ref window, ref f, ref laid)
+            endLine(ref f, ref laid, false)
+        } else if (kind == 5) {
+            commitUnit(ref window, ref f, ref laid)
+            if (!f.empty) {
+                endLine(ref f, ref laid, false)
+            }
+            f.y = f.y + blockGap
+            BlockLine line = view.rich.runs[r].line
+            f.lefts.add(f.left)
+            f.tops.add(f.y)
+            f.bars.add(f.left + view.rich.runs[r].width)
+            f.kinds.add(line)
+            f.left = f.left + view.rich.runs[r].width + (line == BlockLine.None ? 0 : blockInset)
+            f.wrapped = false
+        } else if (kind == 6) {
+            closeBlock(ref window, ref f, ref laid)
+        }
+    }
+    commitUnit(ref window, ref f, ref laid)
+    if (!f.empty) {
+        endLine(ref f, ref laid, false)
+    }
+    for (f.lefts.len() > 0) {
+        closeBlock(ref window, ref f, ref laid)
+    }
+    view.content = f.y + 2 * viewPadY
+    view.laid = move laid
+    view.richChanged = false
+    clampScroll(ref view)
+}
+
+// The words and the spaces of a text, each a part: a line can break after the spaces,
+// but not inside a piece.
+void flowText(ref WindowData window, ref Flow f, ref TextLayout laid, ref PartData view, i64 r, f32 base) {
+    TextStyle style = view.rich.runs[r].style
+    i64 piece = view.rich.runs[r].piece
+    string value = view.rich.runs[r].text
+    i32 face = faceOf(style, piece >= 0 && piece == view.marked)
+    f32 size = base * style.scale
+    addr font = faceFor(ref window, face, size)
+    f32 ascent = 0
+    f32 descent = 0
+    f32 gap = 0
+    cromo_gui_font_metrics(font, ref ascent, ref descent, ref gap)
+    i64 start = 0
+    for (i64 i = 1; i <= value.len(); i++) {
+        if (i == value.len() || (value[i] == 32) != (value[i - 1] == 32)) {
+            Placed p
+            p.run = r
+            p.text = value.slice(start, i)
+            p.piece = piece
+            p.face = face
+            p.size = size
+            p.width = textWidth(font, p.text, i - start)
+            p.ascent = ascent
+            p.descent = descent
+            p.tall = size * view.lineSpacing
+            p.space = value[start] == 32 && piece < 0
+            flowPart(ref window, ref f, ref laid, p)
+            start = i
+        }
+    }
+}
+
+// The room on a side of a piece, which goes with it.
+void padPiece(ref WindowData window, ref Flow f, ref TextLayout laid) {
+    Placed pad
+    pad.run = -1
+    pad.piece = -1
+    pad.width = 2
+    flowPart(ref window, ref f, ref laid, pad)
+}
+
+// A part joins the unit; after spaces or a gap the unit goes on a line.
+void flowPart(ref WindowData window, ref Flow f, ref TextLayout laid, Placed p) {
+    f.unitWidth = f.unitWidth + p.width
+    if (!p.space) {
+        f.unitInk = f.unitWidth
+    }
+    bool breaks = p.space
+    f.unit.add(p)
+    if (breaks) {
+        commitUnit(ref window, ref f, ref laid)
+    }
+}
+
+// The unit on the line, or on the next one when it does not fit; a word wider than the
+// whole line is cut where the line ends.
+void commitUnit(ref WindowData window, ref Flow f, ref TextLayout laid) {
+    if (f.unit.len() == 0) {
+        ret
+    }
+    f32 room = f.width - f.left
+    if (!f.empty && f.x + f.unitInk > room) {
+        endLine(ref f, ref laid, true)
+    }
+    bool fits = f.x + f.unitInk <= room
+    for (i64 k = 0; k < f.unit.len(); k++) {
+        if (f.empty && f.wrapped && f.unit[k].space) {
+            continue  // a line that broke by itself does not start with spaces
+        }
+        if (!fits && !f.unit[k].space && f.x + f.unit[k].width > room) {
+            if (!f.empty && f.unit[k].width <= room) {
+                endLine(ref f, ref laid, true)
+            } else if (f.unit[k].text.len() > 0) {
+                Placed word = f.unit[k]
+                cutWord(ref window, ref f, ref laid, word)
+                continue
+            }
+        }
+        Placed p = f.unit[k]
+        putOnLine(ref f, ref laid, p)
+    }
+    f.unit.clear()
+    f.unitWidth = 0
+    f.unitInk = 0
+}
+
+// A part on the line, after those already there.
+void putOnLine(ref Flow f, ref TextLayout laid, Placed p) {
+    Placed q = p
+    q.x = f.left + f.x
+    f.x = f.x + q.width
+    f.ascent = most(f.ascent, q.ascent)
+    f.descent = most(f.descent, q.descent)
+    f.tall = most(f.tall, q.tall)
+    f.empty = false
+    laid.placed.add(move q)
+}
+
+// A word wider than the room left, on as many lines as it takes, cut between its letters.
+void cutWord(ref WindowData window, ref Flow f, ref TextLayout laid, Placed p) {
+    addr font = faceFor(ref window, p.face, p.size)
+    f32 room = f.width - f.left
+    i64 start = 0
+    f32 used = 0
+    i64 next = 0
+    for (i64 i = 0; i < p.text.len(); i = next) {
+        u8 lead = p.text[i]
+        next = least64(i + (lead < 0x80 ? 1 : lead < 0xE0 ? 2 : lead < 0xF0 ? 3 : 4), p.text.len())
+        f32 w = textWidth(font, p.text.slice(i, next), next - i)
+        if (f.x + used + w > room && (i > start || !f.empty)) {
+            if (i > start) {
+                Placed part = p
+                part.text = p.text.slice(start, i)
+                part.width = used
+                putOnLine(ref f, ref laid, part)
+            }
+            endLine(ref f, ref laid, true)
+            start = i
+            used = 0
+        }
+        used = used + w
+    }
+    if (p.text.len() > start) {
+        Placed part = p
+        part.text = p.text.slice(start, p.text.len())
+        part.width = used
+        putOnLine(ref f, ref laid, part)
+    }
+}
+
+// Ends the line: its height is the most that its parts need, and its letters are in its
+// middle.
+void endLine(ref Flow f, ref TextLayout laid, bool wrapped) {
+    TextLine line
+    line.top = f.y
+    f32 ascent = f.ascent > 0 ? f.ascent : f.baseAscent
+    f32 descent = f.descent > 0 ? f.descent : f.baseDescent
+    f32 height = f.tall > 0 ? f.tall : f.baseTall
+    line.height = height
+    line.baseline = (height + ascent - descent) / 2
+    line.middle = line.baseline - (f.baseAscent - f.baseDescent) / 2
+    line.first = f.first
+    line.end = laid.placed.len()
+    laid.lines.add(move line)
+    f.y = f.y + height
+    f.x = 0
+    f.first = laid.placed.len()
+    f.ascent = 0
+    f.descent = 0
+    f.tall = 0
+    f.empty = true
+    f.wrapped = wrapped
+}
+
+// Ends the last block open, with its line from its top to here.
+void closeBlock(ref WindowData window, ref Flow f, ref TextLayout laid) {
+    commitUnit(ref window, ref f, ref laid)
+    if (!f.empty) {
+        endLine(ref f, ref laid, false)
+    }
+    i64 last = f.lefts.len() - 1
+    if (last < 0) {
+        ret
+    }
+    if (f.kinds[last] != BlockLine.None) {
+        BlockMark mark
+        mark.x = f.bars[last]
+        mark.top = f.tops[last]
+        mark.bottom = f.y
+        mark.line = f.kinds[last]
+        laid.blocks.add(move mark)
+    }
+    f.left = f.lefts.remove(last)
+    f.tops.remove(last)
+    f.bars.remove(last)
+    f.kinds.remove(last)
+    f.y = f.y + blockGap
+    f.wrapped = false
+}
+
+// The first line whose bottom is under y, from the top of the text, or the number of
+// the lines.
+i64 lineBelow(ref TextLayout laid, f32 y) {
+    i64 low = 0
+    i64 high = laid.lines.len()
+    for (low < high) {
+        i64 middle = (low + high) / 2
+        if (laid.lines[middle].top + laid.lines[middle].height <= y) {
+            low = middle + 1
+        } else {
+            high = middle
+        }
+    }
+    ret low
+}
+
+// The piece at a point of the window, or -1: its parts, and the 2 pixels on each side.
+i64 pieceAt(ref PartData view, f32 x, f32 y) {
+    f32 tx = x - view.left - viewPadX
+    f32 ty = y - view.top - viewPadY + view.offsetY
+    i64 k = lineBelow(ref view.laid, ty)
+    if (k >= view.laid.lines.len() || view.laid.lines[k].top > ty) {
+        ret -1
+    }
+    for (i64 a = view.laid.lines[k].first; a < view.laid.lines[k].end; a++) {
+        if (view.laid.placed[a].piece >= 0 && tx >= view.laid.placed[a].x - 2 &&
+            tx < view.laid.placed[a].x + view.laid.placed[a].width + 2) {
+            ret view.laid.placed[a].piece
+        }
+    }
+    ret -1
+}
+
+// Scrolls a view as little as it takes to show the line of a piece, after its layout.
+void revealPiece(ref PartData view) {
+    i64 piece = view.reveal
+    view.reveal = -1
+    if (piece < 0) {
+        ret
+    }
+    for (i64 k = 0; k < view.laid.lines.len(); k++) {
+        for (i64 a = view.laid.lines[k].first; a < view.laid.lines[k].end; a++) {
+            if (view.laid.placed[a].piece == piece) {
+                f32 top = view.laid.lines[k].top
+                f32 bottom = top + view.laid.lines[k].height + 2 * viewPadY
+                view.velocity = 0
+                if (top < view.offsetY) {
+                    scrollBy(ref view, top - view.offsetY)
+                } else if (bottom > view.offsetY + f32(view.height)) {
+                    scrollBy(ref view, bottom - f32(view.height) - view.offsetY)
+                }
+                ret
+            }
+        }
+    }
+}
+
+// A click on a piece, with a button of the mouse.
+void pieceClick(ref PartData view, i64 piece, f32 x, f32 y, i32 button, ref list<Call> calls) {
+    Call call = callOf(12, view.pieces)
+    call.index = piece
+    call.mouse = canvasMouse(ref view, x, y, button)
+    calls.add(move call)
+}
+
+// The middle and the right buttons of the mouse on a piece: a press and a release on
+// the same one click it, as the left button does through pressPart and releasePart.
+void otherButton(ref WindowData window, ref list<PartData> parts, bool down, i32 button, f32 x, f32 y, ref list<Call> calls) {
+    i64 p = window.popup == 0 && !snackAt(ref window, x, y) ? partAt(ref window, ref parts, x, y) : -1
+    i64 piece = p >= 0 && parts[p].kind == kindTextView && parts[p].active ? pieceAt(ref parts[p], x, y) : -1
+    if (down) {
+        window.sideView = piece >= 0 ? parts[p].id : 0
+        window.sidePiece = piece
+        window.sideButton = button
+    } else {
+        if (piece >= 0 && parts[p].id == window.sideView && piece == window.sidePiece && button == window.sideButton) {
+            pieceClick(ref parts[p], piece, x, y, button, ref calls)
+        }
+        window.sideView = 0
+    }
+}
+
+// A text view on the surface: the lines of its blocks, the box of the piece marked in
+// the accent and that of the piece under the mouse in the third surface, then the texts
+// and the images of the lines that are seen.
+void drawTextView(ref WindowData window, ref PartData view, ref Colors c, ref list<ImageData> images) {
+    addr r = window.renderer
+    f32 d = window.density
+    f32 x = view.left
+    f32 y = view.top
+    f32 w = f32(view.width)
+    f32 h = f32(view.height)
+    bool on = view.active
+    layoutText(ref window, ref view)
+    revealPiece(ref view)
+    clipInside(r, ref view, x, y, w, h)
+    fill(r, c.surface, x, y, w, h)
+    f32 left = x + viewPadX
+    f32 top = y + viewPadY - view.offsetY
+    for (ref BlockMark mark in view.laid.blocks) {
+        if (top + mark.bottom > y && top + mark.top < y + h) {
+            cromo_gui_box(r, left + mark.x, top + mark.top, 2, mark.bottom - mark.top, 0, 0, d, solid(blockColor(mark.line, ref c), on), 0)
+        }
+    }
+    for (ref CanvasTexture t in view.imageTextures) {
+        t.used = false
+    }
+    addr none
+    bool hot = window.hot == view.id && on
+    for (i64 k = lineBelow(ref view.laid, view.offsetY - viewPadY); k < view.laid.lines.len(); k++) {
+        f32 lineTop = top + view.laid.lines[k].top
+        if (lineTop >= y + h) {
+            break
+        }
+        f32 lineHeight = view.laid.lines[k].height
+        i64 end = view.laid.lines[k].end
+        i64 a = view.laid.lines[k].first
+        for (a < end) {
+            i64 piece = view.laid.placed[a].piece
+            i64 b = a + 1
+            for (b < end && view.laid.placed[b].piece == piece) {
+                b++
+            }
+            bool marked = piece >= 0 && piece == view.marked
+            if (marked || (piece >= 0 && hot && window.hotItem == piece)) {
+                f32 from = view.laid.placed[a].x
+                f32 to = view.laid.placed[b - 1].x + view.laid.placed[b - 1].width
+                cromo_gui_box(r, left + from - 2, lineTop + 1, to - from + 4, lineHeight - 2, 3, 0, d,
+                    solid(marked ? c.accent : c.surface3, on), 0)
+            }
+            a = b
+        }
+        for (a = view.laid.lines[k].first; a < end; a++) {
+            i64 run = view.laid.placed[a].run
+            if (view.laid.placed[a].space || run < 0) {
+                continue
+            }
+            f32 px = left + view.laid.placed[a].x
+            if (view.rich.runs[run].kind == 1) {
+                bool marked = view.laid.placed[a].piece >= 0 && view.laid.placed[a].piece == view.marked
+                u32 ink = marked ? c.onAccent : inkOf(view.rich.runs[run].style.ink, ref c)
+                addr font = faceFor(ref window, view.laid.placed[a].face, view.laid.placed[a].size)
+                text(font, view.laid.placed[a].text, px, lineTop + view.laid.lines[k].baseline, ink, on)
+            } else if (view.rich.runs[run].kind == 2) {
+                i64 id = view.rich.runs[run].image
+                f32 bw = view.rich.runs[run].width
+                f32 bh = view.rich.runs[run].height
+                if (id >= 1 && id <= images.len() && bw > 0 && bh > 0) {
+                    f32 k2 = least(bw / images[id - 1].width, bh / images[id - 1].height)
+                    f32 dw = images[id - 1].width * k2
+                    f32 dh = images[id - 1].height * k2
+                    addr texture = imageTexture(ref window, ref view, ref images, id, i32(dw * d + 0.5), i32(dh * d + 0.5))
+                    if (texture != none) {
+                        if (!on) {
+                            SDL_SetTextureAlphaMod(texture, 128)
+                        }
+                        Rect place = Rect(px + (bw - dw) / 2, lineTop + view.laid.lines[k].middle - dh / 2, dw, dh)
+                        SDL_RenderTexture(r, texture, none, ref place)
+                        SDL_SetTextureAlphaMod(texture, 255)
+                    }
+                }
+            }
+        }
+    }
+    for (i64 k = view.imageTextures.len() - 1; k >= 0; k--) {
+        if (!view.imageTextures[k].used) {
+            SDL_DestroyTexture(view.imageTextures[k].texture)
+            view.imageTextures.remove(k)
+        }
+    }
+    clipPart(r, ref view)
+}
+
 // ---- The canvas and the images of the drawings (D483, D484) ----
 
 // A shape of a drawing: 1 a rectangle, 2 the outline of one, 3 a circle, 4 the outline
@@ -7716,13 +8716,20 @@ f32 imageSize(i64 id, bool wide) {
 
 // The font of the texts of the drawings at a size, made the first time it is used.
 addr fontFor(ref WindowData window, f32 size) {
+    ret faceFor(ref window, 0, size)
+}
+
+// The font of a face at a size, made the first time it is used: 0 Inter, 1 semibold, 3
+// JetBrains Mono, 4 semibold, 8 more for the italic (D492, D493).
+addr faceFor(ref WindowData window, i32 face, f32 size) {
     for (i64 i = 0; i < window.fontSizes.len(); i++) {
-        if (window.fontSizes[i] == size) {
+        if (window.fontSizes[i] == size && window.fontFaces[i] == face) {
             ret window.fonts[i]
         }
     }
-    addr font = cromo_gui_font(window.renderer, 0, size, window.density)
+    addr font = cromo_gui_font(window.renderer, face, size, window.density)
     window.fontSizes.add(size)
+    window.fontFaces.add(face)
     window.fonts.add(font)
     ret font
 }
@@ -7733,6 +8740,7 @@ void freeFonts(ref WindowData window) {
     }
     window.fonts.clear()
     window.fontSizes.clear()
+    window.fontFaces.clear()
 }
 
 // The textures of a canvas, as when its renderer loses them or its window closes.

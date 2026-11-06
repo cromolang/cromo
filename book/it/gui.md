@@ -51,6 +51,7 @@ i32 main() {
 | `gui.Panel(...)` | un contenitore senza aspetto proprio, che scorre quando i suoi componenti vanno oltre il fondo |
 | `gui.ListView(...)` | una lista di voci, ognuna con un'icona o un'immagine, un titolo, una riga e un dettaglio |
 | `gui.Table(...)` | righe di celle in colonne, anche milioni, chieste mentre sono mostrate |
+| `gui.TextView(...)` | testo ricco: stili, blocchi, piccole immagini e pezzi che l'utente clicca |
 | `gui.Canvas(...)` | una superficie su cui il programma disegna: `setDrawing`, e il mouse su di essa |
 
 Ogni componente ha `setPosition`, `setSize`, `setVisible`, `setEnabled` e `setAnchor`. I componenti di un gruppo o di un pannello prendono le posizioni dal suo angolo in alto a sinistra.
@@ -246,6 +247,47 @@ i32 main() {
 - Un clic su un titolo chiama `onSort(colonna, discendente)`: il programma ordina i suoi dati, chiama `clearRows()`, e la tabella chiede di nuovo le sue righe. La tabella mostra l'ordine con una freccia.
 - Un clic sceglie una riga, Ctrl ne aggiunge una, Maiusc quelle in mezzo; `selectedRows()` le dà, `onChange` dice quando cambiano, e un doppio clic o Invio chiamano `onChoose`.
 - I dati che i gestori leggono e ordinano vanno in un `thread.Shared`, come in `examples/20_table.cro`.
+
+## Testo ricco
+
+```cromo norun
+import std.gui
+
+[[window]]
+i32 main() {
+    gui.Window w = gui.Window("Notes", 480, 200)
+    gui.TextView notes = w.add(gui.TextView(16, 16, 448, 133))
+    notes.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Stretch)
+    gui.TextStyle plain = gui.TextStyle(gui.Ink.Normal)
+    gui.TextStyle code = gui.TextStyle(gui.Ink.Accent)
+    code.mono = true
+    gui.TextStyle remark = gui.TextStyle(gui.Ink.Selection)
+    remark.italic = true
+
+    gui.RichText t
+    t.text("Read the file with ", plain)
+    t.link(1, "fs.readText", code)
+    t.text(", then split it into lines with ", plain)
+    t.link(2, "split", code)
+    t.text(". The text goes to the next line by itself when the window is narrower.\n", plain)
+    t.startBlock(14, gui.BlockLine.Selection)
+    t.text("Both throw an error when the file is not there.", remark)
+    t.endBlock()
+    notes.setText(move t)
+    notes.setMarked(1)
+    notes.onClick([notes](i64 piece, gui.Mouse m) { notes.setMarked(piece) })
+    w.start()
+    ret 0
+}
+```
+
+![Testo ricco, con un pezzo segnato](images/rich-text.png)
+
+- `gui.TextView` mostra un `gui.RichText`, che il programma costruisce e consegna con `setText(move t)`, come un disegno: per cambiarlo lo costruisce di nuovo, e la vista resta dove era scorsa.
+- `text(valore, stile)` aggiunge un testo, che va a capo da sé agli spazi; `"\n"` comincia una riga nuova. `startBlock(rientro, linea)` e `endBlock()` fanno un blocco, con un margine e una linea alla sua sinistra, anche dentro un altro blocco. `image` mette una piccola immagine fra le parole, e `gap` uno spazio di qualche pixel.
+- Un `gui.TextStyle` ha un colore che è un ruolo del tema, un `gui.Ink`, così il testo segue da sé il tema chiaro e quello scuro; e `strong`, `italic`, `mono` per un carattere a spaziatura fissa, e `scale` per la dimensione.
+- `link(pezzo, valore, stile)` aggiunge un pezzo che l'utente clicca, con il suo numero: i testi con lo stesso numero uno dopo l'altro sono un pezzo solo. `onClick` dà il numero e il mouse, con il suo pulsante, e `setMarked` segna un pezzo nell'accento e scorre per mostrarlo.
+- `examples/21_thread.cro` mostra una discussione con le sue risposte, una dentro l'altra.
 
 ## Disegnare su un canvas
 

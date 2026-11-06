@@ -2313,6 +2313,31 @@ orders.onNeedRows([orders, db](i64 first, i64 count) { orders.setRows(first, row
 ### D489. The widths of the columns
 *2026-11-06.* The program gives the width of each column, and a column can take the room that the others leave; a column can be hidden. The user does not drag them: that can come later.
 
+### D490. Rich text: a value handed over
+*2026-11-06.* Chosen by the author. `gui.TextView` shows rich text: pieces of text in different styles, which go to the next line by themselves, blocks with a margin and a line on their left, small images among the words, and pieces that the user clicks, each with a number given by the program. The program builds a `gui.RichText`, a value as `gui.Drawing` (D483), also on another thread, and hands it over with `setText(move t)`. No markup to parse, and no text of the user to escape. The view says which piece was clicked, marks one piece, as the current one, and scrolls to show it.
+
+```cromo
+// draft: the names of the API of the rich text are not decided
+gui.RichText t
+t.text("Opening notes. ", note)
+t.link(7, "Chapter 2", strong)
+t.startBlock(14, gui.BlockLine.Plain)
+t.text("A remark, in a block with a line on its left.", note)
+t.endBlock()
+view.setText(move t)
+view.onClick([](i64 piece, gui.Mouse m) { println("piece {}", piece) })
+view.setMarked(7)
+```
+
+### D491. The styles of the rich text are roles of the theme
+*2026-11-06.* Chosen by the author. The color of a piece of rich text is a role, as the normal text, the secondary, the faint, the accent, the selection and the danger, which follows the light or the dark theme by itself, as the components do. A style adds semibold, italic, monospaced and a size relative to the text of the view. A color given by the program, as on a canvas, would need the program to know the theme and to build the text again when it changes.
+
+### D492. A monospaced font: JetBrains Mono
+*2026-11-06.* Chosen by the author. `std.gui` has a monospaced font for code, logs and numbers in columns: JetBrains Mono, without ligatures, regular and semibold, with the SIL Open Font License, in the library as Inter (D440). Without the hinting, which stb_truetype does not read, the two files are about 220 KB. Its letters are as large as those of Inter at the same size.
+
+### D493. The italic: Inter slanted
+*2026-11-06.* Chosen by the author. The italic is drawn from the outlines of Inter, slanted before they are rasterized, as the browsers do for a font without its italic: sharp at every size, and no file more. The italic of Inter is itself almost only slanted.
+
 ---
 
 ## Proposed
@@ -2543,6 +2568,15 @@ A component keeps the distances from the edges of its parent, the content of the
 - `onSort(column, descending)`: the first click on a title is ascending, the second on the same title descending; `setSort(column, descending)` shows the order without calling the handlers, and `sortColumn()`, -1 for none, and `sortDescending()` read it. The arrow is the chevron of Lucide, up or down, after the title.
 - The rows chosen are ranges, so Shift can choose millions of rows: a click chooses one, Ctrl and a click add or remove one, Shift and a click choose from the row where the last click without Shift was, Ctrl and Shift add those; the keys move the last row chosen, with Shift from the same row; Ctrl+A chooses all, Enter and a double click call `onChoose(row)`; `onChange(row)` is called at each change, with the last row chosen. `selected()`, `setSelected(index)` with -1 for none, `selectedRows()` in order, `scrollTo(index)`. A table takes the keyboard as a list.
 - The look: the titles as those of the bands, small, semibold, in capitals and spaced, in ink 3, ink 2 under the mouse, on the surface with a line of rule 2 under them; the rows on the surface, 26 pixels high on the desktop and 44 on a phone, under titles of 30 and 40, with a line of rule between them; the rows chosen in the soft selection, and the last one chosen with a bar of the selection on its left; the row under the mouse in surface 2. The cells are the text of the components, 8 pixels from the edges of their column, cut at its edges.
+
+### P56. The rich text (D490-D493)
+- `gui.RichText` is a value: `text(value, style)`, in which `"\n"` starts a new line; `link(piece, value, style)`, with a number from 0, a panic below; `image(picture, width, height)` and `linkImage(piece, picture, width, height)`, the image as large as the box allows with its proportions, in the middle of the line; `gap(width)`; `newLine()`; `startBlock(indent, line)` and `endBlock()`, a panic without a block started; `clear()` and `len()`. The texts and the images that follow one another with the same number are one piece.
+- `gui.TextStyle(ink)` is a struct with public fields that the program sets: `ink`, a `gui.Ink`, `Normal`, `Secondary`, `Faint`, `Accent`, `Selection` or `Danger`, which are ink, ink 2, ink 3, accent 2, the selection and the danger of the theme; `strong`, `italic`, `mono`, and `scale`, 1 by default, more than 0: a scale of 0 or less is a panic when the style is used. A style declared without its color is `Normal`.
+- `gui.TextView(x, y, w, h)`: `setText(move t)`, from any thread, keeps where the view is scrolled; `onClick(func(i64, Mouse))`, for any button, at the release on the piece where it was pressed, with the mouse from the top left corner of the view; `setMarked(piece)`, -1 for none, scrolls as little as it takes to show it; `marked()`, `scrollTo(piece)`, `scrollY()`; `setTextSize(size)` from 6 to 72, 13 on the desktop and 14 on a phone by default, `textSize()`; `setLineSpacing(value)` from 1 to 3, 1.5 by default, `lineSpacing()`. A size or a spacing out of the range is a panic. The view takes no keyboard, and scrolls with the wheel, its bar and a finger as a list.
+- The layout: a line breaks after spaces and gaps, never inside a piece, and a word wider than the line is cut between its letters; a line that breaks by itself does not start with spaces or gaps. A line is as high as the largest size of its texts by the spacing, or as its images with 4 pixels more; its letters are in its middle, and the images too. A block starts and ends on lines of its own, 3 pixels from the text around it; its line is 2 pixels wide, `indent` pixels from the margin around it, and its text 10 pixels after the line, or at `indent` without a line. The lines: `BlockLine.Plain` rule 2, `Selection` the soft selection, `Accent` the accent.
+- The look: the view on the surface, its text 10 pixels from its sides and 8 from its top and its bottom; the piece under the mouse in surface 3, the piece marked in the accent, semibold, with the text on the accent, in a box with corners of 3 pixels, 1 pixel shorter than its line at the top and at the bottom; the layout leaves 2 pixels on each side of a piece, inside its box. On a piece the cursor of the mouse is a hand.
+- The fonts: JetBrains Mono NL 2.304, regular and semibold, without its hinting, its substitutions and the names of its glyphs, with the em of Inter at the same size; the italic slants the outline by 0.2, about 11 degrees, before it is rasterized. A font of text up to 32 pixels of the display has a texture of 512 by 512, a larger one of 1024 by 1024.
+
 ---
 
 ## Open

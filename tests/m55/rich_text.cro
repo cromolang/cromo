@@ -1,0 +1,69 @@
+// The rich text (D490-D493): a value with its parts, the styles with their defaults,
+// a view that lays it out, marks a piece and scrolls to show it, its size and spacing.
+// target: windows linux-x86_64
+// program-env: SDL_VIDEO_DRIVER=offscreen
+// expect-output: style: Normal, scale 1, regular
+// expect-output: 7 parts
+// expect-output: 0 parts after clear
+// expect-output: size 13, spacing 1.5
+// expect-output: marked 59, scrolled
+// expect-output: marked -1
+// expect-output: size 16, spacing 1.75
+import std.gui
+import std.time
+
+// Until the view has scrolled, at most 5 seconds: the window takes a few hundred
+// milliseconds to start.
+void waitFor(gui.TextView view) {
+    for (i32 i = 0; i < 500 && view.scrollY() == 0; i++) {
+        time.msleep(10)
+    }
+}
+
+i32 main() {
+    gui.TextStyle plain
+    println("style: {}, scale {}, {}", plain.ink == gui.Ink.Normal ? "Normal" : "other", plain.scale,
+        plain.strong || plain.italic || plain.mono ? "styled" : "regular")
+    gui.TextStyle code = gui.TextStyle(gui.Ink.Accent)
+    code.mono = true
+    gui.TextStyle note = gui.TextStyle(gui.Ink.Selection)
+    note.italic = true
+    note.scale = 0.9
+
+    gui.RichText small
+    small.text("one\ntwo", plain)  // a text, a new line, a text
+    small.gap(8)
+    small.startBlock(12, gui.BlockLine.Plain)
+    small.link(0, "x", code)
+    small.endBlock()
+    println("{} parts", small.len())
+    small.clear()
+    println("{} parts after clear", small.len())
+
+    gui.Window w = gui.Window("rich", 400, 235)
+    gui.TextView view = w.add(gui.TextView(0, 0, 400, 200))
+    println("size {}, spacing {}", view.textSize(), view.lineSpacing())
+    gui.RichText t
+    for (i64 i = 0; i < 60; i++) {
+        t.link(i, format("{}.", i + 1), plain)
+        t.link(i, "step", code)
+        t.gap(9)
+        if (i % 10 == 5) {
+            t.startBlock(14, gui.BlockLine.Selection)
+            t.text("A remark long enough to go on more than one line of the view, in italic.", note)
+            t.endBlock()
+        }
+    }
+    view.setText(move t)
+    view.setMarked(59)
+    w.start()
+    waitFor(view)
+    println("marked {}, {}", view.marked(), view.scrollY() > 0 ? "scrolled" : "not scrolled")
+    view.setMarked(-1)
+    println("marked {}", view.marked())
+    view.setTextSize(16)
+    view.setLineSpacing(1.75)
+    println("size {}, spacing {}", view.textSize(), view.lineSpacing())
+    w.close()
+    ret 0
+}

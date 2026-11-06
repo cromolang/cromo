@@ -13,6 +13,7 @@ their sources, headers and licenses are kept here.
 | stb_image | 2.30 | https://raw.githubusercontent.com/nothings/stb/013ac3beddff3dbffafd5177e7972067cd2b5083/stb_image.h | `594c2fe35d49488b4382dbfaec8f98366defca819d916ac95becf3e75f4200b3` (the file) | public domain or MIT (at the end of `stb/stb_image.h`) |
 | Inter | 4.1 | https://github.com/rsms/inter/releases/download/v4.1/Inter-4.1.zip | `9883fdd4a49d4fb66bd8177ba6625ef9a64aa45899767dde3d36aa425756b11e` | SIL Open Font License 1.1 (`inter/LICENSE.txt`) |
 | nanosvg | 239e102 (master) | https://raw.githubusercontent.com/memononen/nanosvg/239e102ec2c691f2902e20ace2ed36ee4a35cfe6/src/nanosvg.h and `nanosvgrast.h` | `e34fd5d084be106cea972d19ce5d27fd96d17ba89f8d06bdceee058420c8b2b0` and `79a9c5f4db19debf9f3a648a1589e96d92854f245a5cb4f3d823f263785234d8` (the files) | zlib (`nanosvg/LICENSE.txt`) |
+| JetBrains Mono | 2.304 | https://github.com/JetBrains/JetBrainsMono/releases/download/v2.304/JetBrainsMono-2.304.zip | `6f6376c6ed2960ea8a963cd7387ec9d76e3f629125bc33d1fdcd7eb7012f7bbf` | SIL Open Font License 1.1 (`jetbrains-mono/OFL.txt`) |
 | Lucide | 1.68.0 | https://registry.npmjs.org/lucide-static/-/lucide-static-1.68.0.tgz | `62e0cdd6158bbb81877a95b757d739c60339dbb286153c074664f2b1ec8b2e94` | ISC, and MIT for the icons of Feather (`lucide/LICENSE`) |
 
 From mbedTLS: `include/mbedtls`, `include/psa` and the `.c` and `.h` files of
@@ -24,5 +25,8 @@ the tests, the examples, the documents and the projects of the IDEs; SDL is buil
 its CMake, not with the clang of the runtime (`runtime/sdl`). From nanosvg: `src/nanosvg.h`, `src/nanosvgrast.h` and `LICENSE.txt`, compiled with the images of
 `std.gui` (D484). From Inter:
 `extras/ttf/Inter-Regular.ttf`, `extras/ttf/Inter-SemiBold.ttf` and `LICENSE.txt`. From
+JetBrains Mono: `OFL.txt`, and `JetBrainsMonoNL-Regular.ttf` and `JetBrainsMonoNL-SemiBold.ttf`,
+written by `tools/mono.py` from those of `fonts/ttf` without what stb_truetype does not read,
+the hinting, the substitutions and the names of the glyphs (D492). From
 Lucide: `LICENSE`, and `lucide-icons.ttf`, the icons of `std.gui` taken from
 `font/lucide.ttf` by `tools/lucide.py`, which also writes the enum `gui.Icon`.

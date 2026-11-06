@@ -92,12 +92,13 @@ set(CROMO_TLS_FLAGS -nostdlibinc -isystem "${CMAKE_SOURCE_DIR}/runtime/libc" "-I
     "-DMBEDTLS_USER_CONFIG_FILE=\"mbedtls_user_config.h\"")
 
 # The part of std.gui in C (D441), with stb_truetype, the fonts of Inter (D433,
-# D440) and the icons of Lucide (D448), in the archives of the runtime as the
+# D440) and of JetBrains Mono (D492) and the icons of Lucide (D448), in the archives of the runtime as the
 # glue of TLS: only the programs with windows link it. The images, with stb_image
 # (D446), are an object of their own, with the headers of runtime/libc. Not for
 # ARM64, which has no SDL yet.
 set(CROMO_GUI_SOURCES runtime/gui/gui.c runtime/gui/fonts.S third_party/stb/stb_truetype.h
-    third_party/inter/Inter-Regular.ttf third_party/inter/Inter-SemiBold.ttf third_party/lucide/lucide-icons.ttf)
+    third_party/inter/Inter-Regular.ttf third_party/inter/Inter-SemiBold.ttf third_party/lucide/lucide-icons.ttf
+    third_party/jetbrains-mono/JetBrainsMonoNL-Regular.ttf third_party/jetbrains-mono/JetBrainsMonoNL-SemiBold.ttf)
 set(CROMO_GUI_IMAGE_SOURCES runtime/gui/image.c third_party/stb/stb_image.h third_party/nanosvg/nanosvg.h
     third_party/nanosvg/nanosvgrast.h)
 set(CROMO_GUI_IMAGE_FLAGS -nostdlibinc -isystem "${CMAKE_SOURCE_DIR}/runtime/libc" "-I${CMAKE_SOURCE_DIR}/third_party/stb"
@@ -106,7 +107,7 @@ add_custom_command(
   OUTPUT "${CROMO_RT_DIR}/gui.obj" "${CROMO_RT_DIR}/gui_fonts.obj"
   COMMAND "${CROMO_CLANG}" ${CROMO_RT_FLAGS} "-I${CMAKE_SOURCE_DIR}/third_party/stb" -c "${CMAKE_SOURCE_DIR}/runtime/gui/gui.c" -o "${CROMO_RT_DIR}/gui.obj"
   COMMAND "${CROMO_CLANG}" --target=x86_64-pc-windows-msvc "-I${CMAKE_SOURCE_DIR}/third_party/inter"
-          "-I${CMAKE_SOURCE_DIR}/third_party/lucide" -c "${CMAKE_SOURCE_DIR}/runtime/gui/fonts.S" -o "${CROMO_RT_DIR}/gui_fonts.obj"
+          "-I${CMAKE_SOURCE_DIR}/third_party/lucide" "-I${CMAKE_SOURCE_DIR}/third_party/jetbrains-mono" -c "${CMAKE_SOURCE_DIR}/runtime/gui/fonts.S" -o "${CROMO_RT_DIR}/gui_fonts.obj"
   DEPENDS ${CROMO_GUI_SOURCES}
   COMMENT "Compiling the part of std.gui in C")
 add_custom_command(
@@ -118,7 +119,7 @@ add_custom_command(
   OUTPUT "${CROMO_RT_DIR}/gui_linux.o" "${CROMO_RT_DIR}/gui_fonts_linux.o"
   COMMAND "${CROMO_CLANG}" ${CROMO_RT_LINUX_FLAGS} "-I${CMAKE_SOURCE_DIR}/third_party/stb" -c "${CMAKE_SOURCE_DIR}/runtime/gui/gui.c" -o "${CROMO_RT_DIR}/gui_linux.o"
   COMMAND "${CROMO_CLANG}" --target=x86_64-unknown-linux-gnu "-I${CMAKE_SOURCE_DIR}/third_party/inter"
-          "-I${CMAKE_SOURCE_DIR}/third_party/lucide" -c "${CMAKE_SOURCE_DIR}/runtime/gui/fonts.S" -o "${CROMO_RT_DIR}/gui_fonts_linux.o"
+          "-I${CMAKE_SOURCE_DIR}/third_party/lucide" "-I${CMAKE_SOURCE_DIR}/third_party/jetbrains-mono" -c "${CMAKE_SOURCE_DIR}/runtime/gui/fonts.S" -o "${CROMO_RT_DIR}/gui_fonts_linux.o"
   DEPENDS ${CROMO_GUI_SOURCES}
   COMMENT "Compiling the part of std.gui in C for Linux")
 add_custom_command(
@@ -296,7 +297,7 @@ foreach(arch arm64 x86_64)
     OUTPUT "${dir}/gui.o" "${dir}/gui_fonts.o" "${dir}/gui_image.o"
     COMMAND "${CROMO_CLANG}" ${base} -Wall -Wextra "-I${CMAKE_SOURCE_DIR}/third_party/stb" -c
             "${CMAKE_SOURCE_DIR}/runtime/gui/gui.c" -o "${dir}/gui.o"
-    COMMAND "${CROMO_CLANG}" --target=${triple} "-I${CMAKE_SOURCE_DIR}/third_party/inter" "-I${CMAKE_SOURCE_DIR}/third_party/lucide"
+    COMMAND "${CROMO_CLANG}" --target=${triple} "-I${CMAKE_SOURCE_DIR}/third_party/inter" "-I${CMAKE_SOURCE_DIR}/third_party/lucide" "-I${CMAKE_SOURCE_DIR}/third_party/jetbrains-mono"
             -c "${CMAKE_SOURCE_DIR}/runtime/gui/fonts.S" -o "${dir}/gui_fonts.o"
     COMMAND "${CROMO_CLANG}" ${base} ${CROMO_GUI_IMAGE_FLAGS} -c "${CMAKE_SOURCE_DIR}/runtime/gui/image.c" -o "${dir}/gui_image.o"
     DEPENDS ${CROMO_GUI_SOURCES} ${CROMO_GUI_IMAGE_SOURCES}

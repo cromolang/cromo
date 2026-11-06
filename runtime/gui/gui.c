@@ -140,14 +140,20 @@ void cromo_gui_chrome_free(void* chrome) { SDL_free(chrome); }
 // are rasterized when they are first drawn, at the pixels of the display, into
 // one texture, white with the coverage as alpha, and colored when they are drawn.
 // The positions are in logical pixels, which the scale of the renderer multiplies.
+// The italic is the outline of the letters slanted before it is rasterized (D493),
+// as the browsers do for a font without its italic.
 
 extern const u8 cromo_gui_inter_regular[];
 extern const u8 cromo_gui_inter_semibold[];
 extern const u8 cromo_gui_lucide[];
+extern const u8 cromo_gui_mono_regular[];
+extern const u8 cromo_gui_mono_semibold[];
 
-#define ATLAS 1024      // the side of the texture of a font of text
-#define ICON_ATLAS 512  // of a font of icons, which has fewer glyphs
-#define GLYPHS 4096     // the slots of the table of the glyphs, a power of 2
+#define ATLAS 1024       // the side of the texture of a font of large text
+#define SMALL_ATLAS 512  // of a font of text up to 32 pixels of the display, and of the icons
+#define GLYPHS 4096      // the slots of the table of the glyphs, a power of 2
+#define SLANT 0.2f       // the italic: the tangent of its slant, about 11 degrees
+#define OBLIQUE 8        // the bit of the italic in the face
 
 typedef struct {
     i32 code;  // -1 for a free slot
@@ -166,23 +172,30 @@ typedef struct {
     f32 descent;
     f32 gap;
     i32 atlas;  // the side of its texture
+    i32 oblique;
     i32 shelfX, shelfY, shelfHeight;
     i32 count;
     Glyph glyphs[GLYPHS];
 } Font;
 
-// A font of text, face 0 regular and 1 semibold, whose size is the height of its
-// letters; or with face 2 the font of the icons, whose size is that of the square
-// of an icon.
+// A font of text, whose size is the height of the letters of Inter: face 0 Inter
+// regular, 1 Inter semibold, 3 JetBrains Mono regular and 4 semibold (D492), the
+// letters of the same size as those of Inter, and with OBLIQUE their italic; or
+// with face 2 the font of the icons, whose size is that of the square of an icon.
 void* cromo_gui_font(void* renderer, i32 face, f32 size, f32 density) {
     Font* font = SDL_malloc(sizeof(Font));
     if (!font) return 0;
-    const u8* data = face == 2 ? cromo_gui_lucide : face ? cromo_gui_inter_semibold : cromo_gui_inter_regular;
+    i32 family = face & 7;
+    const u8* data = family == 1   ? cromo_gui_inter_semibold
+                     : family == 2 ? cromo_gui_lucide
+                     : family == 3 ? cromo_gui_mono_regular
+                     : family == 4 ? cromo_gui_mono_semibold
+                                   : cromo_gui_inter_regular;
     if (!stbtt_InitFont(&font->info, data, stbtt_GetFontOffsetForIndex(data, 0))) {
         SDL_free(font);
         return 0;
     }
-    font->atlas = face == 2 ? ICON_ATLAS : ATLAS;
+    font->atlas = family == 2 || size * density <= 32 ? SMALL_ATLAS : ATLAS;
     font->texture = SDL_CreateTexture(renderer, PIXELS_RGBA, 0, font->atlas, font->atlas);  // SDL_TEXTUREACCESS_STATIC
     if (!font->texture) {
         SDL_free(font);
@@ -191,8 +204,17 @@ void* cromo_gui_font(void* renderer, i32 face, f32 size, f32 density) {
     SDL_SetTextureBlendMode(font->texture, BLEND);
     font->renderer = renderer;
     font->density = density;
-    font->scale = face == 2 ? stbtt_ScaleForMappingEmToPixels(&font->info, size * density)
-                            : stbtt_ScaleForPixelHeight(&font->info, size * density);
+    font->oblique = (face & OBLIQUE) != 0;
+    if (family == 2) {
+        font->scale = stbtt_ScaleForMappingEmToPixels(&font->info, size * density);
+    } else if (family >= 3) {  // the em of Inter at this size
+        stbtt_fontinfo inter;
+        stbtt_InitFont(&inter, cromo_gui_inter_regular, stbtt_GetFontOffsetForIndex(cromo_gui_inter_regular, 0));
+        f32 em = stbtt_ScaleForPixelHeight(&inter, size * density) / stbtt_ScaleForMappingEmToPixels(&inter, 1);
+        font->scale = stbtt_ScaleForMappingEmToPixels(&font->info, em);
+    } else {
+        font->scale = stbtt_ScaleForPixelHeight(&font->info, size * density);
+    }
     i32 ascent, descent, gap;
     stbtt_GetFontVMetrics(&font->info, &ascent, &descent, &gap);
     font->ascent = ascent * font->scale / density;
@@ -225,6 +247,69 @@ static void clearAtlas(Font* font) {
     font->count = 0;
 }
 
+// The outline of a glyph, slanted for the italic: x grows with y, from the baseline.
+static i32 outlineOf(Font* font, i32 index, stbtt_vertex** vertices) {
+    i32 count = stbtt_GetGlyphShape(&font->info, index, vertices);
+    if (font->oblique) {
+        for (i32 i = 0; i < count; ++i) {
+            stbtt_vertex* v = &(*vertices)[i];
+            v->x = (short)SDL_floor(v->x + v->y * SLANT + 0.5);
+            v->cx = (short)SDL_floor(v->cx + v->cy * SLANT + 0.5);
+            v->cx1 = (short)SDL_floor(v->cx1 + v->cy1 * SLANT + 0.5);
+        }
+    }
+    return count;
+}
+
+// The box of the pixels of a glyph, from the pen and the baseline, y down.
+static void boxOf(Font* font, i32 index, i32* x0, i32* y0, i32* x1, i32* y1) {
+    if (!font->oblique) {
+        stbtt_GetGlyphBitmapBox(&font->info, index, font->scale, font->scale, x0, y0, x1, y1);
+        return;
+    }
+    stbtt_vertex* vertices;
+    i32 count = outlineOf(font, index, &vertices);
+    f32 left = 1e30f, right = -1e30f, low = 1e30f, high = -1e30f;
+    for (i32 i = 0; i < count; ++i) {
+        stbtt_vertex* v = &vertices[i];
+        i32 points = v->type == STBTT_vcubic ? 3 : v->type == STBTT_vcurve ? 2 : 1;
+        for (i32 p = 0; p < points; ++p) {
+            f32 x = p == 0 ? v->x : p == 1 ? v->cx : v->cx1;
+            f32 y = p == 0 ? v->y : p == 1 ? v->cy : v->cy1;
+            if (x < left) left = x;
+            if (x > right) right = x;
+            if (y < low) low = y;
+            if (y > high) high = y;
+        }
+    }
+    STBTT_free(vertices, font->info.userdata);
+    if (count <= 0) {
+        *x0 = *y0 = *x1 = *y1 = 0;
+        return;
+    }
+    *x0 = STBTT_ifloor(left * font->scale);
+    *y0 = STBTT_ifloor(-high * font->scale);
+    *x1 = STBTT_iceil(right * font->scale);
+    *y1 = STBTT_iceil(-low * font->scale);
+}
+
+// The coverage of a glyph into its box, w by h pixels from (x0, y0).
+static void rasterize(Font* font, i32 index, u8* coverage, i32 w, i32 h, i32 x0, i32 y0) {
+    if (!font->oblique) {
+        stbtt_MakeGlyphBitmap(&font->info, coverage, w, h, w, font->scale, font->scale, index);
+        return;
+    }
+    stbtt_vertex* vertices;
+    i32 count = outlineOf(font, index, &vertices);
+    stbtt__bitmap bitmap;
+    bitmap.w = w;
+    bitmap.h = h;
+    bitmap.stride = w;
+    bitmap.pixels = coverage;
+    stbtt_Rasterize(&bitmap, 0.35f, vertices, count, font->scale, font->scale, 0, 0, x0, y0, 1, font->info.userdata);
+    STBTT_free(vertices, font->info.userdata);
+}
+
 static Glyph* findGlyph(Font* font, i32 code) {
     u32 slot = ((u32)code * 2654435761u) & (GLYPHS - 1);
     for (;;) {
@@ -240,7 +325,7 @@ static Glyph* findGlyph(Font* font, i32 code) {
     i32 index = stbtt_FindGlyphIndex(&font->info, code);
     i32 advance, bearing, x0, y0, x1, y1;
     stbtt_GetGlyphHMetrics(&font->info, index, &advance, &bearing);
-    stbtt_GetGlyphBitmapBox(&font->info, index, font->scale, font->scale, &x0, &y0, &x1, &y1);
+    boxOf(font, index, &x0, &y0, &x1, &y1);
     i32 w = x1 - x0, h = y1 - y0;
     if (w > 0 && h > 0) {
         if (font->shelfX + w + 1 > font->atlas) {
@@ -267,7 +352,7 @@ static Glyph* findGlyph(Font* font, i32 code) {
         u8* coverage = SDL_malloc((size_t)w * h);
         u8* pixels = SDL_malloc((size_t)w * h * 4);
         if (coverage && pixels) {
-            stbtt_MakeGlyphBitmap(&font->info, coverage, w, h, w, font->scale, font->scale, index);
+            rasterize(font, index, coverage, w, h, x0, y0);
             for (i32 i = 0; i < w * h; ++i) {
                 pixels[4 * i] = pixels[4 * i + 1] = pixels[4 * i + 2] = 255;
                 pixels[4 * i + 3] = coverage[i];

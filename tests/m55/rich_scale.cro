@@ -1,0 +1,12 @@
+// The scale of a style is more than 0 (D491).
+// expect-exit: 101
+// expect-stderr: the scale of a style of rich text is more than 0, found 0
+import std.gui
+
+i32 main() {
+    gui.TextStyle s = gui.TextStyle(gui.Ink.Faint)
+    s.scale = 0
+    gui.RichText t
+    t.text("x", s)
+    ret 0
+}
