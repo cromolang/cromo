@@ -1,3 +1,18 @@
+// Clocks and pauses: now() reads a monotonic clock to measure how long something
+// takes, utcNow() and localNow() give the date and the time, unix() the seconds from
+// 1970, and sleep(), msleep() and usleep() pause the program.
+//
+// '''
+// import std.time
+//
+// time.Instant start = time.now()
+// time.msleep(50)
+// println("{} ms", start.elapsed().milliseconds())
+// println("{}", time.localNow().text())   // 2026-10-29T14:03:12.250+01:00
+// '''
+//
+// The guide: [Files, processes and time](https://cromolang.org/book/en/system.html).
+
 // The module std.time (D203): a monotonic clock to measure, the date and the
 // time in UTC and in the zone of the system, and pauses. The clocks are in
 // time_windows.cro and time_linux.cro (D202), with:
@@ -6,33 +21,40 @@
 //   i32 localOffset(i64 seconds)  the offset of the zone at that time, in minutes
 //   void pause(i64 nanoseconds)
 
-// A span of time.
+// A span of time, as elapsed() and since() give it.
 public struct Duration {
-    public i64 nanoseconds
+    public i64 nanoseconds  // the whole span, in nanoseconds
 
+    // The span in seconds, with their fractions.
     public f64 seconds() const {
         ret f64(nanoseconds) / 1e9
     }
 
+    // The whole milliseconds of the span, without the rest.
     public i64 milliseconds() const {
         ret nanoseconds / 1000000
     }
 
+    // The whole microseconds of the span, without the rest.
     public i64 microseconds() const {
         ret nanoseconds / 1000
     }
 }
 
-// A moment of the monotonic clock, which never goes back: it serves to measure.
+// A moment of the monotonic clock, from now(). That clock never goes back, also
+// when the date of the system changes: it serves to measure how long something
+// takes.
 public struct Instant {
     i64 ticks
 
+    // The time from this instant to now.
     public Duration elapsed() const {
         Duration result
         result.nanoseconds = monotonic() - ticks
         ret result
     }
 
+    // The time from 'earlier' to this instant; negative if 'earlier' comes after it.
     public Duration since(Instant earlier) const {
         Duration result
         result.nanoseconds = ticks - earlier.ticks
@@ -40,18 +62,20 @@ public struct Instant {
     }
 }
 
-// A date with the time of day, in UTC or in the zone of the system.
+// A date with the time of day, in UTC or in the zone of the system, from utcNow()
+// or localNow().
 public struct DateTime {
-    public i32 year
-    public i32 month  // 1 to 12
-    public i32 day    // 1 to 31
-    public i32 hour
-    public i32 minute
-    public i32 second
-    public i32 nanosecond
-    public i32 offset  // from UTC, in minutes: 60 in Rome in winter
+    public i32 year        // with all its digits: 2026
+    public i32 month       // 1 to 12
+    public i32 day         // 1 to 31
+    public i32 hour        // 0 to 23
+    public i32 minute      // 0 to 59
+    public i32 second      // 0 to 59
+    public i32 nanosecond  // 0 to 999999999
+    public i32 offset      // from UTC, in minutes: 60 in Rome in winter, 0 in UTC
 
-    // ISO 8601: 2026-10-29T14:03:12.250+01:00, or Z at the end in UTC.
+    // The date and the time in the format of ISO 8601, with the milliseconds:
+    // "2026-10-29T14:03:12.250+01:00", or with Z at the end in UTC.
     public string text() const {
         string zone = "Z"
         if (offset != 0) {
@@ -68,13 +92,16 @@ public struct DateTime {
     }
 }
 
+// The present moment of the monotonic clock, to measure the time until a later
+// one with elapsed() or since().
 public Instant now() {
     Instant result
     result.ticks = monotonic()
     ret result
 }
 
-// The seconds from 1970-01-01 UTC (P17), as the times of a JSON Web Token.
+// The seconds from 1970-01-01 UTC, the time of Unix, which fs.modified() and the
+// times of a JSON Web Token use too.
 public i64 unix() {
     i64 nanoseconds = unixNanoseconds()
     i64 seconds = nanoseconds / 1000000000
@@ -84,23 +111,31 @@ public i64 unix() {
     ret seconds
 }
 
+// The date and the time now, in UTC.
 public DateTime utcNow() {
     ret dateTime(unixNanoseconds(), 0)
 }
 
+// The date and the time now, in the zone of the system, whose offset from UTC is
+// in the field offset. On Linux the zone is that of /etc/localtime, and UTC
+// without it.
 public DateTime localNow() {
     i64 now = unixNanoseconds()
     ret dateTime(now, localOffset(now / 1000000000))
 }
 
+// Pauses for 'seconds' seconds; in a task, the task waits and its thread runs the
+// other tasks. Nothing happens for 0 or less.
 public void sleep(i64 seconds) {
     pause(seconds * 1000000000)
 }
 
+// Pauses for 'milliseconds' milliseconds, as sleep() does.
 public void msleep(i64 milliseconds) {
     pause(milliseconds * 1000000)
 }
 
+// Pauses for 'microseconds' microseconds, as sleep() does.
 public void usleep(i64 microseconds) {
     pause(microseconds * 1000)
 }

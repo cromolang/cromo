@@ -1,9 +1,33 @@
-// The module std.jwt (D399-D402): JSON Web Tokens (RFC 7519) in the compact form
-// of JWS (RFC 7515), signed with HMAC, RSA, ECDSA or Ed25519 (RFC 7518, RFC 8037).
-// The claims are a struct of the program, written and read as JSON (D400); the
-// algorithm is always the one of the key, never the one of the header (D402).
-// HMAC and Ed25519 are those of std.crypto, RSA and ECDSA those of mbedTLS in the
-// runtime (runtime/tls/crypto_key.c), with the key read once.
+// JSON Web Tokens (RFC 7519) in the compact form of JWS (RFC 7515), signed with HMAC,
+// RSA, ECDSA or Ed25519 (RFC 7518, RFC 8037): a service gives one to a client that
+// logs in, or a provider of identity gives it, and the client shows it at each request.
+// 'sign' makes a token of the claims, a struct of the program written as JSON, and
+// 'verify' checks one and gives the claims back, or throws 'Invalid' with the reason.
+// The algorithm is always the one of the 'Key', never the one written in the token,
+// so a token with "alg": "none" is refused.
+//
+// '''
+// struct Session {
+//     string sub
+//     i64 exp
+// }
+//
+// jwt.Key key = jwt.secret(jwt.Algorithm.Hs256, "a secret of at least 32 bytes!!!".bytes())
+// Session session
+// session.sub = "anna"
+// session.exp = time.unix() + 3600  // in an hour
+// string token = jwt.sign(session, key)
+// Session back = jwt.verify<Session>(token, key)
+// '''
+//
+// A 'Verifier' checks the tokens with several keys, as those that a provider of
+// identity publishes, read with 'keySet', and checks the issuer and the audience too.
+//
+// The guide: [Networking and HTTP](https://cromolang.org/book/en/networking.html).
+
+// For who works on std.jwt (D399-D402): the claims are a struct (D400), the algorithm
+// is the one of the key (D402). HMAC and Ed25519 are those of std.crypto, RSA and ECDSA
+// those of mbedTLS in the runtime (runtime/tls/crypto_key.c), with the key read once.
 import unsafe
 import std.crypto
 import std.json
@@ -20,19 +44,22 @@ extern "cromo" {
 
 // ---- Algorithms (RFC 7518, RFC 8037) ----
 
-// In this order: the hash of an algorithm of HMAC, RSA or ECDSA follows from it.
-public enum Algorithm {
-    Hs256
-    Hs384
-    Hs512
-    Rs256
-    Rs384
-    Rs512
-    Es256
-    Es384
-    EdDsa
+// The cases are in this order: the hash of an algorithm of HMAC, RSA or ECDSA follows
+// from it.
 
-    // Its name in the header of a token.
+// An algorithm that signs the tokens, the one of a 'Key'.
+public enum Algorithm {
+    Hs256  // HMAC with SHA-256, with a secret
+    Hs384  // HMAC with SHA-384, with a secret
+    Hs512  // HMAC with SHA-512, with a secret
+    Rs256  // RSA with SHA-256 (PKCS#1 v1.5), the default of many providers of identity
+    Rs384  // RSA with SHA-384
+    Rs512  // RSA with SHA-512
+    Es256  // ECDSA on the curve P-256 with SHA-256
+    Es384  // ECDSA on the curve P-384 with SHA-384
+    EdDsa  // Ed25519
+
+    // Its name in the header of a token: "HS256", "EdDSA".
     public string name() const {
         switch {
             case Hs256 {
@@ -115,10 +142,15 @@ i32 algorithmNamed(string name) {
 
 // ---- Keys (P14, P16) ----
 
-// A key to sign or to verify, of one algorithm: a secret of HMAC, a key of RSA or
-// of a curve, read once by mbedTLS, or a key of Ed25519. It is moved, not copied.
+// A key to sign or to verify the tokens of one algorithm: a secret of HMAC from
+// 'secret', a key in PEM from 'publicKey' or 'privateKey', or a key of a JWK Set from
+// 'keySet'. A secret or a private key signs and verifies, a public key only verifies.
+// The text of a key is read once, when the key is made, and its secret is wiped from
+// memory when it ends. It can be moved, not copied.
 public struct Key {
-    public string id  // the kid of the header (RFC 7515 §4.1.4), which sign writes
+    // Its kid, which 'sign' writes in the header of the token and a 'Verifier' looks
+    // for (RFC 7515 §4.1.4): "" unless the program sets it, or it comes from 'keySet'.
+    public string id
     Algorithm algorithm
     list<u8> secretBytes  // of HMAC, or the private key of Ed25519
     list<u8> publicBytes  // of Ed25519
@@ -133,8 +165,10 @@ public struct Key {
     }
 }
 
-// A secret of HMAC, for HS256, HS384 or HS512, at least as long as the hash: 32
-// bytes for HS256, 48 for HS384, 64 for HS512 (RFC 7518 §3.2).
+// A key of HMAC for HS256, HS384 or HS512, which signs and verifies, with a copy of a
+// secret at least as long as the hash: 32 bytes for HS256, 48 for HS384, 64 for HS512
+// (RFC 7518 §3.2); 'crypto.random' makes a good one. An exception for another
+// algorithm, or a shorter secret.
 public Key secret(Algorithm algorithm, list<u8> bytes) {
     if (familyOf(algorithm) != Family.Hmac) {
         throw Error(format("jwt.secret is for HS256, HS384 and HS512, not for {}, which reads a key in PEM",
@@ -151,15 +185,18 @@ public Key secret(Algorithm algorithm, list<u8> bytes) {
     ret key
 }
 
-// A public key in PEM, which verifies: of RSA or of a curve as
-// SubjectPublicKeyInfo ("BEGIN PUBLIC KEY") or PKCS#1, of Ed25519 as
-// SubjectPublicKeyInfo (RFC 8410).
+// A key of the algorithm that verifies, from a public key in PEM: of RSA or of a
+// curve as SubjectPublicKeyInfo ("BEGIN PUBLIC KEY") or PKCS#1, of Ed25519 as
+// SubjectPublicKeyInfo (RFC 8410). An exception for an algorithm of HMAC, a text that
+// is not such a key, a key of another algorithm, as one of RSA for ES256, and a key of
+// RSA of fewer than 2048 bits.
 public Key publicKey(Algorithm algorithm, string pem) {
     ret readKey(algorithm, pem, false)
 }
 
-// A private key in PEM, which signs and verifies: PKCS#8 ("BEGIN PRIVATE KEY"),
-// or PKCS#1 for RSA and SEC 1 for a curve; of Ed25519 as PKCS#8 (RFC 8410).
+// A key of the algorithm that signs and verifies, from a private key in PEM: PKCS#8
+// ("BEGIN PRIVATE KEY"), or PKCS#1 for RSA and SEC 1 for a curve; of Ed25519 as PKCS#8
+// (RFC 8410). An exception as for 'publicKey'.
 public Key privateKey(Algorithm algorithm, string pem) {
     ret readKey(algorithm, pem, true)
 }
@@ -276,9 +313,13 @@ list<u8> ed25519Field(list<u8> der, string start, string what) {
 
 // ---- The keys of a provider (D401) ----
 
-// The keys of a JWK Set (RFC 7517), as a provider of identity publishes it: RSA
-// from n and e, P-256 and P-384 from x and y, Ed25519 from x, each with its kid.
-// The keys for encryption, of another kind, or weak (P16) are left out.
+// The keys of a JWK Set (RFC 7517), the JSON that a provider of identity publishes,
+// which verify: RSA from n and e, P-256 and P-384 from x and y, Ed25519 from x, each
+// with its kid and its algorithm. The keys for encryption, of another kind, weak or
+// that cannot be read are left out, so the list can be empty. An exception if the
+// text is not JSON, or has no member "keys". Downloading the set, as with
+// 'http.Client', and reading it again when the provider changes its keys is up to the
+// program.
 public list<Key> keySet(string text) {
     json.Value set = json.parse(text)
     json.Value entries = set.get("keys")
@@ -434,8 +475,11 @@ list<u8> derInteger(list<u8> magnitude) {
 
 // ---- Signing (D400) ----
 
-// The token of the claims, signed with a secret or a private key; its header has
-// the kid of the key, when it has one.
+// The token of the claims, written as JSON as 'json.encode' does and signed with a
+// secret or a private key; its header has the algorithm of the key, and its kid when
+// it has one. The claims are written as they are: the times, as exp, are fields of
+// the struct that the program sets, in seconds from 1970, as 'time.unix() + 3600'. An
+// exception with a public key, which cannot sign.
 public string sign<T : json.Data>(T claims, Key key) {
     if (!key.signs) {
         throw Error(format("cannot sign with a public key of {}: jwt.privateKey reads one that signs",
@@ -477,21 +521,36 @@ list<u8> signatureOf(Key key, list<u8> data) {
 
 // ---- Verifying (D402) ----
 
-// Why a token is refused (P15).
+// Why a token is refused: the 'reason' of 'Invalid'.
 public enum Reason {
-    Malformed       // not three parts of base64url, or a header or claims that are not objects of JSON
-    WrongAlgorithm  // signed with another algorithm than the one of its key, as none
-    UnknownKey      // no key has the kid of the token
-    BadSignature
-    Expired      // exp has passed
-    NotYetValid  // nbf has not come
-    WrongIssuer
-    WrongAudience
+    // Not three parts of base64url, a header or claims that are not objects of JSON, a
+    // header with crit, or claims that do not fit the struct asked for.
+    Malformed
+    // Signed with another algorithm than the one of its key, as none; for a 'Verifier',
+    // also a token without kid whose algorithm no key has.
+    WrongAlgorithm
+    UnknownKey     // no key of the 'Verifier' has the kid of the token
+    BadSignature   // the signature is not that of the token with the key
+    Expired        // the time of exp has passed
+    NotYetValid    // the time of nbf has not come
+    WrongIssuer    // iss is not the issuer of the 'Verifier'
+    WrongAudience  // aud does not name the audience of the 'Verifier'
 }
 
-// The exception of a token that is refused, with its reason (P15).
+// The exception of a token that is refused: 'reason' says why, and 'message()' explains
+// it, as "the token has expired".
+//
+// '''
+// try {
+//     Claims claims = jwt.verify<Claims>(token, key)
+// } catch (jwt.Invalid e) {
+//     if (e.reason == jwt.Reason.Expired) {
+//         println("log in again")
+//     }
+// }
+// '''
 public struct Invalid : Exception {
-    public Reason reason
+    public Reason reason  // why the token is refused
     string text
 
     string message() const {
@@ -499,18 +558,34 @@ public struct Invalid : Exception {
     }
 }
 
-// The checks of the tokens (D402): the keys, of which a token takes the one with
-// its kid, or without a kid the first of its algorithm; the issuer and the
-// audience it must name, when they are set; the tolerance in seconds on exp and
-// nbf, for the clocks that differ.
+// The checks of the tokens of a service, with one or more keys: the issuer and the
+// audience that the tokens must name, when they are set, and a tolerance on their
+// times. Its 'verify' is const, so the tasks of a server can share one verifier.
+//
+// '''
+// jwt.Verifier verifier
+// verifier.keys = jwt.keySet(http.get("https://id.example.com/jwks.json").text())
+// verifier.issuer = "https://id.example.com"
+// verifier.audience = "my-api"
+// verifier.leeway = 30
+// Claims claims = verifier.verify<Claims>(token)
+// '''
 public struct Verifier {
+    // The keys: a token takes the one with its kid, or, without a kid, the first of its
+    // algorithm.
     public list<Key> keys
+    // The iss that the tokens must have; "" does not check it.
     public string issuer
+    // The audience that the aud of the tokens must name, alone or in an array; "" does
+    // not check it.
     public string audience
+    // The seconds of tolerance on exp and nbf, for the clocks that differ; 0 by default.
     public i64 leeway
 
-    // The claims of the token as the struct T, when the token is valid; otherwise
-    // jwt.Invalid, with its reason.
+    // The claims of the token as the struct T, when it passes the checks: its key, its
+    // algorithm, its signature, exp and nbf when it has them, with the tolerance of
+    // 'leeway', and the issuer and the audience when they are set. Otherwise
+    // 'jwt.Invalid', with its reason.
     public T verify<T : json.Data>(string token) const {
         Token parts = split(token)
         i64 chosen = -1
@@ -532,8 +607,10 @@ public struct Verifier {
     }
 }
 
-// The claims of a token signed with the key, as the struct T, checking exp and nbf
-// without tolerance; otherwise jwt.Invalid, with its reason.
+// The claims of a token signed with the key, as the struct T: it checks the algorithm,
+// the signature, and exp and nbf when the token has them, without tolerance; not the
+// issuer nor the audience, which a 'Verifier' checks. Otherwise 'jwt.Invalid', with its
+// reason.
 public T verify<T : json.Data>(string token, Key key) {
     Token parts = split(token)
     check(key, parts)

@@ -1,5 +1,8 @@
-// The functions of ws2_32 whose names are also functions of std.net: a module of
-// the library that the programs cannot import, used by net_windows.cro (D224).
+// Two functions of Winsock, connect and listen, under other names: std.net has
+// functions with those names, so its file for Windows calls these instead. A module
+// for the library itself: the programs cannot import it.
+
+// For who works on the library: the names are apart from those of std.net (D224).
 import unsafe
 
 extern "ws2_32" {
@@ -7,10 +10,15 @@ extern "ws2_32" {
     i32 listen(i64 socket, i32 backlog)
 }
 
+// connect of Winsock: connects the socket to the sockaddr at 'name', of 'length'
+// bytes. 0 when it is done, or -1 with the error in WSAGetLastError, as WSAEWOULDBLOCK
+// for a socket that does not block while it connects.
 public i32 connectSocket(i64 socket, addr name, i32 length) {
     ret connect(socket, name, length)
 }
 
+// listen of Winsock: the socket waits for connections, with up to 'backlog' of them
+// waiting to be accepted. 0 when it is done, or -1 with the error in WSAGetLastError.
 public i32 listenSocket(i64 socket, i32 backlog) {
     ret listen(socket, backlog)
 }

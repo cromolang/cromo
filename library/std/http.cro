@@ -1,8 +1,39 @@
-// The module std.http (D252-D254, D366-D368): HTTP/1.1 over the connections of
-// std.net, with TLS for https (D235). A server gives every request to one function,
-// each connection on a task (D252, D270), and a request can become a WebSocket.
-// The functions of the client open a connection for each request (D254); an
-// http.Client keeps them, for each host. The client asks for gzip and decompresses.
+// HTTP/1.1, the server and the client, over the connections of std.net, with TLS for
+// https.
+//
+// The server gives every request to one function, the handler, which reads the
+// 'Request' and fills the 'Response': 'serve' runs it for each request, each connection
+// on a task of its own, so the handler runs on several threads at once. A request can
+// also become a WebSocket.
+//
+// '''
+// http.serve("0.0.0.0", 8080, [](ref http.Request req, ref http.Response res) {
+//     if (req.matches("GET /hello/{name}")) {
+//         res.write("Hello, " + req.param("name") + "!")
+//     } else {
+//         res.status = 404
+//     }
+// })
+// '''
+//
+// The client sends a request and gives back the whole response: 'get', 'post' and
+// 'send' open a connection for each request, while a 'Client' keeps them open for the
+// next requests to the same host. It follows the redirects, asks for gzip and
+// decompresses. A status of error, as 404, is a response like the others; an
+// exception of type 'Error' is a failure of the network, a timeout, or an answer that
+// is not HTTP.
+//
+// '''
+// http.Response res = http.get("https://example.com/")
+// println("{} {}", res.status, res.headers.get("content-type"))
+// '''
+//
+// The guide: [Networking and HTTP](https://cromolang.org/book/en/networking.html), and a
+// whole service in [Final project: a web service](https://cromolang.org/book/en/web-service.html).
+
+// For who works on std.http: the server follows D252, D253, D258 and D260-D262, with a
+// task for each connection (D270); the client D254 and D263, with the connections kept
+// by http.Client (D366) and gzip (D367); the WebSocket D368.
 import std.gzip
 import std.net
 import std.thread
@@ -13,15 +44,22 @@ import std.websocket
 
 // A header of a request or of a response.
 public struct Header {
-    public string name
-    public string value
+    public string name   // "Content-Type", in the case it was written in
+    public string value  // "text/html"; one received has no spaces around it
 }
 
-// The headers in their order. The names are compared without case (RFC 9110).
+// The headers of a request or of a response, in their order. The names are compared
+// without case, as HTTP wants: 'get("content-type")' finds "Content-Type". A name can
+// have several headers, as Set-Cookie.
+//
+// '''
+// res.headers.set("Cache-Control", "no-store")
+// string agent = req.headers.get("user-agent")  // "" without it
+// '''
 public struct Headers {
-    public list<Header> items
+    public list<Header> items  // in their order, also those with the same name
 
-    // The value of the first header with the name, "" without one.
+    // A copy of the value of the first header with the name, "" without one.
     public string get(string name) const {
         for (Header item in items) {
             if (sameName(item.name, name)) {
@@ -31,6 +69,7 @@ public struct Headers {
         ret ""
     }
 
+    // Whether there is a header with the name, also with an empty value.
     public bool has(string name) const {
         for (Header item in items) {
             if (sameName(item.name, name)) {
@@ -40,18 +79,23 @@ public struct Headers {
         ret false
     }
 
-    // Replaces the headers with the name with one.
+    // Replaces the headers with the name with one, at the end, with a copy of 'text'.
+    // An exception as for 'add', after the old ones are removed.
     public void set(string name, string text) {
         remove(name)
         add(name, text)
     }
 
-    // Adds a header, also when there is one with the same name.
+    // Adds a header at the end, with a copy of the name and of 'text', also when there
+    // is one with the same name. An exception for an empty name, a name with a space,
+    // a control character or ':', and a value with a new line, which would start
+    // another header.
     public void add(string name, string text) {
         checkHeader(name, text)
         items.add(header(name, text))
     }
 
+    // Removes all the headers with the name; none is not an error.
     public void remove(string name) {
         list<Header> kept
         for (i64 i = 0; i < items.len(); i++) {
@@ -89,23 +133,70 @@ void checkHeader(string name, string text) {
 
 // ---- Requests and responses ----
 
-// A request: the one that a server receives, or the one that the client sends
-// with send().
+// A request of HTTP: on the server, the one that the handler receives, already read
+// whole; on the client, the one that 'send' sends, made with 'Request(method, url)'.
+//
+// The handler of a server chooses the route with 'matches', and reads the parameters
+// of the route with 'param', those of the query with 'queryValue', the headers and the
+// body:
+//
+// '''
+// if (req.matches("GET /users/{id}")) {
+//     i64 id = i64(req.param("id"))  // an exception, so a 500, if it is not a number
+//     string page = req.queryValue("page")
+// } else if (req.matches("POST /users")) {
+//     User user = json.decode<User>(req.text())
+// }
+// '''
+//
+// A client writes its headers and its body before sending it:
+//
+// '''
+// http.Request req = http.Request("PUT", "https://example.com/users/7")
+// req.headers.set("Authorization", "Bearer " + token)
+// req.writeJson(json.encode(user))
+// http.Response res = http.send(req)
+// '''
+//
+// It can be moved, not copied.
 public struct Request {
+    // The method, as "GET" or "POST", as the client wrote it.
     public string method
-    public string url    // the server: as in the request, "/users/7?full=1"
-    public string path   // the server: "/users/7", as sent, with its escapes
-    public string query  // the server: "full=1"
-    public Headers headers
-    public list<u8> body
+    // On the server, the target of the request, "/users/7?full=1"; on the client, the
+    // whole URL, "https://example.com/users/7?full=1".
+    public string url
+    public string path         // on the server: the path of the URL, "/users/7", with its escapes
+    public string query        // on the server: what follows '?', "full=1", with its escapes
+    public Headers headers     // in their order
+    public list<u8> body       // the bytes, whole; 'text()' reads them as text
     list<Header> params        // of the last pattern of matches()
     string version             // "HTTP/1.1"
     net.Connection connection  // the server: lent to the request while the handler runs (D368)
     bool upgraded              // the server: the connection became a WebSocket
 
-    // The server: the request becomes a WebSocket, which `work` uses until it
-    // returns, on the task of the connection; then the WebSocket and the connection
-    // end. A request that is not one of WebSocket gets the status 400.
+    // On the server: answers 101, turns the request into a WebSocket, and gives it to
+    // 'work', which runs on the task of the connection. When 'work' returns or throws,
+    // the connection ends, without the response of the handler. For a clean end,
+    // 'work' calls 'close()', or returns after 'receive()' has thrown
+    // 'websocket.Closed'. A request that is not one of WebSocket gets the status 400,
+    // and 'work' is not called. The WebSocket has no timeout unless 'work' sets one.
+    //
+    // '''
+    // if (req.matches("GET /echo")) {
+    //     req.webSocket([](ref websocket.Socket ws) {
+    //         for {
+    //             switch (ws.receive()) {  // websocket.Closed when the client closes
+    //                 case Text(string text) {
+    //                     ws.send("echo: " + text)
+    //                 }
+    //                 case Binary(list<u8> bytes) {
+    //                     ws.sendBytes(bytes)
+    //                 }
+    //             }
+    //         }
+    //     })
+    // }
+    // '''
     public void webSocket(func(ref websocket.Socket) work) {
         string key = headers.get("sec-websocket-key")
         upgraded = true
@@ -120,30 +211,35 @@ public struct Request {
         work(ref socket)
     }
 
-    // A request for the client: the method and the whole URL.
+    // A request for the client, with a copy of the method, as "GET" or "DELETE", and of
+    // the whole URL, "https://example.com/users/7". Its headers and its body are added
+    // after.
     public Request(string verb, string address) {
         method = verb.copy()
         url = address.copy()
     }
 
-    // The body as text: an exception if it is not UTF-8.
+    // A copy of the body as text: an exception if it is not UTF-8.
     public string text() const {
         ret string(body)
     }
 
-    // Adds text to the body, of type text/plain unless the headers say another.
+    // Adds the text at the end of the body, and sets the Content-Type to "text/plain;
+    // charset=utf-8" unless the headers have one.
     public void write(string text) {
         appendText(ref body, text)
         defaultType(ref headers, "text/plain; charset=utf-8")
     }
 
-    // Adds the text of JSON to the body, of type application/json, as
-    // req.writeJson(json.encode(user)).
+    // Adds a text of JSON at the end of the body, as 'req.writeJson(json.encode(user))',
+    // and sets the Content-Type to "application/json" unless the headers have one.
     public void writeJson(string text) {
         appendText(ref body, text)
         defaultType(ref headers, "application/json")
     }
 
+    // Adds the bytes at the end of the body, and sets the Content-Type to 'type', as
+    // "image/png", unless the headers have one.
     public void writeBytes(list<u8> bytes, string type) {
         for (u8 b in bytes) {
             body.add(b)
@@ -151,10 +247,12 @@ public struct Request {
         defaultType(ref headers, type)
     }
 
-    // Whether the request has the method and the path of the pattern (D252):
-    // "GET /users/{id}" takes a segment of the path as the parameter id, and
-    // "/files/{rest...}" all the rest; without the method any method goes, and
-    // GET takes also HEAD. The parameters are then read with param().
+    // Whether the method and the path of the request are those of the pattern, as
+    // "GET /users/{id}", where a name in braces takes a segment of the path that is not
+    // empty, and '{rest...}', only at the end, all the rest of the path. Without the
+    // method any method goes, and GET takes HEAD too. The other segments are compared
+    // exactly, also a final '/'; the query does not count. When it is true, 'param'
+    // reads the parameters. A pattern with '{rest...}' before its end is an exception.
     public bool matches(string pattern) {
         string shape = pattern.copy()
         i64 space = find(pattern, " ", 0)
@@ -205,7 +303,8 @@ public struct Request {
         ret true
     }
 
-    // A parameter of the pattern of the last matches() that was true.
+    // A parameter of the pattern of the last 'matches' that was true, without its
+    // escapes: 'param("id")' for "{id}". An exception if that pattern does not have it.
     public string param(string name) const {
         for (Header item in params) {
             if (item.name == name) {
@@ -215,7 +314,9 @@ public struct Request {
         throw Error(format("the pattern that the request matched has no parameter {{{}}}", name))
     }
 
-    // A value of the query, without its escapes: "" without it.
+    // The value of a parameter of the query, without its escapes and with '+' as a
+    // space: "2" for 'queryValue("page")' with "?page=2". The first with the name; ""
+    // when it is missing or has no value.
     public string queryValue(string name) const {
         for (string pair in split(query, "&")) {
             i64 equal = find(pair, "=", 0)
@@ -241,32 +342,56 @@ string parameterName(string part) {
     ret ""
 }
 
-// A response: the one that the handler of a server fills, with status 200 unless
-// it says another, or the one that the client receives.
+// A response of HTTP: on the server, the one that the handler fills, with the status
+// 200 unless it sets another; on the client, the one received, with the whole body.
+//
+// The server writes it when the handler returns, in one piece with its Content-Length:
+// the Content-Length, Connection and Transfer-Encoding that the handler sets are left
+// out, but "Connection: close" closes the connection after the response. The statuses
+// 204 and 304 send no body, and neither does the response to HEAD.
+//
+// '''
+// res.status = 201
+// res.headers.set("Location", "/users/7")
+// res.writeJson(json.encode(user))
+// '''
+//
+// On the client, a body that the server compressed with gzip arrives decompressed,
+// and then the headers have its Content-Length, without Content-Encoding.
+//
+// '''
+// http.Response res = http.get("https://example.com/users/7")
+// if (res.status == 200) {
+//     User user = json.decode<User>(res.text())
+// }
+// '''
 public struct Response {
-    public i32 status = 200
-    public Headers headers
-    public list<u8> body
-    bool closes  // the client: the connection cannot carry another request
+    public i32 status = 200  // as 200, 404 or 500
+    public Headers headers   // in their order
+    public list<u8> body     // the bytes, whole; 'text()' reads them as text
+    bool closes              // the client: the connection cannot carry another request
 
-    // The body as text: an exception if it is not UTF-8.
+    // A copy of the body as text: an exception if it is not UTF-8.
     public string text() const {
         ret string(body)
     }
 
-    // Adds text to the body, of type text/plain unless the headers say another.
+    // Adds the text at the end of the body, and sets the Content-Type to "text/plain;
+    // charset=utf-8" unless the headers have one.
     public void write(string text) {
         appendText(ref body, text)
         defaultType(ref headers, "text/plain; charset=utf-8")
     }
 
-    // Adds the text of JSON to the body, of type application/json, as
-    // res.writeJson(json.encode(user)).
+    // Adds a text of JSON at the end of the body, as 'res.writeJson(json.encode(user))',
+    // and sets the Content-Type to "application/json" unless the headers have one.
     public void writeJson(string text) {
         appendText(ref body, text)
         defaultType(ref headers, "application/json")
     }
 
+    // Adds the bytes at the end of the body, and sets the Content-Type to 'type', as
+    // "image/png", unless the headers have one.
     public void writeBytes(list<u8> bytes, string type) {
         for (u8 b in bytes) {
             body.add(b)
@@ -290,17 +415,47 @@ void defaultType(ref Headers headers, string type) {
 
 // ---- The server (D252) ----
 
-// A server that listens, before it serves: port() gives the port also when 0
-// asked the system for a free one.
+// A server that listens, made by 'listen' or 'listenTls', and serves once 'serve' is
+// called: until then the connections wait in the system. Its 'port()' is known before,
+// also when 0 asked the system for a free one, so a program can start the server in a
+// task and then call it, as a test does. It can be moved, as into a task, not copied.
+//
+// '''
+// http.Server server = http.listen("127.0.0.1", 0)
+// println("listening on port {}", server.port())
+// thread.Atomic<i64> count  // shared by the requests
+// server.serve([count](ref http.Request req, ref http.Response res) {
+//     res.write(format("request {}", count.add(1) + 1))
+// })
+// '''
 public struct Server {
     net.Listener listener
 
+    // The port it listens on, also when 0 asked the system for a free one.
     public i32 port() const {
         ret listener.port()
     }
 
-    // Gives every request to the handler, each connection on a task of its own
-    // (D270), and never returns. An exception of the handler gives the status 500.
+    // Gives every request to the handler, and never returns. It accepts the
+    // connections on the thread or the task that calls it, and serves each one on a
+    // task of its own, its requests one after the other while the client keeps it
+    // open. So the handler runs on several threads at once: it is a 'const func', and
+    // what the requests share is in a 'thread.Mutex' or a 'thread.Atomic', captured by
+    // reading.
+    //
+    // - Before the handler, the request is read whole: a head larger than 64 KiB gets
+    //   the status 431, a body larger than 16 MiB 413, a request that is not valid 400,
+    //   and a version other than HTTP/1.1 and 1.0 505. "Expect: 100-continue" is
+    //   answered.
+    // - The response is written when the handler returns.
+    // - An exception of the handler replaces its response with the status 500 and an
+    //   empty body, and writes a line on the error output, as "http: GET /users/x:
+    //   ..."; a panic still ends the program.
+    // - A connection waits 5 seconds for the start of each request, then 30 seconds for
+    //   each read and write; past them it ends in silence, as it does when the client
+    //   goes away or the network fails.
+    // - An error in accepting a connection, as too many open files, is tried again
+    //   after 10 milliseconds.
     public void serve(const func(ref Request, ref Response) handler) const {
         thread.Group connections
         for {
@@ -322,20 +477,35 @@ public struct Server {
     }
 }
 
+// A server that listens on the port of a name or an address, as "0.0.0.0" for all the
+// addresses of IPv4, and serves once 'serve' is called; port 0 asks the system for a
+// free one, which 'port()' gives. An exception if the name is not found or the port is
+// taken.
 public Server listen(string host, i32 port) {
     Server server
     server.listener = net.listen(host, port)
     ret server
 }
 
-// With TLS: the certificate, followed by its chain, and the key, in PEM (D235).
+// A server of https, as 'listen' gives: 'certificate' is the text in PEM of its
+// certificate, followed by those of its chain, and 'key' the text in PEM of its private
+// key. An exception if they cannot be read. The handshake of each connection is made
+// on its task.
 public Server listenTls(string host, i32 port, string certificate, string key) {
     Server server
     server.listener = net.listenTls(host, port, certificate, key)
     ret server
 }
 
-// Listens and serves: http.serve("0.0.0.0", 8080, handler).
+// Listens on the port of a name or an address and gives every request to the handler,
+// as 'listen' and then 'Server.serve' do: it never returns. An exception if it cannot
+// listen.
+//
+// '''
+// http.serve("0.0.0.0", 8080, [](ref http.Request req, ref http.Response res) {
+//     res.write("Hello!")
+// })
+// '''
 public void serve(string host, i32 port, const func(ref Request, ref Response) handler) {
     Server server = listen(host, port)
     server.serve(handler)
@@ -675,10 +845,13 @@ string reason(i32 status) {
 
 // ---- The client (D254) ----
 
+// The response to a GET of the URL, as 'send' gives it.
 public Response get(string url) {
     ret send(Request("GET", url))
 }
 
+// The response to a POST of the text 'body' to the URL, with the Content-Type 'type',
+// as "application/json", as 'send' gives it.
 public Response post(string url, string body, string type) {
     Request req = Request("POST", url)
     req.headers.set("Content-Type", type)
@@ -686,9 +859,24 @@ public Response post(string url, string body, string type) {
     ret send(req)
 }
 
-// Sends a request on a new connection, with TLS for https, and follows up to ten
-// redirects. A status of error is a response, not an exception; an exception is
-// a failure of the network or a response that is not HTTP.
+// Sends the request on a connection of its own, with TLS for https, and gives back the
+// response, read whole. The request is not changed, and can be sent again.
+//
+// - The URL starts with http:// or https://, and can have a port; a name and a password
+//   in it are not supported. Its path and its query are sent as written, so the
+//   values in them are written with 'escape'; the fragment after '#' is not sent.
+// - The client writes Host, Content-Length and Connection by itself, and adds
+//   "User-Agent: cromo" and "Accept-Encoding: gzip" when the request does not have
+//   them. It decompresses a body in gzip only when it asked for it.
+// - Up to ten redirects are followed. After 303, and after 301 or 302 to a method other
+//   than GET and HEAD, the request goes on as a GET without a body. Authorization and
+//   Cookie are not sent to another host.
+// - Connecting, with the handshake of TLS, has no timeout; then each read and write
+//   waits at most 30 seconds.
+// - A status of error, as 404, is a response, not an exception. An exception of type
+//   'Error' is a URL that cannot be used, a host that is not found, a failure of the
+//   network or of TLS, a timeout, more than ten redirects, an answer that is not HTTP,
+//   or a body larger than 16 MiB, also once decompressed.
 public Response send(Request req) {
     Client once
     once.single = true
@@ -701,17 +889,39 @@ struct Kept {
     net.Connection connection
 }
 
-// D366: a client that keeps the connections open, for each host, to use them for
-// the next requests. Several tasks can use the same client: they read it.
+// For who works on std.http: http.Client is D366, its bodyLimit P19.
+
+// A client of HTTP that keeps its connections open, up to 8 for each host, to use them
+// again for the next requests to the same host: many requests are much faster. Its
+// methods are const, so several tasks can use the same client at once, capturing it
+// by reading, each request on a connection of its own. A kept connection that the
+// server has closed meanwhile fails before the response: then the request is sent
+// again, once, on a new connection. The destructor closes the connections. It can be
+// moved, not copied.
+//
+// '''
+// http.Client client
+// client.bodyLimit = 1048576
+// for (i64 id = 1; id <= 3; id++) {
+//     http.Response res = client.get(format("https://example.com/users/{}", id))
+//     println("{}", res.status)
+// }
+// '''
 public struct Client {
     thread.Mutex<list<Kept>> idle
-    bool single                      // the functions of the module: a connection for each request (D254)
-    public i64 bodyLimit = 16777216  // the largest body of a response, also decompressed (P19)
+    bool single  // the functions of the module: a connection for each request (D254)
+    // The largest body of a response, in bytes, also once decompressed: a larger one is
+    // an exception. 16 MiB by default.
+    public i64 bodyLimit = 16777216
 
+    // The response to a GET of the URL, as 'http.get' gives it, on the connections of
+    // the client.
     public Response get(string url) const {
         ret send(Request("GET", url))
     }
 
+    // The response to a POST of the text 'body' to the URL, with the Content-Type
+    // 'type', as 'http.post' gives it, on the connections of the client.
     public Response post(string url, string body, string type) const {
         Request req = Request("POST", url)
         req.headers.set("Content-Type", type)
@@ -719,7 +929,9 @@ public struct Client {
         ret send(req)
     }
 
-    // As http.send, on the connections of the client.
+    // Sends the request as 'http.send' does, on a connection kept by the client or on
+    // a new one, which it keeps after the response unless the server closes it. The
+    // body of the response has at most 'bodyLimit' bytes.
     public Response send(Request req) const {
         string method = req.method.copy()
         string url = req.url.copy()
@@ -1044,8 +1256,9 @@ string resolve(string base, string location) {
 
 // ---- Escapes of URLs ----
 
-// The text with %XX for every byte that is not a letter, a digit or -_.~, for a
-// value of the query or a segment of the path.
+// The text with %XX for every byte that is not a letter, a digit, '-', '_', '.' or '~',
+// for a value of the query or a segment of the path of a URL: 'http.escape("a b&c")'
+// gives "a%20b%26c".
 public string escape(string text) {
     string out
     for (i64 i = 0; i < text.len(); i++) {

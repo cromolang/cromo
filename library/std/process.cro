@@ -1,9 +1,30 @@
+// Other programs, with their standard input, output and error. run() runs a program
+// to its end and gives its exit code and what it printed; start() starts one and
+// gives a Process, to write to its input and read its output while it runs.
+//
+// A program is found as the shell finds it: in the folders of PATH when its name
+// has no folder, and on Windows without '.exe' too. Its arguments reach it as they
+// are, without a shell that interprets them. An exit code other than 0 is a value
+// to check; a program that cannot start is an exception.
+//
+// '''
+// import std.process
+//
+// process.Output result = process.run("git", ["status", "--short"])
+// if (result.code != 0) {
+//     eprintln("git failed: {}", result.err)
+// }
+// print("{}", result.out)
+// '''
+//
+// The guide: [Files, processes and time](https://cromolang.org/book/en/system.html).
+
 // The module std.process (D307): other programs, with their standard input,
 // output and error. The calls of the system are in process_windows.cro and
 // process_linux.cro (D202), with:
 //   void launch(ref Process p, string program, list<string> args, bool errors)
 //       starts the program, with pipes for its input and output, and for its
-//       errors too when `errors`; otherwise it writes them where this program does
+//       errors too when 'errors'; otherwise it writes them where this program does
 //   i64 readSome(i64 pipe, addr data, i64 most)   0 at the end
 //   void writeAll(i64 pipe, addr data, i64 size)
 //   void closePipe(i64 pipe)
@@ -14,15 +35,27 @@
 import std.thread
 import unsafe
 
-// What run() gives: the exit code, and the standard output and error as text.
+// What run() gives: the exit code, and the standard output and error as text, with
+// U+FFFD in place of the bytes that are not UTF-8.
 public struct Output {
-    public i32 code
-    public string out
-    public string err
+    public i32 code    // the exit code: 0 for success; on Linux, 128 + the signal that ended it
+    public string out  // the standard output
+    public string err  // the standard error
 }
 
-// A program that runs, from start(). Its destructor closes its input and output
-// and waits for its end.
+// A program that runs, from start(): this program writes to its standard input and
+// reads its standard output, while its errors go where those of this program go.
+// When the Process is destroyed, as at the end of its block, the input and the
+// output are closed and the end of the program is waited for, unless wait() did it
+// already.
+//
+// '''
+// process.Process p = process.start("git", ["hash-object", "--stdin"])
+// p.write("hello\n")
+// p.closeInput()
+// string hash = p.readAll()   // "ce013625030ba8dba906f756967f9e9ca394464a\n"
+// i32 code = p.wait()
+// '''
 public struct Process {
     i64 id = -1     // Windows: the handle of the process; Linux: its pid
     i64 input = -1  // the pipes, or -1
@@ -39,6 +72,9 @@ public struct Process {
         }
     }
 
+    // Writes the text to the standard input of the program, and waits while the
+    // program does not read it. Throws if the input is closed, or if the program
+    // does not read it any more, as when it has ended.
     public void write(string text) {
         if (input < 0) {
             throw Error("cannot write to the program: its input is closed (D307)")
@@ -46,6 +82,7 @@ public struct Process {
         writeAll(input, text.cstring(), text.len())
     }
 
+    // Writes the bytes to the standard input of the program, as write() does.
     public void writeBytes(list<u8> bytes) {
         if (input < 0) {
             throw Error("cannot write to the program: its input is closed (D307)")
@@ -61,7 +98,8 @@ public struct Process {
         }
     }
 
-    // The end of its input, which many programs wait for before they answer.
+    // Closes the standard input of the program, which then sees its end: many
+    // programs, as sort, wait for it before they answer. A second call does nothing.
     public void closeInput() {
         if (input >= 0) {
             closePipe(input)
@@ -69,7 +107,8 @@ public struct Process {
         }
     }
 
-    // Up to `most` bytes of its output, as soon as some arrive: empty at the end.
+    // Up to 'most' bytes of the standard output of the program, as soon as some
+    // arrive; empty at the end of the output.
     public list<u8> read(i64 most) {
         list<u8> bytes
         if (output < 0) {
@@ -88,7 +127,8 @@ public struct Process {
         ret bytes
     }
 
-    // All its output, to its end.
+    // All the standard output of the program that is left, to its end, as text with
+    // U+FFFD in place of the bytes that are not UTF-8.
     public string readAll() {
         if (output < 0) {
             ret ""
@@ -96,7 +136,8 @@ public struct Process {
         ret text(readEverything(output))
     }
 
-    // Waits for its end, and gives its exit code; again, the same code.
+    // Waits for the end of the program, and gives its exit code: on Linux, 128 + the
+    // signal that ended it, as the shells say. A second call gives the same code.
     public i32 wait() {
         if (!waited) {
             code = waitProcess(id)
@@ -105,7 +146,7 @@ public struct Process {
         ret code
     }
 
-    // Ends it at once; wait() then gives its code.
+    // Ends the program at once, if it is still running; wait() then gives its code.
     public void kill() {
         if (id >= 0 && !waited) {
             killProcess(id)
@@ -124,8 +165,9 @@ public struct Process {
     }
 }
 
-// Runs a program to its end, with its output and its errors (D307). A code other
-// than 0 is a value; a program that cannot start is an exception.
+// Runs a program to its end and gives its exit code, its output and its errors; its
+// standard input is empty. An exit code other than 0 is a value to check; throws if
+// the program cannot start, as when it does not exist.
 public Output run(string program, list<string> args) {
     Process p
     launch(ref p, program, args, true)
@@ -145,8 +187,9 @@ public Output run(string program, list<string> args) {
     ret result
 }
 
-// Starts a program, which runs while this one writes to it and reads from it
-// (D307). Its errors go where the errors of this program go.
+// Starts a program, which runs while this one writes to its input and reads its
+// output. Its errors go where those of this program go. Throws if the program
+// cannot start, as when it does not exist.
 public Process start(string program, list<string> args) {
     Process p
     launch(ref p, program, args, false)

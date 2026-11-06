@@ -17,7 +17,7 @@
 
 - Sources in UTF-8, with the `.cro` extension (D29).
 - **A statement ends at the end of the line**, no `;` (D17). A statement continues on the next line if the line ends with a binary operator, a comma or an open parenthesis, or if there are round or square brackets still open. Only one statement per line (D32).
-- Comments: `// line` and `/* block */`.
+- Comments: `// line` and `/* block */`. The `//` lines right above a declaration, or at the end of the line of a field or of a case, are its documentation, in Markdown with code between single quotes and blocks of code between lines `'''`; the comment at the beginning of a file documents its module (D473, D474).
 - Identifiers: letters, digits and `_`, not starting with a digit.
 - Literals:
   - integers: `42`, `0xFF`, `0b1010`, `1_000_000`

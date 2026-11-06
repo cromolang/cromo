@@ -1,9 +1,26 @@
+// Compresses and decompresses data in the format of gzip (RFC 1952), the deflate of
+// RFC 1951 with a header and a check: the files .gz, and the bodies of HTTP with
+// Content-Encoding gzip. inflate() reads deflate alone, as a zip holds it, and
+// crc32() gives the check of gzip and of zip.
+//
+// '''
+// import std.gzip
+//
+// list<u8> packed = gzip.compress("hello, hello, hello".bytes())
+// string text = string(gzip.decompress(packed))
+// '''
+//
+// The guide: [Files, processes and time](https://cromolang.org/book/en/system.html).
+
 // The module std.gzip (D367, D392): the format of gzip (RFC 1952) with deflate (RFC
 // 1951), in Cromo. compress finds the repeats with chains of hashes in a window of
 // 32 KB and writes them with the fixed codes of deflate, in one block; decompress
 // reads the three kinds of block, and any gzip, also of several members. inflate
 // reads deflate without gzip around it, as in a zip (P20).
 
+// The data compressed in the format of gzip, which any gzip reads. It uses only the
+// fixed codes of deflate, so the result is somewhat larger than the one of the gzip
+// command.
 public list<u8> compress(list<u8> data) {
     Writer w
     w.out.reserve(data.len() / 2 + 64)
@@ -80,13 +97,16 @@ public list<u8> compress(list<u8> data) {
     ret move w.out
 }
 
-// Throws when the data are not gzip, or are damaged.
+// The data of a gzip, decompressed; a gzip of several members, one after the
+// other, gives them joined. Throws when the data are not gzip, or are damaged or
+// cut: the CRC-32 and the size are checked. For data that come from the network,
+// decompressUpTo() sets a limit.
 public list<u8> decompress(list<u8> data) {
     ret decompressUpTo(data, 9223372036854775807)
 }
 
-// As decompress, but throws when the result would be larger than `limit`: for data
-// that come from the network, which can be small and become huge.
+// As decompress(), but throws when the result would be larger than 'limit' bytes:
+// for data that come from the network, where a few kilobytes can become gigabytes.
 public list<u8> decompressUpTo(list<u8> data, i64 limit) {
     Reader r
     r.limit = limit
@@ -147,8 +167,9 @@ public list<u8> decompressUpTo(list<u8> data, i64 limit) {
     }
 }
 
-// Deflate without the header and the check of gzip, as a zip holds it (P20); the
-// result must not be larger than `limit`.
+// The data of deflate decompressed, without the header and the check of gzip, as a
+// zip holds them. Throws when the data are damaged or cut, or when the result would
+// be larger than 'limit' bytes.
 public list<u8> inflate(list<u8> data, i64 limit) {
     Reader r
     r.limit = limit
@@ -157,7 +178,8 @@ public list<u8> inflate(list<u8> data, i64 limit) {
     ret move r.out
 }
 
-// The CRC-32 of the data, the check of gzip and of zip (P20).
+// The CRC-32 of the data, the check of gzip and of zip: "123456789" gives
+// 0xCBF43926.
 public u32 crc32(list<u8> data) {
     ret crcOf(data, 0, data.len())
 }

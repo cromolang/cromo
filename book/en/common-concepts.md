@@ -256,6 +256,24 @@ A function has one result. When it may have nothing to give, it returns a conven
    on several lines */
 ```
 
+The `//` comments right above a declaration, with no blank line between, are its documentation: VS Code shows them under the mouse, in the completion and while the arguments of a call are written, as it does for the standard library. A comment at the end of the line of a field documents the field. The text is Markdown, with the code inside a sentence between single quotes, `'r'`, and a block of code between two lines `'''`:
+
+```cromo ignore
+// The area of a circle of radius 'r'.
+//
+// '''
+// f64 a = area(2.0)
+// '''
+f64 area(f64 r) {
+    ret 3.14159 * r * r
+}
+
+struct Point {
+    f64 x  // from the left
+    f64 y  // from the top
+}
+```
+
 ## Statements and lines
 
 A statement ends at the end of its line, without a semicolon. It continues on the next line when the line ends with an operator, a comma or an open parenthesis:

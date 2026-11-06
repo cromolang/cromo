@@ -256,6 +256,24 @@ Una funzione ha un solo risultato. Quando potrebbe non avere nulla da dare, rest
    su più righe */
 ```
 
+I commenti `//` subito sopra una dichiarazione, senza righe vuote in mezzo, sono la sua documentazione: VS Code li mostra sotto il mouse, nel completamento e mentre si scrivono gli argomenti di una chiamata, come fa per la libreria standard. Un commento alla fine della riga di un campo documenta il campo. Il testo è Markdown, con il codice dentro una frase tra apici singoli, `'r'`, e un blocco di codice tra due righe `'''`:
+
+```cromo ignore
+// L'area di un cerchio di raggio 'r'.
+//
+// '''
+// f64 a = area(2.0)
+// '''
+f64 area(f64 r) {
+    ret 3.14159 * r * r
+}
+
+struct Point {
+    f64 x  // da sinistra
+    f64 y  // dall'alto
+}
+```
+
 ## Istruzioni e righe
 
 Un'istruzione finisce alla fine della sua riga, senza punto e virgola. Prosegue sulla riga successiva quando la riga termina con un operatore, una virgola o una parentesi aperta:

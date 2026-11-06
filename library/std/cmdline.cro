@@ -1,15 +1,28 @@
-// The module std.cmdline (D415, D416): the options of a program, read from the
-// arguments of main (D154).
+// The module std.cmdline: the options of a program, read from the arguments of main, and the
+// text of the help. A 'CmdLine' declares the options, each with a long name, a short name of
+// one letter and a description; then 'parse' reads the arguments, and 'getInt', 'getFloat',
+// 'getString', 'exists' and 'rest' give what they hold.
 //
-//   cmdline.CmdLine cmd
-//   cmd.flag("verbose", 'v', "verbose output")
-//   cmd.addInt("port", 'p', "port to listen on", false, 8080)
-//   cmd.parse(args)
-//   i64 port = cmd.getInt("port")
+// '''
+// import std.cmdline
 //
-// The forms of the command line are in P26, the help in P27. A wrong use of the
-// module is a panic; a wrong command line ends the program with its error and the
-// help, with the exit code 2.
+// i32 main(list<string> args) {
+//     cmdline.CmdLine cmd
+//     cmd.flag("verbose", 'v', "print more")
+//     cmd.addInt("port", 'p', "port to listen on", false, 8080)
+//     cmd.parse(args)
+//     i64 port = cmd.getInt("port")
+//     ret 0
+// }
+// '''
+//
+// A wrong use of the module, as two options with the same name, is a panic: it is an error of
+// the program. A wrong command line is an error of who runs it: 'parse' prints the error and
+// the help, and ends the program with the exit code 2.
+//
+// The guide: [Files, processes and time](https://cromolang.org/book/en/system.html).
+
+// D415, D416; the forms of the command line are in P26, the help in P27.
 import std.fs
 import std.os
 
@@ -64,20 +77,40 @@ struct Option {
     }
 }
 
-// The options of a program, the arguments that are not options, and the text of
-// the help.
+// The options of a program, the arguments that are not options, and the text of the help.
+// The options are added first, then 'parse' reads the arguments of main, and the methods
+// that start with 'get' give their values. The options can be written '--port 9000',
+// '--port=9000', '-p 9000' or '-p9000', and the flags together, as '-vq'; an option given
+// twice keeps its last value.
+//
+// '''
+// cmdline.CmdLine cmd
+// cmd.flag("verbose", 'v', "print more")
+// cmd.addString("format", 'f', "output format", false, "text")
+// cmd.choices("format", ["text", "json"])
+// cmd.footer("files...")
+// cmd.parse(args)
+// list<string> files = cmd.rest()
+// '''
 public struct CmdLine {
     list<Option> options
     list<string> others
     string footerText
     string program = "program"
 
-    // An option without a value, as --verbose and -v.
+    // Adds an option without a value, as '--verbose' and '-v': 'name' is the long name,
+    // without '--', 'letter' the short one, or a space, ' ', when there is none, and
+    // 'description' the text of the help. 'exists' says whether it was given. A name that is
+    // empty, starts with '-' or is "help", the letters '-' and 'h', and a name or a letter used
+    // twice, are a panic.
     public void flag(string name, char letter, string description) {
         options.add(newOption(name, letter, description, Kind.Flag, false))
     }
 
-    // An option with an i64; the default is used when the option is not given.
+    // Adds an option with an i64, as '--port 8080' or '-p 8080': 'name', 'letter' and
+    // 'description' as in 'flag'. 'value' is the default, which 'getInt' gives when the option
+    // is not given; a 'required' option must be given, and its default is not used. The value
+    // is read as 'i64("...")' reads it.
     public void addInt(string name, char letter, string description, bool required, i64 value) {
         Option option = newOption(name, letter, description, Kind.Int, required)
         option.integer = value
@@ -85,7 +118,9 @@ public struct CmdLine {
         options.add(move option)
     }
 
-    // An option with an f64.
+    // Adds an option with an f64, as '--ratio 0.5': 'value' is the default, which 'getFloat'
+    // gives when the option is not given; the rest as in 'addInt'. The value is read as
+    // 'f64("...")' reads it.
     public void addFloat(string name, char letter, string description, bool required, f64 value) {
         Option option = newOption(name, letter, description, Kind.Float, required)
         option.real = value
@@ -93,7 +128,8 @@ public struct CmdLine {
         options.add(move option)
     }
 
-    // An option with a string.
+    // Adds an option with a string, as '--format json': 'value' is the default, which
+    // 'getString' gives when the option is not given; the rest as in 'addInt'.
     public void addString(string name, char letter, string description, bool required, string value) {
         Option option = newOption(name, letter, description, Kind.Text, required)
         option.text = value.copy()
@@ -101,7 +137,10 @@ public struct CmdLine {
         options.add(move option)
     }
 
-    // The values allowed for an option, as texts: "8080", "json".
+    // Sets the values allowed for the option 'name', as texts: '["text", "json"]'. A number is
+    // compared as 'format("{}", n)' writes it, so 2.0 is "2". A value given outside the
+    // choices is an error of the command line. An option that was not added, a flag, and the
+    // default of an option that is not required when it is not among the values, are a panic.
     public void choices(string name, list<string> values) {
         i64 at = indexOf(name)
         if (options[at].kind == Kind.Flag) {
@@ -113,14 +152,22 @@ public struct CmdLine {
         }
     }
 
-    // What the line of usage shows after the options, as "files...".
+    // Sets what the line of usage of the help shows after the options, as "files...", for the
+    // arguments that are not options.
     public void footer(string text) {
         footerText = text.copy()
     }
 
-    // Reads the arguments of main: with -h or --help it prints the help and ends the
-    // program with 0; with an error, the error and the help on the standard error,
-    // and the exit code 2 (D416).
+    // Reads the options from the arguments of main, where 'args[0]' is the program: its name,
+    // without the folder and '.exe', goes in the help. The arguments that are not options go to
+    // 'rest()'; after '--' every argument goes there, also when it starts with '-', and so does
+    // '-' alone.
+    //
+    // With '-h' or '--help' it prints the help on the standard output and ends the program with
+    // the exit code 0. A wrong command line, as an unknown option, a missing value, a number
+    // that is not valid, a value outside the choices or a required option that is missing,
+    // prints the error and the help on the standard error, and ends the program with the exit
+    // code 2.
     public void parse(list<string> args) {
         if (args.len() > 0) {
             program = fs.fileName(args[0])
@@ -154,30 +201,39 @@ public struct CmdLine {
         }
     }
 
-    // Whether the option was given.
+    // Whether the option 'name', a flag or one with a value, was on the command line. A name
+    // that was not added is a panic.
     public bool exists(string name) const {
         ret options[indexOf(name)].given
     }
 
-    // The value of an option of int: the one given, or the default.
+    // The value of the option 'name', added with 'addInt': the one given, or the default. A
+    // name that was not added, or an option of another type, is a panic.
     public i64 getInt(string name) const {
         ret options[kindOf(name, Kind.Int)].integer
     }
 
+    // The value of the option 'name', added with 'addFloat': the one given, or the default. A
+    // name that was not added, or an option of another type, is a panic.
     public f64 getFloat(string name) const {
         ret options[kindOf(name, Kind.Float)].real
     }
 
+    // The value of the option 'name', added with 'addString': the one given, or the default.
+    // A name that was not added, or an option of another type, is a panic.
     public string getString(string name) const {
         ret options[kindOf(name, Kind.Text)].text.copy()
     }
 
-    // The arguments that are not options, in their order.
+    // The arguments that are not options, in their order, without 'args[0]'.
     public list<string> rest() const {
         ret others.copy()
     }
 
-    // The text of the help (P27).
+    // The text of the help, which '-h' and '--help' print: the line of usage, as
+    // "usage: server [options] files...", with the required options and the footer, then a line
+    // for each option, with its short and long names, its type, its description, its choices
+    // and its default. Before 'parse' the name of the program is "program".
     public string help() const {
         string usage = "usage: " + program
         for (Option option in options) {

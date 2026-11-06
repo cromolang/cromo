@@ -6,11 +6,15 @@
 # x.formatted.cro, which must not change again; without x.formatted.cro, cromo
 # fmt must refuse x.cro. The files in a folder named `lsp` are opened in cromo
 # lsp (D170), and checked with these directives, positions as line:column:
-#   // lsp-hover: 9:5 text           the hover there contains the text
+#   // lsp-hover: 9:5 text           the hover there contains the text; with '!' it does not
 #   // lsp-definition: 9:5 3:9       the definition is there, or in another file: x.cro:3:9
 #   // lsp-error: 4:13 text          an error there, with the text; no other error is allowed
 #   // lsp-symbols: Point, Point.x   symbols of the file, the members after their type
 #   // lsp-completion: 9:7 len, !data  proposed there, and not proposed with a '!'
+#   // lsp-completion-doc: 9:7 len text  the documentation of that item there contains the text
+#   // lsp-signature: 9:12 1 text      the help on the signature there, with the parameter 1
+#                                      in evidence, has the text in its label or documentation;
+#                                      `none` for no help
 #   // cromo-flags: --release       extra options for cromo
 #   // expect-exit: 42              exit code of the program
 #   // expect-output: text          one line of standard output (repeatable, exact match)
@@ -483,6 +487,12 @@ foreach ($case in Get-ChildItem $PSScriptRoot -Recurse -Filter *.cro | Sort-Obje
             $checks += [pscustomobject]@{ Kind = $matches[1]; Line = [int]$matches[2]; Column = [int]$matches[3]; Value = $matches[4] }
         } elseif ($line -match '^\s*//\s*lsp-completion:\s*(\d+):(\d+)\s+(.+?)\s*$') {
             $checks += [pscustomobject]@{ Kind = 'completion'; Line = [int]$matches[1]; Column = [int]$matches[2]; Value = $matches[3] }
+        } elseif ($line -match '^\s*//\s*lsp-completion-doc:\s*(\d+):(\d+)\s+(\S+)\s+(.+?)\s*$') {
+            $checks += [pscustomobject]@{ Kind = 'completion-doc'; Line = [int]$matches[1]; Column = [int]$matches[2]; Label = $matches[3]; Value = $matches[4] }
+        } elseif ($line -match '^\s*//\s*lsp-signature:\s*(\d+):(\d+)\s+none\s*$') {
+            $checks += [pscustomobject]@{ Kind = 'signature'; Line = [int]$matches[1]; Column = [int]$matches[2]; Active = -1; Value = '' }
+        } elseif ($line -match '^\s*//\s*lsp-signature:\s*(\d+):(\d+)\s+(\d+)\s+(.+?)\s*$') {
+            $checks += [pscustomobject]@{ Kind = 'signature'; Line = [int]$matches[1]; Column = [int]$matches[2]; Active = [int]$matches[3]; Value = $matches[4] }
         } elseif ($line -match '^\s*//\s*lsp-symbols:\s*(.+?)\s*$') {
             $checks += [pscustomobject]@{ Kind = 'symbols'; Value = $matches[1] }
         }
@@ -493,7 +503,8 @@ foreach ($case in Get-ChildItem $PSScriptRoot -Recurse -Filter *.cro | Sort-Obje
     $requests = @()
     foreach ($check in $checks) {
         if ($check.Kind -eq 'error') { continue }
-        $method = @{ hover = 'textDocument/hover'; definition = 'textDocument/definition'; symbols = 'textDocument/documentSymbol'; completion = 'textDocument/completion' }[$check.Kind]
+        $method = @{ hover = 'textDocument/hover'; definition = 'textDocument/definition'; symbols = 'textDocument/documentSymbol'
+            completion = 'textDocument/completion'; 'completion-doc' = 'textDocument/completion'; signature = 'textDocument/signatureHelp' }[$check.Kind]
         $params = @{ textDocument = @{ uri = $uri } }
         if ($check.Kind -ne 'symbols') { $params.position = @{ line = $check.Line - 1; character = $check.Column - 1 } }
         $requests += @{ method = $method; params = $params }
@@ -512,7 +523,11 @@ foreach ($case in Get-ChildItem $PSScriptRoot -Recurse -Filter *.cro | Sort-Obje
                 continue
             }
             $result = $session.Responses[$k++]
-            if ($check.Kind -eq 'hover') {
+            if ($check.Kind -eq 'hover' -and $check.Value.StartsWith('!')) {  # the hover there does not contain the text
+                if ($result -and $result.contents.value.Contains($check.Value.Substring(1))) {
+                    $problems += "hover at ${at}: $($result.contents.value), without $($check.Value.Substring(1))"
+                }
+            } elseif ($check.Kind -eq 'hover') {
                 if (-not $result -or -not $result.contents.value.Contains($check.Value)) {
                     $problems += "hover at ${at}: $(if ($result) { $result.contents.value } else { 'none' }), expected $($check.Value)"
                 }
@@ -522,6 +537,24 @@ foreach ($case in Get-ChildItem $PSScriptRoot -Recurse -Filter *.cro | Sort-Obje
                 $target = "$($parts[-2]):$($parts[-1])"
                 $actual = if ($result) { "$($result.uri.Split('/')[-1]) $($result.range.start.line + 1):$($result.range.start.character + 1)" } else { 'none' }
                 if ($actual -ne "$file $target") { $problems += "definition at ${at}: $actual, expected $file $target" }
+            } elseif ($check.Kind -eq 'completion-doc') {
+                $item = @($result | Where-Object { $_.label -eq $check.Label })[0]
+                $doc = if ($item -and $item.documentation) { $item.documentation.value } else { '' }
+                if (-not $doc.Contains($check.Value)) {
+                    $problems += "completion at ${at}: the documentation of $($check.Label) is '$doc', expected $($check.Value)"
+                }
+            } elseif ($check.Kind -eq 'signature') {
+                if ($check.Active -lt 0) {
+                    if ($result) { $problems += "signature at ${at}: $($result.signatures[0].label), expected none" }
+                } elseif (-not $result) {
+                    $problems += "signature at ${at}: none, expected $($check.Value)"
+                } else {
+                    $signature = $result.signatures[0]
+                    $shown = $signature.label + "`n" + $(if ($signature.documentation) { $signature.documentation.value } else { '' })
+                    if ($result.activeParameter -ne $check.Active -or -not $shown.Contains($check.Value)) {
+                        $problems += "signature at ${at}: $($signature.label) with the parameter $($result.activeParameter), expected $($check.Active) and $($check.Value)"
+                    }
+                }
             } elseif ($check.Kind -eq 'completion') {
                 $labels = @($result | ForEach-Object { $_.label })
                 foreach ($expected in ($check.Value -split ',\s*')) {

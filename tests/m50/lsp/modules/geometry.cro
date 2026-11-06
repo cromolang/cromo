@@ -1,0 +1,21 @@
+// Shapes for the tests of the documentation (D473).
+//
+// The guide: [Modules](https://cromolang.org/book/en/modules.html).
+
+// A box of a given size.
+public struct Box {
+    public i64 size  // the side, in pixels
+
+    public Box(i64 s) {
+        size = s
+    }
+}
+
+// The width of the box 'b'.
+public i64 width(Box b) {
+    ret b.size
+}
+
+i64 hidden() {
+    ret 0
+}

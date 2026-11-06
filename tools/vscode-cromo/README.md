@@ -6,9 +6,10 @@ Support for [Cromo](https://cromolang.org), a general-purpose language with the 
 
 - **Syntax highlighting** of the `.cro` files: keywords, types, numbers, strings with their format placeholders (`{}`, `{:.2f}`), comments, attributes and functions.
 - **Errors as you type**, from the compiler itself.
-- **Hover**: the type of a value or the signature of a function under the mouse.
+- **Hover**: the type of a value or the signature of a function under the mouse, with its documentation: the `//` comments above its declaration, for the standard library and for your code.
 - **Go to Definition** (F12) and the **outline** of the file.
-- **Completion** of the fields and the methods after a dot.
+- **Completion** of the fields and the methods after a dot, and of the names of a module after its name, as `fs.`, with their documentation.
+- **Signature help** while the arguments of a call are written, with the parameter being written in evidence.
 - **Formatting** with the rules of `cromo fmt`, also when a file is saved.
 - Comment toggling (`Ctrl+/`), closing brackets and indentation after `{`.
 

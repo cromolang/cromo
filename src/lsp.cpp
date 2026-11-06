@@ -1,5 +1,6 @@
 #include "lsp.h"
 
+#include "docs.h"
 #include "format.h"
 #include "index.h"
 #include "json.h"
@@ -269,6 +270,8 @@ struct Analysis {
     std::vector<std::string> keys;  // sourceKey of each file; empty for the standard library
     bool checked = false;           // it reached sema
     std::set<std::string> published;
+    // The documentation comments of each file, read when the editor asks (D473).
+    mutable std::map<int, std::unique_ptr<DocComments>> docComments;
 
     int fileOf(const std::string& key) const {
         for (size_t i = 0; i < keys.size(); ++i) {
@@ -276,7 +279,71 @@ struct Analysis {
         }
         return -1;
     }
+
+    const DocComments* docsOf(int file) const {
+        if (file < 0 || static_cast<size_t>(file) >= sources.size()) return nullptr;
+        std::unique_ptr<DocComments>& docs = docComments[file];
+        if (!docs) docs = std::make_unique<DocComments>(sources[file]);
+        return docs.get();
+    }
+
+    // The documentation of the declaration at `loc`, as Markdown (D474).
+    std::string docOf(SourceLocation loc, bool trailing) const {
+        const DocComments* docs = docsOf(loc.file);
+        return docs ? markdownOf(docs->of(loc.line, trailing)) : std::string();
+    }
+
+    // The path of the module of a file, as `std.fs`.
+    std::string moduleOf(int file) const {
+        if (file < 0 || static_cast<size_t>(file) >= module.files.size()) return {};
+        return module.files[file].name;
+    }
+
+    // The files of an imported module, with those for the system (D202).
+    std::set<int> filesOf(const ImportDecl& import) const {
+        std::set<int> files(import.files.begin(), import.files.end());
+        for (size_t i = 0; i < module.files.size(); ++i) {
+            if (files.count(module.files[i].part)) files.insert(static_cast<int>(i));
+        }
+        return files;
+    }
+
+    // P51: the documentation of the first of its files that has one.
+    std::string moduleDoc(const ImportDecl& import) const {
+        for (int file : import.files) {
+            const DocComments* docs = docsOf(file);
+            std::vector<std::string> lines = docs ? docs->module() : std::vector<std::string>();
+            if (!lines.empty()) return markdownOf(lines);
+        }
+        return {};
+    }
 };
+
+std::vector<std::string> linesOf(const std::string& text) {
+    std::vector<std::string> lines;
+    size_t start = 0;
+    for (;;) {
+        size_t end = text.find('\n', start);
+        lines.push_back(text.substr(start, end == std::string::npos ? std::string::npos : end - start));
+        if (end == std::string::npos) return lines;
+        start = end + 1;
+    }
+}
+
+// The Markdown of a hover or of a signature: Cromo code, then the documentation
+// under a line (D475).
+std::string withDoc(const std::string& code, const std::string& doc) {
+    return code + (doc.empty() ? "" : "\n\n---\n\n" + doc);
+}
+
+std::string cromoBlock(const std::string& code) { return "```cromo\n" + code + "\n```"; }
+
+Json markdown(const std::string& value) {
+    Json out = Json::object();
+    out.set("kind", "markdown");
+    out.set("value", value);
+    return out;
+}
 
 class Server {
 public:
@@ -333,6 +400,8 @@ public:
                 send(response(id, formatting(params)));
             } else if (method == "textDocument/completion") {
                 send(response(id, completion(params)));
+            } else if (method == "textDocument/signatureHelp") {
+                send(response(id, signatureHelp(params)));
             } else {
                 Json error = Json::object();
                 error.set("code", -32601);
@@ -368,6 +437,15 @@ private:
         triggers.push(".");
         completion.set("triggerCharacters", std::move(triggers));
         capabilities.set("completionProvider", std::move(completion));  // D179
+        Json signature = Json::object();
+        Json opening = Json::array();
+        opening.push("(");
+        opening.push(",");
+        signature.set("triggerCharacters", std::move(opening));
+        Json again = Json::array();
+        again.push(")");
+        signature.set("retriggerCharacters", std::move(again));
+        capabilities.set("signatureHelpProvider", std::move(signature));  // D477
         Json info = Json::object();
         info.set("name", "cromo");
         info.set("version", CROMO_VERSION);
@@ -586,13 +664,62 @@ private:
         const Analysis* analysis = nullptr;
         int file = 0;
         const Reference* reference = referenceAt(params, analysis, file);
-        if (!reference) return Json();
-        Json contents = Json::object();
-        contents.set("kind", "markdown");
-        contents.set("value", "```cromo\n" + reference->hover + "\n```");
+        if (!reference) return hoverOfName(params);
+        std::string code = cromoBlock(reference->hover);
+        // D475: the module above the signature, when it is another one; the core has none.
+        if (!reference->docs.empty() && reference->target.file != kLibraryFile) {
+            std::string module = analysis->moduleOf(reference->target.file);
+            if (!module.empty() && module != analysis->moduleOf(file)) code = cromoBlock(module) + "\n" + code;
+        }
+        std::string doc;
+        for (const Reference::Doc& place : reference->docs) {
+            std::string text = analysis->docOf(place.loc, place.trailing);
+            if (!text.empty()) doc += (doc.empty() ? "" : "\n\n") + text;
+        }
         Json result = Json::object();
-        result.set("contents", std::move(contents));
+        result.set("contents", markdown(withDoc(code, doc)));
         result.set("range", range(analysis->sources[file].text, reference->loc, reference->length));
+        return result;
+    }
+
+    // D475: the names that the analysis does not index: the built-in functions and
+    // types, and the name of an imported module, in its import or before a dot.
+    Json hoverOfName(const Json& params) const {
+        std::string key = sourceKey(pathFromUri(params["textDocument"]["uri"].asString()));
+        auto document = documents_.find(key);
+        if (document == documents_.end()) return Json();
+        const std::string& text = document->second.text;
+        size_t offset = offsetAt(text, params["position"]);
+        SourceFile source{document->second.path, text};
+        Diagnostics quiet(source);
+        quiet.setSilent(true);
+        std::vector<Token> tokens = tokenize(source, 0, quiet, true);
+        size_t at = 0;
+        while (at < tokens.size() && !(tokens[at].begin <= offset && offset < tokens[at].end)) ++at;
+        if (at == tokens.size() || tokens[at].kind != TokenKind::Identifier) return Json();
+        const Token& token = tokens[at];
+        std::string value;
+        if (const BuiltinDoc* builtin = builtinDoc(token.text)) {
+            value = withDoc(cromoBlock(*builtin->signature ? builtin->signature : builtin->name),
+                            markdownOf(linesOf(builtin->text)));
+        }
+        const Analysis* analysis = analysisOf(key);
+        int file = analysis ? analysis->fileOf(key) : -1;
+        if (value.empty() && file >= 0 && static_cast<size_t>(file) < analysis->module.files.size()) {
+            bool beforeDot = at + 1 < tokens.size() && tokens[at + 1].kind == TokenKind::Dot;
+            for (const ImportDecl& import : analysis->module.files[file].imports) {
+                bool inImport = import.loc.line == token.loc.line;
+                if (!inImport && !(beforeDot && import.qualifier() == token.text)) continue;
+                std::string path;
+                for (const std::string& part : import.path) path += (path.empty() ? "" : ".") + part;
+                value = withDoc(cromoBlock("import " + path), analysis->moduleDoc(import));
+                break;
+            }
+        }
+        if (value.empty()) return Json();
+        Json result = Json::object();
+        result.set("contents", markdown(value));
+        result.set("range", range(text, token.loc, static_cast<int>(token.text.size())));
         return result;
     }
 
@@ -633,54 +760,76 @@ private:
         std::string repaired = text.substr(0, dot) + ".cromo_complete" + (end < text.size() && text[end] == '(' ? "" : "()") +
                                text.substr(end);
 
-        Document copy = document->second;
-        copy.text = repaired;
-        bool requireMain = true;
-        std::string root = findRoot(copy, requireMain);
-        std::pair<std::string, std::string> replaced{key, repaired};
-        std::shared_ptr<Analysis> analysis = analyze(root, requireMain, &replaced);
-        int file = analysis->fileOf(key);
-        if (file < 0) analysis = analyze(document->second.path, false, &replaced);  // a module that main.cro does not import
-        file = analysis->fileOf(key);
+        int file = -1;
+        std::shared_ptr<Analysis> analysis = analyzeText(document->second, key, repaired, file);
         if (file < 0) return items;
 
         SourceLocation at = locationOf(repaired, begin, file);
         for (const Reference& reference : analysis->references) {
             if (reference.loc.file != file || reference.loc.line != at.line || reference.loc.column != at.column) continue;
             Type type = reference.type;
-            if (type.isStruct()) members(*type.structDecl, file, items);
+            if (type.isStruct()) members(*analysis, *type.structDecl, file, items);
             if (type.isArray()) {  // D196
                 items.push(item("len", 2, "i64 len()"));
                 if (!needsDestruction(type)) items.push(item("copy", 2, type.name() + " copy()"));
             }
             if (type.isInterface()) {
-                for (const FunctionDecl& method : type.interfaceDecl->methods) items.push(item(method.name, 2, signatureOf(method)));
+                for (const FunctionDecl& method : type.interfaceDecl->methods) {
+                    items.push(item(method.name, 2, signatureOf(method), analysis->docOf(method.loc, false)));
+                }
             }
             return items;
         }
         // D181: after the name of an enum, its cases.
         for (const StructDecl& decl : analysis->module.structs) {
             if (decl.name != name || !decl.isEnum || (decl.loc.file != file && !decl.isPublic)) continue;
-            for (const EnumCase& entry : decl.cases) items.push(item(entry.name, 20, decl.name + "." + entry.name));
-            break;
+            for (const EnumCase& entry : decl.cases) {
+                items.push(item(entry.name, 20, decl.name + "." + entry.name, analysis->docOf(entry.loc, true)));
+            }
+            return items;
         }
+        moduleMembers(*analysis, file, name, items);
         return items;
     }
 
-    static Json item(const std::string& label, int kind, const std::string& detail) {
+    // The analysis of a text of a document that is not the one in the editor, as
+    // the code being written with a call in place of what is missing (D180).
+    std::shared_ptr<Analysis> analyzeText(const Document& document, const std::string& key, const std::string& text,
+                                          int& file) {
+        Document copy = document;
+        copy.text = text;
+        bool requireMain = true;
+        std::string root = findRoot(copy, requireMain);
+        std::pair<std::string, std::string> replaced{key, text};
+        std::shared_ptr<Analysis> analysis = analyze(root, requireMain, &replaced);
+        file = analysis->fileOf(key);
+        if (file < 0) {  // a module that main.cro does not import
+            analysis = analyze(document.path, false, &replaced);
+            file = analysis->fileOf(key);
+        }
+        return analysis;
+    }
+
+    // LSP kinds: 2 method, 3 function, 5 field, 8 interface, 13 enum, 20 enum member,
+    // 22 struct. The documentation is shown next to the signature (D475).
+    static Json item(const std::string& label, int kind, const std::string& detail, const std::string& doc = {}) {
         Json out = Json::object();
         out.set("label", label);
-        out.set("kind", kind);  // LSP kinds: 2 method, 5 field, 20 enum member
+        out.set("kind", kind);
         out.set("detail", detail);
+        if (!doc.empty()) out.set("documentation", markdown(doc));
         return out;
     }
 
     // D181: what the module of `file` can use: the public members, or all of them in
     // the module of the type (D132); a method that implements an interface too.
-    static void members(const StructDecl& decl, int file, Json& items) {
+    static void members(const Analysis& analysis, const StructDecl& decl, int file, Json& items) {
         bool own = decl.loc.file == file;
         for (const FieldDecl& field : decl.fields) {
-            if (own || field.isPublic) items.push(item(field.name, 5, fieldTypeOf(field, decl) + " " + decl.name + "." + field.name));
+            if (own || field.isPublic) {
+                items.push(item(field.name, 5, fieldTypeOf(field, decl) + " " + decl.name + "." + field.name,
+                                analysis.docOf(field.loc, true)));
+            }
         }
         std::set<std::string> fromInterfaces;
         for (const TypeName& name : decl.interfaces) {
@@ -689,8 +838,287 @@ private:
         }
         for (const FunctionDecl& member : decl.members) {
             if (member.kind != FunctionKind::Method) continue;
-            if (own || member.isPublic || fromInterfaces.count(member.name)) items.push(item(member.name, 2, signatureOf(member, &decl)));
+            if (own || member.isPublic || fromInterfaces.count(member.name)) {
+                items.push(item(member.name, 2, signatureOf(member, &decl), analysis.docOf(member.loc, false)));
+            }
         }
+    }
+
+    static std::string typeParamsOf(const std::vector<TypeParam>& params) {
+        if (params.empty()) return {};
+        std::string text = "<";
+        for (size_t i = 0; i < params.size(); ++i) text += (i ? ", " : "") + params[i].name;
+        return text + ">";
+    }
+
+    // D476: after the name of an imported module, its public names, without the
+    // instances of the generics, the tests and the C functions (P51).
+    static void moduleMembers(const Analysis& analysis, int file, const std::string& name, Json& items) {
+        if (file < 0 || static_cast<size_t>(file) >= analysis.module.files.size()) return;
+        std::set<int> files;
+        for (const ImportDecl& import : analysis.module.files[file].imports) {
+            if (import.qualifier() != name) continue;
+            for (int part : analysis.filesOf(import)) files.insert(part);
+        }
+        if (files.empty()) return;
+        for (const FunctionDecl& function : analysis.module.functions) {
+            if (!files.count(function.loc.file) || !function.isPublic || function.isExtern || function.isTest) continue;
+            items.push(item(function.name, 3, signatureOf(function), analysis.docOf(function.loc, false)));
+        }
+        for (const StructDecl& decl : analysis.module.structs) {
+            if (!files.count(decl.loc.file) || !decl.isPublic) continue;
+            items.push(item(decl.name, decl.isEnum ? 13 : 22, (decl.isEnum ? "enum " : "struct ") + decl.name + typeParamsOf(decl.typeParams),
+                            analysis.docOf(decl.loc, false)));
+        }
+        for (const InterfaceDecl& decl : analysis.module.interfaces) {
+            if (!files.count(decl.loc.file) || !decl.isPublic) continue;
+            items.push(item(decl.name, 8, "interface " + decl.name, analysis.docOf(decl.loc, false)));
+        }
+    }
+
+    // ---- The help on the signature (D477) ----
+
+    Json signatureHelp(const Json& params) {
+        std::string key = sourceKey(pathFromUri(params["textDocument"]["uri"].asString()));
+        auto document = documents_.find(key);
+        if (document == documents_.end()) return Json();
+        const std::string& text = document->second.text;
+        size_t cursor = offsetAt(text, params["position"]);
+        SourceFile source{document->second.path, text};
+        Diagnostics quiet(source);
+        quiet.setSilent(true);
+        std::vector<Token> tokens = tokenize(source, 0, quiet);
+
+        // The parenthesis of the call around the cursor, and the commas before it.
+        int last = -1;
+        for (size_t i = 0; i < tokens.size() && tokens[i].kind != TokenKind::EndOfFile && tokens[i].begin < cursor; ++i) {
+            last = static_cast<int>(i);
+        }
+        int depth = 0;
+        int commas = 0;
+        int open = -1;
+        for (int i = last; i >= 0; --i) {
+            TokenKind kind = tokens[i].kind;
+            if (kind == TokenKind::RParen || kind == TokenKind::RBracket || kind == TokenKind::RBrace) {
+                ++depth;
+            } else if (kind == TokenKind::LParen || kind == TokenKind::LBracket || kind == TokenKind::LBrace) {
+                if (depth == 0) {
+                    if (kind == TokenKind::LParen) open = i;
+                    break;
+                }
+                --depth;
+            } else if (depth == 0 && kind == TokenKind::Comma) {
+                ++commas;
+            } else if (depth == 0 && kind == TokenKind::Newline) {
+                break;
+            }
+        }
+        if (open < 1 || tokens[open - 1].kind != TokenKind::Identifier) return Json();
+        std::string name = tokens[open - 1].text;
+        std::string receiver;
+        size_t receiverBegin = 0;
+        if (open >= 3 && tokens[open - 2].kind == TokenKind::Dot) {
+            if (tokens[open - 3].kind != TokenKind::Identifier) return Json();  // after a call or an index (D180)
+            receiver = tokens[open - 3].text;
+            receiverBegin = tokens[open - 3].begin;
+        }
+
+        // P51: the text with the call without its arguments, which can be analyzed.
+        size_t close = std::string::npos;
+        int level = 0;
+        for (size_t i = open + 1; i < tokens.size() && tokens[i].kind != TokenKind::EndOfFile; ++i) {
+            TokenKind kind = tokens[i].kind;
+            if (kind == TokenKind::LParen || kind == TokenKind::LBracket || kind == TokenKind::LBrace) {
+                ++level;
+            } else if (kind == TokenKind::RParen || kind == TokenKind::RBracket || kind == TokenKind::RBrace) {
+                if (level == 0) {
+                    if (kind == TokenKind::RParen) close = tokens[i].end;
+                    break;
+                }
+                --level;
+            } else if (level == 0 && kind == TokenKind::Newline) {
+                break;
+            }
+        }
+        if (close == std::string::npos || close < cursor) {
+            close = text.find('\n', cursor);
+            if (close == std::string::npos) close = text.size();
+        }
+        std::string repaired = text.substr(0, tokens[open].end) + ")" + text.substr(close);
+        int file = -1;
+        std::shared_ptr<Analysis> analysis = analyzeText(document->second, key, repaired, file);
+        if (file < 0) return Json();
+
+        std::string label;
+        std::string doc;
+        if (!calleeOf(*analysis, file, receiver, name, locationOf(repaired, receiverBegin, file), label, doc)) return Json();
+        Json signature = signatureInformation(label, name, doc);
+        int count = static_cast<int>(signature["parameters"].items().size());
+        int active = count == 0 ? 0 : std::min(commas, count - 1);
+        signature.set("activeParameter", active);
+        Json signatures = Json::array();
+        signatures.push(std::move(signature));
+        Json result = Json::object();
+        result.set("signatures", std::move(signatures));
+        result.set("activeSignature", 0);
+        result.set("activeParameter", active);
+        return result;
+    }
+
+    // The signature and the documentation of what `receiver.name(` or `name(`
+    // calls, found as the completion finds the members (D477).
+    static bool calleeOf(const Analysis& analysis, int file, const std::string& receiver, const std::string& name,
+                         SourceLocation receiverAt, std::string& label, std::string& doc) {
+        const Module& module = analysis.module;
+        std::string own = analysis.moduleOf(file);
+        auto constructorOf = [&](const StructDecl& decl) {
+            for (const FunctionDecl& member : decl.members) {
+                if (member.kind != FunctionKind::Constructor) continue;
+                label = signatureOf(member);
+                doc = analysis.docOf(decl.loc, false);
+                std::string more = analysis.docOf(member.loc, false);
+                if (!more.empty()) doc += (doc.empty() ? "" : "\n\n") + more;
+                return true;
+            }
+            return false;
+        };
+        auto function = [&](const FunctionDecl& found) {
+            label = signatureOf(found);
+            doc = analysis.docOf(found.loc, false);
+            return true;
+        };
+        if (receiver.empty()) {
+            if (const BuiltinDoc* builtin = builtinDoc(name)) {
+                if (!*builtin->signature) return false;
+                label = builtin->signature;
+                doc = markdownOf(linesOf(builtin->text));
+                return true;
+            }
+            // The names of the file and of its module come first (D126), then the core,
+            // then the public names of the other modules.
+            auto rank = [&](int at, bool isPublic) {
+                if (at == file) return 0;
+                if (analysis.moduleOf(at) == own) return 1;
+                if (!isPublic) return 9;
+                return at == kLibraryFile ? 2 : 3;
+            };
+            const FunctionDecl* best = nullptr;
+            int bestRank = 9;
+            for (const FunctionDecl& candidate : module.functions) {
+                if (candidate.name != name || candidate.isTest) continue;
+                int r = rank(candidate.loc.file, candidate.isPublic);
+                if (r < bestRank) {
+                    best = &candidate;
+                    bestRank = r;
+                }
+            }
+            if (best) return function(*best);
+            const StructDecl* type = nullptr;
+            bestRank = 9;
+            for (const StructDecl& candidate : module.structs) {
+                if (candidate.name != name) continue;
+                int r = rank(candidate.loc.file, candidate.isPublic);
+                if (r < bestRank) {
+                    type = &candidate;
+                    bestRank = r;
+                }
+            }
+            return type && constructorOf(*type);
+        }
+        // `geometry.area(`: a function or a constructor of an imported module (D126).
+        if (file >= 0 && static_cast<size_t>(file) < module.files.size()) {
+            std::set<int> files;
+            for (const ImportDecl& import : module.files[file].imports) {
+                if (import.qualifier() != receiver) continue;
+                for (int part : analysis.filesOf(import)) files.insert(part);
+            }
+            if (!files.empty()) {
+                for (const FunctionDecl& candidate : module.functions) {
+                    if (candidate.name == name && candidate.isPublic && files.count(candidate.loc.file)) return function(candidate);
+                }
+                for (const StructDecl& candidate : module.structs) {
+                    if (candidate.name == name && candidate.isPublic && files.count(candidate.loc.file)) return constructorOf(candidate);
+                }
+                return false;
+            }
+        }
+        // `Shape.Circle(`: a case with data.
+        for (const StructDecl& decl : module.structs) {
+            if (decl.name != receiver || !decl.isEnum || (decl.loc.file != file && !decl.isPublic)) continue;
+            for (const EnumCase& entry : decl.cases) {
+                if (entry.name != name || entry.fields.empty()) continue;
+                label = decl.name + "." + entry.name + "(";
+                for (size_t i = 0; i < entry.fields.size(); ++i) {
+                    const FieldDecl& field = entry.fields[i];
+                    label += (i ? ", " : "") + (field.resolved.isError() ? field.type.name : field.resolved.name()) + " " + field.name;
+                }
+                label += ")";
+                doc = analysis.docOf(entry.loc, true);
+                return true;
+            }
+            return false;
+        }
+        // `c.area(`: a method of the type of the name before the dot (D180).
+        for (const Reference& reference : analysis.references) {
+            if (reference.loc.file != file || reference.loc.line != receiverAt.line || reference.loc.column != receiverAt.column) continue;
+            Type type = reference.type;
+            if (type.isStruct()) {
+                for (const FunctionDecl& member : type.structDecl->members) {
+                    if (member.kind != FunctionKind::Method || member.name != name) continue;
+                    label = signatureOf(member, type.structDecl);
+                    doc = analysis.docOf(member.loc, false);
+                    return true;
+                }
+            }
+            if (type.isInterface()) {
+                for (const FunctionDecl& method : type.interfaceDecl->methods) {
+                    if (method.name == name) return function(method);
+                }
+            }
+            return false;
+        }
+        return false;
+    }
+
+    // The signature with the places of its parameters in the label.
+    static Json signatureInformation(const std::string& label, const std::string& name, const std::string& doc) {
+        Json parameters = Json::array();
+        size_t open = std::string::npos;
+        for (size_t at = label.find(name + "("); at != std::string::npos; at = label.find(name + "(", at + 1)) {
+            if (at == 0 || !isIdentChar(label[at - 1])) {
+                open = at + name.size();
+                break;
+            }
+        }
+        if (open != std::string::npos) {
+            int depth = 0;
+            size_t start = open + 1;
+            for (size_t i = open + 1; i < label.size(); ++i) {
+                char c = label[i];
+                if (c == '(' || c == '<' || c == '[') {
+                    ++depth;
+                } else if ((c == ')' || c == '>' || c == ']') && depth > 0) {
+                    --depth;
+                } else if ((c == ',' || c == ')') && depth == 0) {
+                    while (start < i && label[start] == ' ') ++start;
+                    if (i > start) {
+                        Json place = Json::array();
+                        place.push(static_cast<int>(start));
+                        place.push(static_cast<int>(i));
+                        Json parameter = Json::object();
+                        parameter.set("label", std::move(place));
+                        parameters.push(std::move(parameter));
+                    }
+                    start = i + 1;
+                    if (c == ')') break;
+                }
+            }
+        }
+        Json signature = Json::object();
+        signature.set("label", label);
+        if (!doc.empty()) signature.set("documentation", markdown(doc));
+        signature.set("parameters", std::move(parameters));
+        return signature;
     }
 
     static Json symbol(const std::string& text, const std::string& name, int kind, SourceLocation loc,

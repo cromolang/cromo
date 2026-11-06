@@ -2,7 +2,7 @@
   "name": "cromo",
   "displayName": "Cromo",
   "description": "The Cromo language: syntax highlighting, errors as you type, hover, go to definition, outline, completion and formatting, with the language server of cromo",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "publisher": "cromolang",
   "license": "(MIT OR Apache-2.0)",
   "icon": "images/icon.png",

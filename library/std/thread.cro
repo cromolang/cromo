@@ -1,3 +1,25 @@
+// Code that runs at the same time: the threads of the system (Thread), lightweight
+// tasks that share a few threads (Task and Group), and what they use together:
+// Mutex for data that change, Channel to pass values and Atomic for counters.
+//
+// The compiler checks what a thread or a task captures: while it runs, the code
+// that started it cannot change what it reads, nor touch what it changes. Data that
+// several of them change go in a Mutex.
+//
+// '''
+// import std.thread
+//
+// thread.Atomic<i64> done
+// thread.Group jobs
+// for (i64 i = 0; i < 100; i++) {
+//     jobs.start([done]() { done.add(1) })
+// }
+// jobs.wait()
+// println("{}", done.load())   // 100
+// '''
+//
+// The guide: [Threads, tasks and channels](https://cromolang.org/book/en/concurrency.html).
+
 // The module std.thread (D214-D217, D269, D273, D326-D328): threads, tasks,
 // groups of tasks, mutexes, channels and atomics. The threads of the system and the
 // workers of the tasks are in the runtime; the compiler keeps a thread or a task
@@ -15,12 +37,27 @@ extern "cromo" {
     void cromo_channel_free(addr channel)
 }
 
-// A thread made from a lambda, started with start() and waited for with join().
+// A thread of the system, made from a lambda, started with start() and waited for
+// with join(). An exception that ends the thread is thrown again by join(); one that
+// no join() takes stops the program.
+//
+// A thread whose lambda captures by address, with 'ref' or by reading a value that
+// is not simple, belongs to its block: if join() was not called, the block waits
+// for the thread at its end. A thread that owns all that it uses, with 'move' or
+// simple values, can outlive the block, as in a list.
+//
+// '''
+// i64 total = 0
+// thread.Thread worker = thread.Thread([ref total]() { total = 42 })
+// worker.start()
+// worker.join()
+// '''
 public struct Thread {
     func() body
     addr record  // of the runtime, from start() on
     bool joined
 
+    // A thread that will run 'work', which is moved into it; it starts with start().
     public Thread(move func() work) {
         body = move work
     }
@@ -37,6 +74,7 @@ public struct Thread {
         threadFree(record)
     }
 
+    // Starts the thread. Starting it a second time is a panic.
     public void start() {
         if (started()) {
             panic("the thread is already started (D214)")
@@ -44,7 +82,8 @@ public struct Thread {
         record = threadStart(body)
     }
 
-    // Waits for the end of the thread, and throws again its exception (D217).
+    // Waits for the end of the thread, and throws again the exception that ended it,
+    // if any. A panic if the thread is not started or is already joined.
     public void join() {
         if (!started()) {
             panic("the thread is not started: call start() first (D214)")
@@ -64,14 +103,21 @@ public struct Thread {
     }
 }
 
-// A lightweight task (D269), with the interface and the rules of Thread: many of
-// them run on a few threads of the system. A task that waits for the network, for
-// time.sleep, for a mutex or for join() leaves its thread to the others.
+// A lightweight task, with the interface and the rules of Thread: the runtime runs
+// many tasks on a few threads of the system, one for each processor, and a task
+// costs a few kilobytes. A task that waits, for the network, for time.sleep(), for
+// a mutex, for a channel or for join(), leaves its thread to the other tasks. A task
+// that blocks its thread, as in a C function, keeps it, and after about a
+// millisecond the runtime gives the other tasks another thread.
+//
+// Use tasks for work that waits, as servers and clients of the network, and threads
+// for long computations.
 public struct Task {
     func() body
     addr record  // of the runtime, from start() on
     bool joined
 
+    // A task that will run 'work', which is moved into it; it starts with start().
     public Task(move func() work) {
         body = move work
     }
@@ -88,6 +134,7 @@ public struct Task {
         threadFree(record)
     }
 
+    // Starts the task. Starting it a second time is a panic.
     public void start() {
         if (started()) {
             panic("the task is already started (D269)")
@@ -95,7 +142,8 @@ public struct Task {
         record = taskStart(body)
     }
 
-    // Waits for the end of the task, and throws again its exception (D217).
+    // Waits for the end of the task, and throws again the exception that ended it, if
+    // any. A panic if the task is not started or is already joined.
     public void join() {
         if (!started()) {
             panic("the task is not started: call start() first (D269)")
@@ -115,9 +163,11 @@ public struct Task {
     }
 }
 
-// Tasks started one by one, also in a loop (D273): they can read the variables
-// declared before the group, which stay constant until the end of its block, and
-// there the group waits for all of them.
+// Tasks started one by one, also in a loop, and waited for together. The tasks can
+// read the variables declared before the group, which stay constant until the end
+// of its block, and take others with 'move'; they cannot capture with 'ref'. At the
+// end of its block the group waits for all its tasks, and an exception that no
+// wait() took stops the program.
 public struct Group {
     addr record  // of the runtime, from the first start() on
 
@@ -133,6 +183,7 @@ public struct Group {
         threadFree(record)
     }
 
+    // Starts a task of the group that runs 'work', which is moved into it.
     public void start(move func() work) {
         addr none
         if (record == none) {
@@ -151,7 +202,9 @@ public struct Group {
     }
 }
 
-// The data of a mutex are reached only while it is locked, in a lambda (D216).
+// Data that threads and tasks share and change, which start with the default value
+// of T. They are reached only inside lock(), by one at a time, so a lock cannot be
+// forgotten.
 public struct Mutex<T> {
     u64 state  // the lock of the system, free at zero: the first field
     T data
@@ -159,9 +212,18 @@ public struct Mutex<T> {
     ~Mutex() {
     }
 
-    // const: the threads of a block read the same mutex (D215), and the lock gives
-    // them `ref` to the data one at a time.
+    // Locks the mutex, calls 'body' with the data by 'ref', and unlocks it at the end
+    // of 'body', also when an exception goes through. Who finds it locked waits; a
+    // task leaves its thread to the others meanwhile. Locking the same mutex again
+    // inside 'body' waits for ever.
+    //
+    // '''
+    // thread.Mutex<i64> counter
+    // counter.lock([](ref i64 n) { n++ })
+    // '''
     public void lock(func(ref T) body) const {
+        // const: the threads of a block read the same mutex (D215), and the lock
+        // gives them 'ref' to the data one at a time.
         addr me = selfAddress()
         mutexLock(me)
         addr place = offset(me, 8)  // the data, after the lock
@@ -176,12 +238,29 @@ public struct Mutex<T> {
 }
 
 // Values passed from task to task and from thread to thread, in the order they are
-// sent (D326). It holds up to `capacity` values; with capacity 0, the default, the
-// sender waits until a receiver has the value. close() ends it (D327).
+// sent. It holds up to a capacity of values, given to its constructor; with
+// capacity 0, the default, the sender waits until a receiver has the value. close()
+// ends it, and 'for (T v in channel)' receives until then. The values still in the
+// channel when it is destroyed are destroyed with it.
+//
+// '''
+// thread.Channel<string> lines = thread.Channel<string>(16)
+// thread.Task reader = thread.Task([lines]() {
+//     for (string line in lines) {
+//         println("{}", line)
+//     }
+// })
+// reader.start()
+// lines.send("hello")
+// lines.close()
+// reader.join()
+// '''
 public struct Channel<T> {
     addr record  // of the runtime, made by the first use: the first field
     i64 capacity
 
+    // A channel that holds up to 'count' values before send() waits; with 0, the
+    // sender waits until a receiver has the value. A negative count is a panic.
     public Channel(i64 count) {
         if (count < 0) {
             panic(format("the capacity of a channel is 0 or more, found {} (D326)", count))
@@ -203,7 +282,8 @@ public struct Channel<T> {
         cromo_channel_free(record)
     }
 
-    // Waits while the channel is full; throws if it is closed (D327).
+    // Sends the value, which is moved into the channel, and waits while the channel
+    // is full. Throws if the channel is closed; the value is then destroyed.
     public void send(move T value) const {
         addr place = alloc(sizeOf<T>())
         put<T>(place, move value)
@@ -215,7 +295,8 @@ public struct Channel<T> {
         free(place)
     }
 
-    // Waits while the channel is empty; throws once it is closed and empty (D327).
+    // The next value, in the order they were sent; waits while the channel is empty.
+    // Throws once the channel is closed and empty.
     public T receive() const {
         addr place = alloc(sizeOf<T>())
         if (cromo_channel_receive(own(), place) == 0) {
@@ -227,8 +308,9 @@ public struct Channel<T> {
         ret value
     }
 
-    // As receive(), but false once the channel is closed and empty: the step of
-    // `for (T v in channel)`.
+    // As receive(), but without the exception: puts the next value in 'value' and
+    // gives true, or gives false, with 'value' unchanged, once the channel is closed
+    // and empty. It is the step of 'for (T v in channel)'.
     public bool next(ref T value) const {
         addr place = alloc(sizeOf<T>())
         bool received = cromo_channel_receive(own(), place) != 0
@@ -239,7 +321,9 @@ public struct Channel<T> {
         ret received
     }
 
-    // The values already sent can still be received; a second close() does nothing.
+    // Closes the channel: from then on send() throws, while the values already sent
+    // can still be received; after them receive() throws and the loops on the
+    // channel end. A second close() does nothing.
     public void close() const {
         cromo_channel_close(own())
     }
@@ -249,11 +333,15 @@ public struct Channel<T> {
     }
 }
 
-// An integer or a bool that the threads and the tasks read and write together,
-// each operation in the one order of the sequence (D328).
+// An integer or a bool that threads and tasks read and change together without a
+// lock. Each operation happens whole, and all of them in one order that every
+// thread sees, the sequential consistency. An atomic cannot be copied: the threads
+// and the tasks capture it by reading it.
 public struct Atomic<T> {
     T state
 
+    // An atomic with the value 'initial'; one declared without a value starts with 0
+    // or false.
     public Atomic(move T initial) {
         state = move initial
     }
@@ -262,25 +350,27 @@ public struct Atomic<T> {
     ~Atomic() {
     }
 
+    // The value.
     public T load() const {
         ret atomicLoad<T>(selfAddress())
     }
 
+    // Writes the value.
     public void store(T value) const {
         atomicStore<T>(selfAddress(), value)
     }
 
-    // Adds, and returns the value before; an integer only.
+    // Adds 'amount', and gives the value before; for an integer only.
     public T add(T amount) const {
         ret atomicAdd<T>(selfAddress(), amount)
     }
 
-    // Writes the value, and returns the one before.
+    // Writes the value, and gives the one before.
     public T exchange(T value) const {
         ret atomicExchange<T>(selfAddress(), value)
     }
 
-    // Writes `desired` only if the value is `expected`: true if it did.
+    // Writes 'desired' only if the value is 'expected', in one step: true if it did.
     public bool compareExchange(T expected, T desired) const {
         ret atomicCompareExchange<T>(selfAddress(), expected, desired)
     }

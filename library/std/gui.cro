@@ -1,3 +1,46 @@
+// Windows and their components, drawn by the program itself: labels, buttons, text
+// boxes, check boxes, switches, sliders, combo boxes, images and icons, groups and
+// panels that scroll, lists, the bars of an app, dialogs and snackbars. A window looks
+// the same on Windows and on Linux, in the style of a dashboard made with Tailwind,
+// light or dark, and the same program compiled with '--target android' is an app for
+// Android.
+//
+// 'Window' makes a window, its 'add' puts a component in it and gives it back, and
+// 'start' shows it; when 'main' returns, the program waits until its windows are
+// closed. A window and a component are handles: small values that name them, which can
+// be copied freely and captured by copy in a lambda.
+//
+// - Positions and sizes are in logical pixels, which the library scales with the
+//   density of the screen, from the top left corner of the content of the window, under
+//   its title bar, or of the group, the panel or the dialog that holds the component.
+// - The anchors, set with 'setAnchor', say which edges of the window, or of its group, a
+//   component follows when they move: a window is written for one size, and the anchors
+//   adapt it to the others, also to the screen of a phone.
+// - The handlers of the events, as 'onClick', run on the thread of the windows, one at a
+//   time, and can change any component. A handler that takes long freezes the windows:
+//   long work goes to a task. An exception that leaves a handler stops the program.
+// - The methods of the windows and of the components can be called from any thread.
+//   When the program changes a component, as with 'setText' or 'setChecked', the
+//   handlers are not called: they are for what the user does.
+//
+// '''
+// import std.gui
+//
+// [[window]]
+// i32 main() {
+//     gui.Window w = gui.Window("Greetings", 420, 230)
+//     w.add(gui.Label("Your name", 24, 24, 200, 20))
+//     gui.TextBox name = w.add(gui.TextBox("", 24, 48, 372, 32))
+//     gui.Button greet = w.add(gui.Button("Greet", 24, 96, 100, 32))
+//     gui.Label answer = w.add(gui.Label("", 24, 148, 372, 20))
+//     greet.onClick([name, answer]() { answer.setText(format("Hello, {}!", name.text())) })
+//     w.start()
+//     ret 0
+// }
+// '''
+//
+// The guide: [Windows and apps](https://cromolang.org/book/en/gui.html).
+
 // The module std.gui (D429-D449): windows with their title bar drawn by the
 // library, in the style of Visual Studio Code (D431), the themes light, dark and of
 // the system (D432), the components Label, Button, TextBox, CheckBox, GroupBox,
@@ -93,218 +136,240 @@ extern "cromo" {
 
 // ---- The public types ----
 
-// The theme of a window (D432): System follows that of the system, and changes
-// with it.
+// The colors of a window and of its components, light or dark, set with
+// 'Window.setTheme'. On a phone the bars of the system take the same colors.
 public enum Theme {
-    System
-    Light
-    Dark
+    System  // that of the system, the default, which changes when the user changes it
+    Light   // dark text on light grays
+    Dark    // light text on dark grays
 }
 
-// How a component follows the left and the right edges of its window or of its
-// group, when they move (D447): Stretch follows both, changing its width, Center
-// neither, keeping its center at the same distance from the center.
+// How a component follows the left and the right edges of its parent, the window or
+// the group, the panel or the dialog that holds it, when the parent changes width. The
+// component keeps the distances that it has when its anchors, its position or its size
+// are set: so a window is written for one size, and the anchors adapt it to the others.
+//
+// '''
+// gui.TextBox title = w.add(gui.TextBox("", 16, 16, 448, 32))
+// title.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Top)   // as wide as the window
+// '''
 public enum Horizontal {
-    Left
-    Right
-    Stretch
-    Center
+    Left     // keeps its distance from the left edge, and its width: the default
+    Right    // keeps its distance from the right edge, and its width
+    Stretch  // keeps its distances from both edges, and so changes its width
+    Center   // keeps its center at the same distance from the center, and its width
 }
 
-// The same for the top and the bottom edges (D447).
+// How a component follows the top and the bottom edges of its parent when the parent
+// changes height, as 'Horizontal' does for the left and the right ones. In a panel that
+// scrolls, the components anchored to the top scroll with its content, and the others
+// stay where they are on the part that is seen, as a button over a list.
+//
+// '''
+// gui.Button save = w.add(gui.Button("Save", 364, 217, 100, 32))
+// save.setAnchor(gui.Horizontal.Right, gui.Vertical.Bottom)   // in the bottom right corner
+// '''
 public enum Vertical {
-    Top
-    Bottom
-    Stretch
-    Center
+    Top      // keeps its distance from the top edge, and its height: the default
+    Bottom   // keeps its distance from the bottom edge, and its height
+    Stretch  // keeps its distances from both edges, and so changes its height
+    Center   // keeps its center at the same distance from the center, and its height
 }
 
-// How an ImageBox fits its image (P39): Fit shows all of it, as large as the box
-// allows; Fill covers the box, cut at the edges; Stretch takes the size of the box;
-// Center keeps its size. Fit, Fill and Center keep its proportions.
+// How an image box fits its image, set with 'ImageBox.setScale'. The image is at the
+// center of the box, and what goes beyond its edges is cut.
 public enum Scale {
-    Fit
-    Fill
-    Stretch
-    Center
+    Fit      // the whole image, as large as the box allows, with its proportions: the default
+    Fill     // the whole box, covered by the image with its proportions, cut at the edges
+    Stretch  // the size of the box, without the proportions of the image
+    Center   // the size of the image, a pixel of it for each logical pixel
 }
 
 // ---- The icons (D448, D449), written by tools/lucide.py ----
 
-// An icon of Lucide 1.68.0 (D448): its value is its character in the font of the
-// icons. None, the default, is no icon.
+// An icon of Lucide 1.68.0, drawn with lines in the colors of the component that shows
+// it, and sharp at every size. A button shows one with 'setIcon', an icon box alone,
+// and the app bar, the navigation bar and the items of a list have theirs. The names
+// are those of [Lucide](https://lucide.dev/icons/) with capitals and no hyphens:
+// 'message-circle' is 'MessageCircle', 'trash-2' is 'Trash2'. 'None', the default, is
+// no icon.
 public enum Icon {
-    None = 0
-    Activity = 0xE038
-    AlarmClock = 0xE03A
-    Archive = 0xE041
-    ArrowDown = 0xE042
-    ArrowLeft = 0xE048
-    ArrowRight = 0xE049
-    ArrowUp = 0xE04A
-    AtSign = 0xE04E
-    Award = 0xE04F
-    Ban = 0xE051
-    Battery = 0xE053
-    Bell = 0xE059
-    BellOff = 0xE05A
-    Bike = 0xE1D2
-    Bluetooth = 0xE05C
-    Book = 0xE05E
-    BookOpen = 0xE05F
-    Bookmark = 0xE060
-    Briefcase = 0xE062
-    Building2 = 0xE290
-    Calendar = 0xE063
-    Camera = 0xE064
-    Car = 0xE1D5
-    ChartColumn = 0xE2A3
-    ChartLine = 0xE2A5
-    ChartPie = 0xE06B
-    Check = 0xE06C
-    ChevronDown = 0xE06D
-    ChevronLeft = 0xE06E
-    ChevronRight = 0xE06F
-    ChevronUp = 0xE070
-    CircleAlert = 0xE077
-    CircleCheck = 0xE226
-    CircleQuestionMark = 0xE082
-    CircleX = 0xE084
-    Clipboard = 0xE085
-    Clock = 0xE087
-    Cloud = 0xE088
-    Code = 0xE093
-    Coffee = 0xE096
-    Contact = 0xE09C
-    Copy = 0xE09E
-    Cpu = 0xE0A9
-    CreditCard = 0xE0AA
-    Database = 0xE0AD
-    Download = 0xE0B2
-    Droplet = 0xE0B4
-    Ellipsis = 0xE0B6
-    EllipsisVertical = 0xE0B7
-    ExternalLink = 0xE0B9
-    Eye = 0xE0BA
-    EyeOff = 0xE0BB
-    File = 0xE0C0
-    FileText = 0xE0CC
-    Flag = 0xE0D1
-    Flame = 0xE0D2
-    Folder = 0xE0D7
-    FolderOpen = 0xE247
-    Funnel = 0xE0DC
-    Gift = 0xE0E1
-    Globe = 0xE0E8
-    GraduationCap = 0xE234
-    Heart = 0xE0F2
-    History = 0xE1F5
-    House = 0xE0F5
-    Image = 0xE0F6
-    Inbox = 0xE0F7
-    Info = 0xE0F9
-    Key = 0xE0FD
-    Laptop = 0xE1CD
-    Layers = 0xE529
-    LayoutGrid = 0xE0FF
-    Lightbulb = 0xE1C2
-    Link = 0xE102
-    List = 0xE106
-    Loader = 0xE109
-    Lock = 0xE10B
-    LockOpen = 0xE10C
-    LogIn = 0xE10D
-    LogOut = 0xE10E
-    Mail = 0xE10F
-    Map = 0xE110
-    MapPin = 0xE111
-    Menu = 0xE115
-    MessageCircle = 0xE116
-    MessageSquare = 0xE117
-    Mic = 0xE118
-    Minus = 0xE11C
-    Monitor = 0xE11D
-    Moon = 0xE11E
-    Music = 0xE122
-    Package = 0xE129
-    Paperclip = 0xE12D
-    Pause = 0xE12E
-    Pencil = 0xE1F9
-    Phone = 0xE133
-    Plane = 0xE1DE
-    Play = 0xE13C
-    Plus = 0xE13D
-    Power = 0xE140
-    Printer = 0xE141
-    QrCode = 0xE1DF
-    RefreshCw = 0xE145
-    RotateCcw = 0xE148
-    Save = 0xE14D
-    Scan = 0xE257
-    Search = 0xE151
-    Send = 0xE152
-    Server = 0xE153
-    Settings = 0xE154
-    Share2 = 0xE156
-    Shield = 0xE158
-    ShoppingBag = 0xE15B
-    ShoppingCart = 0xE15C
-    SkipBack = 0xE15F
-    SkipForward = 0xE160
-    SlidersHorizontal = 0xE29A
-    Smartphone = 0xE163
-    Smile = 0xE164
-    Square = 0xE167
-    Star = 0xE176
-    Sun = 0xE178
-    Table = 0xE17D
-    Tag = 0xE17F
-    Terminal = 0xE181
-    Thermometer = 0xE186
-    ThumbsDown = 0xE189
-    ThumbsUp = 0xE18A
-    Trash2 = 0xE18E
-    TriangleAlert = 0xE193
-    Trophy = 0xE373
-    Truck = 0xE194
-    Umbrella = 0xE199
-    Upload = 0xE19E
-    User = 0xE19F
-    UserCheck = 0xE1A0
-    UserPlus = 0xE1A2
-    Users = 0xE1A4
-    Utensils = 0xE2F6
-    Video = 0xE1A5
-    Volume2 = 0xE1AB
-    VolumeX = 0xE1AC
-    Wallet = 0xE204
-    Wifi = 0xE1AE
-    WifiOff = 0xE1AF
-    X = 0xE1B2
-    Zap = 0xE1B4
+    None = 0                     // no icon: the default
+    Activity = 0xE038            // a pulse line, as that of a heart monitor
+    AlarmClock = 0xE03A          // an alarm clock
+    Archive = 0xE041             // a box for archives, with its lid
+    ArrowDown = 0xE042           // an arrow that points down
+    ArrowLeft = 0xE048           // an arrow that points left, to go back
+    ArrowRight = 0xE049          // an arrow that points right
+    ArrowUp = 0xE04A             // an arrow that points up
+    AtSign = 0xE04E              // the sign @
+    Award = 0xE04F               // a rosette with ribbons, for a prize
+    Ban = 0xE051                 // a circle crossed by a line, for something forbidden
+    Battery = 0xE053             // a battery
+    Bell = 0xE059                // a bell, for the notifications
+    BellOff = 0xE05A             // a bell crossed out, for the notifications off
+    Bike = 0xE1D2                // a bicycle
+    Bluetooth = 0xE05C           // the sign of Bluetooth
+    Book = 0xE05E                // a closed book
+    BookOpen = 0xE05F            // an open book
+    Bookmark = 0xE060            // a bookmark
+    Briefcase = 0xE062           // a briefcase, for work
+    Building2 = 0xE290           // an office building
+    Calendar = 0xE063            // a calendar
+    Camera = 0xE064              // a camera
+    Car = 0xE1D5                 // a car
+    ChartColumn = 0xE2A3         // a chart with columns
+    ChartLine = 0xE2A5           // a chart with a line
+    ChartPie = 0xE06B            // a pie chart
+    Check = 0xE06C               // a check mark
+    ChevronDown = 0xE06D         // a chevron that points down, to open
+    ChevronLeft = 0xE06E         // a chevron that points left, to go back
+    ChevronRight = 0xE06F        // a chevron that points right, to go on
+    ChevronUp = 0xE070           // a chevron that points up, to close
+    CircleAlert = 0xE077         // an exclamation mark in a circle, for an error
+    CircleCheck = 0xE226         // a check mark in a circle, for a success
+    CircleQuestionMark = 0xE082  // a question mark in a circle, for help
+    CircleX = 0xE084             // an X in a circle, for a failure
+    Clipboard = 0xE085           // a clipboard
+    Clock = 0xE087               // a clock, for a time
+    Cloud = 0xE088               // a cloud
+    Code = 0xE093                // two angle brackets, for code
+    Coffee = 0xE096              // a cup of coffee
+    Contact = 0xE09C             // a card with a person, for a contact
+    Copy = 0xE09E                // two sheets one over the other, to copy
+    Cpu = 0xE0A9                 // a processor
+    CreditCard = 0xE0AA          // a credit card
+    Database = 0xE0AD            // a cylinder, for a database
+    Download = 0xE0B2            // an arrow down into a tray, to download
+    Droplet = 0xE0B4             // a drop of water
+    Ellipsis = 0xE0B6            // three dots in a row, for more
+    EllipsisVertical = 0xE0B7    // three dots in a column, for a menu of more actions
+    ExternalLink = 0xE0B9        // a box with an arrow out of it, for a link that opens elsewhere
+    Eye = 0xE0BA                 // an eye, to show
+    EyeOff = 0xE0BB              // an eye crossed out, to hide
+    File = 0xE0C0                // a sheet of paper, for a file
+    FileText = 0xE0CC            // a sheet with lines of text
+    Flag = 0xE0D1                // a flag
+    Flame = 0xE0D2               // a flame
+    Folder = 0xE0D7              // a folder
+    FolderOpen = 0xE247          // an open folder
+    Funnel = 0xE0DC              // a funnel, for a filter
+    Gift = 0xE0E1                // a gift
+    Globe = 0xE0E8               // a globe, for the web or the languages
+    GraduationCap = 0xE234       // a graduation cap, for a school
+    Heart = 0xE0F2               // a heart, for what is liked
+    History = 0xE1F5             // a clock with an arrow around it, for the history
+    House = 0xE0F5               // a house, for the home page
+    Image = 0xE0F6               // a picture of mountains, for an image
+    Inbox = 0xE0F7               // a tray, for the messages received
+    Info = 0xE0F9                // an i in a circle, for information
+    Key = 0xE0FD                 // a key
+    Laptop = 0xE1CD              // a laptop
+    Layers = 0xE529              // sheets one over the other, for layers
+    LayoutGrid = 0xE0FF          // four squares, for a grid
+    Lightbulb = 0xE1C2           // a light bulb, for an idea or a tip
+    Link = 0xE102                // two links of a chain, for a link
+    List = 0xE106                // lines with dots, for a list
+    Loader = 0xE109              // rays in a circle, for something that is loading
+    Lock = 0xE10B                // a closed padlock
+    LockOpen = 0xE10C            // an open padlock
+    LogIn = 0xE10D               // an arrow into a door, to sign in
+    LogOut = 0xE10E              // an arrow out of a door, to sign out
+    Mail = 0xE10F                // an envelope, for the mail
+    Map = 0xE110                 // a folded map
+    MapPin = 0xE111              // a pin, for a place on a map
+    Menu = 0xE115                // three lines, for a menu
+    MessageCircle = 0xE116       // a round speech bubble, for a message
+    MessageSquare = 0xE117       // a square speech bubble, for a message
+    Mic = 0xE118                 // a microphone
+    Minus = 0xE11C               // a minus sign
+    Monitor = 0xE11D             // the screen of a computer
+    Moon = 0xE11E                // a crescent moon, for the night or the dark theme
+    Music = 0xE122               // a musical note
+    Package = 0xE129             // a parcel
+    Paperclip = 0xE12D           // a paper clip, for an attachment
+    Pause = 0xE12E               // two bars, to pause
+    Pencil = 0xE1F9              // a pencil, to write or to edit
+    Phone = 0xE133               // the handset of a phone, for a call
+    Plane = 0xE1DE               // an airplane
+    Play = 0xE13C                // a triangle that points right, to play
+    Plus = 0xE13D                // a plus sign, to add
+    Power = 0xE140               // a circle broken by a line, to switch on or off
+    Printer = 0xE141             // a printer
+    QrCode = 0xE1DF              // a QR code
+    RefreshCw = 0xE145           // two arrows in a circle, to refresh
+    RotateCcw = 0xE148           // an arrow that turns back, to undo
+    Save = 0xE14D                // a floppy disk, to save
+    Scan = 0xE257                // the corners of a frame, to scan
+    Search = 0xE151              // a magnifying glass, to search
+    Send = 0xE152                // a paper plane, to send
+    Server = 0xE153              // a server
+    Settings = 0xE154            // a gear, for the settings
+    Share2 = 0xE156              // three dots joined by lines, to share
+    Shield = 0xE158              // a shield, for security
+    ShoppingBag = 0xE15B         // a shopping bag
+    ShoppingCart = 0xE15C        // a shopping cart
+    SkipBack = 0xE15F            // a triangle to the left against a bar, for the track before
+    SkipForward = 0xE160         // a triangle to the right against a bar, for the track after
+    SlidersHorizontal = 0xE29A   // horizontal sliders, for options
+    Smartphone = 0xE163          // a smartphone
+    Smile = 0xE164               // a smiling face
+    Square = 0xE167              // a square, to stop
+    Star = 0xE176                // a star, for the favorites
+    Sun = 0xE178                 // a sun, for the day or the light theme
+    Table = 0xE17D               // a table with rows and columns
+    Tag = 0xE17F                 // a tag, for a label or a price
+    Terminal = 0xE181            // a prompt, for a terminal
+    Thermometer = 0xE186         // a thermometer
+    ThumbsDown = 0xE189          // a thumb down
+    ThumbsUp = 0xE18A            // a thumb up
+    Trash2 = 0xE18E              // a bin, to delete
+    TriangleAlert = 0xE193       // an exclamation mark in a triangle, for a warning
+    Trophy = 0xE373              // a trophy
+    Truck = 0xE194               // a truck, for a delivery
+    Umbrella = 0xE199            // an umbrella
+    Upload = 0xE19E              // an arrow up out of a tray, to upload
+    User = 0xE19F                // a person, for a user or an account
+    UserCheck = 0xE1A0           // a person with a check mark
+    UserPlus = 0xE1A2            // a person with a plus sign, to add someone
+    Users = 0xE1A4               // two people, for a group
+    Utensils = 0xE2F6            // a fork and a knife, for food
+    Video = 0xE1A5               // a video camera
+    Volume2 = 0xE1AB             // a speaker with waves, for the sound on
+    VolumeX = 0xE1AC             // a speaker with an X, for the sound off
+    Wallet = 0xE204              // a wallet
+    Wifi = 0xE1AE                // the waves of Wi-Fi
+    WifiOff = 0xE1AF             // the waves of Wi-Fi crossed out
+    X = 0xE1B2                   // an X, to close or to cancel
+    Zap = 0xE1B4                 // a lightning bolt
 }
 
 // ---- The end of the icons ----
 
-// The mouse, in logical pixels from the top left corner of the content, under the
-// title bar (D438), and its button: 1 left, 2 middle, 3 right, 0 when it moves.
+// Where the mouse is, and which button changed, for the handlers of 'onMouseMove',
+// 'onMouseDown' and 'onMouseUp' of a window. A finger on a phone is the left button.
 public struct Mouse {
-    public f32 x
-    public f32 y
-    public i32 button
+    public f32 x       // in logical pixels from the left edge of the content of the window
+    public f32 y       // in logical pixels from the top of the content, under the title bar
+    public i32 button  // 1 left, 2 middle, 3 right, 0 when the mouse moves
 }
 
-// A key pressed: its code is that of SDL, the character for the letters, the
-// digits and the signs, 27 for Esc, 13 for Enter.
+// A key pressed, for the handlers of 'onKeyDown' of a window.
 public struct Key {
+    // The keycode of SDL. For the letters, the digits and the signs it is the character
+    // of the key without Shift: 97 for A, with Shift too, and 49 for 1. Then 13 is
+    // Enter, 27 Esc, 32 Space, 8 Backspace and 127 Delete, and the arrows are
+    // 0x40000050 left, 0x4000004F right, 0x40000052 up and 0x40000051 down.
     public i64 code
-    public bool shift
-    public bool control
-    public bool alt
+    public bool shift    // a Shift key is held
+    public bool control  // a Ctrl key is held
+    public bool alt      // an Alt key is held
 }
 
-// What the components have in common, for Window.add (D434).
+// A component that a window, a group, a panel or a dialog can hold, with their 'add':
+// the components of this module, as 'Label' and 'Button', are its implementations.
 public interface Component {
+    // The number that names the component inside the module, for 'add'.
     i64 componentId() const
 }
 
@@ -313,10 +378,19 @@ public interface Component {
 // Each is a handle, with its position and its size in logical pixels from the top
 // left corner of the content (D438). Its text and its properties are methods.
 
-// A text.
+// A line of text, on the left of its box and in the middle of its height. It takes
+// neither the mouse nor the keys.
+//
+// '''
+// gui.Label status = w.add(gui.Label("Ready", 16, 223, 300, 20))
+// status.setText("Saved")
+// '''
 public struct Label : Component {
     i64 id
 
+    // A label with its text. 'x' and 'y' are in logical pixels from the top left corner
+    // of its parent, the window, the group, the panel or the dialog whose 'add' puts it
+    // there, and 'width' and 'height' its size.
     public Label(string text, i32 x, i32 y, i32 width, i32 height) {
         id = newPart(kindLabel, text, x, y, width, height)
     }
@@ -325,72 +399,109 @@ public struct Label : Component {
         ret id
     }
 
+    // Changes the text of the label.
     public void setText(string value) const {
         setPartText(id, value)
     }
 
+    // The text of the label.
     public string text() const {
         ret partText(id, false)
     }
 
+    // Moves the label, in logical pixels from the top left corner of its parent: the content of
+    // the window, or the group, the panel or the dialog that holds it. Its anchors keep the
+    // distances from the edges that it has at the new place.
     public void setPosition(i32 x, i32 y) const {
         setPartBounds(id, x, y, -1, -1)
     }
 
+    // Changes the width and the height of the label, in logical pixels. Its anchors keep the
+    // distances from the edges that it has with the new size.
     public void setSize(i32 width, i32 height) const {
         setPartBounds(id, -1, -1, width, height)
     }
 
+    // The distance of the label from the left edge of its parent, in logical pixels, where its
+    // anchors have placed it now.
     public i32 x() const {
         ret partBound(id, 0)
     }
 
+    // The distance of the label from the top edge of its parent, in logical pixels, where its
+    // anchors have placed it now.
     public i32 y() const {
         ret partBound(id, 1)
     }
 
+    // The width of the label now, in logical pixels: a 'Stretch' anchor changes it with its
+    // parent.
     public i32 width() const {
         ret partBound(id, 2)
     }
 
+    // The height of the label now, in logical pixels: a 'Stretch' anchor changes it with its
+    // parent.
     public i32 height() const {
         ret partBound(id, 3)
     }
 
+    // Shows or hides the label.
     public void setVisible(bool value) const {
         setPartFlag(id, 0, value)
     }
 
+    // Whether the label is visible, as 'setVisible' set it: true by default.
     public bool visible() const {
         ret partFlag(id, 0)
     }
 
+    // Enables or disables the label: disabled, it is drawn at half its opacity.
     public void setEnabled(bool value) const {
         setPartFlag(id, 1, value)
     }
 
+    // Whether the label is enabled, as 'setEnabled' set it: true by default.
     public bool enabled() const {
         ret partFlag(id, 1)
     }
 
-    // How it follows the edges of its window or of its group (D447).
+    // Sets which edges of its parent the label follows when the parent changes size: the
+    // window, or the group, the panel or the dialog that holds it. It keeps the distances from
+    // those edges that it has now, as 'setAnchor(gui.Horizontal.Right, gui.Vertical.Bottom)' in
+    // the bottom right corner. By default it is anchored to the left and to the top, and does
+    // not move.
     public void setAnchor(Horizontal horizontal, Vertical vertical) const {
         setPartAnchor(id, horizontal, vertical)
     }
 
+    // How the label follows the left and the right edges of its parent: 'Horizontal.Left' by
+    // default.
     public Horizontal horizontalAnchor() const {
         ret partHorizontal(id)
     }
 
+    // How the label follows the top and the bottom edges of its parent: 'Vertical.Top' by
+    // default.
     public Vertical verticalAnchor() const {
         ret partVertical(id)
     }
 }
 
-// A button: a click, Space or Enter with it in focus, calls its handlers of onClick.
+// A button, with a text, an icon or both. A click, a touch, or Space and Enter while it
+// has the keyboard, call its handlers of 'onClick'.
+//
+// '''
+// gui.Button save = w.add(gui.Button("Save", 364, 217, 100, 32))
+// save.setIcon(gui.Icon.Save)
+// save.onClick([w]() { w.showSnackbar("Saved") })
+// '''
 public struct Button : Component {
     i64 id
 
+    // A button with its text. 'x' and 'y' are in logical pixels from the top left
+    // corner of its parent, the window, the group, the panel or the dialog whose 'add'
+    // puts it there, and 'width' and 'height' its size.
     public Button(string text, i32 x, i32 y, i32 width, i32 height) {
         id = newPart(kindButton, text, x, y, width, height)
     }
@@ -399,90 +510,134 @@ public struct Button : Component {
         ret id
     }
 
+    // Adds a handler, called on the thread of the windows when the user presses the
+    // button: with a click, a touch, or Space or Enter while it has the keyboard. The
+    // handlers are called in the order they were added.
     public void onClick(move func() handler) const {
         addr box = alloc(sizeOf<func()>())
         put<func()>(box, move handler)
         addPartHandler(id, 0, box)
     }
 
-    // An icon before the text, or alone in the middle without text (P41).
+    // Puts an icon of 18 pixels before the text, or alone in the middle when the button
+    // has no text; 'Icon.None' removes it.
     public void setIcon(Icon value) const {
         setPartIcon(id, value)
     }
 
+    // The icon of the button, 'Icon.None' without one.
     public Icon icon() const {
         ret partIcon(id)
     }
 
+    // Changes the text of the button; without text, its icon is alone in the middle.
     public void setText(string value) const {
         setPartText(id, value)
     }
 
+    // The text of the button.
     public string text() const {
         ret partText(id, false)
     }
 
+    // Moves the button, in logical pixels from the top left corner of its parent: the content
+    // of the window, or the group, the panel or the dialog that holds it. Its anchors keep the
+    // distances from the edges that it has at the new place.
     public void setPosition(i32 x, i32 y) const {
         setPartBounds(id, x, y, -1, -1)
     }
 
+    // Changes the width and the height of the button, in logical pixels. Its anchors keep the
+    // distances from the edges that it has with the new size.
     public void setSize(i32 width, i32 height) const {
         setPartBounds(id, -1, -1, width, height)
     }
 
+    // The distance of the button from the left edge of its parent, in logical pixels, where its
+    // anchors have placed it now.
     public i32 x() const {
         ret partBound(id, 0)
     }
 
+    // The distance of the button from the top edge of its parent, in logical pixels, where its
+    // anchors have placed it now.
     public i32 y() const {
         ret partBound(id, 1)
     }
 
+    // The width of the button now, in logical pixels: a 'Stretch' anchor changes it with its
+    // parent.
     public i32 width() const {
         ret partBound(id, 2)
     }
 
+    // The height of the button now, in logical pixels: a 'Stretch' anchor changes it with its
+    // parent.
     public i32 height() const {
         ret partBound(id, 3)
     }
 
+    // Shows or hides the button: hidden, it takes neither the mouse nor the keys.
     public void setVisible(bool value) const {
         setPartFlag(id, 0, value)
     }
 
+    // Whether the button is visible, as 'setVisible' set it: true by default.
     public bool visible() const {
         ret partFlag(id, 0)
     }
 
+    // Enables or disables the button: disabled, it is drawn at half its opacity and takes
+    // neither the mouse nor the keys.
     public void setEnabled(bool value) const {
         setPartFlag(id, 1, value)
     }
 
+    // Whether the button is enabled, as 'setEnabled' set it: true by default.
     public bool enabled() const {
         ret partFlag(id, 1)
     }
 
-    // How it follows the edges of its window or of its group (D447).
+    // Sets which edges of its parent the button follows when the parent changes size: the
+    // window, or the group, the panel or the dialog that holds it. It keeps the distances from
+    // those edges that it has now, as 'setAnchor(gui.Horizontal.Right, gui.Vertical.Bottom)' in
+    // the bottom right corner. By default it is anchored to the left and to the top, and does
+    // not move.
     public void setAnchor(Horizontal horizontal, Vertical vertical) const {
         setPartAnchor(id, horizontal, vertical)
     }
 
+    // How the button follows the left and the right edges of its parent: 'Horizontal.Left' by
+    // default.
     public Horizontal horizontalAnchor() const {
         ret partHorizontal(id)
     }
 
+    // How the button follows the top and the bottom edges of its parent: 'Vertical.Top' by
+    // default.
     public Vertical verticalAnchor() const {
         ret partVertical(id)
     }
 }
 
-// A line of text that the user writes: the arrows, Home and End move in it, with
-// Shift they select, Ctrl+A, Ctrl+C, Ctrl+X and Ctrl+V as in every program. Its
-// handlers of onChange receive the text at each change, those of onEnter when
+// A line of text that the user writes, with the input method of the system and, on a
+// phone, the keyboard on the screen. The arrows, Home and End move in it, with Shift
+// they select, as the mouse does, and Backspace, Delete, Ctrl+A, Ctrl+C, Ctrl+X and
+// Ctrl+V do what they do in every program; a text pasted becomes one line. Its
+// handlers of 'onChange' receive the text at each change, those of 'onEnter' when
 // Enter is pressed.
+//
+// '''
+// gui.TextBox name = w.add(gui.TextBox("", 24, 48, 372, 32))
+// name.setPlaceholder("Write your name")
+// name.onEnter([](string text) { println("Hello, {}!", text) })
+// '''
 public struct TextBox : Component {
     i64 id
 
+    // A text box with its first text, maybe "". 'x' and 'y' are in logical pixels from
+    // the top left corner of its parent, the window, the group, the panel or the dialog
+    // whose 'add' puts it there, and 'width' and 'height' its size.
     public TextBox(string text, i32 x, i32 y, i32 width, i32 height) {
         id = newPart(kindTextBox, text, x, y, width, height)
     }
@@ -491,95 +646,139 @@ public struct TextBox : Component {
         ret id
     }
 
+    // Adds a handler, called on the thread of the windows with the new text at each
+    // change that the user makes: a character written or deleted, a text cut or pasted.
+    // 'setText' does not call it.
     public void onChange(move func(string) handler) const {
         addr box = alloc(sizeOf<func(string)>())
         put<func(string)>(box, move handler)
         addPartHandler(id, 1, box)
     }
 
+    // Adds a handler, called on the thread of the windows with the text when the user
+    // presses Enter in the box.
     public void onEnter(move func(string) handler) const {
         addr box = alloc(sizeOf<func(string)>())
         put<func(string)>(box, move handler)
         addPartHandler(id, 2, box)
     }
 
-    // The text shown while the box is empty.
+    // Sets the text shown in gray while the box is empty, as a hint of what to write.
     public void setPlaceholder(string value) const {
         i64 me = id
         withData([me, value](ref Shared data) { data.parts[partIndexOf(ref data, me)].placeholder = value })
     }
 
+    // The text shown while the box is empty, "" by default.
     public string placeholder() const {
         ret partText(id, true)
     }
 
+    // Replaces the text, with the cursor at its end, without calling the handlers of
+    // 'onChange'.
     public void setText(string value) const {
         setPartText(id, value)
     }
 
+    // The text written in the box.
     public string text() const {
         ret partText(id, false)
     }
 
+    // Moves the text box, in logical pixels from the top left corner of its parent: the content
+    // of the window, or the group, the panel or the dialog that holds it. Its anchors keep the
+    // distances from the edges that it has at the new place.
     public void setPosition(i32 x, i32 y) const {
         setPartBounds(id, x, y, -1, -1)
     }
 
+    // Changes the width and the height of the text box, in logical pixels. Its anchors keep the
+    // distances from the edges that it has with the new size.
     public void setSize(i32 width, i32 height) const {
         setPartBounds(id, -1, -1, width, height)
     }
 
+    // The distance of the text box from the left edge of its parent, in logical pixels, where
+    // its anchors have placed it now.
     public i32 x() const {
         ret partBound(id, 0)
     }
 
+    // The distance of the text box from the top edge of its parent, in logical pixels, where
+    // its anchors have placed it now.
     public i32 y() const {
         ret partBound(id, 1)
     }
 
+    // The width of the text box now, in logical pixels: a 'Stretch' anchor changes it with its
+    // parent.
     public i32 width() const {
         ret partBound(id, 2)
     }
 
+    // The height of the text box now, in logical pixels: a 'Stretch' anchor changes it with its
+    // parent.
     public i32 height() const {
         ret partBound(id, 3)
     }
 
+    // Shows or hides the text box: hidden, it takes neither the mouse nor the keys.
     public void setVisible(bool value) const {
         setPartFlag(id, 0, value)
     }
 
+    // Whether the text box is visible, as 'setVisible' set it: true by default.
     public bool visible() const {
         ret partFlag(id, 0)
     }
 
+    // Enables or disables the text box: disabled, it is drawn at half its opacity and takes
+    // neither the mouse nor the keys.
     public void setEnabled(bool value) const {
         setPartFlag(id, 1, value)
     }
 
+    // Whether the text box is enabled, as 'setEnabled' set it: true by default.
     public bool enabled() const {
         ret partFlag(id, 1)
     }
 
-    // How it follows the edges of its window or of its group (D447).
+    // Sets which edges of its parent the text box follows when the parent changes size: the
+    // window, or the group, the panel or the dialog that holds it. It keeps the distances from
+    // those edges that it has now, as 'setAnchor(gui.Horizontal.Right, gui.Vertical.Bottom)' in
+    // the bottom right corner. By default it is anchored to the left and to the top, and does
+    // not move.
     public void setAnchor(Horizontal horizontal, Vertical vertical) const {
         setPartAnchor(id, horizontal, vertical)
     }
 
+    // How the text box follows the left and the right edges of its parent: 'Horizontal.Left' by
+    // default.
     public Horizontal horizontalAnchor() const {
         ret partHorizontal(id)
     }
 
+    // How the text box follows the top and the bottom edges of its parent: 'Vertical.Top' by
+    // default.
     public Vertical verticalAnchor() const {
         ret partVertical(id)
     }
 }
 
-// A box to check, with its text on the right: a click or Space changes it, and its
-// handlers of onChange receive the new state.
+// A box to check, with its text on its right. A click on the box or on its text, or
+// Space while it has the keyboard, checks or unchecks it, and calls its handlers of
+// 'onChange' with the new state.
+//
+// '''
+// gui.CheckBox news = w.add(gui.CheckBox("Send me the news", 12, 154, 260, 22))
+// news.onChange([](bool checked) { println("news: {}", checked) })
+// '''
 public struct CheckBox : Component {
     i64 id
 
+    // A check box with its text, not checked. 'x' and 'y' are in logical pixels from
+    // the top left corner of its parent, the window, the group, the panel or the dialog
+    // whose 'add' puts it there, and 'width' and 'height' its size, with the text.
     public CheckBox(string text, i32 x, i32 y, i32 width, i32 height) {
         id = newPart(kindCheckBox, text, x, y, width, height)
     }
@@ -588,87 +787,132 @@ public struct CheckBox : Component {
         ret id
     }
 
+    // Adds a handler, called on the thread of the windows with the new state when the
+    // user checks or unchecks the box. 'setChecked' does not call it.
     public void onChange(move func(bool) handler) const {
         addr box = alloc(sizeOf<func(bool)>())
         put<func(bool)>(box, move handler)
         addPartHandler(id, 1, box)
     }
 
+    // Checks or unchecks the box, without calling the handlers of 'onChange'.
     public void setChecked(bool value) const {
         setPartFlag(id, 2, value)
     }
 
+    // Whether the box is checked: false at the start.
     public bool checked() const {
         ret partFlag(id, 2)
     }
 
+    // Changes the text on the right of the box.
     public void setText(string value) const {
         setPartText(id, value)
     }
 
+    // The text on the right of the box.
     public string text() const {
         ret partText(id, false)
     }
 
+    // Moves the check box, in logical pixels from the top left corner of its parent: the
+    // content of the window, or the group, the panel or the dialog that holds it. Its anchors
+    // keep the distances from the edges that it has at the new place.
     public void setPosition(i32 x, i32 y) const {
         setPartBounds(id, x, y, -1, -1)
     }
 
+    // Changes the width and the height of the check box, in logical pixels. Its anchors keep
+    // the distances from the edges that it has with the new size.
     public void setSize(i32 width, i32 height) const {
         setPartBounds(id, -1, -1, width, height)
     }
 
+    // The distance of the check box from the left edge of its parent, in logical pixels, where
+    // its anchors have placed it now.
     public i32 x() const {
         ret partBound(id, 0)
     }
 
+    // The distance of the check box from the top edge of its parent, in logical pixels, where
+    // its anchors have placed it now.
     public i32 y() const {
         ret partBound(id, 1)
     }
 
+    // The width of the check box now, in logical pixels: a 'Stretch' anchor changes it with its
+    // parent.
     public i32 width() const {
         ret partBound(id, 2)
     }
 
+    // The height of the check box now, in logical pixels: a 'Stretch' anchor changes it with
+    // its parent.
     public i32 height() const {
         ret partBound(id, 3)
     }
 
+    // Shows or hides the check box: hidden, it takes neither the mouse nor the keys.
     public void setVisible(bool value) const {
         setPartFlag(id, 0, value)
     }
 
+    // Whether the check box is visible, as 'setVisible' set it: true by default.
     public bool visible() const {
         ret partFlag(id, 0)
     }
 
+    // Enables or disables the check box: disabled, it is drawn at half its opacity and takes
+    // neither the mouse nor the keys.
     public void setEnabled(bool value) const {
         setPartFlag(id, 1, value)
     }
 
+    // Whether the check box is enabled, as 'setEnabled' set it: true by default.
     public bool enabled() const {
         ret partFlag(id, 1)
     }
 
-    // How it follows the edges of its window or of its group (D447).
+    // Sets which edges of its parent the check box follows when the parent changes size: the
+    // window, or the group, the panel or the dialog that holds it. It keeps the distances from
+    // those edges that it has now, as 'setAnchor(gui.Horizontal.Right, gui.Vertical.Bottom)' in
+    // the bottom right corner. By default it is anchored to the left and to the top, and does
+    // not move.
     public void setAnchor(Horizontal horizontal, Vertical vertical) const {
         setPartAnchor(id, horizontal, vertical)
     }
 
+    // How the check box follows the left and the right edges of its parent: 'Horizontal.Left'
+    // by default.
     public Horizontal horizontalAnchor() const {
         ret partHorizontal(id)
     }
 
+    // How the check box follows the top and the bottom edges of its parent: 'Vertical.Top' by
+    // default.
     public Vertical verticalAnchor() const {
         ret partVertical(id)
     }
 }
 
-// A card with a title that contains components (D444): their positions are from
-// its top left corner, and they move, hide and are disabled with it.
+// A card with a title in its top left corner, which holds other components: their
+// positions are from its top left corner, so the first ones go under the title, at
+// about 34 pixels. They move, hide and are disabled with the group, follow its edges
+// with their anchors, and are drawn only inside it. A group can hold groups; unlike a
+// panel, it does not scroll.
+//
+// '''
+// gui.GroupBox account = w.add(gui.GroupBox("Account", 12, 12, 300, 200))
+// account.add(gui.Label("Name", 12, 34, 200, 18))
+// gui.TextBox name = account.add(gui.TextBox("", 12, 54, 276, 28))
+// account.setEnabled(false)   // name too
+// '''
 public struct GroupBox : Component {
     i64 id
 
+    // A group with its title. 'x' and 'y' are in logical pixels from the top left
+    // corner of its parent, the window, the group, the panel or the dialog whose 'add'
+    // puts it there, and 'width' and 'height' its size.
     public GroupBox(string text, i32 x, i32 y, i32 width, i32 height) {
         id = newPart(kindGroup, text, x, y, width, height)
     }
@@ -677,81 +921,124 @@ public struct GroupBox : Component {
         ret id
     }
 
-    // Puts a component in the group, and gives it back: a component is in one
-    // window or in one group only.
+    // Puts a component in the group, with its position from the top left corner of the
+    // group, and gives it back. The group can be put in its window before or after. A
+    // component that is already in a window or in a group is a panic, and so are an app
+    // bar and a group put in itself or in a group that it holds.
     public T add<T : Component>(T component) const {
         addPart(0, id, component.componentId())
         ret component
     }
 
+    // Changes the title of the group.
     public void setText(string value) const {
         setPartText(id, value)
     }
 
+    // The title of the group.
     public string text() const {
         ret partText(id, false)
     }
 
+    // Moves the group, in logical pixels from the top left corner of its parent: the content of
+    // the window, or the group, the panel or the dialog that holds it. Its anchors keep the
+    // distances from the edges that it has at the new place.
     public void setPosition(i32 x, i32 y) const {
         setPartBounds(id, x, y, -1, -1)
     }
 
+    // Changes the width and the height of the group, in logical pixels. Its anchors keep the
+    // distances from the edges that it has with the new size.
     public void setSize(i32 width, i32 height) const {
         setPartBounds(id, -1, -1, width, height)
     }
 
+    // The distance of the group from the left edge of its parent, in logical pixels, where its
+    // anchors have placed it now.
     public i32 x() const {
         ret partBound(id, 0)
     }
 
+    // The distance of the group from the top edge of its parent, in logical pixels, where its
+    // anchors have placed it now.
     public i32 y() const {
         ret partBound(id, 1)
     }
 
+    // The width of the group now, in logical pixels: a 'Stretch' anchor changes it with its
+    // parent.
     public i32 width() const {
         ret partBound(id, 2)
     }
 
+    // The height of the group now, in logical pixels: a 'Stretch' anchor changes it with its
+    // parent.
     public i32 height() const {
         ret partBound(id, 3)
     }
 
+    // Shows or hides the group, and its components with it.
     public void setVisible(bool value) const {
         setPartFlag(id, 0, value)
     }
 
+    // Whether the group is visible, as 'setVisible' set it: true by default.
     public bool visible() const {
         ret partFlag(id, 0)
     }
 
+    // Enables or disables the group, and its components with it: disabled, they are drawn at
+    // half their opacity and take neither the mouse nor the keys.
     public void setEnabled(bool value) const {
         setPartFlag(id, 1, value)
     }
 
+    // Whether the group is enabled, as 'setEnabled' set it: true by default.
     public bool enabled() const {
         ret partFlag(id, 1)
     }
 
-    // How it follows the edges of its window or of its group (D447).
+    // Sets which edges of its parent the group follows when the parent changes size: the
+    // window, or the group, the panel or the dialog that holds it. It keeps the distances from
+    // those edges that it has now, as 'setAnchor(gui.Horizontal.Right, gui.Vertical.Bottom)' in
+    // the bottom right corner. By default it is anchored to the left and to the top, and does
+    // not move.
     public void setAnchor(Horizontal horizontal, Vertical vertical) const {
         setPartAnchor(id, horizontal, vertical)
     }
 
+    // How the group follows the left and the right edges of its parent: 'Horizontal.Left' by
+    // default.
     public Horizontal horizontalAnchor() const {
         ret partHorizontal(id)
     }
 
+    // How the group follows the top and the bottom edges of its parent: 'Vertical.Top' by
+    // default.
     public Vertical verticalAnchor() const {
         ret partVertical(id)
     }
 }
 
-// A choice among items (D445): a click, Space or Enter opens the list of its items
-// over the other components, and its handlers of onChange receive the index of
-// the item that the user chooses. Without a choice it shows its placeholder.
+// A choice among a list of items, which the user chooses and cannot write. A click, or
+// Space, Enter or Alt+Down while it has the keyboard, opens the list over the other
+// components, below the box or above it when there is no room below, with up to 8
+// items and the others with the wheel of the mouse. In the list Up, Down, Home, End and
+// the first letter of an item move, Enter, Space or a click choose, and Esc or a click
+// out of the list close it. With the list closed, the same keys choose an item at once.
+// Without a choice the box shows its placeholder.
+//
+// '''
+// gui.ComboBox role = w.add(gui.ComboBox(["Developer", "Designer", "Viewer"], 12, 110, 276, 28))
+// role.setPlaceholder("Choose a role")
+// role.onChange([role](i64 index) { println("{}: {}", index, role.text()) })
+// '''
 public struct ComboBox : Component {
     i64 id
 
+    // A combo box with a copy of its items, none chosen. 'x' and 'y' are in logical
+    // pixels from the top left corner of its parent, the window, the group, the panel or
+    // the dialog whose 'add' puts it there, and 'width' and 'height' its size.
     public ComboBox(list<string> items, i32 x, i32 y, i32 width, i32 height) {
         id = newPart(kindComboBox, "", x, y, width, height)
         setComboItems(id, items)
@@ -761,17 +1048,21 @@ public struct ComboBox : Component {
         ret id
     }
 
+    // Adds a handler, called on the thread of the windows with the index of the item
+    // that the user chooses, when it is not the one chosen before. 'setSelected' and
+    // 'setItems' do not call it.
     public void onChange(move func(i64) handler) const {
         addr box = alloc(sizeOf<func(i64)>())
         put<func(i64)>(box, move handler)
         addPartHandler(id, 1, box)
     }
 
-    // The items, and no choice.
+    // Replaces the items with a copy of 'items', and leaves none chosen.
     public void setItems(list<string> items) const {
         setComboItems(id, items)
     }
 
+    // A copy of the items.
     public list<string> items() const {
         list<string> result
         i64 me = id
@@ -779,12 +1070,14 @@ public struct ComboBox : Component {
         ret result
     }
 
+    // Adds an item at the end of the list; the item chosen stays the same.
     public void addItem(string item) const {
         i64 me = id
         withData([me, item](ref Shared data) { data.parts[partIndexOf(ref data, me)].items.add(item) })
     }
 
-    // The index of the item chosen, or -1 for none.
+    // Chooses the item at 'index', from 0, or none with -1, without calling the handlers
+    // of 'onChange'. Another index out of the items is a panic.
     public void setSelected(i64 index) const {
         i64 me = id
         withData([me, index](ref Shared data) {
@@ -796,6 +1089,7 @@ public struct ComboBox : Component {
         })
     }
 
+    // The index of the item chosen, from 0, or -1 when none is: the default.
     public i64 selected() const {
         i64 me = id
         i64 result = -1
@@ -803,7 +1097,7 @@ public struct ComboBox : Component {
         ret result
     }
 
-    // The item chosen, or "".
+    // The item chosen, or "" when none is.
     public string text() const {
         i64 me = id
         string result
@@ -816,77 +1110,114 @@ public struct ComboBox : Component {
         ret result
     }
 
-    // The text shown without a choice.
+    // Sets the text shown in gray while no item is chosen, as "Choose a role".
     public void setPlaceholder(string value) const {
         i64 me = id
         withData([me, value](ref Shared data) { data.parts[partIndexOf(ref data, me)].placeholder = value })
     }
 
+    // The text shown while no item is chosen, "" by default.
     public string placeholder() const {
         ret partText(id, true)
     }
 
+    // Moves the combo box, in logical pixels from the top left corner of its parent: the
+    // content of the window, or the group, the panel or the dialog that holds it. Its anchors
+    // keep the distances from the edges that it has at the new place.
     public void setPosition(i32 x, i32 y) const {
         setPartBounds(id, x, y, -1, -1)
     }
 
+    // Changes the width and the height of the combo box, in logical pixels. Its anchors keep
+    // the distances from the edges that it has with the new size.
     public void setSize(i32 width, i32 height) const {
         setPartBounds(id, -1, -1, width, height)
     }
 
+    // The distance of the combo box from the left edge of its parent, in logical pixels, where
+    // its anchors have placed it now.
     public i32 x() const {
         ret partBound(id, 0)
     }
 
+    // The distance of the combo box from the top edge of its parent, in logical pixels, where
+    // its anchors have placed it now.
     public i32 y() const {
         ret partBound(id, 1)
     }
 
+    // The width of the combo box now, in logical pixels: a 'Stretch' anchor changes it with its
+    // parent.
     public i32 width() const {
         ret partBound(id, 2)
     }
 
+    // The height of the combo box now, in logical pixels: a 'Stretch' anchor changes it with
+    // its parent.
     public i32 height() const {
         ret partBound(id, 3)
     }
 
+    // Shows or hides the combo box: hidden, it takes neither the mouse nor the keys.
     public void setVisible(bool value) const {
         setPartFlag(id, 0, value)
     }
 
+    // Whether the combo box is visible, as 'setVisible' set it: true by default.
     public bool visible() const {
         ret partFlag(id, 0)
     }
 
+    // Enables or disables the combo box: disabled, it is drawn at half its opacity and takes
+    // neither the mouse nor the keys.
     public void setEnabled(bool value) const {
         setPartFlag(id, 1, value)
     }
 
+    // Whether the combo box is enabled, as 'setEnabled' set it: true by default.
     public bool enabled() const {
         ret partFlag(id, 1)
     }
 
-    // How it follows the edges of its window or of its group (D447).
+    // Sets which edges of its parent the combo box follows when the parent changes size: the
+    // window, or the group, the panel or the dialog that holds it. It keeps the distances from
+    // those edges that it has now, as 'setAnchor(gui.Horizontal.Right, gui.Vertical.Bottom)' in
+    // the bottom right corner. By default it is anchored to the left and to the top, and does
+    // not move.
     public void setAnchor(Horizontal horizontal, Vertical vertical) const {
         setPartAnchor(id, horizontal, vertical)
     }
 
+    // How the combo box follows the left and the right edges of its parent: 'Horizontal.Left'
+    // by default.
     public Horizontal horizontalAnchor() const {
         ret partHorizontal(id)
     }
 
+    // How the combo box follows the top and the bottom edges of its parent: 'Vertical.Top' by
+    // default.
     public Vertical verticalAnchor() const {
         ret partVertical(id)
     }
 }
 
-// An image in PNG, JPEG, BMP or GIF (D446), from a file or from bytes, fitted to
-// its box as its scale says. It is decoded on the thread that sets it, which
-// receives the errors.
+// An image in PNG, JPEG, BMP or GIF, of which a GIF shows its first frame, from a file
+// or from bytes in memory, placed in its box as 'setScale' says: by default the whole
+// image, as large as the box allows. The image is read and decoded by the thread that
+// sets it, which receives the errors as exceptions. An app on a phone has no files
+// next to it: there the images come from 'embed'.
+//
+// '''
+// gui.ImageBox logo = w.add(gui.ImageBox("", 16, 16, 64, 64))
+// logo.setBytes(embed("images/logo.png"))
+// '''
 public struct ImageBox : Component {
     i64 id
 
-    // Throws the errors of reading the file, and an Error if it is not an image.
+    // An image box with the image of 'file', or none with "". 'x' and 'y' are in
+    // logical pixels from the top left corner of its parent, the window, the group, the
+    // panel or the dialog whose 'add' puts it there, and 'width' and 'height' its size.
+    // Throws an 'Error' when the file cannot be read, is empty or is not an image.
     public ImageBox(string file, i32 x, i32 y, i32 width, i32 height) {
         id = newPart(kindImageBox, "", x, y, width, height)
         loadImage(id, file)
@@ -896,34 +1227,42 @@ public struct ImageBox : Component {
         ret id
     }
 
-    // The image of a file, or none with "".
+    // Shows the image of a file, read and decoded by this thread, or none with "".
+    // Throws an 'Error' when the file cannot be read, is empty or is not an image, and
+    // then the image shown stays.
     public void setFile(string path) const {
         loadImage(id, path)
     }
 
+    // The path of the image shown, "" when there is none or it came from bytes.
     public string file() const {
         ret partText(id, false)
     }
 
-    // An image in memory, or none without bytes.
+    // Shows an image in memory, as 'embed' or 'fs.readBytes' give it, or none with an
+    // empty list. The bytes are decoded by this thread and not kept. Throws an 'Error'
+    // when they are not an image, and then the image shown stays.
     public void setBytes(list<u8> bytes) const {
         setImage(id, "", bytes)
     }
 
-    // The size of the image, in pixels.
+    // The width of the image, in its own pixels, or 0 without an image.
     public i32 imageWidth() const {
         ret partBound(id, 4)
     }
 
+    // The height of the image, in its own pixels, or 0 without an image.
     public i32 imageHeight() const {
         ret partBound(id, 5)
     }
 
+    // Sets how the image fits the box: 'Scale.Fit' by default.
     public void setScale(Scale value) const {
         i64 me = id
         withData([me, value](ref Shared data) { data.parts[partIndexOf(ref data, me)].scale = value })
     }
 
+    // How the image fits the box: 'Scale.Fit' by default.
     public Scale scale() const {
         i64 me = id
         Scale result = Scale.Fit
@@ -931,65 +1270,97 @@ public struct ImageBox : Component {
         ret result
     }
 
+    // Moves the image box, in logical pixels from the top left corner of its parent: the
+    // content of the window, or the group, the panel or the dialog that holds it. Its anchors
+    // keep the distances from the edges that it has at the new place.
     public void setPosition(i32 x, i32 y) const {
         setPartBounds(id, x, y, -1, -1)
     }
 
+    // Changes the width and the height of the image box, in logical pixels. Its anchors keep
+    // the distances from the edges that it has with the new size.
     public void setSize(i32 width, i32 height) const {
         setPartBounds(id, -1, -1, width, height)
     }
 
+    // The distance of the image box from the left edge of its parent, in logical pixels, where
+    // its anchors have placed it now.
     public i32 x() const {
         ret partBound(id, 0)
     }
 
+    // The distance of the image box from the top edge of its parent, in logical pixels, where
+    // its anchors have placed it now.
     public i32 y() const {
         ret partBound(id, 1)
     }
 
+    // The width of the image box now, in logical pixels: a 'Stretch' anchor changes it with its
+    // parent.
     public i32 width() const {
         ret partBound(id, 2)
     }
 
+    // The height of the image box now, in logical pixels: a 'Stretch' anchor changes it with
+    // its parent.
     public i32 height() const {
         ret partBound(id, 3)
     }
 
+    // Shows or hides the image box.
     public void setVisible(bool value) const {
         setPartFlag(id, 0, value)
     }
 
+    // Whether the image box is visible, as 'setVisible' set it: true by default.
     public bool visible() const {
         ret partFlag(id, 0)
     }
 
+    // Enables or disables the image box: disabled, it is drawn at half its opacity.
     public void setEnabled(bool value) const {
         setPartFlag(id, 1, value)
     }
 
+    // Whether the image box is enabled, as 'setEnabled' set it: true by default.
     public bool enabled() const {
         ret partFlag(id, 1)
     }
 
-    // How it follows the edges of its window or of its group (D447).
+    // Sets which edges of its parent the image box follows when the parent changes size: the
+    // window, or the group, the panel or the dialog that holds it. It keeps the distances from
+    // those edges that it has now, as 'setAnchor(gui.Horizontal.Right, gui.Vertical.Bottom)' in
+    // the bottom right corner. By default it is anchored to the left and to the top, and does
+    // not move.
     public void setAnchor(Horizontal horizontal, Vertical vertical) const {
         setPartAnchor(id, horizontal, vertical)
     }
 
+    // How the image box follows the left and the right edges of its parent: 'Horizontal.Left'
+    // by default.
     public Horizontal horizontalAnchor() const {
         ret partHorizontal(id)
     }
 
+    // How the image box follows the top and the bottom edges of its parent: 'Vertical.Top' by
+    // default.
     public Vertical verticalAnchor() const {
         ret partVertical(id)
     }
 }
 
-// An icon of Lucide (D448, P41), centered in its box, its square as large as the
-// smaller side, in the color of the text.
+// An icon alone, at the center of its box, as large as the smaller side of the box, in
+// the color of the labels. It takes neither the mouse nor the keys.
+//
+// '''
+// w.add(gui.IconBox(gui.Icon.CircleCheck, 16, 16, 48, 48))
+// '''
 public struct IconBox : Component {
     i64 id
 
+    // An icon box with its icon; 'Icon.None' shows nothing. 'x' and 'y' are in logical
+    // pixels from the top left corner of its parent, the window, the group, the panel or
+    // the dialog whose 'add' puts it there, and 'width' and 'height' its size.
     public IconBox(Icon icon, i32 x, i32 y, i32 width, i32 height) {
         id = newPart(kindIconBox, "", x, y, width, height)
         setPartIcon(id, icon)
@@ -999,73 +1370,116 @@ public struct IconBox : Component {
         ret id
     }
 
+    // Changes the icon; 'Icon.None' shows nothing.
     public void setIcon(Icon value) const {
         setPartIcon(id, value)
     }
 
+    // The icon shown, 'Icon.None' for none.
     public Icon icon() const {
         ret partIcon(id)
     }
 
+    // Moves the icon box, in logical pixels from the top left corner of its parent: the content
+    // of the window, or the group, the panel or the dialog that holds it. Its anchors keep the
+    // distances from the edges that it has at the new place.
     public void setPosition(i32 x, i32 y) const {
         setPartBounds(id, x, y, -1, -1)
     }
 
+    // Changes the width and the height of the icon box, in logical pixels. Its anchors keep the
+    // distances from the edges that it has with the new size.
     public void setSize(i32 width, i32 height) const {
         setPartBounds(id, -1, -1, width, height)
     }
 
+    // The distance of the icon box from the left edge of its parent, in logical pixels, where
+    // its anchors have placed it now.
     public i32 x() const {
         ret partBound(id, 0)
     }
 
+    // The distance of the icon box from the top edge of its parent, in logical pixels, where
+    // its anchors have placed it now.
     public i32 y() const {
         ret partBound(id, 1)
     }
 
+    // The width of the icon box now, in logical pixels: a 'Stretch' anchor changes it with its
+    // parent.
     public i32 width() const {
         ret partBound(id, 2)
     }
 
+    // The height of the icon box now, in logical pixels: a 'Stretch' anchor changes it with its
+    // parent.
     public i32 height() const {
         ret partBound(id, 3)
     }
 
+    // Shows or hides the icon box.
     public void setVisible(bool value) const {
         setPartFlag(id, 0, value)
     }
 
+    // Whether the icon box is visible, as 'setVisible' set it: true by default.
     public bool visible() const {
         ret partFlag(id, 0)
     }
 
+    // Enables or disables the icon box: disabled, it is drawn at half its opacity.
     public void setEnabled(bool value) const {
         setPartFlag(id, 1, value)
     }
 
+    // Whether the icon box is enabled, as 'setEnabled' set it: true by default.
     public bool enabled() const {
         ret partFlag(id, 1)
     }
 
-    // How it follows the edges of its window or of its group (D447).
+    // Sets which edges of its parent the icon box follows when the parent changes size: the
+    // window, or the group, the panel or the dialog that holds it. It keeps the distances from
+    // those edges that it has now, as 'setAnchor(gui.Horizontal.Right, gui.Vertical.Bottom)' in
+    // the bottom right corner. By default it is anchored to the left and to the top, and does
+    // not move.
     public void setAnchor(Horizontal horizontal, Vertical vertical) const {
         setPartAnchor(id, horizontal, vertical)
     }
 
+    // How the icon box follows the left and the right edges of its parent: 'Horizontal.Left' by
+    // default.
     public Horizontal horizontalAnchor() const {
         ret partHorizontal(id)
     }
 
+    // How the icon box follows the top and the bottom edges of its parent: 'Vertical.Top' by
+    // default.
     public Vertical verticalAnchor() const {
         ret partVertical(id)
     }
 }
 
-// A container that draws nothing (D451): its components take their positions
-// from its top left corner, as in a group. A page of a navigation bar is one.
+// A container with no look of its own: its components take their positions from its
+// top left corner, as in a group, and are drawn only inside it. A panel scrolls up and
+// down when its components anchored to the top go below its bottom edge: with a finger,
+// with the wheel of the mouse, or with the thin bar that shows on its right. There is
+// nothing to write for it. Its components anchored otherwise stay where they are on
+// the part that is seen, as a button over a list. A page of a navigation bar is a
+// panel.
+//
+// '''
+// gui.Panel form = w.add(gui.Panel(0, 0, 420, 300))
+// form.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Stretch)
+// for (i64 i = 0; i < 20; i++) {
+//     form.add(gui.CheckBox(format("Option {}", i + 1), 16, 16 + 32 * i32(i), 300, 22))
+// }
+// '''
 public struct Panel : Component {
     i64 id
 
+    // A panel, empty. 'x' and 'y' are in logical pixels from the top left corner of its
+    // parent, the window, the group, the panel or the dialog whose 'add' puts it there,
+    // and 'width' and 'height' its size.
     public Panel(i32 x, i32 y, i32 width, i32 height) {
         id = newPart(kindPanel, "", x, y, width, height)
     }
@@ -1074,81 +1488,125 @@ public struct Panel : Component {
         ret id
     }
 
-    // Puts a component in the panel, and gives it back.
+    // Puts a component in the panel, with its position from the top left corner of the
+    // panel, and gives it back. A component that is already in a window or in a group is
+    // a panic, and so are an app bar and a panel put in itself or in a panel that it
+    // holds.
     public T add<T : Component>(T component) const {
         addPart(0, id, component.componentId())
         ret component
     }
 
-    // How far the panel is scrolled, in logical pixels from the top (D460).
+    // How far the panel is scrolled, in logical pixels from the top: 0 when it is not.
     public i32 scrollY() const {
         ret i32(partScroll(id))
     }
 
+    // Scrolls the panel so that 'y', in logical pixels from the top of its content, is
+    // at its top edge: 0 goes back to the top. At the next frame the value is kept
+    // between 0 and the most that the components of the panel allow.
     public void scrollTo(i32 y) const {
         setPartScroll(id, f32(y))
     }
 
+    // Moves the panel, in logical pixels from the top left corner of its parent: the content of
+    // the window, or the group, the panel or the dialog that holds it. Its anchors keep the
+    // distances from the edges that it has at the new place.
     public void setPosition(i32 x, i32 y) const {
         setPartBounds(id, x, y, -1, -1)
     }
 
+    // Changes the width and the height of the panel, in logical pixels. Its anchors keep the
+    // distances from the edges that it has with the new size.
     public void setSize(i32 width, i32 height) const {
         setPartBounds(id, -1, -1, width, height)
     }
 
+    // The distance of the panel from the left edge of its parent, in logical pixels, where its
+    // anchors have placed it now.
     public i32 x() const {
         ret partBound(id, 0)
     }
 
+    // The distance of the panel from the top edge of its parent, in logical pixels, where its
+    // anchors have placed it now.
     public i32 y() const {
         ret partBound(id, 1)
     }
 
+    // The width of the panel now, in logical pixels: a 'Stretch' anchor changes it with its
+    // parent.
     public i32 width() const {
         ret partBound(id, 2)
     }
 
+    // The height of the panel now, in logical pixels: a 'Stretch' anchor changes it with its
+    // parent.
     public i32 height() const {
         ret partBound(id, 3)
     }
 
+    // Shows or hides the panel, and its components with it.
     public void setVisible(bool value) const {
         setPartFlag(id, 0, value)
     }
 
+    // Whether the panel is visible, as 'setVisible' set it: true by default.
     public bool visible() const {
         ret partFlag(id, 0)
     }
 
+    // Enables or disables the panel, and its components with it: disabled, they are drawn at
+    // half their opacity and take neither the mouse nor the keys.
     public void setEnabled(bool value) const {
         setPartFlag(id, 1, value)
     }
 
+    // Whether the panel is enabled, as 'setEnabled' set it: true by default.
     public bool enabled() const {
         ret partFlag(id, 1)
     }
 
-    // How it follows the edges of its window or of its group (D447).
+    // Sets which edges of its parent the panel follows when the parent changes size: the
+    // window, or the group, the panel or the dialog that holds it. It keeps the distances from
+    // those edges that it has now, as 'setAnchor(gui.Horizontal.Right, gui.Vertical.Bottom)' in
+    // the bottom right corner. By default it is anchored to the left and to the top, and does
+    // not move.
     public void setAnchor(Horizontal horizontal, Vertical vertical) const {
         setPartAnchor(id, horizontal, vertical)
     }
 
+    // How the panel follows the left and the right edges of its parent: 'Horizontal.Left' by
+    // default.
     public Horizontal horizontalAnchor() const {
         ret partHorizontal(id)
     }
 
+    // How the panel follows the top and the bottom edges of its parent: 'Vertical.Top' by
+    // default.
     public Vertical verticalAnchor() const {
         ret partVertical(id)
     }
 }
 
-// The bar at the top of an app (D450, P42): its title, an icon on the left, as a
-// back arrow or a menu, and icons of actions on the right. Put in a window, it
-// takes the top of the content, the whole width.
+// The bar at the top of an app: its title, an icon on its left, as a menu or an arrow
+// back, and the icons of its actions on its right. Put in a window with 'add', it takes
+// the top of the content, the whole width and 56 pixels: the other components of the
+// window go under it, and the pages of a navigation bar start there by themselves. On
+// the desktop it is under the title bar of the window.
+//
+// '''
+// gui.AppBar top = w.add(gui.AppBar("Inbox"))
+// top.setNavigation(gui.Icon.Menu)
+// top.onNavigation([]() { println("the menu") })
+// top.addAction(gui.Icon.Search, [w]() { w.showSnackbar("Search") })
+// '''
 public struct AppBar : Component {
     i64 id
 
+    // An app bar with its title, to put in a window with 'add'. A window has one at most:
+    // a second one, or an app bar put in a group, a panel or a dialog, is a panic of
+    // 'add'.
     public AppBar(string title) {
         id = newPart(kindAppBar, title, 0, 0, 0, i32(appBarHeight))
     }
@@ -1157,31 +1615,38 @@ public struct AppBar : Component {
         ret id
     }
 
+    // Changes the title of the bar.
     public void setTitle(string value) const {
         setPartText(id, value)
     }
 
+    // The title of the bar.
     public string title() const {
         ret partText(id, false)
     }
 
-    // The icon on the left, None for none, and what a click on it does.
+    // Puts an icon on the left of the bar, as 'Icon.Menu' or 'Icon.ArrowLeft', which
+    // calls the handlers of 'onNavigation' when it is clicked; 'Icon.None' removes it.
     public void setNavigation(Icon value) const {
         setPartIcon(id, value)
     }
 
+    // The icon on the left of the bar, 'Icon.None' without one.
     public Icon navigation() const {
         ret partIcon(id)
     }
 
+    // Adds a handler, called on the thread of the windows when the user clicks or
+    // touches the icon on the left of the bar.
     public void onNavigation(move func() handler) const {
         addr box = alloc(sizeOf<func()>())
         put<func()>(box, move handler)
         addPartHandler(id, 0, box)
     }
 
-    // An icon on the right, the first added on the right edge, and what a click on
-    // it does.
+    // Adds an icon on the right of the bar, with the handler that a click or a touch on
+    // it calls on the thread of the windows. The first action added is at the right
+    // edge, and each next one on the left of the one before.
     public void addAction(Icon icon, move func() handler) const {
         addr box = alloc(sizeOf<func()>())
         put<func()>(box, move handler)
@@ -1193,42 +1658,63 @@ public struct AppBar : Component {
         })
     }
 
+    // The distance of the app bar from the left edge of the content: 0.
     public i32 x() const {
         ret partBound(id, 0)
     }
 
+    // The distance of the app bar from the top of the content: 0.
     public i32 y() const {
         ret partBound(id, 1)
     }
 
+    // The width of the app bar, in logical pixels: that of the content of its window, once it
+    // is in one.
     public i32 width() const {
         ret partBound(id, 2)
     }
 
+    // The height of the app bar: 56 logical pixels.
     public i32 height() const {
         ret partBound(id, 3)
     }
 
+    // Shows or hides the app bar: the room that it takes at the top stays empty.
     public void setVisible(bool value) const {
         setPartFlag(id, 0, value)
     }
 
+    // Whether the app bar is visible, as 'setVisible' set it: true by default.
     public bool visible() const {
         ret partFlag(id, 0)
     }
 
+    // Enables or disables the app bar: disabled, it is drawn at half its opacity and its icons
+    // do not respond.
     public void setEnabled(bool value) const {
         setPartFlag(id, 1, value)
     }
 
+    // Whether the app bar is enabled, as 'setEnabled' set it: true by default.
     public bool enabled() const {
         ret partFlag(id, 1)
     }
 }
 
-// The bar at the bottom of an app (D450, D451, P42): its items, an icon and a text
-// each, choose the page of the app that is shown. A window has one, given by
-// Window.navigationBar.
+// The bar at the bottom of an app, whose items, an icon and a text each, choose the
+// page that is shown. A window has one, made the first time that 'Window.navigationBar'
+// is called: it takes the bottom of the content, the whole width and 64 pixels. Each
+// page is a panel that fills the room between it and the app bar, and scrolls when its
+// components go below its bottom. On a phone the keyboard on the screen covers the
+// bar, and the pages go down to the keyboard.
+//
+// '''
+// gui.NavigationBar bar = w.navigationBar()
+// gui.Panel home = bar.addPage("Home", gui.Icon.House)
+// home.add(gui.Label("Welcome", 16, 16, 200, 20))
+// gui.Panel settings = bar.addPage("Settings", gui.Icon.Settings)
+// bar.onChange([top](i64 index) { top.setTitle(index == 0 ? "Home" : "Settings") })
+// '''
 public struct NavigationBar : Component {
     i64 id
 
@@ -1240,7 +1726,10 @@ public struct NavigationBar : Component {
         ret id
     }
 
-    // Adds an item, and gives back its page, with the room between the bars.
+    // Adds an item with its text and its icon, and gives back its page: a panel that
+    // fills the room between the bars, follows the size of the window, and is shown
+    // while its item is chosen. Its components take their positions from its top left
+    // corner; its own position and size are those of the room, whatever is set.
     public Panel addPage(string text, Icon icon) const {
         i64 me = id
         i64 made = 0
@@ -1261,7 +1750,8 @@ public struct NavigationBar : Component {
         ret page
     }
 
-    // The item chosen, from 0, whose page is shown.
+    // Chooses the item at 'index', from 0, and shows its page, without calling the
+    // handlers of 'onChange'. An index out of the items is a panic.
     public void setSelected(i64 index) const {
         i64 me = id
         withData([me, index](ref Shared data) {
@@ -1273,6 +1763,7 @@ public struct NavigationBar : Component {
         })
     }
 
+    // The index of the item chosen, whose page is shown: 0 at the start.
     public i64 selected() const {
         i64 me = id
         i64 result = 0
@@ -1280,53 +1771,80 @@ public struct NavigationBar : Component {
         ret result
     }
 
-    // When the user chooses an item.
+    // Adds a handler, called on the thread of the windows with the index of the item
+    // that the user chooses, when it is not the one chosen before. 'setSelected' does
+    // not call it.
     public void onChange(move func(i64) handler) const {
         addr box = alloc(sizeOf<func(i64)>())
         put<func(i64)>(box, move handler)
         addPartHandler(id, 1, box)
     }
 
+    // The distance of the navigation bar from the left edge of the content: 0.
     public i32 x() const {
         ret partBound(id, 0)
     }
 
+    // The distance of the navigation bar from the top of the content, in logical pixels: the
+    // height of the content less the 64 of the bar.
     public i32 y() const {
         ret partBound(id, 1)
     }
 
+    // The width of the navigation bar, in logical pixels: that of the content of its window.
     public i32 width() const {
         ret partBound(id, 2)
     }
 
+    // The height of the navigation bar: 64 logical pixels.
     public i32 height() const {
         ret partBound(id, 3)
     }
 
+    // Shows or hides the navigation bar, and its pages with it.
     public void setVisible(bool value) const {
         setPartFlag(id, 0, value)
     }
 
+    // Whether the navigation bar is visible, as 'setVisible' set it: true by default.
     public bool visible() const {
         ret partFlag(id, 0)
     }
 
+    // Enables or disables the navigation bar: disabled, it is drawn at half its opacity and its
+    // items do not respond; its pages stay as they are.
     public void setEnabled(bool value) const {
         setPartFlag(id, 1, value)
     }
 
+    // Whether the navigation bar is enabled, as 'setEnabled' set it: true by default.
     public bool enabled() const {
         ret partFlag(id, 1)
     }
 }
 
-// A list of items (D461, D462), each a row with an icon, a title, a line under it
-// and a text on the right, all optional: only the rows that are seen are drawn,
-// and the list scrolls as a panel. The item chosen stays lit; a click, a touch or
-// the keys choose an item and call the handlers of onChoose with its index.
+// A list of items in rows of 56 pixels, as those of an app of mail: each has an icon
+// or a round image, a title, a line under it and a text on its right, as a time, all
+// optional. Only the rows that are seen are drawn, so a list can have thousands of
+// items, and it scrolls as a panel, with a finger, the wheel or its bar. The item
+// chosen stays lit: a click, a touch, or Up, Down, Home, End, Page Up and Page Down
+// while the list has the keyboard, choose an item and call the handlers of 'onChoose'
+// with its index.
+//
+// '''
+// gui.ListView inbox = page.add(gui.ListView(0, 0, 390, 605))
+// inbox.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Stretch)
+// inbox.addItem(gui.Icon.User, "Ada Lovelace", "The notes on the engine", "10:42")
+// inbox.addItem(gui.Icon.Mail, "The workshop", "The report of the day", "Mon")
+// inbox.setItemImageBytes(0, embed("images/ada.png"))
+// inbox.onChoose([inbox](i64 index) { println("open {}", inbox.itemTitle(index)) })
+// '''
 public struct ListView : Component {
     i64 id
 
+    // An empty list. 'x' and 'y' are in logical pixels from the top left corner of its
+    // parent, the window, the group, the panel or the dialog whose 'add' puts it there,
+    // and 'width' and 'height' its size.
     public ListView(i32 x, i32 y, i32 width, i32 height) {
         id = newPart(kindListView, "", x, y, width, height)
     }
@@ -1335,7 +1853,8 @@ public struct ListView : Component {
         ret id
     }
 
-    // Icon.None and "" for what the item does not have.
+    // Adds an item at the end: its icon, its title, the line under the title and the
+    // text on the right, with 'Icon.None' and "" for what the item does not have.
     public void addItem(Icon icon, string title, string subtitle, string detail) const {
         i64 me = id
         withData([me, icon, title, subtitle, detail](ref Shared data) {
@@ -1350,8 +1869,9 @@ public struct ListView : Component {
         })
     }
 
-    // An item before the one at index, or at the end with count(): the item chosen
-    // stays the same.
+    // Inserts an item before the one at 'index', or at the end with 'count()', with the
+    // same parts as 'addItem'. The item chosen stays the same, at its new index. An
+    // index below 0 or above 'count()' is a panic.
     public void insertItem(i64 index, Icon icon, string title, string subtitle, string detail) const {
         i64 me = id
         withData([me, index, icon, title, subtitle, detail](ref Shared data) {
@@ -1372,6 +1892,8 @@ public struct ListView : Component {
         })
     }
 
+    // Replaces the icon and the texts of the item at 'index', which keeps its image and
+    // stays chosen if it is. An index out of the items is a panic.
     public void setItem(i64 index, Icon icon, string title, string subtitle, string detail) const {
         i64 me = id
         withData([me, index, icon, title, subtitle, detail](ref Shared data) {
@@ -1383,6 +1905,9 @@ public struct ListView : Component {
         })
     }
 
+    // Removes the item at 'index', with its image; if it was the item chosen, none is.
+    // The items after it go back by one, and so does the index of the item chosen. An
+    // index out of the items is a panic.
     public void removeItem(i64 index) const {
         i64 me = id
         withData([me, index](ref Shared data) {
@@ -1402,6 +1927,8 @@ public struct ListView : Component {
         })
     }
 
+    // Removes all the items, with their images, leaves none chosen, and scrolls back to
+    // the top.
     public void clear() const {
         i64 me = id
         withData([me](ref Shared data) {
@@ -1420,6 +1947,7 @@ public struct ListView : Component {
         })
     }
 
+    // How many items the list has.
     public i64 count() const {
         i64 me = id
         i64 result = 0
@@ -1427,6 +1955,7 @@ public struct ListView : Component {
         ret result
     }
 
+    // The title of the item at 'index'. An index out of the items is a panic.
     public string itemTitle(i64 index) const {
         i64 me = id
         string result
@@ -1434,6 +1963,8 @@ public struct ListView : Component {
         ret result
     }
 
+    // The line under the title of the item at 'index', "" if it has none. An index out of
+    // the items is a panic.
     public string itemSubtitle(i64 index) const {
         i64 me = id
         string result
@@ -1441,6 +1972,8 @@ public struct ListView : Component {
         ret result
     }
 
+    // The text on the right of the item at 'index', "" if it has none. An index out of the
+    // items is a panic.
     public string itemDetail(i64 index) const {
         i64 me = id
         string result
@@ -1448,6 +1981,8 @@ public struct ListView : Component {
         ret result
     }
 
+    // The icon of the item at 'index', 'Icon.None' if it has none. An index out of the
+    // items is a panic.
     public Icon itemIcon(i64 index) const {
         i64 me = id
         Icon result = Icon.None
@@ -1455,7 +1990,9 @@ public struct ListView : Component {
         ret result
     }
 
-    // The item chosen, or -1 for none.
+    // Chooses the item at 'index', which stays lit, or none with -1, without calling the
+    // handlers of 'onChoose' and without scrolling to it, which 'scrollTo' does. Another
+    // index out of the items is a panic.
     public void setSelected(i64 index) const {
         i64 me = id
         withData([me, index](ref Shared data) {
@@ -1467,6 +2004,7 @@ public struct ListView : Component {
         })
     }
 
+    // The index of the item chosen, from 0, or -1 when none is: the default.
     public i64 selected() const {
         i64 me = id
         i64 result = -1
@@ -1474,15 +2012,20 @@ public struct ListView : Component {
         ret result
     }
 
-    // When the user chooses an item.
+    // Adds a handler, called on the thread of the windows with the index of the item
+    // that the user chooses, with a click, a touch or the keys, also when it was the item
+    // chosen already. 'setSelected' does not call it.
     public void onChoose(move func(i64) handler) const {
         addr box = alloc(sizeOf<func(i64)>())
         put<func(i64)>(box, move handler)
         addPartHandler(id, 1, box)
     }
 
-    // A round image in place of the icon of an item (D469), "" for none: read and
-    // decoded by this thread, as that of an image box.
+    // Shows a round image of 40 pixels in place of the icon of the item at 'index', as
+    // the photo of a contact: the square at the center of the image of 'file', in PNG,
+    // JPEG, BMP or GIF, read and decoded by this thread. "" removes it. Throws an
+    // 'Error' when the file cannot be read, is empty or is not an image; an index out of
+    // the items is a panic.
     public void setItemImage(i64 index, string file) const {
         list<u8> bytes
         if (file.len() > 0) {
@@ -1491,13 +2034,16 @@ public struct ListView : Component {
         setRoundImage(id, index, file, bytes)
     }
 
-    // An image in memory for the item, as embed() gives it (D470), or none
-    // without bytes.
+    // Shows a round image in place of the icon of the item at 'index', as
+    // 'setItemImage' does, from an image in memory, as 'embed' gives it; an empty list
+    // removes it. Throws an 'Error' when the bytes are not an image; an index out of the
+    // items is a panic.
     public void setItemImageBytes(i64 index, list<u8> bytes) const {
         setRoundImage(id, index, "", bytes)
     }
 
-    // Scrolls the list so that the item is seen.
+    // Scrolls the list as little as it takes to show the item at 'index'. An index out
+    // of the items is a panic.
     public void scrollTo(i64 index) const {
         i64 me = id
         withData([me, index](ref Shared data) {
@@ -1506,66 +2052,101 @@ public struct ListView : Component {
         })
     }
 
+    // Moves the list, in logical pixels from the top left corner of its parent: the content of
+    // the window, or the group, the panel or the dialog that holds it. Its anchors keep the
+    // distances from the edges that it has at the new place.
     public void setPosition(i32 x, i32 y) const {
         setPartBounds(id, x, y, -1, -1)
     }
 
+    // Changes the width and the height of the list, in logical pixels. Its anchors keep the
+    // distances from the edges that it has with the new size.
     public void setSize(i32 width, i32 height) const {
         setPartBounds(id, -1, -1, width, height)
     }
 
+    // The distance of the list from the left edge of its parent, in logical pixels, where its
+    // anchors have placed it now.
     public i32 x() const {
         ret partBound(id, 0)
     }
 
+    // The distance of the list from the top edge of its parent, in logical pixels, where its
+    // anchors have placed it now.
     public i32 y() const {
         ret partBound(id, 1)
     }
 
+    // The width of the list now, in logical pixels: a 'Stretch' anchor changes it with its
+    // parent.
     public i32 width() const {
         ret partBound(id, 2)
     }
 
+    // The height of the list now, in logical pixels: a 'Stretch' anchor changes it with its
+    // parent.
     public i32 height() const {
         ret partBound(id, 3)
     }
 
+    // Shows or hides the list: hidden, it takes neither the mouse nor the keys.
     public void setVisible(bool value) const {
         setPartFlag(id, 0, value)
     }
 
+    // Whether the list is visible, as 'setVisible' set it: true by default.
     public bool visible() const {
         ret partFlag(id, 0)
     }
 
+    // Enables or disables the list: disabled, it is drawn at half its opacity and takes neither
+    // the mouse nor the keys.
     public void setEnabled(bool value) const {
         setPartFlag(id, 1, value)
     }
 
+    // Whether the list is enabled, as 'setEnabled' set it: true by default.
     public bool enabled() const {
         ret partFlag(id, 1)
     }
 
-    // How it follows the edges of its window or of its group (D447).
+    // Sets which edges of its parent the list follows when the parent changes size: the window,
+    // or the group, the panel or the dialog that holds it. It keeps the distances from those
+    // edges that it has now, as 'setAnchor(gui.Horizontal.Right, gui.Vertical.Bottom)' in the
+    // bottom right corner. By default it is anchored to the left and to the top, and does not
+    // move.
     public void setAnchor(Horizontal horizontal, Vertical vertical) const {
         setPartAnchor(id, horizontal, vertical)
     }
 
+    // How the list follows the left and the right edges of its parent: 'Horizontal.Left' by
+    // default.
     public Horizontal horizontalAnchor() const {
         ret partHorizontal(id)
     }
 
+    // How the list follows the top and the bottom edges of its parent: 'Vertical.Top' by
+    // default.
     public Vertical verticalAnchor() const {
         ret partVertical(id)
     }
 }
 
-// A switch (D466), on or off, with its text on the left and the switch at the right
-// edge: a click or Space changes it, and its handlers of onChange receive the new
-// state.
+// A switch, on or off, as those in the settings of a phone: its text on the left and
+// the switch at the right edge of its box. A click, a touch, or Space while it has the
+// keyboard, turns it, and calls its handlers of 'onChange' with the new state.
+//
+// '''
+// gui.Switch notify = w.add(gui.Switch("Notifications", 16, 16, 358, 32))
+// notify.setChecked(true)
+// notify.onChange([](bool on) { println("notifications: {}", on) })
+// '''
 public struct Switch : Component {
     i64 id
 
+    // A switch with its text, off. 'x' and 'y' are in logical pixels from the top left
+    // corner of its parent, the window, the group, the panel or the dialog whose 'add'
+    // puts it there, and 'width' and 'height' its size, with the text.
     public Switch(string text, i32 x, i32 y, i32 width, i32 height) {
         id = newPart(kindSwitch, text, x, y, width, height)
     }
@@ -1574,88 +2155,135 @@ public struct Switch : Component {
         ret id
     }
 
+    // Adds a handler, called on the thread of the windows with the new state when the
+    // user turns the switch on or off. 'setChecked' does not call it.
     public void onChange(move func(bool) handler) const {
         addr box = alloc(sizeOf<func(bool)>())
         put<func(bool)>(box, move handler)
         addPartHandler(id, 1, box)
     }
 
+    // Turns the switch on, with true, or off, without calling the handlers of
+    // 'onChange'.
     public void setChecked(bool value) const {
         setPartFlag(id, 2, value)
     }
 
+    // Whether the switch is on: false at the start.
     public bool checked() const {
         ret partFlag(id, 2)
     }
 
+    // Changes the text on the left of the switch.
     public void setText(string value) const {
         setPartText(id, value)
     }
 
+    // The text on the left of the switch.
     public string text() const {
         ret partText(id, false)
     }
 
+    // Moves the switch, in logical pixels from the top left corner of its parent: the content
+    // of the window, or the group, the panel or the dialog that holds it. Its anchors keep the
+    // distances from the edges that it has at the new place.
     public void setPosition(i32 x, i32 y) const {
         setPartBounds(id, x, y, -1, -1)
     }
 
+    // Changes the width and the height of the switch, in logical pixels. Its anchors keep the
+    // distances from the edges that it has with the new size.
     public void setSize(i32 width, i32 height) const {
         setPartBounds(id, -1, -1, width, height)
     }
 
+    // The distance of the switch from the left edge of its parent, in logical pixels, where its
+    // anchors have placed it now.
     public i32 x() const {
         ret partBound(id, 0)
     }
 
+    // The distance of the switch from the top edge of its parent, in logical pixels, where its
+    // anchors have placed it now.
     public i32 y() const {
         ret partBound(id, 1)
     }
 
+    // The width of the switch now, in logical pixels: a 'Stretch' anchor changes it with its
+    // parent.
     public i32 width() const {
         ret partBound(id, 2)
     }
 
+    // The height of the switch now, in logical pixels: a 'Stretch' anchor changes it with its
+    // parent.
     public i32 height() const {
         ret partBound(id, 3)
     }
 
+    // Shows or hides the switch: hidden, it takes neither the mouse nor the keys.
     public void setVisible(bool value) const {
         setPartFlag(id, 0, value)
     }
 
+    // Whether the switch is visible, as 'setVisible' set it: true by default.
     public bool visible() const {
         ret partFlag(id, 0)
     }
 
+    // Enables or disables the switch: disabled, it is drawn at half its opacity and takes
+    // neither the mouse nor the keys.
     public void setEnabled(bool value) const {
         setPartFlag(id, 1, value)
     }
 
+    // Whether the switch is enabled, as 'setEnabled' set it: true by default.
     public bool enabled() const {
         ret partFlag(id, 1)
     }
 
-    // How it follows the edges of its window or of its group (D447).
+    // Sets which edges of its parent the switch follows when the parent changes size: the
+    // window, or the group, the panel or the dialog that holds it. It keeps the distances from
+    // those edges that it has now, as 'setAnchor(gui.Horizontal.Right, gui.Vertical.Bottom)' in
+    // the bottom right corner. By default it is anchored to the left and to the top, and does
+    // not move.
     public void setAnchor(Horizontal horizontal, Vertical vertical) const {
         setPartAnchor(id, horizontal, vertical)
     }
 
+    // How the switch follows the left and the right edges of its parent: 'Horizontal.Left' by
+    // default.
     public Horizontal horizontalAnchor() const {
         ret partHorizontal(id)
     }
 
+    // How the switch follows the top and the bottom edges of its parent: 'Vertical.Top' by
+    // default.
     public Vertical verticalAnchor() const {
         ret partVertical(id)
     }
 }
 
-// A slider (D466): an integer between a minimum and a maximum, chosen by dragging
-// its knob, by a click on its track or with the keys; its handlers of onChange
-// receive the new value, also while the knob is dragged.
+// An integer between a minimum and a maximum, as a volume or a quantity, chosen by
+// dragging the knob, with a click on the track, or with the keys while the slider has
+// the keyboard: Left and Down take 1, Right and Up add 1, Page Down and Page Up move by
+// a tenth of the range, Home and End go to the minimum and to the maximum. A value with
+// decimals comes from dividing it. Its handlers of 'onChange' receive the new value,
+// also while the knob is dragged.
+//
+// '''
+// gui.Label size = w.add(gui.Label("Text size: 100%", 16, 64, 358, 20))
+// gui.Slider zoom = w.add(gui.Slider(80, 150, 16, 88, 358, 32))
+// zoom.setValue(100)
+// zoom.onChange([size](i64 value) { size.setText(format("Text size: {}%", value)) })
+// '''
 public struct Slider : Component {
     i64 id
 
+    // A slider from 'minimum' to 'maximum', both included, at the minimum. 'x' and 'y'
+    // are in logical pixels from the top left corner of its parent, the window, the
+    // group, the panel or the dialog whose 'add' puts it there, and 'width' and 'height'
+    // its size. A minimum above the maximum is a panic.
     public Slider(i64 minimum, i64 maximum, i32 x, i32 y, i32 width, i32 height) {
         if (minimum > maximum) {
             panic(format("the minimum of the slider, {}, is above its maximum, {}", minimum, maximum))
@@ -1674,13 +2302,16 @@ public struct Slider : Component {
         ret id
     }
 
+    // Adds a handler, called on the thread of the windows with the new value whenever
+    // the user changes it, also while the knob is dragged. 'setValue' does not call it.
     public void onChange(move func(i64) handler) const {
         addr box = alloc(sizeOf<func(i64)>())
         put<func(i64)>(box, move handler)
         addPartHandler(id, 1, box)
     }
 
-    // The value, kept between the minimum and the maximum.
+    // Sets the value, kept between the minimum and the maximum, without calling the
+    // handlers of 'onChange'.
     public void setValue(i64 value) const {
         i64 me = id
         withData([me, value](ref Shared data) {
@@ -1691,6 +2322,7 @@ public struct Slider : Component {
         })
     }
 
+    // The value now, between the minimum and the maximum.
     public i64 value() const {
         i64 me = id
         i64 result = 0
@@ -1698,6 +2330,7 @@ public struct Slider : Component {
         ret result
     }
 
+    // The smallest value, at the left end of the track.
     public i64 minimum() const {
         i64 me = id
         i64 result = 0
@@ -1705,6 +2338,7 @@ public struct Slider : Component {
         ret result
     }
 
+    // The largest value, at the right end of the track.
     public i64 maximum() const {
         i64 me = id
         i64 result = 0
@@ -1712,67 +2346,112 @@ public struct Slider : Component {
         ret result
     }
 
+    // Moves the slider, in logical pixels from the top left corner of its parent: the content
+    // of the window, or the group, the panel or the dialog that holds it. Its anchors keep the
+    // distances from the edges that it has at the new place.
     public void setPosition(i32 x, i32 y) const {
         setPartBounds(id, x, y, -1, -1)
     }
 
+    // Changes the width and the height of the slider, in logical pixels. Its anchors keep the
+    // distances from the edges that it has with the new size.
     public void setSize(i32 width, i32 height) const {
         setPartBounds(id, -1, -1, width, height)
     }
 
+    // The distance of the slider from the left edge of its parent, in logical pixels, where its
+    // anchors have placed it now.
     public i32 x() const {
         ret partBound(id, 0)
     }
 
+    // The distance of the slider from the top edge of its parent, in logical pixels, where its
+    // anchors have placed it now.
     public i32 y() const {
         ret partBound(id, 1)
     }
 
+    // The width of the slider now, in logical pixels: a 'Stretch' anchor changes it with its
+    // parent.
     public i32 width() const {
         ret partBound(id, 2)
     }
 
+    // The height of the slider now, in logical pixels: a 'Stretch' anchor changes it with its
+    // parent.
     public i32 height() const {
         ret partBound(id, 3)
     }
 
+    // Shows or hides the slider: hidden, it takes neither the mouse nor the keys.
     public void setVisible(bool value) const {
         setPartFlag(id, 0, value)
     }
 
+    // Whether the slider is visible, as 'setVisible' set it: true by default.
     public bool visible() const {
         ret partFlag(id, 0)
     }
 
+    // Enables or disables the slider: disabled, it is drawn at half its opacity and takes
+    // neither the mouse nor the keys.
     public void setEnabled(bool value) const {
         setPartFlag(id, 1, value)
     }
 
+    // Whether the slider is enabled, as 'setEnabled' set it: true by default.
     public bool enabled() const {
         ret partFlag(id, 1)
     }
 
-    // How it follows the edges of its window or of its group (D447).
+    // Sets which edges of its parent the slider follows when the parent changes size: the
+    // window, or the group, the panel or the dialog that holds it. It keeps the distances from
+    // those edges that it has now, as 'setAnchor(gui.Horizontal.Right, gui.Vertical.Bottom)' in
+    // the bottom right corner. By default it is anchored to the left and to the top, and does
+    // not move.
     public void setAnchor(Horizontal horizontal, Vertical vertical) const {
         setPartAnchor(id, horizontal, vertical)
     }
 
+    // How the slider follows the left and the right edges of its parent: 'Horizontal.Left' by
+    // default.
     public Horizontal horizontalAnchor() const {
         ret partHorizontal(id)
     }
 
+    // How the slider follows the top and the bottom edges of its parent: 'Vertical.Top' by
+    // default.
     public Vertical verticalAnchor() const {
         ret partVertical(id)
     }
 }
 
-// A dialog (D467): a card with a title, components and buttons at the bottom, that
-// showDialog of a window opens over its content, with the rest darkened and out of
-// reach until it closes. Its components have their positions from the top left
-// corner of its body, under the title; Esc, or the back key on Android, closes it.
+// A dialog: a card with a title, its components and its buttons at the bottom, which
+// 'Window.showDialog' opens at the center of the window, over the rest darkened, which
+// the mouse and the keys do not reach until it closes. It is drawn inside the window,
+// the same on the desktop and on a phone. Its buttons do not close it by themselves:
+// their handlers call 'close'. Esc, or the back key of a phone, closes it too. A
+// dialog is made once and can be shown again after it closes.
+//
+// '''
+// gui.Dialog ask = gui.Dialog("Delete the message?", 320, 156)
+// ask.add(gui.Label("It cannot be undone.", 0, 0, 272, 20))
+// ask.addButton("Cancel", [ask]() { ask.close() })
+// ask.addButton("Delete", [w, ask]() {
+//     ask.close()
+//     w.showSnackbar("Message deleted")
+// })
+// trash.onClick([w, ask]() { w.showDialog(ask) })
+// '''
 public struct Dialog {
     i64 id
 
+    // A dialog with its title and the size of its card, in logical pixels. Its body,
+    // where 'add' puts the components, starts 24 pixels from the left edge of the card
+    // and 64 from the top, under the title, and leaves 68 pixels at the bottom for the
+    // buttons: 'Dialog("...", 320, 156)' has a body of 272 by 24. The card is at most as
+    // large as the content of the window less 32 pixels: in a smaller window it shrinks,
+    // and the components of its body follow their anchors.
     public Dialog(string title, i32 width, i32 height) {
         i64 made = 0
         withData([ref made, title, width, height](ref Shared data) {
@@ -1789,7 +2468,9 @@ public struct Dialog {
         id = made
     }
 
-    // Puts a component in the body of the dialog, and gives it back.
+    // Puts a component in the body of the dialog, with its position from the top left
+    // corner of the body, under the title, and gives it back. A component that is
+    // already in a window or in a group is a panic, and so is an app bar.
     public T add<T : Component>(T component) const {
         i64 me = id
         i64 body = 0
@@ -1798,7 +2479,10 @@ public struct Dialog {
         ret component
     }
 
-    // A button at the bottom right, after those added before: the last is indigo.
+    // Adds a button at the bottom right of the card, on the right of those added before,
+    // as wide as its text: the last one is the main one, in indigo, the others are white
+    // with a border. A click, or Space and Enter while it has the keyboard, call the
+    // handler on the thread of the windows; the dialog stays open until it calls 'close'.
     public void addButton(string text, move func() handler) const {
         addr box = alloc(sizeOf<func()>())
         put<func()>(box, move handler)
@@ -1815,7 +2499,9 @@ public struct Dialog {
         })
     }
 
-    // Closes the dialog, if it is shown, and calls the handlers of onClose.
+    // Closes the dialog, if a window shows it, and then calls its handlers of 'onClose'
+    // on the thread of the windows; the keyboard goes back to the component that had it
+    // before. A dialog that is not shown stays as it is.
     public void close() const {
         i64 me = id
         withData([me](ref Shared data) {
@@ -1829,13 +2515,15 @@ public struct Dialog {
         })
     }
 
-    // Whenever the dialog closes: by close(), with Esc or with the back key.
+    // Adds a handler, called on the thread of the windows whenever the dialog closes: by
+    // 'close', with Esc, or with the back key of a phone.
     public void onClose(move func() handler) const {
         addr box = alloc(sizeOf<func()>())
         put<func()>(box, move handler)
         addPartHandler(id, 3, box)
     }
 
+    // Whether a window shows the dialog now.
     public bool shown() const {
         i64 me = id
         bool result = false
@@ -1847,10 +2535,12 @@ public struct Dialog {
         ret result
     }
 
+    // Changes the title of the dialog.
     public void setTitle(string value) const {
         setPartText(id, value)
     }
 
+    // The title of the dialog.
     public string title() const {
         ret partText(id, false)
     }
@@ -2530,12 +3220,32 @@ void setImage(i64 id, string file, list<u8> bytes) {
 
 // ---- The window ----
 
-// A window (D430, D442): made with its title and its size in logical pixels,
-// shown by start(). It is a handle: its copies name the same window, and a lambda
-// captures it by copy. The program ends when its windows are closed.
+// A window, with its title bar, drawn by the library in the colors of its theme, and its
+// components. It is a handle: its copies name the same window, and a lambda captures it
+// by copy, so that a button can close its own window. 'start' shows it, and when 'main'
+// returns the program waits until its windows are closed. The handlers of its events
+// and of its components run on the thread of the windows, one at a time.
+//
+// On Android an app has one window, which fills the screen between the bars of the
+// system, without a title bar: its components, placed for the size given to the
+// constructor, follow the screen with their anchors, also when the phone turns. Its
+// size and its state do not change there.
+//
+// '''
+// gui.Window w = gui.Window("Notes", 480, 300)
+// gui.TextBox title = w.add(gui.TextBox("", 16, 16, 448, 32))
+// title.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Top)
+// gui.Button quit = w.add(gui.Button("Quit", 364, 217, 100, 32))
+// quit.setAnchor(gui.Horizontal.Right, gui.Vertical.Bottom)
+// quit.onClick([w]() { w.close() })
+// w.start()
+// '''
 public struct Window {
     i64 id
 
+    // A window with its title and the size of the whole window, in logical pixels, its
+    // title bar of 35 pixels included: the content, where the components go, is 'w'
+    // wide and 'h' less 35 high. The window is shown by 'start'.
     public Window(string text, i32 w, i32 h) {
         i64 made = 0
         withData([ref made, text, w, h](ref Shared data) {
@@ -2554,14 +3264,17 @@ public struct Window {
         id = made
     }
 
-    // Puts a component in the window, and gives it back (D434): a component is in
-    // one window or in one group only.
+    // Puts a component in the window, with its position from the top left corner of the
+    // content, and gives it back, so that its handle can be kept:
+    // 'gui.Button ok = w.add(gui.Button("OK", 20, 20, 100, 32))'. A component that is
+    // already in a window or in a group is a panic, and so is a second app bar.
     public T add<T : Component>(T component) const {
         addPart(id, 0, component.componentId())
         ret component
     }
 
-    // The bar at the bottom of the window, made the first time (P42).
+    // The navigation bar at the bottom of the window, made the first time that it is
+    // called: a window has one at most, and each call gives the same bar.
     public NavigationBar navigationBar() const {
         i64 me = id
         i64 made = 0
@@ -2584,6 +3297,8 @@ public struct Window {
         ret NavigationBar(made)
     }
 
+    // Changes the title, shown at the center of the title bar and by the system, as in
+    // the taskbar; on a phone it is not shown.
     public void setTitle(string text) const {
         i64 me = id
         withData([me, text](ref Shared data) {
@@ -2593,6 +3308,7 @@ public struct Window {
         })
     }
 
+    // The title of the window.
     public string title() const {
         i64 me = id
         string result
@@ -2600,7 +3316,9 @@ public struct Window {
         ret result
     }
 
-    // The size of the whole window, with its title bar, in logical pixels.
+    // Changes the size of the whole window, its title bar included, in logical pixels;
+    // before 'start', the size it starts with. The anchors move the components. On
+    // Android it does nothing.
     public void setSize(i32 w, i32 h) const {
         i64 me = id
         withData([me, w, h](ref Shared data) {
@@ -2611,6 +3329,8 @@ public struct Window {
         })
     }
 
+    // The width of the whole window in logical pixels, which follows the user who resizes
+    // it; on a phone, once the window is shown, that of the screen.
     public i32 width() const {
         i64 me = id
         i32 result = 0
@@ -2618,6 +3338,9 @@ public struct Window {
         ret result
     }
 
+    // The height of the whole window in logical pixels, its title bar included, which
+    // follows the user who resizes it; on a phone, once the window is shown, that of the
+    // screen.
     public i32 height() const {
         i64 me = id
         i32 result = 0
@@ -2625,7 +3348,8 @@ public struct Window {
         ret result
     }
 
-    // Whether the edges resize the window, and the button maximizes it.
+    // Sets whether the user can resize the window with its edges and maximize it with
+    // its button: true by default. On Android it does nothing.
     public void setResizable(bool value) const {
         i64 me = id
         withData([me, value](ref Shared data) {
@@ -2635,6 +3359,7 @@ public struct Window {
         })
     }
 
+    // Whether the user can resize the window: true by default.
     public bool resizable() const {
         i64 me = id
         bool result = false
@@ -2642,19 +3367,25 @@ public struct Window {
         ret result
     }
 
-    // Before start(), the window starts so.
+    // Minimizes the window; called before 'start', the window starts minimized. On
+    // Android it does nothing.
     public void minimize() const {
         showAs(1)
     }
 
+    // Maximizes the window; called before 'start', the window starts maximized. On
+    // Android it does nothing.
     public void maximize() const {
         showAs(2)
     }
 
+    // Brings the window back from minimized or maximized to its size; called before
+    // 'start', the window starts so, as it does by default. On Android it does nothing.
     public void restore() const {
         showAs(0)
     }
 
+    // Whether the window is minimized now; before 'start', whether it starts so.
     public bool minimized() const {
         i64 me = id
         bool result = false
@@ -2665,6 +3396,7 @@ public struct Window {
         ret result
     }
 
+    // Whether the window is maximized now; before 'start', whether it starts so.
     public bool maximized() const {
         i64 me = id
         bool result = false
@@ -2675,11 +3407,14 @@ public struct Window {
         ret result
     }
 
+    // Sets the colors of the window and of its components, light or dark, at once:
+    // 'Theme.System', the default, follows those of the system and changes with them.
     public void setTheme(Theme value) const {
         i64 me = id
         withData([me, value](ref Shared data) { data.windows[indexOf(ref data, me)].theme = value })
     }
 
+    // The theme of the window, 'Theme.System' by default.
     public Theme theme() const {
         i64 me = id
         Theme result = Theme.System
@@ -2687,7 +3422,9 @@ public struct Window {
         ret result
     }
 
-    // The frames that are drawn each second, from 1 to 240: 60 by default.
+    // Sets how many frames are drawn each second, from 1 to 240: 60 by default. The
+    // windows are drawn together, at the most frames among those open. A value out of
+    // the range is a panic.
     public void setFps(i32 value) const {
         if (value < 1 || value > 240) {
             panic(format("the frames per second are from 1 to 240, found {}", value))
@@ -2696,6 +3433,7 @@ public struct Window {
         withData([me, value](ref Shared data) { data.windows[indexOf(ref data, me)].fps = value })
     }
 
+    // How many frames of the window are drawn each second: 60 by default.
     public i32 fps() const {
         i64 me = id
         i32 result = 0
@@ -2703,7 +3441,10 @@ public struct Window {
         ret result
     }
 
-    // Shows the window and returns: the thread of the GUI draws it (D436).
+    // Shows the window and returns at once: the window is drawn, and the handlers are
+    // called, by the thread of the windows, which the first 'start' starts. Starting a
+    // window twice is a panic, and so is starting a second window on Android, where an
+    // app has one.
     public void start() const {
         i64 me = id
         withData([me](ref Shared data) {
@@ -2728,12 +3469,15 @@ public struct Window {
         })
     }
 
-    // Closes the window; it can also be closed with its button.
+    // Closes the window, as its button does, and then calls its handlers of 'onClose' on
+    // the thread of the windows. A window closed before 'start' is never shown.
     public void close() const {
         i64 me = id
         withData([me](ref Shared data) { data.windows[indexOf(ref data, me)].closing = true })
     }
 
+    // Whether the window is closed, by the user or by 'close', once its handlers of
+    // 'onClose' have run.
     public bool closed() const {
         i64 me = id
         bool result = false
@@ -2741,7 +3485,10 @@ public struct Window {
         ret result
     }
 
-    // Waits until the window is closed (D436).
+    // Waits until the window is closed, for a program that has more to do after it: at
+    // the end of 'main' the program waits for its windows anyway. It waits forever for a
+    // window never started, and for an open one when it is called from a handler, which
+    // holds the thread that would close it.
     public void wait() const {
         for (!closed()) {
             time.msleep(10)
@@ -2750,6 +3497,8 @@ public struct Window {
 
     // ---- The events: the lambdas run on the thread of the GUI (D435) ----
 
+    // Adds a handler, called on the thread of the windows when the mouse moves over the
+    // content of the window, also over the components, with its position and button 0.
     public void onMouseMove(move func(Mouse) handler) const {
         addr box = alloc(sizeOf<func(Mouse)>())
         put<func(Mouse)>(box, move handler)
@@ -2757,6 +3506,9 @@ public struct Window {
         withData([me, box](ref Shared data) { data.windows[indexOf(ref data, me)].mouseMove.add(box) })
     }
 
+    // Adds a handler, called on the thread of the windows when a button of the mouse, or
+    // a finger, is pressed on the content of the window, with its position and the
+    // button. The presses on the components come here too, after the components.
     public void onMouseDown(move func(Mouse) handler) const {
         addr box = alloc(sizeOf<func(Mouse)>())
         put<func(Mouse)>(box, move handler)
@@ -2764,6 +3516,9 @@ public struct Window {
         withData([me, box](ref Shared data) { data.windows[indexOf(ref data, me)].mouseDown.add(box) })
     }
 
+    // Adds a handler, called on the thread of the windows when a button of the mouse, or
+    // a finger, is released on the content of the window, with its position and the
+    // button. The releases on the components come here too, after the components.
     public void onMouseUp(move func(Mouse) handler) const {
         addr box = alloc(sizeOf<func(Mouse)>())
         put<func(Mouse)>(box, move handler)
@@ -2771,7 +3526,11 @@ public struct Window {
         withData([me, box](ref Shared data) { data.windows[indexOf(ref data, me)].mouseUp.add(box) })
     }
 
-    // The keys that the component in focus does not use.
+    // Adds a handler, called on the thread of the windows with each key pressed that the
+    // component with the keyboard does not use, as F5 in a text box; a key held down
+    // comes again as it repeats. Tab, which moves the keyboard to the next component,
+    // the back key of a phone, and the keys pressed while a dialog is shown, do not come
+    // here.
     public void onKeyDown(move func(Key) handler) const {
         addr box = alloc(sizeOf<func(Key)>())
         put<func(Key)>(box, move handler)
@@ -2779,7 +3538,9 @@ public struct Window {
         withData([me, box](ref Shared data) { data.windows[indexOf(ref data, me)].keyDown.add(box) })
     }
 
-    // The new size of the whole window, in logical pixels.
+    // Adds a handler, called on the thread of the windows with the new width and height
+    // of the whole window, in logical pixels, when its size changes. The anchors move
+    // the components by themselves.
     public void onResize(move func(i32, i32) handler) const {
         addr box = alloc(sizeOf<func(i32, i32)>())
         put<func(i32, i32)>(box, move handler)
@@ -2787,7 +3548,10 @@ public struct Window {
         withData([me, box](ref Shared data) { data.windows[indexOf(ref data, me)].resize.add(box) })
     }
 
-    // Opens a dialog over the content (D467): one at a time.
+    // Opens a dialog at the center of the content, over the rest darkened, which the
+    // mouse and the keys do not reach until it closes; the keyboard goes to the first of
+    // its components that takes it. A window shows one dialog at a time: opening one
+    // while another is shown is a panic, and so is a dialog shown by another window.
     public void showDialog(Dialog dialog) const {
         i64 me = id
         i64 card = dialog.id
@@ -2810,22 +3574,47 @@ public struct Window {
         })
     }
 
-    // A short message at the bottom for 4 seconds (D468), in place of the one shown.
+    // Shows a short message at the bottom of the content for 4 seconds, above the
+    // navigation bar and above the components anchored to the bottom that it would cover,
+    // which stay visible and can be pressed. It takes the place of the one shown, and ""
+    // hides it.
     public void showSnackbar(string text) const {
         addr none
         snackbar(id, text, "", none)
     }
 
-    // The same, with an action on its right, as "Undo": a click calls the handler
-    // and hides the snackbar.
+    // Shows a snackbar as 'showSnackbar' does, with an action on its right, as "Undo":
+    // a click or a touch on it calls the handler on the thread of the windows and hides
+    // the snackbar. The handler is dropped when another snackbar takes the place of this
+    // one, so it must own what it captures.
+    //
+    // '''
+    // string title = messages.itemTitle(index)
+    // messages.removeItem(index)
+    // w.showSnackbarAction("Message deleted", "Undo", [messages, index, move title]() {
+    //     messages.insertItem(index, gui.Icon.Mail, title, "", "")
+    // })
+    // '''
     public void showSnackbarAction(string text, string action, move func() handler) const {
         addr box = alloc(sizeOf<func()>())
         put<func()>(box, move handler)
         snackbar(id, text, action, box)
     }
 
-    // The back key of Android, or its gesture (D457): without handlers it closes the
-    // window, and so the app.
+    // Adds a handler, called on the thread of the windows when the user presses the back
+    // key of Android, or makes its gesture, in place of what the key does without
+    // handlers: closing the window, and so the app. While a dialog is shown, the key
+    // closes the dialog instead. On the desktop the handlers are never called.
+    //
+    // '''
+    // w.onBack([w, pages]() {
+    //     if (pages.selected() == 0) {
+    //         w.close()
+    //     } else {
+    //         pages.setSelected(0)
+    //     }
+    // })
+    // '''
     public void onBack(move func() handler) const {
         addr box = alloc(sizeOf<func()>())
         put<func()>(box, move handler)
@@ -2833,7 +3622,9 @@ public struct Window {
         withData([me, box](ref Shared data) { data.windows[indexOf(ref data, me)].back.add(box) })
     }
 
-    // After the window is closed.
+    // Adds a handler, called on the thread of the windows after the window is closed: by
+    // its button, by the keys of the system, by the back key of a phone or by 'close'.
+    // The window is 'closed' once its handlers have run.
     public void onClose(move func() handler) const {
         addr box = alloc(sizeOf<func()>())
         put<func()>(box, move handler)

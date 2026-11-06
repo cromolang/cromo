@@ -1,6 +1,8 @@
 # The icons of std.gui (D448, D449): writes third_party/lucide/lucide-icons.ttf, a
 # part of the font of Lucide with the icons of ICONS, its license, and the enum
-# gui.Icon in library/std/gui.cro, between its two marks.
+# gui.Icon in library/std/gui.cro, between its two marks. The documentation of
+# the enum and the comments of its cases (D473) are kept from gui.cro: a new icon
+# needs its comment written by hand.
 #
 # Usage: python tools/lucide.py <folder>
 #   <folder> is the package lucide-static, extracted from
@@ -8,6 +10,7 @@
 #   script reads font/lucide.ttf, font/codepoints.json, LICENSE and package.json.
 #   It needs fontTools (pip install fonttools).
 import json
+import re
 import os
 import sys
 
@@ -73,15 +76,6 @@ def main():
     with open(os.path.join(folder, 'LICENSE'), 'w', encoding='utf-8', newline='\n') as target:
         target.write(license)
 
-    lines = [BEGIN,
-             '',
-             '// An icon of Lucide {} (D448): its value is its character in the font of the'.format(version),
-             '// icons. None, the default, is no icon.',
-             'public enum Icon {',
-             '    None = 0']
-    for name in sorted(ICONS, key=caseName):
-        lines.append('    {} = 0x{:X}'.format(caseName(name), codepoints[name]))
-    lines += ['}', '', END]
     path = os.path.join(ROOT, 'library', 'std', 'gui.cro')
     with open(path, encoding='utf-8') as source:
         text = source.read()
@@ -89,6 +83,28 @@ def main():
         sys.exit('gui.cro has not the marks of the icons')
     start = text.index(BEGIN)
     end = text.index(END) + len(END)
+
+    # The documentation of the enum, with the version of Lucide, and the comment of
+    # each case, as gui.cro has them.
+    old = text[start:end].split('\n')
+    enum = old.index('public enum Icon {')
+    doc = [line for line in old[:enum] if line.startswith('//') and line != BEGIN]
+    doc = [re.sub(r'Lucide \d+(\.\d+)*', 'Lucide ' + version, line) for line in doc]
+    comments = {}
+    for line in old[enum + 1:]:
+        match = re.match(r'\s*(\w+)\s*=[^/]*//\s?(.*)$', line)
+        if match:
+            comments[match.group(1)] = match.group(2)
+    cases = [('None', '0')] + [(caseName(name), '0x{:X}'.format(codepoints[name])) for name in sorted(ICONS, key=caseName)]
+    width = max(len('    {} = {}'.format(case, value)) for case, value in cases)
+    lines = [BEGIN, ''] + doc + ['public enum Icon {']
+    for case, value in cases:
+        code = '    {} = {}'.format(case, value)
+        lines.append(code.ljust(width + 2) + '// ' + comments[case] if case in comments else code)
+    lines += ['}', '', END]
+    undocumented = [case for case, value in cases if case not in comments]
+    if undocumented:
+        print('without a comment in gui.cro: ' + ', '.join(undocumented))
     text = text[:start] + '\n'.join(lines) + text[end:]
     with open(path, 'w', encoding='utf-8', newline='\n') as target:
         target.write(text)

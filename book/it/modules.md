@@ -80,6 +80,8 @@ Dopo `import geometry`, i suoi nomi pubblici si usano direttamente: `distance(a,
 
 Gli import si scrivono all'inizio del file, e ogni file scrive i propri: l'importazione non è transitiva. Due moduli possono importarsi a vicenda.
 
+Il commento all'inizio di un file, prima degli import e separato da ciò che segue da una riga vuota, documenta il modulo: VS Code lo mostra sul nome del modulo, nel suo `import` e in `geometry.distance`, e dopo `geometry.` propone i nomi pubblici del modulo con la loro documentazione.
+
 ## Una cartella è un modulo
 
 `import shapes` importa la cartella `shapes`, con tutti i suoi file `.cro`, come un unico modulo:

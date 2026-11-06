@@ -218,7 +218,7 @@ the year has four digits: true
 ```
 
 - `time.now()` reads a clock that only goes forward, for measuring; `elapsed()` and `since()` give a `Duration`, with `seconds()`, `milliseconds()`, `microseconds()` and the field `nanoseconds`.
-- `utcNow()` and `localNow()` give a `DateTime`, with its fields from the year to the nanosecond, the offset from UTC in minutes, and `text()` in the format of ISO 8601: `2026-10-30T18:21:33+01:00`.
+- `utcNow()` and `localNow()` give a `DateTime`, with its fields from the year to the nanosecond, the offset from UTC in minutes, and `text()` in the format of ISO 8601: `2026-10-30T18:21:33.250+01:00`, with the milliseconds.
 - `sleep`, `msleep` and `usleep` pause; in a task, the thread runs other tasks meanwhile.
 
 ## Summary

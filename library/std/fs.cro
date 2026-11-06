@@ -1,3 +1,28 @@
+// Files and folders: a file read or written whole, as text or as bytes, the folders
+// and what they hold, links, and the parts of a path. A path is a string, absolute
+// or from the current folder, with '/' between the names on every system, and '\'
+// too on Windows.
+//
+// A function that fails throws an exception whose message has the action, the path
+// and the reason: "cannot read 'notes.txt': no such file or folder".
+//
+// '''
+// import std.fs
+//
+// fs.createFolders("data/logs")
+// fs.writeText("data/notes.txt", "first line\n")
+// fs.appendText("data/notes.txt", "second line\n")
+// for (string line in fs.readText("data/notes.txt").trimEnd().split("\n")) {
+//     println("> {}", line)
+// }
+// for (string name in fs.listFolder("data")) {
+//     println("{} {}", name, fs.isFolder(fs.joinPath("data", name)))
+// }
+// fs.removeAll("data")
+// '''
+//
+// The guide: [Files, processes and time](https://cromolang.org/book/en/system.html).
+
 // The module std.fs (D201): files read and written whole, folders and paths. An
 // error is an exception whose message has the path and the reason. The system
 // calls are in fs_windows.cro and fs_linux.cro (D202), with:
@@ -10,9 +35,9 @@
 //   void remove(string path)           a file, a link, or an empty folder
 //   void createFolder(string path)
 //   list<string> listFolder(string path)  the names in the folder, in no order
-//   void rename(string from, string to)   replaces `to` if it is a file
-//   void copy(string from, string to)     a file, over `to` if it exists
-//   void createLink(string target, string path)  `path` becomes a link to `target`
+//   void rename(string from, string to)   replaces 'to' if it is a file
+//   void copy(string from, string to)     a file, over 'to' if it exists
+//   void createLink(string target, string path)  'path' becomes a link to 'target'
 //                                      (P18): a symbolic link, or on Windows a
 //                                      junction, only to a folder, which needs no
 //                                      administrator and keeps the absolute path
@@ -23,6 +48,7 @@
 //   string separator()
 import unsafe
 
+// The bytes of a file. Throws if it cannot be read.
 public list<u8> readBytes(string path) {
     i64 size = 0
     addr data = loadFile(path, ref size)
@@ -35,7 +61,8 @@ public list<u8> readBytes(string path) {
     ret bytes
 }
 
-// The text of a file, which must be UTF-8.
+// The text of a file, which must be UTF-8. Throws if the file cannot be read, or if
+// it is not UTF-8.
 public string readText(string path) {
     i64 size = 0
     addr data = loadFile(path, ref size)
@@ -46,6 +73,8 @@ public string readText(string path) {
     }
 }
 
+// Writes the bytes to a file, which is created, or replaced if it exists. Throws if
+// it cannot be written, as when its folder is missing.
 public void writeBytes(string path, list<u8> bytes) {
     addr data = alloc(bytes.len())
     for (i64 i = 0; i < bytes.len(); i++) {
@@ -58,6 +87,8 @@ public void writeBytes(string path, list<u8> bytes) {
     }
 }
 
+// Writes the text to a file, which is created, or replaced if it exists. Throws if
+// it cannot be written, as when its folder is missing.
 public void writeText(string path, string text) {
     storeFile(path, text.cstring(), text.len(), false)
 }
@@ -67,7 +98,9 @@ public void appendText(string path, string text) {
     storeFile(path, text.cstring(), text.len(), true)
 }
 
-// A folder with the ones above it that are missing, as mkdir -p.
+// Creates a folder with the ones above it that are missing, as mkdir -p. Nothing
+// happens if the folder exists already; throws if the path, or one above it, is a
+// file.
 public void createFolders(string path) {
     if (isFolder(path)) {
         ret
@@ -79,8 +112,8 @@ public void createFolders(string path) {
     createFolder(path)
 }
 
-// A file, or a folder with all that it holds. A link is removed itself, never
-// what it points to. Nothing happens if the path does not exist.
+// Removes a file, or a folder with all that it holds. A link is removed itself,
+// never what it points to. Nothing happens if the path does not exist.
 public void removeAll(string path) {
     if (!isLink(path) && isFolder(path)) {
         for (string name in listFolder(path)) {
@@ -92,8 +125,10 @@ public void removeAll(string path) {
     remove(path)
 }
 
-// The two paths with the separator of the system between them: "a" and "b.txt"
-// give "a/b.txt", or a\b.txt on Windows.
+// The two paths with the separator of the system between them:
+// 'joinPath("a", "b.txt")' gives "a/b.txt", or '"a\\b.txt"' on Windows. No
+// separator is added when 'first' ends with one, and an empty 'first' gives
+// 'second'.
 public string joinPath(string first, string second) {
     if (first.len() == 0) {
         ret second.copy()
@@ -104,7 +139,8 @@ public string joinPath(string first, string second) {
     ret first + separator() + second
 }
 
-// The folder of a path: "a/b/c.txt" gives "a/b", "c.txt" gives "", "/c" gives "/".
+// The folder of a path: "a/b/c.txt" gives "a/b", "c.txt" gives "", "/c" gives "/",
+// and on Windows '"C:\\c"' gives '"C:\\"'.
 public string parent(string path) {
     i64 end = path.len()
     for (end > 1 && isSeparator(path[end - 1])) {
@@ -127,7 +163,7 @@ public string parent(string path) {
     ret path.slice(0, keep)
 }
 
-// The last name of a path: "a/b/c.txt" gives "c.txt".
+// The last name of a path: "a/b/c.txt" gives "c.txt", and "a/b/" gives "b".
 public string fileName(string path) {
     i64 end = path.len()
     for (end > 0 && isSeparator(path[end - 1])) {

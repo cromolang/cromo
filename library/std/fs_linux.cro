@@ -63,20 +63,26 @@ void storeFile(string path, addr data, i64 size, bool append) {
     systemCall(i64(Call.Close), file, 0, 0, 0, 0, 0)
 }
 
+// Whether a file or a folder exists at the path. It never throws: a path that
+// cannot be reached gives false.
 public bool exists(string path) {
     ret mode(path) >= 0
 }
 
+// Whether the path is a folder, or a link to one; false if nothing is there.
 public bool isFolder(string path) {
     i64 bits = mode(path)
     ret bits >= 0 && bits & 0xF000 == 0x4000  // S_IFDIR
 }
 
+// Whether the path is a file, or a link to one; false if nothing is there.
 public bool isFile(string path) {
     i64 bits = mode(path)
     ret bits >= 0 && bits & 0xF000 == 0x8000  // S_IFREG
 }
 
+// Whether the path is a link: a symbolic link, or on Windows a junction too. The
+// link itself is checked, not what it points to; false if nothing is there.
 public bool isLink(string path) {
     addr info = alloc(144)
     i64 status = systemCall(i64(Call.NewFstatAt), -100, path.cstring(), info, 0x100, 0, 0)  // AT_SYMLINK_NOFOLLOW
@@ -85,14 +91,21 @@ public bool isLink(string path) {
     ret status >= 0 && bits & 0xF000 == 0xA000  // S_IFLNK
 }
 
+// The size of a file, in bytes. Throws if it does not exist.
 public i64 size(string path) {
     ret statField(path, 48, "read the size of")  // st_size
 }
 
+// The time of the last change of a file or a folder, in seconds from 1970-01-01
+// UTC, as time.unix() gives it. Throws if the path does not exist.
 public i64 modified(string path) {
     ret statField(path, 88, "read the date of")  // st_mtime
 }
 
+// Renames or moves a file or a folder; 'to' is the new path, also in another
+// folder, and a file already there is replaced. Throws if 'from' does not exist.
+// Only a file on Windows can move to another disk: otherwise both paths must be on
+// the same one.
 public void rename(string from, string to) {
     i64 status = systemCall(i64(Call.RenameAt2), -100, from.cstring(), -100, to.cstring(), 0, 0)
     if (status < 0) {
@@ -100,8 +113,11 @@ public void rename(string from, string to) {
     }
 }
 
-// The bytes, 64 KB at a time; the new file has the permissions 0644.
+// Copies the file 'from' to 'to', which is replaced if it exists. Throws if 'from'
+// does not exist or is a folder. On Linux the copy does not keep the permissions of
+// the original: call makeExecutable for a program.
 public void copy(string from, string to) {
+    // The bytes, 64 KB at a time; the new file has the permissions 0644.
     i64 source = systemCall(i64(Call.OpenAt), -100, from.cstring(), 0x80000, 0, 0, 0)  // O_RDONLY | O_CLOEXEC
     if (source < 0) {
         throw failure("copy", from, source)
@@ -144,10 +160,13 @@ public void copy(string from, string to) {
     }
 }
 
+// Whether the byte separates the names of a path: '/', and on Windows '\\' too.
 public bool isSeparator(u8 c) {
     ret c == '/'
 }
 
+// The separator that joinPath puts between the names of a path: "/" on Linux,
+// '"\\"' on Windows.
 public string separator() {
     ret "/"
 }
@@ -165,6 +184,9 @@ i64 statField(string path, i64 at, string action) {
     ret value
 }
 
+// Removes a file, a link or an empty folder; a link is removed itself, not what it
+// points to. Throws if the path does not exist, or if the folder is not empty:
+// removeAll removes a folder with all that it holds.
 public void remove(string path) {
     i64 status = systemCall(i64(Call.UnlinkAt), -100, path.cstring(), 0, 0, 0, 0)
     if (status == -21) {                                                               // EISDIR
@@ -175,6 +197,8 @@ public void remove(string path) {
     }
 }
 
+// Creates a folder. Throws if the path exists already, or if the folder above it is
+// missing: createFolders creates those too.
 public void createFolder(string path) {
     i64 status = systemCall(i64(Call.MkdirAt), -100, path.cstring(), 493, 0, 0, 0)  // 0755
     if (status < 0) {
@@ -182,6 +206,9 @@ public void createFolder(string path) {
     }
 }
 
+// The names of the files, the folders and the links in a folder, without "." and
+// "..", in no order: 'joinPath(path, name)' gives the path of each. Throws if the
+// folder does not exist.
 public list<string> listFolder(string path) {
     i64 folder = systemCall(i64(Call.OpenAt), -100, path.cstring(), 0x80000 | directoryFlag(), 0, 0, 0)
     if (folder < 0) {
@@ -214,6 +241,11 @@ public list<string> listFolder(string path) {
     ret names
 }
 
+// Makes 'path' a link to 'target'. On Linux it is a symbolic link that holds
+// 'target' as it is written: a relative target is read from the folder of the link.
+// On Windows it is a junction, which needs no administrator rights but can point
+// only to a folder, and holds the absolute path of 'target'. Throws if 'path'
+// exists already, and on Windows if 'target' is not a folder.
 public void createLink(string target, string path) {
     i64 status = systemCall(i64(Call.SymlinkAt), target.cstring(), -100, path.cstring(), 0, 0, 0)
     if (status < 0) {
@@ -221,6 +253,8 @@ public void createLink(string target, string path) {
     }
 }
 
+// Where the link at the path points, as the link holds it: for a junction of
+// Windows, an absolute path. Throws if the path does not exist or is not a link.
 public string readLink(string path) {
     addr buffer = alloc(4096)
     i64 length = systemCall(i64(Call.ReadlinkAt), -100, path.cstring(), buffer, 4096, 0, 0)
@@ -236,8 +270,11 @@ public string readLink(string path) {
     ret target
 }
 
-// x for those who can read the file, as chmod +x with the usual umask.
+// Makes a file executable: on Linux it adds the permission to run it for those who
+// can read it, as chmod +x does; on Windows, which runs a file by its extension,
+// nothing changes. Throws if the file does not exist.
 public void makeExecutable(string path) {
+    // x for those who can read the file, as chmod +x with the usual umask.
     i64 bits = mode(path)
     if (bits < 0) {
         throw failure("make executable", path, bits)

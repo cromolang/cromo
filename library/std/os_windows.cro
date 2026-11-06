@@ -13,14 +13,18 @@ extern "kernel32" {
     i32 ReadFile(i64 file, addr data, u32 size, ref u32 done, addr overlapped)
 }
 
+// The name of the system: "windows", or "linux", also on Android.
 public string name() {
     ret "windows"
 }
 
+// The id that the system gives to this process.
 public i64 processId() {
     ret i64(GetCurrentProcessId())
 }
 
+// Whether the variable 'name' is in the environment, also with an empty value. On
+// Windows the names do not distinguish upper and lower case.
 public bool hasEnv(string name) {
     addr none
     addr key = wide(name)
@@ -29,6 +33,9 @@ public bool hasEnv(string name) {
     ret size > 0
 }
 
+// The value of the variable 'name' of the environment, or "" when it is not set:
+// hasEnv tells an empty value from a missing one. On Windows the names do not
+// distinguish upper and lower case.
 public string env(string name) {
     addr none
     addr key = wide(name)
@@ -45,6 +52,7 @@ public string env(string name) {
     ret value
 }
 
+// The absolute path of the current folder, from which the relative paths start.
 public string currentFolder() {
     addr none
     u32 size = GetCurrentDirectoryW(0, none)

@@ -1,3 +1,20 @@
+// The system the program runs on: its name, the variables of the environment, the
+// current folder, the standard input, and the end of the program. The arguments of
+// the program arrive in 'main(list<string> args)'.
+//
+// '''
+// import std.os
+//
+// println("{} in {}", os.name(), os.currentFolder())
+// if (!os.hasEnv("HOME")) {
+//     eprintln("HOME is not set")
+//     os.exit(1)
+// }
+// string input = os.readInput()
+// '''
+//
+// The guide: [Files, processes and time](https://cromolang.org/book/en/system.html).
+
 // The module std.os (D201): the system, its environment and the process. The
 // functions that differ are in os_windows.cro and os_linux.cro (D202):
 //   string name()             "windows" or "linux"
@@ -8,8 +25,8 @@
 // and readSome, which reads the standard input for readInput and readLine (D420).
 import unsafe
 
-// Ends the program with `code`, after writing what was printed. The objects still
-// alive are not destroyed, as with exit() of C.
+// Ends the program at once with the exit 'code', after writing what was printed.
+// The objects still alive are not destroyed, as with exit() of C.
 public void exit(i32 code) {
     exitProcess(code)
 }
@@ -42,8 +59,10 @@ bool fillInput() {
     ret true
 }
 
-// All the standard input that is left, as a string: an exception if it is not
-// UTF-8.
+// All the standard input that is left, to its end, as text: what a filter reads.
+// Throws if it is not UTF-8. From a terminal, the input ends with Ctrl+D on Linux,
+// and on Windows with Ctrl+Z at the start of a line and Enter. Read the standard
+// input from one thread at a time.
 public string readInput() {
     list<u8> bytes
     for (fillInput()) {
@@ -55,8 +74,17 @@ public string readInput() {
     ret string(bytes)
 }
 
-// The next line of the standard input, without its end, \n or \r\n; false at the end,
-// with `line` empty.
+// Reads the next line of the standard input into 'line', without its end, '\n' or
+// '\r\n'; a last line without '\n' is read too. False at the end of the input, with
+// 'line' empty. Throws if the line is not UTF-8. Read the standard input from one
+// thread at a time.
+//
+// '''
+// string line
+// for (os.readLine(ref line)) {
+//     println("> {}", line)
+// }
+// '''
 public bool readLine(ref string line) {
     list<u8> bytes
     bool any = false

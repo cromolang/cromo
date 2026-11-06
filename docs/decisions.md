@@ -1050,7 +1050,7 @@ extern "kernel32" {
 - A method is inserted by name, without parentheses.
 
 ### D182. Completion: when
-*2026-10-29.* VS Code asks when `.` is written, and with Ctrl+Space right after a dot or inside the name after it. Elsewhere the server proposes nothing yet.
+*2026-10-29.* VS Code asks when `.` is written, and with Ctrl+Space right after a dot or inside the name after it. Elsewhere the server proposes nothing yet. Amended by D476: also after the name of a module.
 
 ### D183. How an anonymous function is written
 *2026-10-29.* As the lambdas of C++, with the captures written: `[limit, ref total](i32 x) bool { ret x > limit }`. The captures are between square brackets, with the modes of Cromo: a name alone is read, `ref` can modify, `move` takes the ownership (D22). The parameters are written as in a function, and the type returned follows the parentheses; without it the function returns nothing. Whoever reads sees at once what the lambda uses and how. It resolves the open point of D148.
@@ -2192,6 +2192,45 @@ string help = string(embed("help.txt"))
 ### D472. The snackbar goes above the components at the bottom
 *2026-11-05.* The snackbar goes above the components anchored at the bottom of the content that it would cover, as a floating button in the Scaffold of Material 3: nothing moves, and a button such as "Write" stays visible and can be pressed while the message is shown.
 
+### D473. Documentation comments
+*2026-11-06.* Asked by the author: in VS Code the hover and the completion of Cromo showed only the declaration, while those of Rust explain what they show. The `//` comments right above a declaration, without a blank line between them, are its documentation, as in Go and as clangd shows them for C++: of a function, a method, a constructor, a struct, an enum, an interface, a field or a case. Nothing new to learn, and the library was already written so; a note such as `// TODO` right above a declaration becomes part of its documentation. The comment at the end of the line of a field or of a case documents it too, as in Go; with both, the one above comes first. The comment at the beginning of a file documents its module, unless a declaration follows it without a blank line.
+
+```cromo
+// The text of a file, which must be UTF-8.
+public string readText(string path) {
+    ...
+}
+
+public struct Entry {
+    public string name   // with '/', as in the archive
+    public bool executable
+}
+```
+
+### D474. The text of the documentation
+*2026-11-06.* Markdown, as in Rust, without the backquote, which is not on the Italian keyboard: code inside a sentence goes between single quotes, `'separator'`, and a block of code between two lines `'''`, which the editor shows as Cromo. A quote opens where no letter or digit precedes it, and closes where none follows it, so `it's` and `don't` stay apostrophes; a character literal, `'/'`, shows as code. The rest is Markdown: an empty comment line separates two paragraphs, `-` starts the items of a list, `*text*` is emphasis and `[text](url)` a link. The parameters are named in the text, without `@param`.
+
+```cromo
+// Splits the text at every 'separator', which is not in the parts:
+//
+// '''
+// list<string> parts = "a,b,,c".split(",")   // "a", "b", "", "c"
+// '''
+public list<string> split(string separator) const {
+```
+
+### D475. What the editor shows
+*2026-11-06.* The hover shows the signature, with the module above it when it is another one, as rust-analyzer does, and under a line the documentation. The completion shows the documentation of each member next to its signature. The built-in functions, as `println` and `embed`, and the types of numbers, have their documentation in the compiler. The name of an imported module, in `fs.readText` and in its `import`, shows the documentation of the module.
+
+### D476. Completion after the name of a module
+*2026-11-06.* `fs.` proposes the public functions, structs, enums and interfaces of the module imported with that name (D126), with their documentation; so do the modules of the program. It amends D182.
+
+### D477. The help on the signature
+*2026-11-06.* While the arguments of a call are written, after `(` and `,`, a window shows the signature with the parameter being written in evidence, and the documentation, as the `signatureHelp` of the protocol. The function is found as the completion finds the members (D180): `area(` is a function of the module, of the core or of an imported module, or a constructor; `geometry.area(` a function of that module; `c.area(` a method of the type of `c`; `Shape.Circle(` a case with data. After a call or an index, as in `f().g(`, there is none yet.
+
+### D478. The library is documented
+*2026-11-06.* Every public declaration of the core and of the modules of `std` has its documentation, written for who uses the library: what it does and gives back, its exceptions and panics, and an example where it helps. The documentation of a module ends with a link to the chapter of the guide that explains it, on cromolang.org.
+
 ---
 
 ## Proposed
@@ -2384,6 +2423,15 @@ A component keeps the distances from the edges of its parent, the content of the
 - Before Android 11 the activity is `adjustResize`, and the window becomes shorter. The keyboard is what the window loses at the bottom, from the safe area or from its height, while SDL says it is shown.
 - The keyboard can come in steps: each one higher shows again the component in focus, and so does a text box that takes the focus while the keyboard is open, as with Tab. The panels that hold it scroll, from the innermost, until it is seen with 8 pixels around it.
 - The snackbar goes 8 pixels above the highest of the components it would cover that are visible, out of a dialog and anchored at the bottom (`gui.Vertical.Bottom`); the navigation bar is not one of them, the snackbar is already above it.
+
+### P51. The documentation (D473-D478)
+- A line of documentation is the comment without `//` and the space after it; the lines of a paragraph are joined, as in Markdown. The comments `/* */` are not documentation. An attribute, as `[[test]]`, can stay between the documentation and the declaration.
+- A comment alone on its line right under the comment at the end of the line before, in its column, goes on with that one (D168): it documents the field of that line, not the declaration under it.
+- Out of the quotes and the blocks, `<` is shown as it is, so that `list<string>` in a sentence is not taken for HTML.
+- The module in the hover is its path, as `std.fs`; the core has none. The documentation of a module made of a folder (D130) is that of the first of its files, in the order of the names, that has one; the files for each system (D202) do not document their module.
+- The functions of the files for each system repeat their documentation in each file, since `cromo` reads only the one of the system it compiles for. The numbers of the decisions stay out of the documentation of the library, in the notes for who works on it.
+- The completion after a module proposes its public names, without the instances of the generics, the tests and the C functions.
+- The help on the signature: the server analyzes the text with the call without its arguments, as the completion does (D180); the parameter in evidence is the one after as many commas as precede the cursor, the last one past the end.
 ---
 
 ## Open

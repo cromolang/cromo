@@ -61,7 +61,7 @@ public:
 
     std::vector<Reference> run(const Module& module) {
         for (const InterfaceDecl& decl : module.interfaces) {
-            add(decl.loc, decl.name, "interface " + decl.name, decl.loc);
+            add(decl.loc, decl.name, "interface " + decl.name, decl.loc, Type::error(), {{decl.loc}});
             for (const FunctionDecl& method : decl.methods) declaration(method, false);
         }
         for (const StructDecl& decl : module.structs) structDecl(decl);
@@ -93,7 +93,7 @@ private:
     // Only where the source really has the name: sema also makes nodes that are
     // not written, as the `append` of `s += t`.
     void add(SourceLocation loc, const std::string& name, const std::string& hover, SourceLocation target,
-             Type type = Type::error()) {
+             Type type = Type::error(), std::vector<Reference::Doc> docs = {}) {
         if (name.empty() || identifierAt(loc) != name) return;
         if (!seen_.insert(std::make_tuple(loc.file, loc.line, loc.column)).second) return;  // the instances of a generic
         Reference reference;
@@ -103,13 +103,16 @@ private:
         reference.hasTarget = true;
         reference.target = target;
         reference.type = type;
+        reference.docs = std::move(docs);
         references_.push_back(std::move(reference));
     }
 
     void typeName(const TypeName& name) {
         Type type = baseElement(name.resolved);  // `Point[4]` leads to Point
-        if (type.isStruct()) add(name.loc, name.name, declarationOf(type), type.structDecl->loc);
-        if (type.isInterface()) add(name.loc, name.name, declarationOf(type), type.interfaceDecl->loc);
+        if (type.isStruct()) add(name.loc, name.name, declarationOf(type), type.structDecl->loc, Type::error(), {{type.structDecl->loc}});
+        if (type.isInterface()) {
+            add(name.loc, name.name, declarationOf(type), type.interfaceDecl->loc, Type::error(), {{type.interfaceDecl->loc}});
+        }
         for (const TypeName& arg : name.args) typeName(arg);
     }
 
@@ -133,16 +136,18 @@ private:
             }
             hover += ")";
         }
-        add(loc, item.name, hover, item.loc);
+        add(loc, item.name, hover, item.loc, Type::error(), {{item.loc, true}});
     }
 
     void structDecl(const StructDecl& decl) {
-        if (decl.typeParams.empty() || decl.generic) add(decl.loc, decl.name, declarationOf(Type::structType(&decl)), decl.loc);
+        if (decl.typeParams.empty() || decl.generic) {
+            add(decl.loc, decl.name, declarationOf(Type::structType(&decl)), decl.loc, Type::error(), {{decl.loc}});
+        }
         for (const TypeName& name : decl.interfaces) typeName(name);
         for (const FieldDecl& field : decl.fields) {
             typeName(field.type);
             add(field.loc, field.name, typeText(field.resolved, field.type) + " " + decl.name + "." + field.name, field.loc,
-                field.resolved);
+                field.resolved, {{field.loc, true}});
         }
         for (size_t i = 0; i < decl.cases.size(); ++i) {
             caseOf(decl, static_cast<int>(i), decl.cases[i].loc);
@@ -155,7 +160,7 @@ private:
         std::string name = function.kind == FunctionKind::Constructor || function.kind == FunctionKind::Destructor
                                ? (function.owner ? function.owner->name : std::string())
                                : function.name;
-        add(function.loc, name, signatureOf(function), function.loc);
+        add(function.loc, name, signatureOf(function), function.loc, Type::error(), {{function.loc}});
         if (!checked) return;
         typeName(function.returnType);
         for (size_t i = 0; i < function.params.size(); ++i) {
@@ -277,7 +282,9 @@ private:
         }
         case ExprKind::Call: {
             const auto& call = static_cast<const CallExpr&>(*node);
-            if (call.function) add(call.loc, call.callee, signatureOf(*call.function), call.function->loc);
+            if (call.function) {
+                add(call.loc, call.callee, signatureOf(*call.function), call.function->loc, Type::error(), {{call.function->loc}});
+            }
             for (const TypeName& arg : call.typeArgs) typeName(arg);
             exprs(call.args);
             break;
@@ -291,14 +298,16 @@ private:
             if (owner.isStruct() && field.index >= 0 && static_cast<size_t>(field.index) < owner.structDecl->fields.size()) {
                 const FieldDecl& decl = owner.structDecl->fields[field.index];
                 add(field.loc, field.field, typeText(decl.resolved, decl.type) + " " + owner.structDecl->name + "." + decl.name,
-                    decl.loc, decl.resolved);
+                    decl.loc, decl.resolved, {{decl.loc, true}});
             }
             break;
         }
         case ExprKind::MethodCall: {
             const auto& call = static_cast<const MethodCallExpr&>(*node);
             expr(call.object.get());
-            if (call.function) add(call.loc, call.method, signatureOf(*call.function), call.function->loc);
+            if (call.function) {
+                add(call.loc, call.method, signatureOf(*call.function), call.function->loc, Type::error(), {{call.function->loc}});
+            }
             exprs(call.args);
             break;
         }
@@ -306,10 +315,13 @@ private:
             const auto& construct = static_cast<const ConstructExpr&>(*node);
             if (construct.decl) {
                 std::string hover = declarationOf(Type::structType(construct.decl));
+                std::vector<Reference::Doc> docs = {{construct.decl->loc}};
                 for (const FunctionDecl& member : construct.decl->members) {
-                    if (member.kind == FunctionKind::Constructor) hover = signatureOf(member);
+                    if (member.kind != FunctionKind::Constructor) continue;
+                    hover = signatureOf(member);
+                    docs.push_back({member.loc});
                 }
-                add(construct.loc, construct.decl->name, hover, construct.decl->loc);
+                add(construct.loc, construct.decl->name, hover, construct.decl->loc, Type::error(), std::move(docs));
             }
             exprs(construct.args);
             break;

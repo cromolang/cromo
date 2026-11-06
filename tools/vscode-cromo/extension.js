@@ -1,7 +1,8 @@
 // The client of `cromo lsp` (D170), written without packages from npm so that
 // the extension is built without Node.js (D178). It sends the open .cro documents
 // to the server, shows its diagnostics, and asks it for hover, definition, the
-// symbols of a file, the members after a dot and formatting (D171, D179, D164).
+// symbols of a file, the members after a dot and formatting (D171, D179, D164),
+// with the documentation of the names, and the help on the signature (D475-D477).
 const vscode = require('vscode');
 const fs = require('fs');
 const os = require('os');
@@ -289,10 +290,28 @@ function activate(context) {
                 return (result || []).map((item) => {
                     const completion = new vscode.CompletionItem(item.label, item.kind - 1);
                     completion.detail = item.detail;
+                    if (item.documentation) completion.documentation = new vscode.MarkdownString(item.documentation.value);
                     return completion;
                 });
             },
         }, '.'),  // D179: the members after a dot
+        vscode.languages.registerSignatureHelpProvider(selector, {
+            async provideSignatureHelp(document, position) {
+                const result = await ask('textDocument/signatureHelp', where(document, position));
+                if (!result || !result.signatures || result.signatures.length === 0) return null;
+                const help = new vscode.SignatureHelp();
+                help.signatures = result.signatures.map((item) => {
+                    const signature = new vscode.SignatureInformation(item.label,
+                        item.documentation ? new vscode.MarkdownString(item.documentation.value) : undefined);
+                    signature.parameters = (item.parameters || []).map((parameter) => new vscode.ParameterInformation(parameter.label));
+                    if (item.activeParameter !== undefined) signature.activeParameter = item.activeParameter;
+                    return signature;
+                });
+                help.activeSignature = result.activeSignature || 0;
+                help.activeParameter = result.activeParameter || 0;
+                return help;
+            },
+        }, { triggerCharacters: ['(', ','], retriggerCharacters: [')'] }),  // D477
         vscode.languages.registerDocumentFormattingEditProvider(selector, {
             async provideDocumentFormattingEdits(document) {
                 const result = await ask('textDocument/formatting', { textDocument: { uri: document.uri.toString() } });

@@ -1,5 +1,15 @@
 # Changes
 
+## 0.12.0
+
+- The documentation of the names, from the `//` comments above their declarations, in the hover and in the completion, with the module of the name; and of the built-in functions and types, as `println` and `i64`.
+- The names of a module after its name and a dot, as `fs.`, with their documentation.
+- The help on the signature while the arguments of a call are written, with the parameter being written in evidence.
+
+## 0.11.0
+
+- The color of `embed`.
+
 ## 0.10.0
 
 - The first version in the Visual Studio Marketplace and in Open VSX, as `cromolang.cromo`, with its icon and the links to cromolang.org, the guide and GitHub. It takes the place of `cromo.cromo-lang`, which came with the archives of Cromo up to 0.27.

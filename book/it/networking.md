@@ -84,7 +84,7 @@ Eseguilo e apri `http://localhost:8080/hello/world` in un browser.
 - `req.matches("GET /users/{id}")` controlla il metodo e il percorso, e `req.param("id")` legge la parte tra graffe; `{rest...}` prende il resto del percorso. `req.queryValue("page")` legge la query.
 - `res.write`, `res.writeJson` e `res.writeBytes` scrivono il corpo e ne impostano il `Content-Type`; `res.status` vale 200 per impostazione predefinita; `res.headers` contiene gli header.
 - Un'eccezione nell'handler produce lo stato 500, e il server va avanti.
-- Il server mantiene attive le connessioni tra una richiesta e l'altra, e legge e scrive i corpi a blocchi.
+- Il server mantiene attive le connessioni tra una richiesta e l'altra, legge i corpi anche quando arrivano a blocchi, e scrive ogni risposta intera, con il suo `Content-Length`.
 
 `http.listen(host, port)` restituisce un `http.Server` senza avviarlo, la cui `port()` è nota prima di `serve(handler)`: è utile con la porta 0, e nei test.
 

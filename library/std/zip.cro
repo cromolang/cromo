@@ -1,3 +1,20 @@
+// Reads the archives of zip, as Windows, macOS and the forges make them: the files
+// stored or compressed with deflate, also in the archives above 4 GB. read() gives
+// the entries of an archive, and extract() writes them in a folder. It does not
+// write archives, and it refuses the encrypted ones.
+//
+// '''
+// import std.fs
+// import std.zip
+//
+// for (zip.Entry entry in zip.read(fs.readBytes("photos.zip"))) {
+//     println("{}: {} bytes", entry.name, entry.data.len())
+// }
+// zip.extract(fs.readBytes("site.zip"), "site")
+// '''
+//
+// The guide: [Files, processes and time](https://cromolang.org/book/en/system.html).
+
 // The module std.zip (D404): reads the archives of zip (APPNOTE.TXT of PKWARE), as
 // Windows, macOS and the forges make them, from their central directory: the files
 // stored or compressed with deflate (std.gzip), also with Zip64 for the archives
@@ -5,17 +22,19 @@
 import std.fs
 import std.gzip
 
-// A file, a folder or a symbolic link of an archive (P21).
+// A file, a folder or a symbolic link of an archive.
 public struct Entry {
-    public string name  // with '/', as in the archive, without one at the end: "bin/cromo.exe"
-    public bool folder
+    public string name      // the path, with '/' and none at the end: "bin/cromo.exe"
+    public bool folder      // whether it is a folder
     public string link      // the target of a symbolic link, "" for the others
-    public bool executable  // by the permissions of Unix, when the archive has them
-    public list<u8> data
+    public bool executable  // whether it can run, by its permissions of Unix: false without them
+    public list<u8> data    // the content of a file, decompressed; empty for a folder or a link
 }
 
-// The entries of an archive, in its order. Throws when the data are not a zip, or
-// are damaged: the CRC-32 of each file is checked.
+// The entries of an archive, in its order, with their content decompressed. Throws
+// when the data are not a zip, or are damaged or cut: the CRC-32 of each file is
+// checked. Throws also for a file that is encrypted, or compressed with a method
+// other than deflate.
 public list<Entry> read(list<u8> archive) {
     i64 end = endRecord(archive)
     if (end < 0) {
@@ -113,9 +132,12 @@ public list<Entry> read(list<u8> archive) {
     ret entries
 }
 
-// Writes the files and the folders of the archive in `folder`, created if it is
-// missing (P21). The links are left out, as they could point outside the folder,
-// and a name that would leave it, as "../x" or "/x", stops the extraction.
+// Writes the files and the folders of the archive in 'folder', which is created if
+// it is missing. A file that exists is replaced, and on Linux the executable ones
+// get the permission to run. The links are left out, as they could point outside
+// the folder, and a name that would leave it, as "../x" or "/x", stops the
+// extraction with an exception: an archive that comes from the network cannot
+// write elsewhere.
 public void extract(list<u8> archive, string folder) {
     list<Entry> entries = read(archive)
     fs.createFolders(folder)

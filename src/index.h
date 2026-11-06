@@ -17,6 +17,13 @@ struct Reference {
     bool hasTarget = false;
     SourceLocation target;  // where it is declared
     Type type;              // of a variable or a field: what follows a dot (D179)
+    // The declarations whose documentation the hover shows (D475): above them, and
+    // at the end of the line for a field or a case (D473). None for a variable.
+    struct Doc {
+        SourceLocation loc;
+        bool trailing = false;
+    };
+    std::vector<Doc> docs;
 };
 
 // The names of a checked program, in the files of `sources`. A name that sema

@@ -1,6 +1,26 @@
-// The module std.net (D223-D226): TCP connections and listeners, UDP sockets and
-// the names of the hosts. A call waits until it is done, or until the timeout
-// set on its socket (D225); in a task, the task waits and its thread runs the
+// TCP connections and listeners, UDP sockets, TLS and the names of the hosts. A call
+// waits until it is done, as in C, or until the timeout set on its socket with
+// 'timeout()', and then it throws. In a task, the wait leaves the thread to the other
+// tasks, so a server can give each connection a task of its own. An error of the network
+// is an exception of type 'Error', whose message says what failed and why, as "cannot
+// connect to example.com:80: connection refused".
+//
+// '''
+// net.Connection site = net.connectTls("example.com", 443)
+// site.timeout(10000)
+// site.writeText("GET / HTTP/1.1\r\nHost: example.com\r\nConnection: close\r\n\r\n")
+// println("{}", string(site.read(200)))
+// '''
+//
+// The main types are 'Listener', 'Connection' and 'Udp'. A name is resolved on Linux
+// from '/etc/hosts', then by the servers of '/etc/resolv.conf', and on Windows by the
+// resolver of the system; IPv4 and IPv6 work on both. TLS comes from mbedTLS, inside the
+// runtime: the executables need no other library.
+//
+// The guide: [Networking and HTTP](https://cromolang.org/book/en/networking.html).
+
+// For who works on std.net (D223-D226): a call waits until it is done, or until the
+// timeout set on its socket (D225); in a task, the task waits and its thread runs the
 // others (D269). The sockets do not block: the calls of the system say when they
 // would wait, -1 or false below, and the library waits for the socket. They are in
 // net_windows.cro and net_linux.cro (D202), with:
@@ -53,7 +73,20 @@ struct Address {
     i32 port
 }
 
-// Waits for connections on an address and a port (D224).
+// Waits for connections on an address and a port, made by 'listen' or 'listenTls':
+// 'accept()' gives them one by one. The destructor closes it. It can be moved, as into a
+// task, but not copied.
+//
+// '''
+// net.Listener listener = net.listen("0.0.0.0", 7000)
+// thread.Group clients
+// for {
+//     net.Connection client = listener.accept()
+//     clients.start([move client]() {
+//         client.write(client.read(1024))  // an echo
+//     })
+// }
+// '''
 public struct Listener {
     i64 handle = -1
     i64 wait = -1  // milliseconds; -1 waits as long as it takes (D225)
@@ -63,10 +96,12 @@ public struct Listener {
         close()
     }
 
-    // The next connection; with a timeout, an exception if none arrives in time.
-    // With TLS, its handshake comes with its first read or write, so that a slow
-    // client does not keep the others waiting (D244). It is const: several threads
-    // or tasks can accept from the same listener (D268).
+    // The next connection, waiting for it; with a timeout, an exception if none arrives
+    // in time. An exception also when the listener is closed, or the system refuses
+    // the connection. With TLS, the handshake of the connection comes with its first
+    // read or write, in the task that serves it, so that a slow client does not keep
+    // the others waiting. It is const: several threads or tasks can accept from the
+    // same listener.
     public Connection accept() const {
         checkOpen(handle, "accept a connection")
         Connection connection
@@ -82,6 +117,8 @@ public struct Listener {
         ret connection
     }
 
+    // Sets how long 'accept()' waits for a connection, in milliseconds; -1, the default,
+    // waits as long as it takes.
     public void timeout(i64 milliseconds) {
         wait = milliseconds
     }
@@ -91,6 +128,8 @@ public struct Listener {
         ret localPort(handle)
     }
 
+    // Stops listening, and then 'accept()' throws; the destructor does it too, and a
+    // second call does nothing. The connections already accepted stay open.
     public void close() {
         if (handle >= 0) {
             closeSocket(handle)
@@ -112,8 +151,17 @@ public struct Listener {
     }
 }
 
-// A connection of TCP (D224), encrypted when it comes from connectTls or
-// listenTls (D235).
+// A connection of TCP, from 'connect' or 'accept()', encrypted when it comes from
+// 'connectTls' or 'listenTls', with the same 'read' and 'write'. Each call waits until it
+// is done, or until the timeout; in a task, the wait leaves the thread to the other
+// tasks. The destructor closes it. It can be moved, as into a task, but not copied.
+//
+// '''
+// net.Connection connection = net.connect("127.0.0.1", 7000)
+// connection.timeout(5000)
+// connection.writeText("hello")
+// list<u8> answer = connection.read(1024)  // empty if the other side has closed
+// '''
 public struct Connection {
     i64 handle = -1
     i64 wait = -1
@@ -123,8 +171,10 @@ public struct Connection {
         close()
     }
 
-    // Up to `most` bytes, as soon as some arrive: an empty list when the other
-    // side has closed the connection.
+    // Up to 'most' bytes, as soon as some arrive, which can be fewer than those the other
+    // side wrote: an empty list when the other side has closed the connection. With
+    // TLS, also when it has ended without saying so. An exception on a timeout, on an
+    // error of the network or of TLS, as a handshake that fails, and after 'close()'.
     public list<u8> read(i64 most) {
         addr none
         if (tls != none) {
@@ -149,6 +199,9 @@ public struct Connection {
         }
     }
 
+    // Writes all the bytes, waiting while the system has no room for them; nothing is
+    // kept after it returns. An exception on a timeout, on an error of the network, as a
+    // connection that the other side has reset, and after 'close()'.
     public void write(list<u8> bytes) {
         addr data = copyBytes(bytes)
         try {
@@ -158,15 +211,21 @@ public struct Connection {
         }
     }
 
+    // Writes the bytes of the text, UTF-8, as 'write' does.
     public void writeText(string text) {
         sendAll(text.cstring(), text.len())
     }
 
+    // Sets how long each following read or write waits for the other side, in
+    // milliseconds, also in the handshake of TLS of a server; past it the call throws.
+    // -1, the default, waits as long as it takes.
     public void timeout(i64 milliseconds) {
         wait = milliseconds
     }
 
-    // With TLS, it says close_notify to the other side first, if it can (D245).
+    // Closes the connection, and then 'read' and 'write' throw; the destructor does it
+    // too, and a second call does nothing. With TLS, it says close_notify to the other
+    // side first, if it can, ignoring the errors.
     public void close() {
         addr none
         if (tls != none) {
@@ -287,12 +346,22 @@ public struct Connection {
 
 // A message of UDP, with the address it comes from.
 public struct Datagram {
-    public list<u8> data
-    public string host
-    public i32 port
+    public list<u8> data  // the bytes of the message
+    public string host    // the address of the sender, as "192.168.1.2" or "fe80::1"
+    public i32 port       // the port of the sender
 }
 
-// A socket of UDP, bound to an address and a port.
+// A socket of UDP, bound to an address and a port, made by 'udp': it sends and receives
+// messages, each whole or not at all, with no connection and no promise that they
+// arrive, nor in which order. The destructor closes it. It can be moved, not copied.
+//
+// '''
+// net.Udp socket = net.udp("0.0.0.0", 0)
+// socket.timeout(2000)
+// socket.send("192.168.1.20", 9000, "ping".bytes())
+// net.Datagram answer = socket.receive(1500)
+// println("{} bytes from {}:{}", answer.data.len(), answer.host, answer.port)
+// '''
 public struct Udp {
     i64 handle = -1
     i64 wait = -1
@@ -302,6 +371,10 @@ public struct Udp {
         close()
     }
 
+    // Sends the bytes as one message to the port of a host, a name or an address of
+    // the same version of IP as the socket. An exception if the host is not found or
+    // has no address of that version, on a timeout, or on an error of the network; none
+    // if the message is lost on the way.
     public void send(string host, i32 port, list<u8> bytes) {
         Address target = pick(resolveHost(host, port), version, host)
         addr data = copyBytes(bytes)
@@ -315,7 +388,9 @@ public struct Udp {
         }
     }
 
-    // The next message, of at most `most` bytes.
+    // The next message, of at most 'most' bytes, and who sent it; with a timeout, an
+    // exception if none arrives in time. Give room for the largest message: a longer
+    // one is cut to 'most' bytes on Linux, and is an exception on Windows.
     public Datagram receive(i64 most) {
         checkOpen(handle, "receive")
         addr buffer = alloc(most)
@@ -339,14 +414,19 @@ public struct Udp {
         }
     }
 
+    // Sets how long 'send' and 'receive' wait, in milliseconds; past it they throw. -1,
+    // the default, waits as long as it takes.
     public void timeout(i64 milliseconds) {
         wait = milliseconds
     }
 
+    // The port it is bound to, also when 0 asked the system for a free one.
     public i32 port() const {
         ret localPort(handle)
     }
 
+    // Closes the socket, and then 'send' and 'receive' throw; the destructor does it
+    // too, and a second call does nothing.
     public void close() {
         if (handle >= 0) {
             closeSocket(handle)
@@ -355,15 +435,21 @@ public struct Udp {
     }
 }
 
-// Listens on a name or an address; port 0 asks the system for a free one.
+// A listener on a name or an address, as "127.0.0.1" for this computer alone or
+// "0.0.0.0" for all its addresses of IPv4 ("::" for IPv6); port 0 asks the system for a
+// free one, which 'port()' gives. A name with several addresses listens on the first.
+// An exception if the name is not found or the port is taken, as "cannot use 0.0.0.0
+// port 8080: the address is in use".
 public Listener listen(string host, i32 port) {
     Listener listener
     listener.open(host, port)
     ret listener
 }
 
-// Listens with TLS (D235): the certificate, followed by those of its chain, and
-// the private key are texts in PEM.
+// A listener as 'listen' gives, whose connections encrypt with TLS: 'certificate' is
+// the text in PEM of the certificate of the server, followed by those of its chain, and
+// 'key' the text in PEM of its private key. An exception if they cannot be read. The
+// handshake of each connection comes with its first read or write.
 public Listener listenTls(string host, i32 port, string certificate, string key) {
     Listener listener
     listener.tls = cromo_tls_server(certificate.cstring(), certificate.len(), key.cstring(), key.len())
@@ -375,7 +461,10 @@ public Listener listenTls(string host, i32 port, string certificate, string key)
     ret listener
 }
 
-// Connects to a name or an address, trying its addresses in turn.
+// A connection to the port of a name or an address, trying the addresses of the name
+// in turn until one answers. An exception if the name is not found, or with the error
+// of the last address if none answers, as "cannot connect to example.com:80: connection
+// refused". It has no timeout of its own: it waits as long as the system does.
 public Connection connect(string host, i32 port) {
     list<Address> addresses = resolveHost(host, port)
     i64 code = 0
@@ -394,8 +483,11 @@ public Connection connect(string host, i32 port) {
     throw failure(format("connect to {}:{}", host, port), errorText(code))
 }
 
-// Connects with TLS (D235): the certificate of the server must come from an
-// authority of the system (D234) and name the host.
+// A connection with TLS to the port of a name or an address, as 'connect' gives,
+// after the handshake. The certificate of the server must come from an authority that
+// the system trusts, and name the host: otherwise an exception says why, as "the
+// certificate has expired". As 'connect', it has no timeout of its own, in the
+// handshake too.
 public Connection connectTls(string host, i32 port) {
     Connection connection = connect(host, port)
     connection.tls = cromo_tls_connect(host.cstring(), host.len())
@@ -403,7 +495,10 @@ public Connection connectTls(string host, i32 port) {
     ret connection
 }
 
-// A socket of UDP bound to a name or an address; port 0 for a free one.
+// A socket of UDP bound to the port of a name or an address, as "0.0.0.0" for all the
+// addresses of IPv4 or "::" for those of IPv6; port 0 asks the system for a free one.
+// The socket sends to the addresses of its version of IP. An exception if the name is
+// not found or the port is taken.
 public Udp udp(string host, i32 port) {
     Address address = resolveHost(host, port)[0]
     Udp opened
@@ -413,7 +508,8 @@ public Udp udp(string host, i32 port) {
     ret opened
 }
 
-// The addresses of a name, as text: "93.184.215.14", "2606:2800::1".
+// The addresses of a name, as text: "93.184.215.14", "2606:2800::1". An address
+// written with numbers gives itself. An exception if the name is not found.
 public list<string> resolve(string host) {
     list<string> names
     for (Address address in resolveHost(host, 0)) {

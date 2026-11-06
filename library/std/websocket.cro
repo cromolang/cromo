@@ -1,23 +1,57 @@
-// The module std.websocket (D368): WebSocket (RFC 6455) over the connections of
-// std.net, with TLS for wss. A client opens one with connect(url); a handler of
-// std.http turns its request into one with res.webSocket(...). Both send and
-// receive texts and bytes; the pings are answered by receive().
+// WebSocket (RFC 6455): a connection that stays open and carries messages in both
+// directions, texts or bytes, with TLS for wss. A client opens one with 'connect(url)';
+// a handler of std.http turns its request into one with 'req.webSocket(...)'. Both
+// sides then use a 'Socket': 'send' and 'sendBytes' send a message, 'receive()' waits
+// for the next one, answering the pings by itself, and throws 'Closed' when the other
+// side closes.
+//
+// '''
+// websocket.Socket ws = websocket.connect("wss://example.com/chat")
+// ws.send("hello")
+// switch (ws.receive()) {
+//     case Text(string text) {
+//         println("{}", text)
+//     }
+//     case Binary(list<u8> bytes) {
+//         println("{} bytes", bytes.len())
+//     }
+// }
+// ws.close()
+// '''
+//
+// The guide: [Networking and HTTP](https://cromolang.org/book/en/networking.html).
+
+// For who works on std.websocket: D368.
 import std.crypto
 import std.net
 
-// A message: a text, or bytes.
+// A message of a WebSocket: a text, or bytes.
 public enum Message {
-    Text(string text)
-    Binary(list<u8> bytes)
+    Text(string text)       // a message of text, UTF-8
+    Binary(list<u8> bytes)  // a message of bytes
 }
 
-// The other side closed the WebSocket, or the connection ended: what receive()
-// throws then, with the code of the close (1000 is a normal end, 1006 a connection
-// that ended without one).
+// The exception of a WebSocket that is closed: 'receive()' throws it when the other
+// side has closed, or the connection has ended, and so do 'send' and 'sendBytes' after
+// a close.
+//
+// '''
+// try {
+//     for {
+//         ws.receive()
+//     }
+// } catch (websocket.Closed e) {
+//     println("closed: {} {}", e.code, e.reason)
+// }
+// '''
 public struct Closed : Exception {
+    // The code of the close: 1000 a normal end, 1001 a side that goes away, 1005 a
+    // close without a code, 1006 a connection that ended without a close.
     public i32 code
-    public string reason
+    public string reason  // the reason that the other side gave, often ""
 
+    // The text of the exception: "the WebSocket is closed: 1000", followed by the
+    // reason when there is one.
     public string message() const {
         if (reason.len() > 0) {
             ret format("the WebSocket is closed: {} {}", code, reason)
@@ -26,6 +60,11 @@ public struct Closed : Exception {
     }
 }
 
+// A WebSocket, of a client from 'connect' or of a server from 'Request.webSocket' of
+// std.http. Each call waits until it is done, or until the timeout; in a task, the wait
+// leaves the thread to the other tasks. The destructor ends the connection without a
+// close of WebSocket, which the other side sees as the code 1006: 'close()' ends it
+// cleanly. It can be moved, not copied.
 public struct Socket {
     net.Connection connection
     list<u8> pending  // read from the connection, not yet used
@@ -34,22 +73,30 @@ public struct Socket {
     bool closing  // the close is sent
     i32 code      // of the close received, 0 before
 
+    // Sends the text as one message. An exception on an error of the network or a
+    // timeout, and 'Closed' after a close.
     public void send(string text) {
         sendFrame(1, text.bytes())
     }
 
+    // Sends the bytes as one message, binary. An exception on an error of the network
+    // or a timeout, and 'Closed' after a close.
     public void sendBytes(list<u8> bytes) {
         sendFrame(2, bytes)
     }
 
-    // A timeout for each read and write, as for a connection (D225); without one,
-    // receive() waits as long as it takes.
+    // Sets how long each read and write waits, in milliseconds, as for a connection;
+    // past it the call throws. -1, the default, lets 'receive()' wait as long as it
+    // takes.
     public void timeout(i64 milliseconds) {
         connection.timeout(milliseconds)
     }
 
-    // The next message; the fragments of a message are joined, the pings answered.
-    // Throws Closed once the other side has closed.
+    // The next message, a text or bytes, waiting for it. The fragments of a message are
+    // joined, and the pings that arrive meanwhile are answered. It throws 'Closed' when
+    // the other side closes, after answering its close, or when the connection ends
+    // without one, and again at each call after. An exception for a message larger
+    // than 16 MiB, a frame that is not valid, a text that is not UTF-8, or a timeout.
     public Message receive() {
         if (code != 0) {
             throw closed(code, "")
@@ -116,7 +163,11 @@ public struct Socket {
         }
     }
 
-    // Sends the close, and waits for that of the other side.
+    // Ends the WebSocket cleanly: sends the close, with the code 1000, and waits for
+    // that of the other side, dropping the messages that arrive meanwhile, then closes
+    // the connection. Without a timeout it waits as long as the other side takes to
+    // answer; with one, an answer that does not come in time is an exception. Then
+    // 'send' and 'receive()' throw 'Closed'.
     public void close() {
         if (!closing) {
             list<u8> payload
@@ -246,7 +297,12 @@ Closed closed(i32 code, string reason) {
     ret result
 }
 
-// Opens a WebSocket: ws://host:port/path, or wss:// with TLS.
+// A WebSocket of a client, opened with a URL as "ws://host:port/path", or "wss://..."
+// with TLS; without a port, 80 or 443. An exception if the URL does not start with
+// ws:// or wss://, or its port is not a number, if the host is not found or cannot be
+// reached, or if the server does not accept the WebSocket, with what it answered, as
+// "HTTP/1.1 404 Not Found". Connecting, with the handshake of TLS, has no timeout; then
+// the server must answer within 30 seconds. The socket it gives has no timeout.
 public Socket connect(string url) {
     bool secure = startsWith(url, "wss://")
     if (!secure && !startsWith(url, "ws://")) {
@@ -333,7 +389,9 @@ public Socket connect(string url) {
     ret socket
 }
 
-// For std.http: a connection whose request the server has answered with 101.
+// The WebSocket of a server, on a connection whose request it has answered with "101
+// Switching Protocols", which is moved into it; it has no timeout. 'Request.webSocket'
+// of std.http does all this: a program rarely needs it.
 public Socket accepted(move net.Connection connection) {
     Socket socket
     socket.connection = move connection
@@ -341,7 +399,8 @@ public Socket accepted(move net.Connection connection) {
     ret socket
 }
 
-// The answer to the key of a request: Sec-WebSocket-Accept (RFC 6455).
+// The value of Sec-WebSocket-Accept that answers the Sec-WebSocket-Key of a request
+// (RFC 6455): the base64 of the SHA-1 of the key with a fixed GUID.
 public string acceptKey(string key) {
     ret crypto.base64(crypto.sha1((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").bytes()))
 }

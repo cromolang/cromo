@@ -1,8 +1,10 @@
 // Example 1: functions, conditions and loops.
 //
 // Decided: ret (D18), no ; (D17), if / else if / else and for (D15), types (D9),
-//          type before the name, i++ (D20), println in std::format style (D21)
+//          type before the name, i++ (D20), println in std::format style (D21),
+//          the comments above a function are its documentation (D473, D474)
 
+// The product of the numbers from 1 to 'n': 1 when 'n' is 1 or less.
 i64 factorial(i64 n) {
     if (n <= 1) {
         ret 1
@@ -10,6 +12,7 @@ i64 factorial(i64 n) {
     ret n * factorial(n - 1)
 }
 
+// The number of Fibonacci at position 'n', from 0: 0, 1, 1, 2, 3, 5, 8...
 i64 fibonacci(i64 n) {
     i64 a = 0
     i64 b = 1
@@ -21,6 +24,7 @@ i64 fibonacci(i64 n) {
     ret a
 }
 
+// "positive", "negative" or "zero", as the sign of 'x'.
 string sign(i32 x) {
     if (x > 0) {
         ret "positive"

@@ -2,18 +2,25 @@
 // and os_linux_arm64.cro (D408, P23), and the environment on the initial stack.
 import unsafe
 
+// The name of the system: "windows", or "linux", also on Android.
 public string name() {
     ret "linux"
 }
 
+// The id that the system gives to this process.
 public i64 processId() {
     ret systemCall(i64(Call.GetPid), 0, 0, 0, 0, 0, 0)
 }
 
+// Whether the variable 'name' is in the environment, also with an empty value. On
+// Windows the names do not distinguish upper and lower case.
 public bool hasEnv(string name) {
     ret envIndex(name) >= 0
 }
 
+// The value of the variable 'name' of the environment, or "" when it is not set:
+// hasEnv tells an empty value from a missing one. On Windows the names do not
+// distinguish upper and lower case.
 public string env(string name) {
     i64 index = envIndex(name)
     if (index < 0) {
@@ -28,6 +35,7 @@ public string env(string name) {
     ret string(offset(entry, start), end - start)
 }
 
+// The absolute path of the current folder, from which the relative paths start.
 public string currentFolder() {
     addr buffer = alloc(4096)
     i64 length = systemCall(i64(Call.GetCwd), buffer, 4096, 0, 0, 0, 0)  // with its zero

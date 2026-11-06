@@ -84,7 +84,7 @@ Run it and open `http://localhost:8080/hello/world` in a browser.
 - `req.matches("GET /users/{id}")` checks the method and the path, and `req.param("id")` reads the part in braces; `{rest...}` takes the rest of the path. `req.queryValue("page")` reads the query.
 - `res.write`, `res.writeJson` and `res.writeBytes` write the body and set its `Content-Type`; `res.status` is 200 by default; `res.headers` holds the headers.
 - An exception in the handler gives the status 500, and the server goes on.
-- The server keeps the connections alive between requests, and reads and writes bodies in chunks.
+- The server keeps the connections alive between requests, reads the bodies also when they come in chunks, and writes each response whole, with its `Content-Length`.
 
 `http.listen(host, port)` gives a `http.Server` without starting it, whose `port()` is known before `serve(handler)`: useful with port 0, and in tests.
 

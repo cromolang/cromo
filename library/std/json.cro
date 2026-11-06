@@ -1,28 +1,66 @@
-// The module std.json (D251, D255, D256): the values of JSON, and the conversion of
-// the types of a program to their text and back. `jsonWrite<T>` and `jsonRead<T>`
+// The module std.json: the text of JSON, read and written. 'encode' and 'pretty' give the text
+// of a value, and 'decode' reads a value of a type from its text: the compiler writes the
+// conversion of each struct and enum by itself, without declarations. 'parse' gives a
+// 'Value', for JSON whose shape is not known in advance.
+//
+// '''
+// import std.json
+//
+// struct Point {
+//     i64 x
+//     i64 y
+// }
+//
+// i32 main() {
+//     Point p = json.decode<Point>("{\"x\": 1, \"y\": 2}")
+//     println("{}", json.encode(p))   // {"x":1,"y":2}
+//     ret 0
+// }
+// '''
+//
+// The attribute '[[json("name")]]' before a field or a case gives it another name in JSON,
+// and '[[json(skip)]]' before a field leaves it out. A text that is not JSON, or that does not
+// fit the type, is an exception whose message says where.
+//
+// The guide: [JSON](https://cromolang.org/book/en/json.html).
+
+// The conversion (D251, D255, D256): `jsonWrite<T>` and `jsonRead<T>`
 // of the unsafe dialect become, for each real T, a call of one of the functions
 // below, as writeI32 or readList<T>, or of a function that the compiler generates
 // for a struct or an enum, in this module: an object with a member for each
 // field, or the name of the case.
 import unsafe
 
-// The types that can be converted, which the compiler recognizes without a
-// declaration (D251): the numbers, bool, string, Value, list<T> and map<string, T>
-// of them, the enums without data and the structs whose fields can be converted.
+// The types that can be converted to JSON and back, which the compiler recognizes without a
+// declaration: the numbers, bool, string, 'Value', the lists and the fixed arrays of them, the
+// maps from string to them, the enums, and the structs whose fields can be converted. A field
+// that cannot be converted, as a function, is a compile error that names it.
 public interface Data {
 }
 
-// A value of JSON (D255). An object keeps its members in their order.
+// A value of JSON, of any shape, as 'parse' gives it. An object keeps its members in their
+// order, also two with the same name. A number without a point or an exponent is an 'Int'
+// when it fits in an i64, a 'UInt' above it; the other numbers are a 'Float'. The methods
+// that read a kind of value throw an exception on a value of another kind.
+//
+// '''
+// json.Value v = json.parse("{\"items\": [1, 2.5], \"ok\": true}")
+// i64 first = v.get("items").at(0).asInt()     // 1
+// bool ok = v.get("ok").asBool()               // true
+// json.Value made = json.object()
+// made.set("name", json.Value.Text("Cromo"))   // {"name":"Cromo"}
+// '''
 public enum Value {
-    Null
-    Bool(bool value)
-    Int(i64 value)
-    UInt(u64 value)  // an integer above the i64, up to 2^64 - 1
-    Float(f64 value)
-    Text(string value)
-    Array(list<Value> items)
-    Object(list<Member> members)
+    Null                          // null
+    Bool(bool value)              // true or false
+    Int(i64 value)                // an integer that fits in an i64
+    UInt(u64 value)               // an integer above the i64, up to 2^64 - 1
+    Float(f64 value)              // a number with a point or an exponent, or an integer too large
+    Text(string value)            // a string
+    Array(list<Value> items)      // the elements of an array, in their order
+    Object(list<Member> members)  // the members of an object, in their order
 
+    // Whether the value is null.
     public bool isNull() const {
         switch {
             case Null {
@@ -34,6 +72,7 @@ public enum Value {
         }
     }
 
+    // The bool of a 'Bool'; another kind of value throws an exception.
     public bool asBool() const {
         switch {
             case Bool(bool b) {
@@ -45,6 +84,8 @@ public enum Value {
         }
     }
 
+    // The integer of an 'Int'; another kind of value throws an exception, also a 'Float' as
+    // 2.0 and a 'UInt'.
     public i64 asInt() const {
         switch {
             case Int(i64 n) {
@@ -56,7 +97,8 @@ public enum Value {
         }
     }
 
-    // A float, also from an integer (D255).
+    // The number of a 'Float', an 'Int' or a 'UInt' as an f64, where an integer above 2^53 can
+    // lose its last digits; another kind of value throws an exception.
     public f64 asFloat() const {
         switch {
             case Int(i64 n) {
@@ -74,6 +116,7 @@ public enum Value {
         }
     }
 
+    // A copy of the text of a 'Text'; another kind of value throws an exception.
     public string asText() const {
         switch {
             case Text(string s) {
@@ -85,7 +128,8 @@ public enum Value {
         }
     }
 
-    // The elements of an array, or the members of an object.
+    // The number of elements of an array, or of members of an object; another kind of value
+    // throws an exception.
     public i64 len() const {
         switch {
             case Array(list<Value> items) {
@@ -100,7 +144,7 @@ public enum Value {
         }
     }
 
-    // Whether an object has the member; false for the other values.
+    // Whether the value is an object with a member 'name'; false for the other kinds of value.
     public bool has(string name) const {
         switch {
             case Object(list<Member> members) {
@@ -117,7 +161,9 @@ public enum Value {
         }
     }
 
-    // A copy of the member of an object; with the same name twice, the last.
+    // A copy of the value of the member 'name' of an object; with the same name twice, the
+    // last one. A missing member throws an exception, and so does a value that is not an
+    // object.
     public Value get(string name) const {
         switch {
             case Object(list<Member> members) {
@@ -134,7 +180,8 @@ public enum Value {
         }
     }
 
-    // A copy of an element of an array.
+    // A copy of the element at 'index' of an array, from 0. An index out of the array throws an
+    // exception, not a panic, and so does a value that is not an array.
     public Value at(i64 index) const {
         switch {
             case Array(list<Value> items) {
@@ -149,7 +196,8 @@ public enum Value {
         }
     }
 
-    // The names of the members of an object, in their order.
+    // The names of the members of an object, in their order, a name twice if it is there twice;
+    // another kind of value throws an exception.
     public list<string> keys() const {
         switch {
             case Object(list<Member> members) {
@@ -165,7 +213,9 @@ public enum Value {
         }
     }
 
-    // Replaces the member of an object, or adds it at the end.
+    // Gives the member 'name' of an object the value 'item', or adds the member at the end when
+    // it is missing; another kind of value throws an exception. The value is copied, unless it
+    // is given with 'move'.
     public void set(string name, move Value item) {
         switch {
             case Object(ref list<Member> members) {
@@ -190,7 +240,8 @@ public enum Value {
         }
     }
 
-    // Adds an element at the end of an array.
+    // Adds the element at the end of an array; another kind of value throws an exception. The
+    // value is copied, unless it is given with 'move'.
     public void add(move Value item) {
         switch {
             case Array(ref list<Value> items) {
@@ -237,32 +288,38 @@ public enum Value {
     }
 }
 
-// A member of an object.
+// A member of an object of JSON: its name and its value.
 public struct Member {
-    public string name
-    public Value value
+    public string name  // the name, without the quotes of JSON
+    public Value value  // the value of the member
 }
 
-// An empty object, to fill with set().
+// An empty object, to fill with 'set'.
 public Value object() {
     ret Value.Object(list<Member>())
 }
 
-// An empty array, to fill with add().
+// An empty array, to fill with 'add'.
 public Value array() {
     ret Value.Array(list<Value>())
 }
 
 // ---- Conversion (D251) ----
 
-// The text of a value, without spaces.
+// The text of JSON of a value, compact, without spaces: '{"x":1,"y":2}'. A struct becomes an
+// object with a member for each field, in their order; a list or a fixed array an array; a
+// map an object, with its keys in the order of their bytes; a case of an enum its name, or,
+// when it has data, an object whose only member is the case. A float is written with a
+// point, as 2.0, so that it is read back as a float; an infinity or a NaN throws an
+// exception, since JSON has none.
 public string encode<T : Data>(T value) {
     Writer w
     jsonWrite<T>(ref w, value)
     ret move w.out
 }
 
-// The text of a value on several lines, indented by two spaces for each level.
+// The text of JSON of a value on several lines, indented by two spaces for each level, with a
+// space after the ':' of each member; the rest as in 'encode'.
 public string pretty<T : Data>(T value) {
     Writer w
     w.indent = 2
@@ -270,13 +327,19 @@ public string pretty<T : Data>(T value) {
     ret move w.out
 }
 
-// A value from its text: an exception for a text that is not JSON (RFC 8259).
+// A value of the type 'T' from its text of JSON: 'json.decode<Point>(text)'. A member that is
+// missing, or null, leaves the default value in its field, and a member without a field is
+// ignored. A text that is not JSON throws an exception with its line and column, as 'parse'
+// does. A value of another kind throws one with its path, as "cannot decode JSON: at
+// users[2].age: expected an integer, found a string"; an integer field takes only an
+// integer in its range, not 2.0, while a float field takes also an integer.
 public T decode<T : Data>(string text) {
     ret fromValue<T>(parse(text))
 }
 
-// A struct, or another type, from a Value. A member that is missing leaves the
-// default value in its field; a member without a field is ignored.
+// A value of the type 'T' from a 'Value', with the rules of 'decode'. A struct that needs to
+// tell a null apart declares the field 'json.Value', asks 'isNull()', and then reads the
+// value with 'fromValue'.
 public T fromValue<T : Data>(Value value) {
     try {
         ret jsonRead<T>(value)
@@ -285,6 +348,8 @@ public T fromValue<T : Data>(Value value) {
     }
 }
 
+// The 'Value' of a value, the same that 'parse(encode(value))' gives: to change it, or add
+// members to it, before writing it. An infinity or a NaN throws an exception, as in 'encode'.
 public Value toValue<T : Data>(T value) {
     ret parse(encode(value))
 }
@@ -846,8 +911,10 @@ map<string, T> readMap<T : Data>(Value v) {
 
 // ---- Reading the text (RFC 8259) ----
 
-// A value from its text, without comments and without commas at the end. An
-// error says where: "cannot read JSON: line 3, column 7: expected ',' or '}'".
+// The 'Value' of a text of JSON, as RFC 8259 defines it: without comments, without commas
+// after the last element, and with nothing after the value but spaces. A text that is not JSON
+// throws an exception that says where, as "cannot read JSON: line 3, column 7: expected ','
+// or '}'"; so do arrays and objects nested more than 512 times.
 public Value parse(string text) {
     i64 at = 0
     skipSpace(text, ref at)

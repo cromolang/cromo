@@ -1,8 +1,22 @@
-// The module std.crypto (D236, D249): hashes and HMAC, random bytes, hex and base64,
-// ciphers with authentication, signatures with Ed25519 and the exchange of keys
-// with X25519. The algorithms are those of mbedTLS and Monocypher, in the runtime
-// (runtime/tls); the bytes are lists of u8, and a key of the wrong size is an
-// exception.
+// The building blocks of cryptography: hashes and HMAC, random bytes for keys, hex and
+// base64, ciphers with authentication (AES-GCM and ChaCha20-Poly1305), signatures with
+// Ed25519 and the exchange of keys with X25519. The bytes are lists of u8; a key or a
+// nonce of the wrong size is an exception of type 'Error'. The algorithms are those of
+// mbedTLS and Monocypher, inside the runtime: the executables need no other library.
+//
+// '''
+// list<u8> data = "hello".bytes()
+// println("{}", crypto.hex(crypto.sha256(data)))  // 2cf24dba5fb0a30e...
+//
+// list<u8> key = crypto.random(32)
+// list<u8> nonce = crypto.random(12)
+// list<u8> sealed = crypto.encrypt(crypto.Cipher.ChaCha20Poly1305, key, nonce, data, list<u8>())
+// list<u8> opened = crypto.decrypt(crypto.Cipher.ChaCha20Poly1305, key, nonce, sealed, list<u8>())
+// '''
+//
+// The guide: [Networking and HTTP](https://cromolang.org/book/en/networking.html).
+
+// For who works on std.crypto: D236 and D249; the algorithms are in runtime/tls.
 import unsafe
 
 extern "cromo" {
@@ -26,36 +40,49 @@ extern "cromo" {
 
 // ---- Hashes ----
 
-// MD5 and SHA-1 are broken: they are here for the formats that still use them.
+// The cases are in the order of the runtime: Sha384 after Sha512.
+
+// An algorithm of hash, for 'hmac' and 'Hasher'. MD5 and SHA-1 are broken: they are
+// here for the formats that still use them.
 public enum Hash {
-    Md5
-    Sha1
-    Sha256
-    Sha512
-    Sha384  // after Sha512, as the runtime counts them
+    Md5     // MD5, of 16 bytes
+    Sha1    // SHA-1, of 20 bytes
+    Sha256  // SHA-256, of 32 bytes
+    Sha512  // SHA-512, of 64 bytes
+    Sha384  // SHA-384, of 48 bytes
 }
 
+// The MD5 of the data, 16 bytes. It is broken: only for the formats that still use it.
 public list<u8> md5(list<u8> data) {
     ret digest(Hash.Md5, data)
 }
 
+// The SHA-1 of the data, 20 bytes. It is broken: only for the formats that still use
+// it, as WebSocket.
 public list<u8> sha1(list<u8> data) {
     ret digest(Hash.Sha1, data)
 }
 
+// The SHA-256 of the data, 32 bytes: 'crypto.hex(crypto.sha256("hello".bytes()))' gives
+// "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824".
 public list<u8> sha256(list<u8> data) {
     ret digest(Hash.Sha256, data)
 }
 
+// The SHA-384 of the data, 48 bytes.
 public list<u8> sha384(list<u8> data) {
     ret digest(Hash.Sha384, data)
 }
 
+// The SHA-512 of the data, 64 bytes.
 public list<u8> sha512(list<u8> data) {
     ret digest(Hash.Sha512, data)
 }
 
-// The HMAC of the data with a key of any size (RFC 2104).
+// The HMAC of the data with the key (RFC 2104), of the size of the hash: it proves
+// that who made it has the key. The key can have any size; one as long as the hash,
+// from 'random', is the usual choice. To compare an HMAC received with the one
+// computed, compare all the bytes, not only up to the first that differs.
 public list<u8> hmac(Hash kind, list<u8> key, list<u8> data) {
     addr secret = raw(key)
     addr input = raw(data)
@@ -68,11 +95,21 @@ public list<u8> hmac(Hash kind, list<u8> key, list<u8> data) {
     ret result
 }
 
-// A hash computed in parts, for data that arrive in pieces.
+// A hash computed in parts, for data that arrive in pieces, as a large file read a
+// block at a time: the result is the same as that of all the data at once. It can be
+// moved, not copied.
+//
+// '''
+// crypto.Hasher hasher = crypto.Hasher(crypto.Hash.Sha256)
+// hasher.add("hello ".bytes())
+// hasher.add("world".bytes())
+// string digest = crypto.hex(hasher.finish())  // as crypto.sha256 of "hello world"
+// '''
 public struct Hasher {
     addr state
     Hash kind
 
+    // A hasher of the algorithm, with no data yet.
     public Hasher(Hash algorithm) {
         kind = algorithm
         state = cromo_crypto_hasher(i32(algorithm))
@@ -82,13 +119,15 @@ public struct Hasher {
         cromo_crypto_hasher_end(state)
     }
 
+    // Adds the data to the hash; they are not kept.
     public void add(list<u8> data) {
         addr input = raw(data)
         cromo_crypto_hasher_add(state, input, data.len())
         free(input)
     }
 
-    // The hash of what was added; then the hasher starts again, empty.
+    // The hash of what was added, of the size of the algorithm; then the hasher starts
+    // again, empty.
     public list<u8> finish() {
         addr out = alloc(64)
         cromo_crypto_hasher_finish(state, out)
@@ -100,7 +139,9 @@ public struct Hasher {
 
 // ---- Random bytes ----
 
-// Bytes from the generator of the system, good for keys and nonces.
+// 'count' bytes from the generator of the system, good for keys and nonces: 32 for a
+// key of ChaCha20-Poly1305 or Ed25519, 12 for a nonce. An exception if the system gives
+// none; a negative count is a panic.
 public list<u8> random(i64 count) {
     if (count < 0) {
         panic(format("cannot generate {} random bytes", count))
@@ -117,7 +158,7 @@ public list<u8> random(i64 count) {
 
 // ---- Hex and base64 ----
 
-// Two lowercase hex digits for each byte.
+// The bytes as text, with two lowercase hex digits for each byte: "00ff10".
 public string hex(list<u8> bytes) {
     string digits = "0123456789abcdef"
     list<u8> text
@@ -129,7 +170,9 @@ public string hex(list<u8> bytes) {
     ret string(text)
 }
 
-// The bytes of hex digits, uppercase or lowercase.
+// The bytes of a text of hex digits, two for each byte, uppercase or lowercase, without
+// spaces or "0x"; an empty text gives no bytes. An exception for an odd number of
+// digits, or a character that is not a digit.
 public list<u8> fromHex(string text) {
     if (text.len() % 2 != 0) {
         throw Error("cannot read the hex: its digits are odd in number")
@@ -150,37 +193,44 @@ public list<u8> fromHex(string text) {
     ret bytes
 }
 
-// Base64 (RFC 4648), with the padding `=`.
+// The bytes in base64 (RFC 4648), with the padding '=': "aGVsbG8=" for "hello".
 public string base64(list<u8> bytes) {
     ret encode64(bytes, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/", true)
 }
 
+// The bytes of a text in base64, with its padding '=', and without spaces or new lines.
+// An exception for a length or a character that is not valid.
 public list<u8> fromBase64(string text) {
     ret decode64(text, false)
 }
 
-// Base64 for URLs and names of files (RFC 4648 §5): '-' and '_' instead of '+'
-// and '/', and no padding.
+// The bytes in base64 for URLs and names of files (RFC 4648 §5): '-' and '_' instead of
+// '+' and '/', and no padding.
 public string base64Url(list<u8> bytes) {
     ret encode64(bytes, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_", false)
 }
 
-// It also reads the padding, if it is there.
+// The bytes of a text in base64 for URLs, with or without the padding. An exception for
+// a length or a character that is not valid.
 public list<u8> fromBase64Url(string text) {
     ret decode64(text, true)
 }
 
 // ---- Ciphers with authentication ----
 
-// AES-GCM takes a key of 16, 24 or 32 bytes, ChaCha20-Poly1305 one of 32; both a
-// nonce of 12 bytes, never used twice with the same key.
+// A cipher with authentication, for 'encrypt' and 'decrypt'. Both take a nonce of 12
+// bytes, which must never be used twice with the same key.
 public enum Cipher {
-    AesGcm
-    ChaCha20Poly1305
+    AesGcm            // AES in GCM mode, with a key of 16, 24 or 32 bytes
+    ChaCha20Poly1305  // ChaCha20 with Poly1305, with a key of 32 bytes
 }
 
-// The data encrypted, followed by a tag of 16 bytes that authenticates them and
-// the extra data, which are not encrypted.
+// The data encrypted with the key and the nonce, followed by a tag of 16 bytes that
+// authenticates them and the extra data. The extra data are not encrypted and not in
+// the result, but 'decrypt' needs the same ones, as a header sent in clear; often
+// they are empty, 'list<u8>()'. The nonce, of 12 bytes, must never be used twice with
+// the same key: a new 'random(12)' for each message is the simple way, and it goes
+// with the message, in clear. An exception for a key or a nonce of the wrong size.
 public list<u8> encrypt(Cipher cipher, list<u8> key, list<u8> nonce, list<u8> data, list<u8> extra) {
     checkCipher(cipher, key, nonce, "encrypt")
     addr secret = raw(key)
@@ -198,8 +248,10 @@ public list<u8> encrypt(Cipher cipher, list<u8> key, list<u8> nonce, list<u8> da
     ret result
 }
 
-// The data of encrypt(), if they and the extra data are the same that were
-// encrypted with the key and the nonce; otherwise an exception.
+// The data that 'encrypt' was given, from its result with the tag, when they are
+// authentic: the same cipher, key, nonce and extra data, and nothing changed.
+// Otherwise an exception, which does not say what was wrong. An exception also for
+// data shorter than the tag, and for a key or a nonce of the wrong size.
 public list<u8> decrypt(Cipher cipher, list<u8> key, list<u8> nonce, list<u8> data, list<u8> extra) {
     checkCipher(cipher, key, nonce, "decrypt")
     if (data.len() < 16) {
@@ -228,7 +280,16 @@ public list<u8> decrypt(Cipher cipher, list<u8> key, list<u8> nonce, list<u8> da
 
 // ---- Signatures and exchange of keys ----
 
-// The public key of a private key of Ed25519, which is 32 random bytes (RFC 8032).
+// The public key, of 32 bytes, of a private key of Ed25519, which is 32 random bytes,
+// as 'random(32)' gives (RFC 8032). An exception if the private key does not have 32
+// bytes.
+//
+// '''
+// list<u8> privateKey = crypto.random(32)
+// list<u8> publicKey = crypto.ed25519PublicKey(privateKey)
+// list<u8> signature = crypto.ed25519Sign(privateKey, message)
+// bool valid = crypto.ed25519Verify(publicKey, message, signature)  // true
+// '''
 public list<u8> ed25519PublicKey(list<u8> privateKey) {
     checkKey(privateKey, "the private key of Ed25519")
     addr secret = raw(privateKey)
@@ -240,7 +301,9 @@ public list<u8> ed25519PublicKey(list<u8> privateKey) {
     ret result
 }
 
-// The signature of the message, of 64 bytes.
+// The signature of the message with a private key of Ed25519, of 64 bytes; the same
+// message and key always give the same signature. An exception if the private key
+// does not have 32 bytes.
 public list<u8> ed25519Sign(list<u8> privateKey, list<u8> message) {
     checkKey(privateKey, "the private key of Ed25519")
     addr secret = raw(privateKey)
@@ -254,8 +317,8 @@ public list<u8> ed25519Sign(list<u8> privateKey, list<u8> message) {
     ret result
 }
 
-// Whether the signature is of the message, made with the private key of the
-// public key; false also when a size is wrong.
+// Whether the signature is that of the message, made with the private key of the
+// public key; false also when a size is wrong, never an exception.
 public bool ed25519Verify(list<u8> publicKey, list<u8> message, list<u8> signature) {
     if (publicKey.len() != 32 || signature.len() != 64) {
         ret false
@@ -270,7 +333,9 @@ public bool ed25519Verify(list<u8> publicKey, list<u8> message, list<u8> signatu
     ret valid != 0
 }
 
-// The public key of a private key of X25519, which is 32 random bytes (RFC 7748).
+// The public key, of 32 bytes, of a private key of X25519, which is 32 random bytes,
+// as 'random(32)' gives (RFC 7748): it is sent to the other side. An exception if the
+// private key does not have 32 bytes.
 public list<u8> x25519PublicKey(list<u8> privateKey) {
     checkKey(privateKey, "the private key of X25519")
     addr secret = raw(privateKey)
@@ -282,8 +347,10 @@ public list<u8> x25519PublicKey(list<u8> privateKey) {
     ret result
 }
 
-// The secret shared with the other side, from our private key and its public
-// key: the other side computes the same from its private key and our public key.
+// The secret of 32 bytes shared with the other side, from our private key and its
+// public key: the other side computes the same from its private key and our public
+// key. A key for a cipher is better made from it with a hash, as 'sha256'. An
+// exception if a key does not have 32 bytes, or the public key is not valid.
 public list<u8> x25519(list<u8> privateKey, list<u8> publicKey) {
     checkKey(privateKey, "the private key of X25519")
     checkKey(publicKey, "the public key of X25519")

@@ -13,7 +13,24 @@
 
 import unsafe
 
-// A dynamic array with its elements contiguous on the heap (D13).
+// A list of values of type 'T' that grows as needed, as 'std::vector' in C++: the elements are
+// one after the other on the heap, and the list destroys them when it ends. '[a, b, c]' makes a
+// list, and 'v[i]' is the element itself, which can be read, assigned, passed with 'ref' and
+// moved; an index out of the list is a panic. 'for (T x in v)' visits the elements, and
+// 'for (ref T x in v)' can change them; while it runs, the list cannot change its length. A
+// list is copied where it is given without 'move', as 'b = a'.
+//
+// '''
+// list<i64> numbers = [5, 3, 8]
+// numbers.add(13)
+// numbers.insert(0, 1)              // 1, 5, 3, 8, 13
+// i64 removed = numbers.remove(2)   // 3
+// for (ref i64 n in numbers) {
+//     n *= 2
+// }
+// '''
+//
+// The guide: [Lists, maps and text](https://cromolang.org/book/en/collections.html).
 public struct list<T> {
     addr data
     i64 length
@@ -26,16 +43,22 @@ public struct list<T> {
         free(data)
     }
 
+    // The number of elements.
     public i64 len() const {
         ret length
     }
 
+    // Adds the value at the end of the list. A value that owns resources, as a string, is
+    // copied, unless it is given with 'move': 'names.add(move name)'.
     public void add(move T value) {
         reserve(length + 1)
         put<T>(addressOf(length), move value)
         length++
     }
 
+    // Puts the value at 'index', and the elements from there on move one place forward.
+    // 'index' goes from 0 to 'len()', which adds at the end; outside, it is a panic. The value
+    // is copied or moved as in 'add'.
     public void insert(i64 index, move T value) {
         checkIndex(index, length + 1)
         reserve(length + 1)
@@ -44,6 +67,8 @@ public struct list<T> {
         length++
     }
 
+    // Removes the element at 'index' and gives it back; the elements after it move one place
+    // back. An index out of the list is a panic.
     public T remove(i64 index) {
         checkIndex(index, length)
         T value = take<T>(addressOf(index))
@@ -52,6 +77,8 @@ public struct list<T> {
         ret value
     }
 
+    // Removes all the elements, which are destroyed. The list keeps its memory for the
+    // elements that come next.
     public void clear() {
         for (i64 i = 0; i < length; i++) {
             destroy<T>(addressOf(i))
@@ -59,7 +86,7 @@ public struct list<T> {
         length = 0
     }
 
-    // Makes room for `count` elements in all, so that adding them does not
+    // Makes room for 'count' elements in all, so that adding them up to that number does not
     // move the elements again.
     public void reserve(i64 count) {
         if (count <= capacity) {
@@ -131,6 +158,7 @@ public struct list<T> {
         ret result
     }
 
+    // A new list with a copy of each element, the same that 'b = a' makes.
     public list<T> copy() const {
         list<T> result
         result.reserve(length)
@@ -140,7 +168,12 @@ public struct list<T> {
         ret result
     }
 
-    // A new list with what `f` gives for each element (D92).
+    // A new list with what 'f' gives for each element, in their order. The list does not
+    // change; an exception of 'f' goes on to the caller.
+    //
+    // '''
+    // list<string> labels = numbers.map<string>([](i64 n) string { ret format("#{}", n) })
+    // '''
     public list<U> map<U>(func(T) U f) const {
         list<U> result
         result.reserve(length)
@@ -155,7 +188,11 @@ public struct list<T> {
         ret result
     }
 
-    // A copy of the elements for which `keep` is true.
+    // A new list with a copy of the elements for which 'keep' is true, in their order.
+    //
+    // '''
+    // list<i64> even = numbers.filter([](i64 n) bool { ret n % 2 == 0 })
+    // '''
     public list<T> filter(func(T) bool keep) const {
         list<T> result
         for (i64 i = 0; i < length; i++) {
@@ -181,6 +218,21 @@ public struct list<T> {
 // UTF-8 text that owns its bytes (D10). A string literal has capacity 0: its
 // bytes belong to the program, and they are copied the first time the string
 // changes (D100).
+
+// Text in UTF-8, which owns its bytes, as 'std::string' in C++. The length and the positions
+// are in bytes: 's[i]' is a 'u8', and a letter outside ASCII takes more than one byte. Two
+// strings are compared with '==' and '<', byte by byte, and joined with '+' and '+='. A string
+// is copied where it is given without 'move', as 'b = a'; a literal takes no memory of its own
+// until it changes.
+//
+// '''
+// string clean = "  Hello, World  ".trim()        // "Hello, World"
+// i64 at = clean.find("World")                    // 7
+// string word = clean.slice(0, 5).upper()         // "HELLO"
+// list<string> parts = "a,b,,c".split(",")        // "a", "b", "", "c"
+// '''
+//
+// The guide: [Lists, maps and text](https://cromolang.org/book/en/collections.html).
 public struct string : Key, Ordered {
     addr data
     i64 length
@@ -192,11 +244,13 @@ public struct string : Key, Ordered {
         }
     }
 
-    // The length in bytes (D12).
+    // The length in bytes, not in characters: '"città".len()' is 6.
     public i64 len() const {
         ret length
     }
 
+    // Makes room for 'count' bytes in all, so that appending up to that length does not
+    // allocate memory again.
     public void reserve(i64 count) {
         if (count <= capacity) {
             ret
@@ -217,12 +271,14 @@ public struct string : Key, Ordered {
         capacity = grown
     }
 
+    // Adds a copy of 'other' at the end of the text, as '+='.
     public void append(string other) {
         reserve(length + other.length)
         copyMemory(offset(data, length), other.data, other.length)
         length += other.length
     }
 
+    // A new text with 'other' after this one, as '+'.
     public string concat(string other) const {
         string result
         result.reserve(length + other.length)
@@ -232,6 +288,7 @@ public struct string : Key, Ordered {
         ret result
     }
 
+    // Whether the two texts have the same bytes, as '=='.
     public bool equals(string other) const {
         if (length != other.length) {
             ret false
@@ -239,11 +296,14 @@ public struct string : Key, Ordered {
         ret compareMemory(data, other.data, length) == 0
     }
 
+    // A hash of the bytes, for the keys of a map.
     public u64 hash() const {
         ret hashBytes(data, length)
     }
 
-    // The order of the bytes, which in UTF-8 is the order of the code points (D95).
+    // The order of the two texts, byte by byte, which in UTF-8 is the order of the code points:
+    // -1 when this one comes first, 0 when they are equal, 1 when it comes after. A text comes
+    // after its beginning: "ab" after "a".
     public i32 compare(string other) const {
         i64 common = length
         if (other.length < common) {
@@ -259,7 +319,8 @@ public struct string : Key, Ordered {
         ret 0
     }
 
-    // The bytes of the text (D200).
+    // A copy of the bytes of the text. 'string(bytes)' makes a text of them again, after
+    // checking that they are UTF-8.
     public list<u8> bytes() const {
         list<u8> result
         result.reserve(length)
@@ -268,8 +329,9 @@ public struct string : Key, Ordered {
         ret result
     }
 
-    // A copy of the bytes from `from` to `to` excluded (D200). A slice that cuts a
-    // character of UTF-8 in two is a panic, as an index out of the string.
+    // A copy of the bytes from 'from' to 'to' excluded: '"città".slice(0, 3)' is "cit". A
+    // position out of the text, 'from' after 'to', or a slice that cuts a character of UTF-8 in
+    // two, is a panic.
     public string slice(i64 from, i64 to) const {
         checkIndex(from, length + 1)
         checkIndex(to, length + 1)
@@ -286,12 +348,14 @@ public struct string : Key, Ordered {
         ret result
     }
 
-    // The index in bytes of the first `part`, or -1 without it (D304, D305).
+    // The position in bytes of the first 'part', or -1 if there is none. An empty 'part' is
+    // found at 0.
     public i64 find(string part) const {
         ret findFrom(part, 0)
     }
 
-    // The first `part` at `from` or after, or -1.
+    // The position in bytes of the first 'part' at 'from' or after it, or -1 if there is none.
+    // 'from' goes from 0 to 'len()'; outside, it is a panic.
     public i64 findFrom(string part, i64 from) const {
         checkIndex(from, length + 1)
         if (part.length == 0) {
@@ -306,7 +370,8 @@ public struct string : Key, Ordered {
         ret -1
     }
 
-    // The last `part`, or -1.
+    // The position in bytes of the last 'part', or -1 if there is none. An empty 'part' is
+    // found at 'len()'.
     public i64 findLast(string part) const {
         for (i64 i = length - part.length; i >= 0; i--) {
             if (compareMemory(offset(data, i), part.data, part.length) == 0) {
@@ -316,20 +381,28 @@ public struct string : Key, Ordered {
         ret -1
     }
 
+    // Whether 'part' is in the text; an empty 'part' always is.
     public bool contains(string part) const {
         ret find(part) >= 0
     }
 
+    // Whether the text begins with 'prefix'; true for an empty 'prefix'.
     public bool startsWith(string prefix) const {
         ret prefix.length <= length && compareMemory(data, prefix.data, prefix.length) == 0
     }
 
+    // Whether the text ends with 'suffix'; true for an empty 'suffix'.
     public bool endsWith(string suffix) const {
         ret suffix.length <= length && compareMemory(offset(data, length - suffix.length), suffix.data, suffix.length) == 0
     }
 
-    // The pieces between the separators: "a,,b" gives "a", "" and "b". An empty
-    // separator is a panic.
+    // The parts of the text between the separators, which are not in the parts. Two separators
+    // side by side give an empty part, and a text without the separator gives one part, all
+    // of it, also when it is empty. An empty separator is a panic.
+    //
+    // '''
+    // list<string> parts = "a,b,,c".split(",")   // "a", "b", "", "c"
+    // '''
     public list<string> split(string separator) const {
         if (separator.length == 0) {
             panic("the separator of split() is empty (D304)")
@@ -346,8 +419,8 @@ public struct string : Key, Ordered {
         ret pieces
     }
 
-    // Without the spaces at the two ends: space, tab, the ends of line, vertical
-    // tab and form feed of ASCII.
+    // A copy of the text without the spaces at its two ends: the space, the tab, the line feed,
+    // the carriage return, the vertical tab and the form feed of ASCII.
     public string trim() const {
         i64 start = spacesBefore()
         if (start == length) {  // only spaces
@@ -356,15 +429,18 @@ public struct string : Key, Ordered {
         ret slice(start, length - spacesAfter())
     }
 
+    // A copy of the text without the spaces at its beginning, the same that 'trim' removes.
     public string trimStart() const {
         ret slice(spacesBefore(), length)
     }
 
+    // A copy of the text without the spaces at its end, the same that 'trim' removes.
     public string trimEnd() const {
         ret slice(0, length - spacesAfter())
     }
 
-    // Every `old` becomes `new`. An empty `old` is a panic.
+    // A copy of the text where every 'old' becomes 'new', from the left and without overlaps:
+    // '"aaa".replace("aa", "b")' is "ba". An empty 'old' is a panic.
     public string replace(string old, string new) const {
         if (old.length == 0) {
             panic("the text to replace is empty (D304)")
@@ -383,17 +459,20 @@ public struct string : Key, Ordered {
         ret result
     }
 
-    // The letters a-z become A-Z; the rest of UTF-8 stays as it is (D306).
+    // A copy of the text where the letters a-z become A-Z. The rest stays as it is, also the
+    // letters outside ASCII, as 'à'.
     public string upper() const {
         ret mapLetters('a', 'z', -32)
     }
 
-    // The letters A-Z become a-z (D306).
+    // A copy of the text where the letters A-Z become a-z. The rest stays as it is, also the
+    // letters outside ASCII, as 'À'.
     public string lower() const {
         ret mapLetters('A', 'Z', 32)
     }
 
-    // The text `count` times.
+    // The text 'count' times, one after the other: '"ab".repeat(3)' is "ababab". A 'count' of
+    // 0 gives an empty text, a negative one is a panic.
     public string repeat(i64 count) const {
         if (count < 0) {
             panic(format("repeat() of a negative count, {} (D304)", count))
@@ -455,6 +534,7 @@ public struct string : Key, Ordered {
         ret result
     }
 
+    // A copy of the text, the same that 'b = a' makes.
     public string copy() const {
         string result
         if (capacity == 0) {  // a literal: the bytes can be shared
@@ -469,7 +549,8 @@ public struct string : Key, Ordered {
     }
 }
 
-// The parts one after the other, with `separator` between them (D304).
+// The parts one after the other, with 'separator' between them:
+// 'join(["a", "b", "c"], ", ")' is "a, b, c". An empty list gives an empty text.
 public string join(list<string> parts, string separator) {
     string result
     for (i64 i = 0; i < parts.len(); i++) {
@@ -488,9 +569,13 @@ public string join(list<string> parts, string separator) {
 // these for a string, a list and a map, and one that it generates for the
 // numbers, the arrays, the structs and the enums.
 
-// The types that have a form of debug: all of them by themselves, as json.Data.
+// The types that have a form of debug, the text that '{:?}' prints: every type has it by
+// itself, without declaring anything, but the functions and the interfaces. A generic that
+// prints its 'T' with '{:?}' asks for it: 'T : Debug'.
 public interface Debug { }
 
+// The form of debug of a value, the text that '{:?}' prints: '[1, 2]' for a list,
+// 'Point { x: 1, y: 2 }' for a struct, a string between quotes with its escapes.
 public string debugText<T : Debug>(T value) {
     string out
     debugWrite<T>(ref out, value)
@@ -579,26 +664,59 @@ struct CString {
     }
 }
 
-// The keys of a map (D198). The numbers and bool implement it by themselves.
+// What the keys of a map implement. The numbers, bool and string have it by themselves; a
+// struct implements it with 'hash' and 'equals', where two values that are equal have the
+// same hash.
+//
+// '''
+// struct Cell : Key {
+//     i32 row
+//     i32 column
+//
+//     u64 hash() const {
+//         ret row.hash() ^ column.hash() << 1
+//     }
+//
+//     bool equals(Cell other) const {
+//         ret row == other.row && column == other.column
+//     }
+// }
+// '''
 public interface Key {
+    // A hash of the value: two values that are equal must give the same one.
     u64 hash() const
+    // Whether the value is equal to 'other'.
     bool equals(Self other) const
 }
 
-// The order of two values (D421): negative when this comes first, zero when they are
-// equal, positive when it comes after. The numbers and string have it by themselves.
+// The values that have an order, as 'sort' needs. The numbers and string have it by
+// themselves, and a struct implements it with 'compare'. For two floats, 'compare' gives 0
+// when one of them is a NaN.
 public interface Ordered {
+    // Negative when this value comes before 'other', zero when they are equal, positive when
+    // it comes after.
     i32 compare(Self other) const
 }
 
-// Sorts a list in the order of compare() (D421): stable, a merge sort.
+// Sorts the list from the smallest element, in the order of 'compare'. The sort is stable:
+// elements that are equal keep their order.
+//
+// '''
+// list<string> words = ["pear", "fig", "banana"]
+// sort(ref words)   // "banana", "fig", "pear"
+// '''
 public void sort<T : Ordered>(ref list<T> items) {
     items.sortWith([](T a, T b) bool { ret a.compare(b) < 0 })
 }
 
-// Sorts a list with `less`, which says whether the first value comes before the
-// second (D421): stable, a merge sort. When less throws, the list keeps all its
-// elements.
+// Sorts the list with 'less', which says whether its first value comes before the second.
+// The sort is stable: elements that are equal keep their order. When 'less' throws, the
+// exception goes on to the caller, and the list keeps all its elements, perhaps in another
+// order.
+//
+// '''
+// sortBy(ref words, [](string a, string b) bool { ret a.len() < b.len() })
+// '''
 public void sortBy<T>(ref list<T> items, func(T, T) bool less) {
     items.sortWith(less)
 }
@@ -609,6 +727,25 @@ public void sortBy<T>(ref list<T> items, func(T, T) bool less) {
 // hash of the key with its highest bit set when full; a key is compared only
 // where the hashes are equal. The capacity is a power of two, and at most three
 // quarters of the slots are full or removed.
+
+// A hash table that associates keys with values, as 'std::unordered_map' in C++. The keys can
+// be numbers, 'bool', 'string', or structs that implement 'Key'; a key added to the map is a
+// copy. 'm[k] = v', 'm[k] += v' and 'm[k]++' add a missing key, with the default value, before
+// changing it; reading a missing key in any other way is a panic, so ask first with
+// 'contains'. 'for (K key, V value in m)' visits the map in no particular order, and with
+// 'ref V value' it can change the values. A map is copied where it is given without 'move'.
+//
+// '''
+// map<string, i32> stock
+// stock["apples"] = 10
+// stock["apples"] += 2   // 12
+// stock["plums"]++       // 1: a missing key starts from 0
+// for (string fruit, i32 count in stock) {
+//     println("{} {}", fruit, count)
+// }
+// '''
+//
+// The guide: [Lists, maps and text](https://cromolang.org/book/en/collections.html).
 public struct map<K : Key, V> {
     addr slots
     i64 length
@@ -625,15 +762,17 @@ public struct map<K : Key, V> {
         free(slots)
     }
 
+    // The number of keys.
     public i64 len() const {
         ret length
     }
 
+    // Whether the map has the key.
     public bool contains(K key) const {
         ret find(key, key.hash()) >= 0
     }
 
-    // Removes the key with its value; false if the key was not there.
+    // Removes the key with its value, which are destroyed; false if the key was not there.
     public bool remove(K key) {
         i64 slot = find(key, key.hash())
         if (slot < 0) {
@@ -646,6 +785,7 @@ public struct map<K : Key, V> {
         ret true
     }
 
+    // A new map with a copy of each key and value, the same that 'b = a' makes.
     public map<K, V> copy() const {
         map<K, V> result
         if (capacity == 0) {
@@ -794,19 +934,37 @@ public struct map<K : Key, V> {
     }
 }
 
-// What can be thrown (D36, D115).
+// What can be thrown with 'throw': a type that implements it gives the text of the error with
+// 'message()'. 'catch (Exception e)' catches any exception. 'Error' is a ready-made one; a
+// type of its own lets the caller catch it apart and read its fields.
+//
+// '''
+// struct NotFound : Exception {
+//     string name
+//
+//     string message() const {
+//         ret format("{} was not found", name)
+//     }
+// }
+// '''
+//
+// The guide: [Errors](https://cromolang.org/book/en/errors.html).
 public interface Exception {
+    // The text of the error, for who reads it.
     string message() const
 }
 
-// A ready-made exception with its message, for the simple cases (D115).
+// A ready-made exception with its message, for the errors that need no type of their own:
+// 'throw Error(format("invalid age {}", age))'.
 public struct Error : Exception {
     string text
 
+    // An exception whose message is 'description'.
     public Error(move string description) {
         text = move description
     }
 
+    // The message given to the constructor.
     string message() const {
         ret text.copy()
     }

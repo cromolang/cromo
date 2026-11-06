@@ -1,0 +1,92 @@
+// The documentation comments in the hover, in the completion and in the help on
+// the signature (D473-D477).
+
+import modules.geometry
+import std.fs
+
+// The area of a circle of radius 'r', in square units.
+//
+// '''
+// f64 a = area(2.0)
+// '''
+f64 area(f64 r) {
+    ret 3.14159 * r * r
+}
+
+// Adds 'a' and 'b'; it's a list<i64> of nothing.
+i64 add(i64 a, i64 b) {
+    ret a + b
+}
+
+// A point of the plane.
+struct Point {
+    i64 x  // the distance from the left
+           // in pixels
+    // The distance from the top.
+    i64 y
+
+    // Makes the point.
+    Point(i64 left, i64 top) {
+        x = left
+        y = top
+    }
+
+    // The sum of the two coordinates, and 'extra'.
+    i64 sum(i64 extra) const {
+        ret x + y + extra
+    }
+}
+
+enum Shape {
+    Circle(f64 radius)  // round
+    Square(f64 side)
+}
+
+void main() {
+    Point p = Point(1, 2)
+    f64 a = area(2.0)
+    i64 s = add(1, p.sum(3))
+    string text = fs.readText("x.txt")
+    println("{} {} {}", a, s, text)
+    Shape shape = Shape.Circle(1.0)
+    geometry.Box b = geometry.Box(2)
+    i64 w = geometry.width(b)
+}
+// lsp-hover: 47:13 The area of a circle of radius `r`, in square units.
+// lsp-hover: 47:13 ```cromo
+// lsp-hover: 47:13 f64 a = area(2.0)
+// lsp-hover: 48:13 it's a list\<i64> of nothing
+// lsp-hover: 48:22 The sum of the two coordinates, and `extra`.
+// lsp-hover: 23:9 in pixels
+// lsp-hover: 26:9 The distance from the top.
+// lsp-hover: 26:9 !in pixels
+// lsp-hover: 46:5 A point of the plane.
+// lsp-hover: 46:15 Makes the point.
+// lsp-hover: 51:25 round
+// lsp-hover: 49:19 import std.fs
+// lsp-hover: 49:22 std.fs
+// lsp-hover: 53:13 import modules.geometry
+// lsp-hover: 53:13 Shapes for the tests
+// lsp-hover: 53:22 modules.geometry
+// lsp-hover: 53:22 The width of the box `b`.
+// lsp-hover: 52:31 A box of a given size.
+// lsp-hover: 50:5 Writes `format` on the standard output
+// lsp-hover: 48:5 An integer with sign of 64 bits
+// lsp-completion: 49:22 readText, writeText, !loadFile
+// lsp-completion: 53:22 width, Box, !hidden
+// lsp-completion-doc: 53:22 width The width of the box `b`.
+// lsp-completion-doc: 48:22 sum The sum of the two coordinates
+// lsp-completion-doc: 48:22 x the distance from the left
+// lsp-completion-doc: 51:25 Circle round
+// lsp-signature: 47:18 0 f64 area(f64 r)
+// lsp-signature: 48:20 1 i64 add(i64 a, i64 b)
+// lsp-signature: 48:26 0 i64 Point.sum(i64 extra) const
+// lsp-signature: 49:32 0 string readText(string path)
+// lsp-signature: 50:25 1 void println(string format, ...)
+// lsp-signature: 50:31 1 Writes `format` on the standard output
+// lsp-signature: 51:32 0 Shape.Circle(f64 radius)
+// lsp-signature: 46:24 1 Point(i64 left, i64 top)
+// lsp-signature: 46:24 1 A point of the plane.
+// lsp-signature: 52:35 0 Box(i64 s)
+// lsp-signature: 53:28 0 i64 width(Box b)
+// lsp-signature: 46:5 none

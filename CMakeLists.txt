@@ -518,6 +518,7 @@ add_executable(cromo
   src/main.cpp
   src/ast.cpp
   src/diagnostics.cpp
+  src/docs.cpp
   src/lexer.cpp
   src/parser.cpp
   src/types.cpp

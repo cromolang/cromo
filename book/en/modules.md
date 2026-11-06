@@ -80,6 +80,8 @@ After `import geometry`, its public names are used directly: `distance(a, b)`, `
 
 The imports are written at the top of the file, and each file writes its own: importing is not transitive. Two modules can import each other.
 
+The comment at the beginning of a file, before its imports and separated from what follows by a blank line, documents the module: VS Code shows it on the name of the module, in its `import` and in `geometry.distance`, and after `geometry.` it proposes the public names of the module with their documentation.
+
 ## A folder is a module
 
 `import shapes` imports the folder `shapes`, with all its `.cro` files, as one module:
