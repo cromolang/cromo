@@ -89,6 +89,67 @@ When the window grows, the text box grows with it, the button stays in the botto
 - A component keeps the distances from the edges that it has when it is anchored. So a window is written for one size, and the anchors adapt it to the others, also to the screen of a phone.
 - `gui.Icon` has the icons of Lucide, drawn with lines at every size: `gui.Icon.Save`, `gui.Icon.Mail`, `gui.Icon.Trash2`. A wrong name is a compile error, and the editor completes the names. `setIcon` puts one on a button, and `gui.IconBox` shows one alone.
 
+## Splitting the room
+
+```cromo norun
+import std.gui
+
+[[window]]
+i32 main() {
+    gui.Window w = gui.Window("Mail", 760, 455)
+    gui.Split main = w.add(gui.Split(gui.Direction.Across, 8, 8, 744, 404))
+    main.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Stretch)
+    main.setFirstSize(180)
+    main.setMinimums(120, 240)
+    main.setDraggable(true)
+
+    gui.ListView folders = main.first().add(gui.ListView(0, 0, 180, 404))
+    folders.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Stretch)
+    folders.addItem(gui.Icon.Inbox, "Inbox", "", "12")
+    folders.addItem(gui.Icon.Send, "Sent", "", "")
+    folders.addItem(gui.Icon.Archive, "Archive", "", "")
+
+    gui.Split right = main.second().add(gui.Split(gui.Direction.Down, 0, 0, 556, 404))
+    right.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Stretch)
+    right.setRatio(0.45)
+    right.setDraggable(true)
+    gui.Table messages = right.first().add(gui.Table(0, 0, 556, 178))
+    messages.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Stretch)
+    messages.addColumn("From", 140, gui.Horizontal.Left)
+    messages.addColumn("Subject", 0, gui.Horizontal.Left)
+    messages.setRowCount(500)
+    messages.onNeedRows([messages](i64 first, i64 count) {
+        list<list<string>> rows
+        for (i64 i = first; i < first + count; i++) {
+            rows.add([format("Person {}", i % 7), format("Message {}", i + 1)])
+        }
+        messages.setRows(first, rows)
+    })
+
+    gui.TextView text = right.second().add(gui.TextView(0, 0, 556, 218))
+    text.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Stretch)
+    gui.TextStyle label = gui.TextStyle(gui.Ink.Faint)
+    label.strong = true
+    label.scale = 0.8
+    label.spacing = 0.06
+    gui.RichText t
+    t.text("FROM  ", label)
+    t.text("Person 0\n", gui.TextStyle(gui.Ink.Normal))
+    t.text("The report of October is ready: the numbers are in the second table.", gui.TextStyle(gui.Ink.Normal))
+    text.setText(move t)
+    w.start()
+    ret 0
+}
+```
+
+![A window split in three, with a list, a table and a text](images/splits.png)
+
+- `gui.Split(direction, x, y, width, height)` shares its room between two panels, `first()` and `second()`: side by side with `gui.Direction.Across`, one over the other with `Down`, with a gap of 8 pixels between them, `setGap` to change it.
+- The first panel takes half of the room, or the part that `setRatio` gives, from 0 to 1; `setFirstSize` or `setSecondSize` keep one at a size in pixels, as a side bar, and the other takes the rest. `setMinimums(first, second)` keeps both from becoming too small.
+- When the split changes size, as with a `Stretch` anchor, its panels follow, and the components in them follow with their anchors. Splits in the panels of other splits make the grid of a whole page.
+- With `setDraggable(true)` the user moves the line between the panels with the mouse or a finger; `onChange` receives the part of the first panel, to keep it for the next time.
+- A `gui.TextStyle` with `spacing` spaces its letters, as a part of their size: `0.06` for small capitals, as the titles of the tables.
+
 ## Files inside the program
 
 A program that shows images needs them where it runs. `embed("file")` reads a file when the program is compiled, and puts its bytes in the executable:

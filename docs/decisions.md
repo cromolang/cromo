@@ -2450,6 +2450,15 @@ i32 total = sum.sum()
 ### D509. Components in the title bar
 *2026-11-06.* Chosen by the author. `w.titleBar()` gives a `gui.Panel` in the title bar, between the title and the buttons of the window, as high as the bar, where the program puts buttons, segments or labels; where there is no component the bar still moves the window. On a phone, without a title bar, the panel is not shown.
 
+
+### D510. The room shared by proportions: gui.Split
+*2026-11-07.* Chosen by the author. `gui.Split` is a component with two panels, side by side or one over the other, with a gap between them: the first takes a part of the room, or a fixed size, the second the rest, within the least sizes of both. When the split changes size, as with a `Stretch` anchor, the panels follow, and splits in the panels of others make the grid of a page. A grid of rows and columns as that of CSS was the other way: more powerful, and longer to explain; the anchors with a fraction would leave the gaps and the margins to compute by hand.
+
+### D511. The line of a split, moved by the user on request
+*2026-11-07.* Chosen by the author. The line between the panels of a split is fixed by default; `setDraggable(true)` lets the user move it with the mouse or a finger, within the least sizes, and `onChange` gives the program the new part, to keep it.
+
+### D512. The letters spaced in the rich text
+*2026-11-07.* Chosen by the author. `TextStyle` has `spacing`, the room added after each letter as a part of its size, as `letter-spacing` in `em` of CSS: the small capitals of the labels, as `EVENT`, `0.06`. The titles of the groups, of the tabs and of the tables are spaced already by `std.gui` (D479).
 ---
 
 ## Proposed
@@ -2745,6 +2754,14 @@ A component keeps the distances from the edges of its parent, the content of the
 - `Menu.addSubmenu(text, move submenu)`: an item with an arrow on its right that opens the entries of the submenu on the right of the menu, at its height, or on its left when there is no room: when the mouse is on it, and with Right or Enter while it is pointed at by the keys; Left closes it, and the mouse on another item of the menu too. A submenu with submenus is a panic. `len()` and `setEnabled` count the entries of the menu, the items with a submenu among them, not those of the submenus.
 - `RichText.tooltip(piece, text)` gives a piece a tooltip, and `AppBar.setActionTooltip(index, text)` an action, an index out of the actions a panic; they show as those of the components, and the wait starts again when the mouse goes on another piece or action.
 - `gui.Mouse` has `shift`, `control` and `alt`, the keys held, for the canvases and the windows. `Canvas.onWheel(func(Mouse, f32))` receives the steps of the wheel over the canvas, more than 0 away from the user; with its handlers the wheel does not scroll the panel under it.
+
+### P66. The splits and the letters spaced (D510-D512)
+- `gui.Direction`: `Across`, the panels side by side, the first on the left, and `Down`, one over the other, the first on top. `gui.Split(direction, x, y, w, h)`; `first()` and `second()` give its panels, the same at each call: their components take their positions from their top left corners, and their own positions and sizes are those that the split gives them, whatever is set. A panel scrolls as the others when its components go beyond it.
+- `setRatio(value)` from 0 to 1, 0.5 by default, a value outside a panic: the first panel takes that part of the room, the size less the gap, rounded; `ratio()`. `setFirstSize(pixels)` or `setSecondSize(pixels)` keep that panel at that size, the other takes the rest; `setRatio` goes back to the part. `setMinimums(first, second)`, 0 by default: the first panel has at least its least size, then the second, when the room allows it; `setGap(pixels)`, 8 by default; a negative size is a panic. `direction()`, `gap()`.
+- `setDraggable(true)`, `draggable()`: the mouse takes the line in the gap, at least 6 pixels around its middle, 20 on a phone, with the cursor of the arrows; the line moves the first size, or the fixed one, within the least sizes. Under the mouse and while it moves, a line of 2 pixels in the color of the focus is drawn in the middle of the gap, over the panels. `onChange(func(f32))` is called at each move with the part of the room of the first panel now. The split takes no keyboard, and has no tooltip: its panels can.
+- The rest of a component: `setPosition`, `setSize`, `x()`, `y()`, `width()`, `height()`, `setVisible`, `visible()`, `setEnabled`, `enabled()`, `setAnchor`, `horizontalAnchor()`, `verticalAnchor()`.
+- `TextStyle.spacing`, 0 by default, from -0.5 to 1, else a panic when the text is added: `spacing` times the size of the text is added after each letter, the last too, as CSS does, in the measure as in the drawing. `runtime/gui/gui.c` adds it to the advance of each letter.
+
 ---
 
 ## Open

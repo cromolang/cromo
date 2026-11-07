@@ -406,8 +406,9 @@ static i32 nextCode(const u8** text, const u8* end) {
     return code;
 }
 
-// The width of a text in logical pixels, with the kerning.
-f32 cromo_gui_text_width(void* data, const u8* text, i64 length) {
+// The width of a text in logical pixels, with the kerning, and spacing logical pixels
+// after each letter (D512).
+f32 cromo_gui_text_width(void* data, const u8* text, i64 length, f32 spacing) {
     Font* font = data;
     const u8* end = text + length;
     f32 pen = 0;
@@ -415,14 +416,14 @@ f32 cromo_gui_text_width(void* data, const u8* text, i64 length) {
     while (text < end) {
         i32 code = nextCode(&text, end);
         if (previous) pen += stbtt_GetCodepointKernAdvance(&font->info, previous, code) * font->scale;
-        pen += findGlyph(font, code)->advance;
+        pen += findGlyph(font, code)->advance + spacing * font->density;  // D512: after each letter
         previous = code;
     }
     return pen / font->density;
 }
 
 // The text with its baseline at y, each glyph on a whole pixel of the display.
-void cromo_gui_text(void* data, const u8* text, i64 length, f32 x, f32 y, u8 r, u8 g, u8 b, u8 alpha) {
+void cromo_gui_text(void* data, const u8* text, i64 length, f32 x, f32 y, f32 spacing, u8 r, u8 g, u8 b, u8 alpha) {
     Font* font = data;
     const u8* end = text + length;
     SDL_SetTextureColorMod(font->texture, r, g, b);
@@ -441,7 +442,7 @@ void cromo_gui_text(void* data, const u8* text, i64 length, f32 x, f32 y, u8 r, 
                             glyph->h / font->density};
             SDL_RenderTexture(font->renderer, font->texture, &source, &target);
         }
-        pen += glyph->advance;
+        pen += glyph->advance + spacing * font->density;
         previous = code;
     }
 }

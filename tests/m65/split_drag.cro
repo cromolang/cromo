@@ -1,0 +1,84 @@
+// The line of a split moved by the mouse (D511): pressed in the gap, it follows the
+// mouse within the least sizes, and onChange receives the part of the first panel; a
+// split not draggable does not move. With events of SDL made by the test.
+// target: windows linux-x86_64
+// program-env: SDL_VIDEO_DRIVER=offscreen
+// expect-output: moved 0.245
+// expect-output: first 96, second at 104
+// expect-output: moved 0.204
+// expect-output: first 80, ratio 0.204
+// expect-output: fixed: first 76, grown 76
+// expect-output: still 196
+import std.gui
+import std.time
+import unsafe
+
+extern "SDL3" {
+    bool SDL_PushEvent(addr event)
+}
+
+// A mouse event for the window, whatever its number among the first ones: a press, a
+// release or a move with the left button held.
+void push(u32 kind, f32 x, f32 y) {
+    addr event = alloc(128)
+    for (i64 window = 1; window < 8; window++) {
+        for (i64 i = 0; i < 128; i++) {
+            put<u8>(offset(event, i), 0)
+        }
+        put<u32>(event, kind)
+        put<u32>(offset(event, 16), u32(window))
+        put<u8>(offset(event, 24), 1)
+        put<u8>(offset(event, 25), kind == 0x401 ? 1 : 0)
+        put<u8>(offset(event, 26), 1)
+        put<f32>(offset(event, 28), x)
+        put<f32>(offset(event, 32), y)
+        SDL_PushEvent(event)
+    }
+    free(event)
+    time.msleep(100)
+}
+
+// Drags from a point to another of the content, under the title bar.
+void drag(f32 x1, f32 y1, f32 x2, f32 y2) {
+    push(0x401, x1, y1 + 35)
+    push(0x400, x2, y2 + 35)
+    push(0x402, x2, y2 + 35)
+}
+
+i32 main() {
+    gui.Window w = gui.Window("drag", 400, 335)
+    gui.Split split = w.add(gui.Split(gui.Direction.Across, 0, 0, 400, 120))
+    split.setDraggable(true)
+    split.onChange([](f32 ratio) { println("moved {:.3f}", ratio) })
+    gui.Split fixed = w.add(gui.Split(gui.Direction.Down, 0, 130, 400, 100))
+    fixed.setDraggable(true)
+    fixed.setFirstSize(40)
+    gui.Split still = w.add(gui.Split(gui.Direction.Across, 0, 240, 400, 10))
+    gui.TextView view = w.add(gui.TextView(0, 255, 400, 40))  // it scrolls once the window is drawn
+    gui.RichText t
+    for (i64 i = 0; i < 20; i++) {
+        t.link(i, format("line {}\n", i), gui.TextStyle(gui.Ink.Normal))
+    }
+    view.setText(move t)
+    view.setMarked(19)
+    w.start()
+    for (i32 i = 0; i < 500 && view.scrollY() == 0; i++) {  // at most 5 seconds
+        time.msleep(10)
+    }
+    time.msleep(300)
+    // the first panel 196 wide, the gap from 196 to 204: taken 4 pixels after its start
+    drag(200, 60, 100, 60)
+    println("first {}, second at {}", split.first().width(), split.second().x())
+    split.setMinimums(80, 0)
+    drag(100, 60, 40, 60)
+    println("first {}, ratio {:.3f}", split.first().width(), split.ratio())
+    // down: the first panel 40 high, the gap from 40 to 48 of the split, at 130
+    drag(200, 130 + 44, 200, 130 + 80)
+    print("fixed: first {}, ", fixed.first().height())
+    fixed.setSize(400, 400)
+    println("grown {}", fixed.first().height())
+    drag(200, 245, 50, 245)
+    println("still {}", still.first().width())
+    w.close()
+    ret 0
+}

@@ -1,0 +1,36 @@
+// The letters spaced in the rich text (D512): the same words take more lines with a
+// spacing, and so the view scrolls further to show the last one.
+// target: windows linux-x86_64
+// program-env: SDL_VIDEO_DRIVER=offscreen
+// expect-output: spacing 0.0 and 0.3
+// expect-output: wider: true
+import std.gui
+import std.time
+
+gui.TextView viewOf(gui.Window w, i32 y, f32 spacing) {
+    gui.TextView view = w.add(gui.TextView(0, y, 200, 40))
+    gui.TextStyle style = gui.TextStyle(gui.Ink.Normal)
+    style.spacing = spacing
+    gui.RichText t
+    for (i64 i = 0; i < 30; i++) {
+        t.link(i, "word ", style)
+    }
+    view.setText(move t)
+    view.setMarked(29)
+    ret view
+}
+
+i32 main() {
+    gui.Window w = gui.Window("spacing", 400, 335)
+    gui.TextView plain = viewOf(w, 0, 0)
+    gui.TextView spaced = viewOf(w, 100, 0.3)
+    println("spacing {:.1f} and {:.1f}", gui.TextStyle(gui.Ink.Normal).spacing, f32(0.3))
+    w.start()
+    for (i32 i = 0; i < 500 && (plain.scrollY() == 0 || spaced.scrollY() == 0); i++) {  // at most 5 seconds
+        time.msleep(10)
+    }
+    time.msleep(200)
+    println("wider: {}", spaced.scrollY() > plain.scrollY())
+    w.close()
+    ret 0
+}

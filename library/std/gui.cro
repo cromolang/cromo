@@ -123,8 +123,8 @@ extern "cromo" {
     void cromo_gui_dialog_free(addr paths)
     void cromo_gui_documents()  // D501
     void cromo_gui_font_metrics(addr font, ref f32 ascent, ref f32 descent, ref f32 gap)
-    f32 cromo_gui_text_width(addr font, addr text, i64 length)
-    void cromo_gui_text(addr font, addr text, i64 length, f32 x, f32 y, u8 r, u8 g, u8 b, u8 alpha)
+    f32 cromo_gui_text_width(addr font, addr text, i64 length, f32 spacing)
+    void cromo_gui_text(addr font, addr text, i64 length, f32 x, f32 y, f32 spacing, u8 r, u8 g, u8 b, u8 alpha)
     void cromo_gui_symbol(addr renderer, i32 kind, f32 x, f32 y, f32 density, u8 r, u8 g, u8 b)
     void cromo_gui_symbols_free(addr renderer)
     void cromo_gui_box(addr renderer, f32 x, f32 y, f32 w, f32 h, f32 radius, f32 border, f32 density, u32 fill, u32 line)
@@ -228,6 +228,12 @@ public enum Vertical {
     Center   // keeps its center at the same distance from the center, and its height
 }
 
+// How a 'Split' puts its two panels (D510).
+public enum Direction {
+    Across  // side by side, the first on the left
+    Down    // one over the other, the first on top
+}
+
 // How an image box fits its image, set with 'ImageBox.setScale'. The image is at the
 // center of the box, and what goes beyond its edges is cut.
 public enum Scale {
@@ -269,6 +275,9 @@ public Color rgba(u32 value, u8 alpha) {
 // gui.TextStyle note = gui.TextStyle(gui.Ink.Faint)
 // note.italic = true
 // note.scale = 0.9   // 90% of the text of the view
+// gui.TextStyle label = gui.TextStyle(gui.Ink.Faint)
+// label.strong = true
+// label.spacing = 0.06   // small capitals, spaced: 6% of the size after each letter
 // '''
 public struct TextStyle {
     public Ink ink
@@ -276,6 +285,7 @@ public struct TextStyle {
     public bool italic    // slanted (D493)
     public bool mono      // JetBrains Mono, whose letters are all equally wide (D492)
     public f32 scale = 1  // the size, from that of the text of the view: more than 0
+    public f32 spacing    // added after each letter, as a part of its size, from -0.5 to 1 (D512)
 
     // A style in a color, regular, of the size of the text of the view.
     public TextStyle(Ink color) {
@@ -2020,6 +2030,244 @@ public struct Panel : Component {
     }
 
     // How the panel follows the top and the bottom edges of its parent: 'Vertical.Top' by
+    // default.
+    public Vertical verticalAnchor() const {
+        ret partVertical(id)
+    }
+}
+
+// Two panels side by side, or one over the other, that share its room (D510): the first
+// takes a part of it, half by default, or a fixed size, and the second the rest, with a
+// gap of 8 pixels between them. When the split changes size, as with a 'Stretch' anchor,
+// its panels follow it, and splits in the panels of other splits make the grid of a
+// page. With 'setDraggable(true)' the user moves the line between them (D511).
+//
+// '''
+// gui.Split split = w.add(gui.Split(gui.Direction.Across, 0, 0, 800, 600))
+// split.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Stretch)
+// split.setFirstSize(240)   // a side bar of 240 pixels, the rest to the content
+// split.setDraggable(true)
+// split.first().add(gui.Label("Folders", 12, 8, 200, 24))
+// '''
+public struct Split : Component {
+    i64 id
+
+    // A split with its two panels, empty. 'x' and 'y' are in logical pixels from the top
+    // left corner of its parent, the window, the group, the panel or the dialog whose 'add'
+    // puts it there, and 'width' and 'height' its size, with the gap.
+    public Split(Direction direction, i32 x, i32 y, i32 width, i32 height) {
+        id = newPart(kindSplit, "", x, y, width, height)
+        i64 me = id
+        withData([me, direction](ref Shared data) {
+            data.parts[partIndexOf(ref data, me)].direction = direction
+            for (i32 k = 1; k <= 2; k++) {
+                i64 made = makePart(ref data, kindPanel, "", 0, 0, 0, 0)
+                i64 pane = partIndexOf(ref data, made)
+                data.parts[pane].pane = k
+                data.parts[pane].parent = me
+                data.parts[partIndexOf(ref data, me)].pages.add(made)
+            }
+        })
+    }
+
+    i64 componentId() const {
+        ret id
+    }
+
+    // The first panel: on the left, or on top. Its components take their positions from its
+    // top left corner; its own position and size are those that the split gives it, whatever
+    // is set. It scrolls as the other panels when its components go beyond it.
+    public Panel first() const {
+        Panel pane
+        pane.id = splitPane(id, 0)
+        ret pane
+    }
+
+    // The second panel: on the right, or under the first, as 'first' says.
+    public Panel second() const {
+        Panel pane
+        pane.id = splitPane(id, 1)
+        ret pane
+    }
+
+    // How the split puts its panels, as it was made.
+    public Direction direction() const {
+        i64 me = id
+        Direction result = Direction.Across
+        withData([me, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, me)].direction })
+        ret result
+    }
+
+    // Gives the first panel the part 'value' of the room, the size of the split less the
+    // gap, and the second the rest: 0.5 by default. A value out of 0 to 1 is a panic. It
+    // ends a fixed size set with 'setFirstSize' or 'setSecondSize'.
+    public void setRatio(f32 value) const {
+        if (!(value >= 0 && value <= 1)) {
+            panic(format("the ratio of a split is from 0 to 1, found {}", value))
+        }
+        i64 me = id
+        withData([me, value](ref Shared data) {
+            i64 p = partIndexOf(ref data, me)
+            data.parts[p].ratio = value
+            data.parts[p].fixed = 0
+        })
+    }
+
+    // The part of the room of the first panel: as set, or as the user left it moving the
+    // line; with a fixed size, the part that it is of the room now.
+    public f32 ratio() const {
+        i64 me = id
+        f32 result = 0
+        withData([me, ref result](ref Shared data) {
+            i64 p = partIndexOf(ref data, me)
+            arrangeNow(ref data, p)
+            result = data.parts[p].fixed == 0 ? data.parts[p].ratio : ratioNow(ref data.parts[p])
+        })
+        ret result
+    }
+
+    // Keeps the first panel 'pixels' wide, or high, whatever the size of the split, and
+    // the second takes the rest, as a side bar and its content. A negative size is a panic.
+    public void setFirstSize(i32 pixels) const {
+        setSplitFixed(id, 1, pixels)
+    }
+
+    // Keeps the second panel 'pixels' wide, or high, and the first takes the rest. A
+    // negative size is a panic.
+    public void setSecondSize(i32 pixels) const {
+        setSplitFixed(id, 2, pixels)
+    }
+
+    // The least sizes of the panels in logical pixels, 0 by default: the first has at least
+    // its own, and then the second, as far as the room allows. A negative size is a panic.
+    public void setMinimums(i32 first, i32 second) const {
+        if (first < 0 || second < 0) {
+            panic(format("the least sizes of a split are 0 or more, found {} and {}", first, second))
+        }
+        i64 me = id
+        withData([me, first, second](ref Shared data) {
+            i64 p = partIndexOf(ref data, me)
+            data.parts[p].minFirst = first
+            data.parts[p].minSecond = second
+        })
+    }
+
+    // The room between the panels, in logical pixels: 8 by default. A negative gap is a
+    // panic.
+    public void setGap(i32 pixels) const {
+        if (pixels < 0) {
+            panic(format("the gap of a split is 0 or more, found {}", pixels))
+        }
+        i64 me = id
+        withData([me, pixels](ref Shared data) { data.parts[partIndexOf(ref data, me)].gap = pixels })
+    }
+
+    // The room between the panels, in logical pixels.
+    public i32 gap() const {
+        i64 me = id
+        i32 result = 0
+        withData([me, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, me)].gap })
+        ret result
+    }
+
+    // Lets the user move the line between the panels with the mouse or a finger, or not:
+    // not by default. The line moves within the least sizes, and changes the part of the
+    // first panel, or the fixed size.
+    public void setDraggable(bool value) const {
+        i64 me = id
+        withData([me, value](ref Shared data) { data.parts[partIndexOf(ref data, me)].draggable = value })
+    }
+
+    // Whether the user can move the line, as 'setDraggable' set it: false by default.
+    public bool draggable() const {
+        i64 me = id
+        bool result = false
+        withData([me, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, me)].draggable })
+        ret result
+    }
+
+    // Adds a handler called each time the user moves the line, with the part of the room
+    // of the first panel now, as 'ratio' gives it.
+    public void onChange(move func(f32) handler) const {
+        addr box = alloc(sizeOf<func(f32)>())
+        put<func(f32)>(box, move handler)
+        addPartHandler(id, 1, box)
+    }
+
+    // Moves the split, in logical pixels from the top left corner of its parent: the content
+    // of the window, or the group, the panel or the dialog that holds it. Its anchors keep the
+    // distances from the edges that it has at the new place.
+    public void setPosition(i32 x, i32 y) const {
+        setPartBounds(id, x, y, -1, -1)
+    }
+
+    // Changes the width and the height of the split, in logical pixels, and so those of its
+    // panels. Its anchors keep the distances from the edges that it has with the new size.
+    public void setSize(i32 width, i32 height) const {
+        setPartBounds(id, -1, -1, width, height)
+    }
+
+    // The distance of the split from the left edge of its parent, in logical pixels, where its
+    // anchors have placed it now.
+    public i32 x() const {
+        ret partBound(id, 0)
+    }
+
+    // The distance of the split from the top edge of its parent, in logical pixels, where its
+    // anchors have placed it now.
+    public i32 y() const {
+        ret partBound(id, 1)
+    }
+
+    // The width of the split now, in logical pixels: a 'Stretch' anchor changes it with its
+    // parent.
+    public i32 width() const {
+        ret partBound(id, 2)
+    }
+
+    // The height of the split now, in logical pixels: a 'Stretch' anchor changes it with its
+    // parent.
+    public i32 height() const {
+        ret partBound(id, 3)
+    }
+
+    // Shows or hides the split, and its panels with it.
+    public void setVisible(bool value) const {
+        setPartFlag(id, 0, value)
+    }
+
+    // Whether the split is visible, as 'setVisible' set it: true by default.
+    public bool visible() const {
+        ret partFlag(id, 0)
+    }
+
+    // Enables or disables the split, and its panels with it: disabled, their components are
+    // drawn at half their opacity and take neither the mouse nor the keys, and the line does
+    // not move.
+    public void setEnabled(bool value) const {
+        setPartFlag(id, 1, value)
+    }
+
+    // Whether the split is enabled, as 'setEnabled' set it: true by default.
+    public bool enabled() const {
+        ret partFlag(id, 1)
+    }
+
+    // Sets which edges of its parent the split follows when the parent changes size: the
+    // window, or the group, the panel or the dialog that holds it. It keeps the distances from
+    // those edges that it has now; with 'Stretch' its panels share the new size. By default it
+    // is anchored to the left and to the top, and does not move.
+    public void setAnchor(Horizontal horizontal, Vertical vertical) const {
+        setPartAnchor(id, horizontal, vertical)
+    }
+
+    // How the split follows the left and the right edges of its parent: 'Horizontal.Left' by
+    // default.
+    public Horizontal horizontalAnchor() const {
+        ret partHorizontal(id)
+    }
+
+    // How the split follows the top and the bottom edges of its parent: 'Vertical.Top' by
     // default.
     public Vertical verticalAnchor() const {
         ret partVertical(id)
@@ -4854,6 +5102,7 @@ struct WindowData {
     i64 dragging         // the text box whose text the mouse selects
     i64 popup            // the combo box whose list is open
     i64 canvasHeld       // the canvas that has the mouse while the button pressed on it is held (D483)
+    i64 sash             // the split whose line is under the mouse or held (D511)
     i32 clicks           // of the last press of the mouse: 2 for a double click
     list<Call> requests  // the rows that the tables ask for while they are drawn (D486)
     list<f32> fontSizes  // of the texts of the drawings and of the rich text, with their faces and their fonts
@@ -4947,6 +5196,7 @@ const i32 kindSegmented = 20
 const i32 kindTextArea = 21
 const i32 kindRadioGroup = 22
 const i32 kindProgressBar = 23
+const i32 kindSplit = 24
 
 // A component: its kind, its window and its group once added, its properties, for
 // a text box where its cursor and the other end of its selection are, as indices
@@ -5056,13 +5306,23 @@ struct PartData {
     i64 svgSize
     i32 textureWidth  // the size in pixels of the texture of an SVG image
     i32 textureHeight
-    ButtonStyle style   // of a button (D482)
-    i64 inner           // of a dialog, the panel of its components
-    list<addr> closing  // func(), of a dialog
-    i64 bar             // of a page, its navigation bar
-    list<addr> click    // func()
-    list<addr> change   // func(string) of a text box, func(bool) of a check box, func(i64) of a combo box or a list
-    list<addr> enter    // func(string)
+    ButtonStyle style    // of a button (D482)
+    i64 inner            // of a dialog, the panel of its components
+    list<addr> closing   // func(), of a dialog
+    i64 bar              // of a page, its navigation bar
+    i32 pane             // of a panel of a split: 1 the first, 2 the second (D510)
+    Direction direction  // of a split
+    f32 ratio = 0.5      // the part of the room of its first panel
+    i32 fixed            // its panel with a fixed size, 1 or 2, or 0 for the ratio
+    i32 fixedSize
+    i32 minFirst  // the least sizes of its panels
+    i32 minSecond
+    i32 gap = 8
+    bool draggable     // the user moves its line (D511)
+    f32 grab           // where the mouse took the line, from the end of the first panel
+    list<addr> click   // func()
+    list<addr> change  // func(string) of a text box, func(bool) of a check box, func(i64) of a combo box or a list
+    list<addr> enter   // func(string)
 
     // Laid out by the thread of the GUI: its place in the content of the window,
     // whether it and its groups are visible and enabled, and the rectangle of
@@ -5092,8 +5352,10 @@ addr guiThread    // the thread of the GUI, in the runtime
 addr guardThread  // the thread that waits for it (D437)
 addr arrow        // the cursors of the mouse, made by the thread of the GUI
 addr beam
-addr pointer  // the hand, on the pieces of the rich text
-i32[4] clip   // the SDL_Rect of SDL_SetRenderClipRect
+addr pointer       // the hand, on the pieces of the rich text
+addr resizeAcross  // the arrows, on the line of a split (D511)
+addr resizeDown
+i32[4] clip  // the SDL_Rect of SDL_SetRenderClipRect
 
 // The data under the lock, as a Mutex (D216).
 void withData(func(ref Shared) body) {
@@ -5340,7 +5602,16 @@ i32 contentHeight(WindowData window) {
 // (P40): what the thread of the GUI computes when it draws.
 void arrangeNow(ref Shared data, i64 p) {
     i64 group = data.parts[p].parent
-    if (data.parts[p].page >= 0 && group != 0) {  // a page of a tab view (D494)
+    if (data.parts[p].pane > 0 && group != 0) {  // a panel of a split (D510)
+        i64 g = partIndexOf(ref data, group)
+        arrangeNow(ref data, g)
+        i32 first = firstOf(ref data.parts[g])
+        Direction direction = data.parts[g].direction
+        i32 gap = data.parts[g].gap
+        i32 gw = data.parts[g].width
+        i32 gh = data.parts[g].height
+        placePane(ref data.parts[p], direction, first, gap, gw, gh)
+    } else if (data.parts[p].page >= 0 && group != 0) {  // a page of a tab view (D494)
         i64 g = partIndexOf(ref data, group)
         arrangeNow(ref data, g)
         i32 gw = data.parts[g].width
@@ -6332,11 +6603,20 @@ void fill(addr renderer, u32 rgb, f32 x, f32 y, f32 w, f32 h) {
 }
 
 void text(addr font, string s, f32 x, f32 y, u32 rgb, bool enabled) {
-    cromo_gui_text(font, s.cstring(), s.len(), x, y, red(rgb), green(rgb), blue(rgb), enabled ? 255 : 128)
+    spacedText(font, s, x, y, 0, rgb, enabled)
+}
+
+// A text with 'spacing' logical pixels after each letter (D512).
+void spacedText(addr font, string s, f32 x, f32 y, f32 spacing, u32 rgb, bool enabled) {
+    cromo_gui_text(font, s.cstring(), s.len(), x, y, spacing, red(rgb), green(rgb), blue(rgb), enabled ? 255 : 128)
 }
 
 f32 textWidth(addr font, string s, i64 bytes) {
-    ret cromo_gui_text_width(font, s.cstring(), bytes)
+    ret cromo_gui_text_width(font, s.cstring(), bytes, 0)
+}
+
+f32 spacedWidth(addr font, string s, i64 bytes, f32 spacing) {
+    ret cromo_gui_text_width(font, s.cstring(), bytes, spacing)
 }
 
 // Drawing only inside a rectangle, in logical pixels.
@@ -6386,11 +6666,13 @@ void run() {
     if (!SDL_Init(0x20)) {  // SDL_INIT_VIDEO
         panic(format("cannot start the windows: {}", cText(SDL_GetError())))
     }
-    arrow = SDL_CreateSystemCursor(0)     // SDL_SYSTEM_CURSOR_DEFAULT
-    beam = SDL_CreateSystemCursor(1)      // SDL_SYSTEM_CURSOR_TEXT
-    cromo_gui_documents()                 // std.fs reads the documents of Android with SDL (D501)
-    pointer = SDL_CreateSystemCursor(11)  // SDL_SYSTEM_CURSOR_POINTER
-    addr event = alloc(128)               // SDL_Event, a union of 128 bytes
+    arrow = SDL_CreateSystemCursor(0)         // SDL_SYSTEM_CURSOR_DEFAULT
+    beam = SDL_CreateSystemCursor(1)          // SDL_SYSTEM_CURSOR_TEXT
+    cromo_gui_documents()                     // std.fs reads the documents of Android with SDL (D501)
+    pointer = SDL_CreateSystemCursor(11)      // SDL_SYSTEM_CURSOR_POINTER
+    resizeAcross = SDL_CreateSystemCursor(7)  // SDL_SYSTEM_CURSOR_EW_RESIZE
+    resizeDown = SDL_CreateSystemCursor(8)    // SDL_SYSTEM_CURSOR_NS_RESIZE
+    addr event = alloc(128)                   // SDL_Event, a union of 128 bytes
     for (true) {
         u64 start = SDL_GetTicksNS()
         i32 fps = prepare()
@@ -6711,7 +6993,8 @@ i32 buttonAt(f32 x, f32 y, f32 width) {
 // A call of handlers, made under the lock and run after it.
 struct Call {
     i32 kind  // 1 mouse move, 2 mouse down, 3 mouse up, 4 key, 5 resize, 6 click, 7 text, 8 check, 9 choice,
-    // 10 func(i64, i64), 11 func(i64, bool), 12 func(i64, Mouse), 13 func(list<string>)
+    // 10 func(i64, i64), 11 func(i64, bool), 12 func(i64, Mouse), 13 func(list<string>),
+    // 14 func(Mouse, f32), 15 func(f32)
     list<addr> boxes
     Mouse mouse
     Key key
@@ -6722,7 +7005,7 @@ struct Call {
     i64 index
     i64 second          // the second number of a func(i64, i64)
     list<string> texts  // of a func(list<string>)
-    f32 amount          // of a func(Mouse, f32): the steps of the wheel
+    f32 amount          // of a func(Mouse, f32): the steps of the wheel; of a func(f32), the value
     bool once           // the handler is called once, and freed after (D500)
 }
 
@@ -6835,6 +7118,13 @@ void dispatch(ref Call call) {
             } finally {
                 put<func(Mouse, f32)>(box, move handler)
             }
+        } else if (call.kind == 15) {
+            func(f32) handler = take<func(f32)>(box)
+            try {
+                handler(call.amount)
+            } finally {
+                put<func(f32)>(box, move handler)
+            }
         } else if (call.kind == 12) {
             func(i64, Mouse) handler = take<func(i64, Mouse)>(box)
             try {
@@ -6896,12 +7186,13 @@ void route(ref WindowData window, ref list<PartData> parts, addr event, u32 kind
             }
             window.tipItem = window.hotItem
         }
-        if (hotId != window.hot || hand != window.hand) {
+        bool sashMoved = hoverSash(ref window, ref parts, x, y)  // D511
+        if (hotId != window.hot || hand != window.hand || sashMoved) {
             window.hot = hotId
             window.hand = hand
             bool typing = hot >= 0 && hot != open && (parts[hot].kind == kindTextBox || parts[hot].kind == kindTextArea) &&
                 parts[hot].active
-            SDL_SetCursor(hand ? pointer : typing ? beam : arrow)
+            SDL_SetCursor(window.sash != 0 ? sashCursor(ref parts, window.sash) : hand ? pointer : typing ? beam : arrow)
         }
         window.snackHot = snackAt(ref window, x, y)
         i64 held = partNumber(ref parts, window.canvasHeld)
@@ -6914,6 +7205,9 @@ void route(ref WindowData window, ref list<PartData> parts, addr event, u32 kind
         i64 sliding = partNumber(ref parts, window.held)
         if (sliding >= 0 && parts[sliding].kind == kindSlider && parts[sliding].active) {
             slideTo(ref parts[sliding], x, ref calls)
+        }
+        if (sliding >= 0 && parts[sliding].kind == kindSplit && parts[sliding].draggable && parts[sliding].active) {  // D511
+            moveSash(ref parts[sliding], x, y, ref calls)
         }
         if (window.dragging != 0) {
             i64 d = partNumber(ref parts, window.dragging)
@@ -6979,6 +7273,8 @@ void route(ref WindowData window, ref list<PartData> parts, addr event, u32 kind
             if (kind == 0x401 && button == 1) {
                 if (snackAt(ref window, x, y)) {
                     window.snackHeld = true
+                } else if (pressSash(ref window, ref parts, x, y)) {
+                    // D511: the line of a split follows the mouse until it is released
                 } else if (!startScroll(ref window, ref parts, x, y, finger)) {
                     pressPart(ref window, ref parts, x, y, ref calls)
                     if (finger && window.held != 0) {  // D496: maybe a long press
@@ -7002,6 +7298,10 @@ void route(ref WindowData window, ref list<PartData> parts, addr event, u32 kind
                     window.dragging = 0
                 } else {
                     releasePart(ref window, ref parts, x, y, ref calls)
+                }
+                if (hoverSash(ref window, ref parts, x, y)) {  // the line let go: the cursor at the next move
+                    SDL_SetCursor(window.sash != 0 ? sashCursor(ref parts, window.sash) : arrow)
+                    window.hot = -1
                 }
                 if (finger) {  // a finger leaves no component under it
                     window.hot = 0
@@ -7043,6 +7343,7 @@ void route(ref WindowData window, ref list<PartData> parts, addr event, u32 kind
         window.hovered = -1
         window.pressed = -1
         window.hot = 0
+        window.sash = 0
         window.pointerX = -1
         window.pointerY = -1
     } else if (kind == 0x20E) {  // FOCUS_GAINED
@@ -8185,6 +8486,14 @@ void layoutIn(ref WindowData window, ref list<PartData> parts, i64 group, Frame 
         bool hidden = false
         if (parts[i].action != 0) {
             // placed by layoutDialog
+        } else if (parts[i].pane > 0) {  // a panel of a split (D510), after the split
+            i64 split = partNumber(ref parts, parts[i].parent)
+            if (split >= 0) {
+                i32 first = firstOf(ref parts[split])
+                Direction direction = parts[split].direction
+                i32 gap = parts[split].gap
+                placePane(ref parts[i], direction, first, gap, frame.width, frame.height)
+            }
         } else if (parts[i].page >= 0) {
             if (parts[i].parent != 0) {
                 placeTabPage(ref parts[i], frame.width, frame.height)
@@ -8234,7 +8543,7 @@ void layoutIn(ref WindowData window, ref list<PartData> parts, i64 group, Frame 
         if (parts[i].kind == kindTextView || parts[i].kind == kindTextArea) {  // D490, D499: from the last frame
             clampScroll(ref parts[i])
         }
-        if (parts[i].kind == kindGroup || parts[i].kind == kindPanel || parts[i].kind == kindTabView) {
+        if (parts[i].kind == kindGroup || parts[i].kind == kindPanel || parts[i].kind == kindTabView || parts[i].kind == kindSplit) {
             Frame inner
             inner.left = parts[i].left
             inner.top = parts[i].top
@@ -8261,6 +8570,202 @@ void layoutIn(ref WindowData window, ref list<PartData> parts, i64 group, Frame 
             }
             layoutIn(ref window, ref parts, parts[i].id, inner)
         }
+    }
+}
+
+// ---- The splits (D510, D511) ----
+
+// A panel of a split, 0 the first and 1 the second.
+i64 splitPane(i64 id, i64 k) {
+    i64 result = 0
+    withData([id, k, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, id)].pages[k] })
+    ret result
+}
+
+void setSplitFixed(i64 id, i32 which, i32 pixels) {
+    if (pixels < 0) {
+        panic(format("the size of a panel of a split is 0 or more, found {}", pixels))
+    }
+    withData([id, which, pixels](ref Shared data) {
+        i64 p = partIndexOf(ref data, id)
+        data.parts[p].fixed = which
+        data.parts[p].fixedSize = pixels
+    })
+}
+
+// The room of a split for its panels: its size along its direction, less the gap.
+i32 splitRoom(ref PartData split) {
+    i32 total = split.direction == Direction.Across ? split.width : split.height
+    ret total > split.gap ? total - split.gap : 0
+}
+
+// The size of the first panel of a split along its direction, for its size now: the
+// fixed one, or its part of the room, within the least sizes.
+i32 firstOf(ref PartData split) {
+    i32 room = splitRoom(ref split)
+    i32 first = i32(f32(room) * split.ratio + 0.5)
+    if (split.fixed == 1) {
+        first = split.fixedSize
+    } else if (split.fixed == 2) {
+        first = room - split.fixedSize
+    }
+    ret fitFirst(ref split, first, room)
+}
+
+// A size of the first panel within the least sizes, the first before the second, and
+// within the room.
+i32 fitFirst(ref PartData split, i32 size, i32 room) {
+    i32 first = size
+    if (first > room - split.minSecond) {
+        first = room - split.minSecond
+    }
+    if (first < split.minFirst) {
+        first = split.minFirst
+    }
+    if (first > room) {
+        first = room
+    }
+    ret first > 0 ? first : 0
+}
+
+// The part of the room of the first panel now.
+f32 ratioNow(ref PartData split) {
+    i32 room = splitRoom(ref split)
+    ret room > 0 ? f32(firstOf(ref split)) / f32(room) : split.ratio
+}
+
+// A panel of a split takes its side of the gap, for the size of the split.
+void placePane(ref PartData pane, Direction direction, i32 first, i32 gap, i32 width, i32 height) {
+    bool across = direction == Direction.Across
+    i32 total = across ? width : height
+    i32 start = pane.pane == 1 ? 0 : first + gap
+    i32 size = pane.pane == 1 ? first : total - first - gap
+    if (size < 0) {
+        size = 0
+    }
+    pane.x = across ? start : 0
+    pane.y = across ? 0 : start
+    pane.width = across ? size : width
+    pane.height = across ? height : size
+    pane.baseX = pane.x
+    pane.baseY = pane.y
+    pane.baseWidth = pane.width
+    pane.baseHeight = pane.height
+    pane.parentWidth = width
+    pane.parentHeight = height
+}
+
+// Where the mouse takes the line of a split: its gap, at least 6 pixels around its
+// middle, 20 on a phone.
+Rect sashOf(ref PartData split, bool phone) {
+    f32 middle = f32(firstOf(ref split)) + f32(split.gap) / 2
+    f32 wide = most(f32(split.gap), phone ? 20 : 6)
+    if (split.direction == Direction.Across) {
+        ret Rect(split.left + middle - wide / 2, split.top, wide, f32(split.height))
+    }
+    ret Rect(split.left, split.top + middle - wide / 2, f32(split.width), wide)
+}
+
+// The split whose line the user can move under the mouse, the innermost, or -1: not
+// where something that is not in the split covers it.
+i64 sashAt(ref WindowData window, ref list<PartData> parts, f32 x, f32 y) {
+    i64 top = partAt(ref window, ref parts, x, y)
+    for (i64 k = window.order.len() - 1; k >= firstReached(ref window); k--) {
+        i64 i = window.order[k]
+        if (parts[i].kind == kindSplit && parts[i].draggable && parts[i].shown && parts[i].active) {
+            Rect s = sashOf(ref parts[i], window.phone)
+            bool on = x >= s.x && x < s.x + s.w && y >= s.y && y < s.y + s.h && x >= parts[i].clipLeft &&
+                x < parts[i].clipRight && y >= parts[i].clipTop && y < parts[i].clipBottom
+            if (on && holds(ref parts, parts[i].id, top)) {
+                ret i
+            }
+        }
+    }
+    ret -1
+}
+
+// Whether a component is a group, or is inside it.
+bool holds(ref list<PartData> parts, i64 group, i64 p) {
+    i64 at = p
+    for (at >= 0) {
+        if (parts[at].id == group) {
+            ret true
+        }
+        at = partNumber(ref parts, parts[at].parent)
+    }
+    ret false
+}
+
+// The mouse pressed on the line of a split takes it, until it is released: true when it
+// did.
+bool pressSash(ref WindowData window, ref list<PartData> parts, f32 x, f32 y) {
+    if (window.popup != 0) {
+        ret false
+    }
+    i64 s = sashAt(ref window, ref parts, x, y)
+    if (s < 0) {
+        ret false
+    }
+    f32 along = parts[s].direction == Direction.Across ? x - parts[s].left : y - parts[s].top
+    parts[s].grab = along - f32(firstOf(ref parts[s]))
+    window.held = parts[s].id
+    window.heldItem = -1
+    window.sash = parts[s].id
+    ret true
+}
+
+// The line held follows the mouse within the least sizes; when it moves, the handlers
+// of onChange receive the part of the first panel.
+void moveSash(ref PartData split, f32 x, f32 y, ref list<Call> calls) {
+    f32 along = split.direction == Direction.Across ? x - split.left : y - split.top
+    i32 room = splitRoom(ref split)
+    i32 before = firstOf(ref split)
+    f32 wanted = along - split.grab
+    i32 first = fitFirst(ref split, wanted > 0 ? i32(wanted + 0.5) : 0, room)
+    if (first == before) {
+        ret
+    }
+    if (split.fixed == 1) {
+        split.fixedSize = first
+    } else if (split.fixed == 2) {
+        split.fixedSize = room - first
+    } else if (room > 0) {
+        split.ratio = f32(first) / f32(room)
+    }
+    Call call = callOf(15, split.change)
+    call.amount = ratioNow(ref split)
+    calls.add(move call)
+}
+
+// The split whose line is under the mouse or held; true when it changed.
+bool hoverSash(ref WindowData window, ref list<PartData> parts, f32 x, f32 y) {
+    i64 held = partNumber(ref parts, window.held)
+    i64 s = -1
+    if (held >= 0 && parts[held].kind == kindSplit && parts[held].draggable) {
+        s = held
+    } else if (!window.dragMoved && !window.phone) {
+        s = sashAt(ref window, ref parts, x, y)
+    }
+    i64 id = s >= 0 ? parts[s].id : 0
+    bool changed = id != window.sash
+    window.sash = id
+    ret changed
+}
+
+// The cursor over the line of a split: the arrows along its direction.
+addr sashCursor(ref list<PartData> parts, i64 id) {
+    i64 s = partNumber(ref parts, id)
+    ret s >= 0 && parts[s].direction == Direction.Down ? resizeDown : resizeAcross
+}
+
+// The line of a split under the mouse or held: 2 pixels in the color of the focus, in
+// the middle of its gap, over its panels.
+void drawSash(ref WindowData window, ref PartData split, ref Colors c) {
+    f32 middle = f32(firstOf(ref split)) + f32(split.gap) / 2
+    if (split.direction == Direction.Across) {
+        fill(window.renderer, c.selection, split.left + middle - 1, split.top, 2, f32(split.height))
+    } else {
+        fill(window.renderer, c.selection, split.left, split.top + middle - 1, f32(split.width), 2)
     }
 }
 
@@ -8430,6 +8935,10 @@ void drawParts(ref WindowData window, ref list<PartData> parts, ref Colors c, i6
         if (parts[i].shown && !parts[i].inTitle && scrolls(ref parts[i]) && seen) {
             clipPart(r, ref parts[i])
             drawScrollBar(ref window, ref parts[i], ref c)
+        }
+        if (parts[i].id == window.sash && parts[i].kind == kindSplit && parts[i].shown && !parts[i].inTitle) {  // D511
+            clipPart(r, ref parts[i])
+            drawSash(ref window, ref parts[i], ref c)
         }
     }
 }
@@ -10691,6 +11200,9 @@ void addRuns(ref list<Run> runs, i64 piece, string value, TextStyle style) {
     if (!(style.scale > 0)) {
         panic(format("the scale of a style of rich text is more than 0, found {}", style.scale))
     }
+    if (!(style.spacing >= -0.5 && style.spacing <= 1)) {
+        panic(format("the spacing of a style of rich text is from -0.5 to 1, found {}", style.spacing))
+    }
     i64 start = 0
     for (i64 i = 0; i <= value.len(); i++) {
         if (i == value.len() || value[i] == 10) {
@@ -10729,6 +11241,7 @@ struct Placed {
     i64 piece
     i32 face  // of its font, and its size
     f32 size
+    f32 spacing  // after each letter, in logical pixels (D512)
     f32 x
     f32 width
     f32 ascent  // of its font, for its line
@@ -10942,7 +11455,8 @@ void flowText(ref WindowData window, ref Flow f, ref TextLayout laid, ref PartDa
             p.piece = piece
             p.face = face
             p.size = size
-            p.width = textWidth(font, p.text, i - start)
+            p.spacing = style.spacing * size
+            p.width = spacedWidth(font, p.text, i - start, p.spacing)
             p.ascent = ascent
             p.descent = descent
             p.tall = size * view.lineSpacing
@@ -11029,7 +11543,7 @@ void cutWord(ref WindowData window, ref Flow f, ref TextLayout laid, Placed p) {
     for (i64 i = 0; i < p.text.len(); i = next) {
         u8 lead = p.text[i]
         next = least64(i + (lead < 0x80 ? 1 : lead < 0xE0 ? 2 : lead < 0xF0 ? 3 : 4), p.text.len())
-        f32 w = textWidth(font, p.text.slice(i, next), next - i)
+        f32 w = spacedWidth(font, p.text.slice(i, next), next - i, p.spacing)
         if (f.x + used + w > room && (i > start || !f.empty)) {
             if (i > start) {
                 Placed part = p
@@ -11243,7 +11757,7 @@ void drawTextView(ref WindowData window, ref PartData view, ref Colors c, ref li
                 bool marked = view.laid.placed[a].piece >= 0 && view.laid.placed[a].piece == view.marked
                 u32 ink = marked ? c.onAccent : inkOf(view.rich.runs[run].style.ink, ref c)
                 addr font = faceFor(ref window, view.laid.placed[a].face, view.laid.placed[a].size)
-                text(font, view.laid.placed[a].text, px, lineTop + view.laid.lines[k].baseline, ink, on)
+                spacedText(font, view.laid.placed[a].text, px, lineTop + view.laid.lines[k].baseline, view.laid.placed[a].spacing, ink, on)
             } else if (view.rich.runs[run].kind == 2) {
                 i64 id = view.rich.runs[run].image
                 f32 bw = view.rich.runs[run].width
@@ -11653,7 +12167,7 @@ void drawCanvas(ref WindowData window, ref PartData part, ref list<ImageData> im
             f32 size = textWidth(font, value, value.len())
             Horizontal align = part.drawing.shapes[i].align
             f32 left = align == Horizontal.Center ? x - size / 2 : align == Horizontal.Right ? x - size : x
-            cromo_gui_text(font, value.cstring(), value.len(), left, y + (ascent - descent) / 2, c.red, c.green, c.blue, c.alpha)
+            cromo_gui_text(font, value.cstring(), value.len(), left, y + (ascent - descent) / 2, 0, c.red, c.green, c.blue, c.alpha)
         }
     }
     for (i64 k = part.imageTextures.len() - 1; k >= 0; k--) {

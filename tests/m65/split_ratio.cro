@@ -1,0 +1,12 @@
+// The part of a split is from 0 to 1 (D510).
+// target: windows linux-x86_64
+// program-env: SDL_VIDEO_DRIVER=offscreen
+// expect-exit: 101
+// expect-stderr: the ratio of a split is from 0 to 1, found 1.5
+import std.gui
+
+i32 main() {
+    gui.Split split = gui.Split(gui.Direction.Down, 0, 0, 200, 200)
+    split.setRatio(1.5)
+    ret 0
+}

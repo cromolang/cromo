@@ -89,6 +89,67 @@ Quando la finestra si allarga, la casella di testo cresce con lei, il pulsante r
 - Un componente mantiene le distanze dai bordi che ha quando viene ancorato. Così una finestra si scrive per una dimensione, e le ancore la adattano alle altre, anche allo schermo di un telefono.
 - `gui.Icon` ha le icone di Lucide, disegnate a linee a ogni dimensione: `gui.Icon.Save`, `gui.Icon.Mail`, `gui.Icon.Trash2`. Un nome sbagliato è un errore di compilazione, e l'editor completa i nomi. `setIcon` ne mette una su un pulsante, e `gui.IconBox` ne mostra una da sola.
 
+## Dividere lo spazio
+
+```cromo norun
+import std.gui
+
+[[window]]
+i32 main() {
+    gui.Window w = gui.Window("Mail", 760, 455)
+    gui.Split main = w.add(gui.Split(gui.Direction.Across, 8, 8, 744, 404))
+    main.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Stretch)
+    main.setFirstSize(180)
+    main.setMinimums(120, 240)
+    main.setDraggable(true)
+
+    gui.ListView folders = main.first().add(gui.ListView(0, 0, 180, 404))
+    folders.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Stretch)
+    folders.addItem(gui.Icon.Inbox, "Inbox", "", "12")
+    folders.addItem(gui.Icon.Send, "Sent", "", "")
+    folders.addItem(gui.Icon.Archive, "Archive", "", "")
+
+    gui.Split right = main.second().add(gui.Split(gui.Direction.Down, 0, 0, 556, 404))
+    right.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Stretch)
+    right.setRatio(0.45)
+    right.setDraggable(true)
+    gui.Table messages = right.first().add(gui.Table(0, 0, 556, 178))
+    messages.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Stretch)
+    messages.addColumn("From", 140, gui.Horizontal.Left)
+    messages.addColumn("Subject", 0, gui.Horizontal.Left)
+    messages.setRowCount(500)
+    messages.onNeedRows([messages](i64 first, i64 count) {
+        list<list<string>> rows
+        for (i64 i = first; i < first + count; i++) {
+            rows.add([format("Person {}", i % 7), format("Message {}", i + 1)])
+        }
+        messages.setRows(first, rows)
+    })
+
+    gui.TextView text = right.second().add(gui.TextView(0, 0, 556, 218))
+    text.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Stretch)
+    gui.TextStyle label = gui.TextStyle(gui.Ink.Faint)
+    label.strong = true
+    label.scale = 0.8
+    label.spacing = 0.06
+    gui.RichText t
+    t.text("FROM  ", label)
+    t.text("Person 0\n", gui.TextStyle(gui.Ink.Normal))
+    t.text("The report of October is ready: the numbers are in the second table.", gui.TextStyle(gui.Ink.Normal))
+    text.setText(move t)
+    w.start()
+    ret 0
+}
+```
+
+![Una finestra divisa in tre, con una lista, una tabella e un testo](images/splits.png)
+
+- `gui.Split(direzione, x, y, larghezza, altezza)` divide il suo spazio tra due pannelli, `first()` e `second()`: affiancati con `gui.Direction.Across`, uno sopra l'altro con `Down`, con uno spazio di 8 pixel tra loro, che `setGap` cambia.
+- Il primo pannello prende metà dello spazio, o la parte che dà `setRatio`, da 0 a 1; `setFirstSize` o `setSecondSize` tengono uno dei due a una misura in pixel, come una barra laterale, e l'altro prende il resto. `setMinimums(primo, secondo)` impedisce che diventino troppo piccoli.
+- Quando lo split cambia misura, come con un'ancora `Stretch`, i suoi pannelli lo seguono, e i componenti al loro interno seguono i pannelli con le proprie ancore. Gli split nei pannelli di altri split fanno la griglia di un'intera pagina.
+- Con `setDraggable(true)` l'utente sposta la linea tra i pannelli con il mouse o con un dito; `onChange` riceve la parte del primo pannello, da conservare per la volta dopo.
+- Un `gui.TextStyle` con `spacing` spazia le sue lettere, in proporzione alla loro misura: `0.06` per i maiuscoletti, come i titoli delle tabelle.
+
 ## File dentro il programma
 
 Un programma che mostra immagini ne ha bisogno dove gira. `embed("file")` legge un file quando il programma viene compilato, e ne mette i byte nell'eseguibile:

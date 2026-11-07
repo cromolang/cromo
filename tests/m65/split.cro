@@ -1,0 +1,64 @@
+// The splits (D510): the panels share the room less the gap by a part or with a fixed
+// size, within the least sizes, the first before the second; a split in a panel of
+// another follows it when the window changes size.
+// target: windows linux-x86_64
+// program-env: SDL_VIDEO_DRIVER=offscreen
+// expect-output: half: 0,0 196x300 | 204,0 196x300
+// expect-output: direction Across, gap 8, ratio 0.50, draggable false
+// expect-output: column: 0,0 196x123 | 0,131 196x169
+// expect-output: quarter: 98 | 106 294
+// expect-output: first fixed: 120 | 128 272, ratio 0.31
+// expect-output: grown: 120x360 | 128,0 372x360
+// expect-output: column grown: 0,0 120x148 | 0,156 120x204
+// expect-output: second fixed: 392 | 400 100
+// expect-output: least sizes: 342 | 350 150
+// expect-output: the first wins: 450 | 458 42
+// expect-output: gap 0: 250 | 250 250
+import std.gui
+import std.time
+
+void show(string name, gui.Split split) {
+    gui.Panel a = split.first()
+    gui.Panel b = split.second()
+    println("{}: {},{} {}x{} | {},{} {}x{}", name, a.x(), a.y(), a.width(), a.height(), b.x(), b.y(), b.width(), b.height())
+}
+
+void sizes(string name, gui.Split split) {
+    println("{}: {} | {} {}", name, split.first().width(), split.second().x(), split.second().width())
+}
+
+i32 main() {
+    gui.Window w = gui.Window("splits", 400, 335)  // a content of 400 by 300
+    gui.Split split = w.add(gui.Split(gui.Direction.Across, 0, 0, 400, 300))
+    split.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Stretch)
+    show("half", split)
+    println("direction {:?}, gap {}, ratio {:.2f}, draggable {}", split.direction(), split.gap(), split.ratio(), split.draggable())
+    gui.Split column = split.first().add(gui.Split(gui.Direction.Down, 0, 0, 196, 300))
+    column.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Stretch)
+    column.setRatio(0.42)
+    show("column", column)
+    split.setRatio(0.25)
+    sizes("quarter", split)
+    split.setFirstSize(120)
+    println("first fixed: {} | {} {}, ratio {:.2f}", split.first().width(), split.second().x(), split.second().width(), split.ratio())
+    w.start()
+    w.setSize(500, 395)  // a content of 500 by 360
+    time.msleep(100)
+    gui.Panel a = split.first()
+    gui.Panel b = split.second()
+    println("grown: {}x{} | {},{} {}x{}", a.width(), a.height(), b.x(), b.y(), b.width(), b.height())
+    show("column grown", column)
+    split.setSecondSize(100)
+    sizes("second fixed", split)
+    split.setRatio(0.9)
+    split.setMinimums(0, 150)
+    sizes("least sizes", split)
+    split.setMinimums(450, 150)
+    sizes("the first wins", split)
+    split.setMinimums(0, 0)
+    split.setRatio(0.5)
+    split.setGap(0)
+    sizes("gap 0", split)
+    w.close()
+    ret 0
+}

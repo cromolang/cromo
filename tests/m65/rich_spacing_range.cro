@@ -1,0 +1,13 @@
+// The spacing of a style is from -0.5 to 1 (D512).
+// target: windows linux-x86_64
+// expect-exit: 101
+// expect-stderr: the spacing of a style of rich text is from -0.5 to 1, found 1.5
+import std.gui
+
+i32 main() {
+    gui.TextStyle s = gui.TextStyle(gui.Ink.Faint)
+    s.spacing = 1.5
+    gui.RichText t
+    t.text("x", s)
+    ret 0
+}

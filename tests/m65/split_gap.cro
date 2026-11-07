@@ -1,0 +1,14 @@
+// The sizes of a split are 0 or more (D510).
+// target: windows linux-x86_64
+// program-env: SDL_VIDEO_DRIVER=offscreen
+// expect-exit: 101
+// expect-stderr: the least sizes of a split are 0 or more, found 10 and -1
+import std.gui
+
+i32 main() {
+    gui.Split split = gui.Split(gui.Direction.Across, 0, 0, 200, 200)
+    split.setGap(0)
+    split.setFirstSize(0)
+    split.setMinimums(10, -1)
+    ret 0
+}
