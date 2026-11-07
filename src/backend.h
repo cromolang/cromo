@@ -18,6 +18,7 @@ struct BackendOptions {
     std::string outputPath;  // executable to produce
     Target target = hostTarget();
     int optLevel = 2;        // from 0 to 3
+    std::string cpu;         // D513: the processor of --cpu, as x86-64-v3 or native; empty for x86-64
     bool keepObject = false; // keep the intermediate object file
     bool objectOnly = false; // the runtime in Cromo (D393): only the object, in outputPath, for its archive
     std::vector<std::string> archives;   // static libraries of the extern blocks: name.lib, libname.a (D136, D143)
@@ -36,5 +37,9 @@ struct BackendOptions {
 // in `error`.
 bool buildExecutable(const std::string& irText, const std::string& moduleName, const BackendOptions& options,
                      std::string& error);
+
+// D513: whether `cpu` is native or a processor of x86-64 that LLVM knows; if not,
+// false with the reason in `error`.
+bool validCpu(const std::string& cpu, std::string& error);
 
 }  // namespace cromo

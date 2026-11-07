@@ -1,0 +1,6 @@
+// A name of --cpu that LLVM does not know for x86-64 is an error (D513).
+// cromo-flags: --cpu pentium9
+// expect-error: unknown processor for --cpu: pentium9
+i32 main() {
+    ret 0
+}

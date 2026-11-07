@@ -31,6 +31,7 @@ Se non indichi un file, i comandi usano il `main.cro` della cartella corrente.
 | `--target windows`, `--target linux`, `--target linux-arm64` | il sistema dell'eseguibile, anche Linux su ARM64; di default quello su cui gira `cromo` |
 | `--target android` | l'APK di un'app per Android, per telefoni ed emulatori; `cromo run` non accetta altri target |
 | `-O0` … `-O3` | il livello di ottimizzazione; il default è `-O2` |
+| `--cpu <processore>` | il processore di cui il programma usa le istruzioni: `x86-64`, il default, per tutti; `x86-64-v2`; `x86-64-v3`, con AVX2; `x86-64-v4`, con AVX-512; `native`, quello di questo computer; oppure un nome come `haswell`. Su un processore che non le ha il programma si ferma all'avvio e dice quali mancano |
 | `--emit-ir` | stampa l'LLVM IR del programma invece di scrivere l'eseguibile |
 
 ## Debug e release

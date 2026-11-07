@@ -114,7 +114,7 @@ i32 main() {
 39.60 28.80 true
 ```
 
-`f32x8` contiene otto `f32`, e `i16x16` sedici `i16`: un vettore SIMD, i numeri su cui il processore lavora insieme con AVX2, SSE o NEON. Ci sono vettori di 128 e di 256 bit per ogni numero, come `i8x32`, `u16x8`, `i32x4` o `f64x4`.
+`f32x8` contiene otto `f32`, e `i16x16` sedici `i16`: un vettore SIMD, i numeri su cui il processore lavora insieme con AVX2, SSE o NEON. Ci sono vettori di 128 e di 256 bit per ogni numero, come `i8x32`, `u16x8`, `i32x4` o `f64x4`. Di default un programma usa le istruzioni che ogni x86-64 ha, e un vettore di 256 bit diventa due da 128; `cromo build --cpu x86-64-v3` usa quelle di AVX2, in tutto il programma.
 
 - `f32x8(x)` mette x in ogni numero, `f32x8.load(lista, da)` legge otto numeri da una lista o da un array, `v.store(ref lista, da)` li scrive, e `v[i]` è uno di loro.
 - `+`, `-`, `*`, `/` dei float e gli operatori dei bit agiscono numero per numero; un numero da una parte va in ogni numero, come `taxed * 1.2`. Gli interi ricominciano dall'altro capo, senza i controlli di overflow.

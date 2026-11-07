@@ -6,11 +6,13 @@
 #include <llvm/Analysis/TargetLibraryInfo.h>
 #include <llvm/DebugInfo/DIContext.h>
 #include <llvm/DebugInfo/DWARF/DWARFContext.h>
+#include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/LegacyPassManager.h>
 #include <llvm/IR/Module.h>
 #include <llvm/IR/Verifier.h>
 #include <llvm/IRReader/IRReader.h>
+#include <llvm/MC/MCSubtargetInfo.h>
 #include <llvm/MC/TargetRegistry.h>
 #include <llvm/Object/Archive.h>
 #include <llvm/Object/COFFImportFile.h>
@@ -25,6 +27,7 @@
 #include <llvm/Target/TargetMachine.h>
 #include <llvm/Target/TargetOptions.h>
 #include <llvm/Transforms/IPO/GlobalDCE.h>
+#include <llvm/TargetParser/Host.h>
 #include <llvm/TargetParser/Triple.h>
 
 #include <lld/Common/Driver.h>
@@ -61,6 +64,65 @@ void initializeLlvm() {
     LLVMInitializeAArch64AsmPrinter();
     LLVMInitializeAArch64AsmParser();
     initialized = true;
+}
+
+// D513: the processor of --cpu and its features for LLVM; native is the one of this
+// computer, with what it has and lacks. ARM64 is ARMv8.0, whose atomics call the
+// functions of mem_arm64.S, which use LSE when the processor has it (D407).
+std::pair<std::string, std::string> processorOf(const BackendOptions& options) {
+    if (isArm64(options.target)) return {"generic", "+outline-atomics"};
+    if (options.cpu.empty()) return {"x86-64", ""};
+    if (options.cpu != "native") return {options.cpu, ""};
+    std::string features;
+    for (const auto& feature : llvm::sys::getHostCPUFeatures()) {
+        if (!features.empty()) features += ",";
+        features += (feature.getValue() ? "+" : "-") + feature.getKey().str();
+    }
+    return {llvm::sys::getHostCPUName().str(), features};
+}
+
+// D513: the features that a program can use and the processor must have, in the
+// order of cpuFeatures in runtime/cromo_rt.c, which checks them at the start.
+const char* const checkedFeatures[] = {
+    // x86-64-v2
+    "sse3", "ssse3", "sse4.1", "sse4.2", "popcnt", "cx16", "sahf",
+    // x86-64-v3
+    "avx", "avx2", "bmi", "bmi2", "f16c", "fma", "lzcnt", "movbe", "xsave",
+    // x86-64-v4
+    "avx512f", "avx512bw", "avx512cd", "avx512dq", "avx512vl",
+    // the newer processors
+    "aes", "pclmul", "rdrnd", "rdseed", "adx", "sha", "gfni", "vaes", "vpclmulqdq", "avx512vbmi", "avx512vbmi2",
+    "avx512vnni", "avx512bitalg", "avx512vpopcntdq", "avx512ifma", "avx512fp16", "avxvnni", "avx512bf16",
+};
+
+// D513: cromo_start, compiled for x86-64, first asks the runtime whether the
+// processor has the features of --cpu, which the rest of the program can use
+// anywhere: LLVM does not bring the functions of the program into it.
+void requireProcessor(llvm::Module& module, const llvm::TargetMachine& machine, const std::string& cpu) {
+    llvm::Function* start = module.getFunction("cromo_start");
+    if (!start || start->isDeclaration()) return;
+    const llvm::MCSubtargetInfo& info = machine.getMCSubtargetInfo();
+    uint64_t needs = 0;
+    for (size_t i = 0; i < std::size(checkedFeatures); ++i) {
+        if (info.checkFeatures(std::string("+") + checkedFeatures[i])) needs |= uint64_t(1) << i;
+    }
+    if (needs == 0) return;
+    start->addFnAttr("target-cpu", "x86-64");
+    start->addFnAttr("target-features", "");
+    llvm::LLVMContext& context = module.getContext();
+    llvm::Type* i64 = llvm::Type::getInt64Ty(context);
+    llvm::FunctionCallee check = module.getOrInsertFunction("cromo_cpu_check", llvm::Type::getVoidTy(context), i64,
+                                                            llvm::PointerType::getUnqual(context), i64);
+    llvm::BasicBlock& entry = start->getEntryBlock();
+    llvm::IRBuilder<> builder(&entry, entry.getFirstInsertionPt());
+    for (llvm::Instruction& instruction : entry) {
+        if (instruction.getDebugLoc()) {
+            builder.SetCurrentDebugLocation(instruction.getDebugLoc());
+            break;
+        }
+    }
+    llvm::Constant* name = builder.CreateGlobalString(cpu, "cromo.cpu");
+    builder.CreateCall(check, {builder.getInt64(needs), name, builder.getInt64(cpu.size())});
 }
 
 void optimize(llvm::Module& module, llvm::TargetMachine& machine, int level) {
@@ -610,14 +672,11 @@ bool buildExecutable(const std::string& irText, const std::string& moduleName, c
                                          : options.optLevel == 1 ? llvm::CodeGenOptLevel::Less
                                          : options.optLevel == 3 ? llvm::CodeGenOptLevel::Aggressive
                                                                  : llvm::CodeGenOptLevel::Default;
-    // ARM64: ARMv8.0, whose atomics call the functions of mem_arm64.S, which use
-    // LSE when the processor has it (D407).
-    bool arm64 = isArm64(options.target);
     // Android: position independent code, as its executables and libraries (P43).
     std::optional<llvm::Reloc::Model> relocation;
     if (isAndroid(options.target)) relocation = llvm::Reloc::PIC_;
-    std::unique_ptr<llvm::TargetMachine> machine(target->createTargetMachine(triple, arm64 ? "generic" : "x86-64",
-                                                                             arm64 ? "+outline-atomics" : "", targetOptions,
+    auto [cpu, features] = processorOf(options);
+    std::unique_ptr<llvm::TargetMachine> machine(target->createTargetMachine(triple, cpu, features, targetOptions,
                                                                              relocation, std::nullopt, codegenLevel));
     if (!machine) {
         error = "cannot create the target machine for " + triple.str();
@@ -629,6 +688,7 @@ bool buildExecutable(const std::string& irText, const std::string& moduleName, c
         module->setPICLevel(llvm::PICLevel::BigPIC);
         if (!options.objectOnly && !options.sharedLibrary) module->setPIELevel(llvm::PIELevel::Large);
     }
+    if (!options.cpu.empty() && !isArm64(options.target)) requireProcessor(*module, *machine, options.cpu);
 
     std::string verifyMessages;
     llvm::raw_string_ostream verifyStream(verifyMessages);
@@ -666,6 +726,19 @@ bool buildExecutable(const std::string& irText, const std::string& moduleName, c
     llvm::sys::fs::remove(tablePath);
     if (!options.keepObject) llvm::sys::fs::remove(objectPath);
     return linked;
+}
+
+bool validCpu(const std::string& cpu, std::string& error) {
+    if (cpu == "native") return true;
+    initializeLlvm();
+    llvm::Triple triple(targetTriple(Target::Windows));
+    std::string lookupError;
+    const llvm::Target* target = llvm::TargetRegistry::lookupTarget(triple, lookupError);
+    std::unique_ptr<llvm::MCSubtargetInfo> info(target ? target->createMCSubtargetInfo(triple, "", "") : nullptr);
+    if (info && info->isCPUStringValid(cpu)) return true;
+    error = "unknown processor for --cpu: " + cpu +
+            " (x86-64, x86-64-v2, x86-64-v3, x86-64-v4, native, or a processor of x86-64 as haswell or znver4)";
+    return false;
 }
 
 }  // namespace cromo

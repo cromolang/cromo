@@ -31,6 +31,7 @@ Without a file, the commands use `main.cro` of the current folder.
 | `--target windows`, `--target linux`, `--target linux-arm64` | the system of the executable, also Linux on ARM64; by default the one `cromo` runs on |
 | `--target android` | the APK of an app for Android, for phones and emulators; `cromo run` takes no other target |
 | `-O0` … `-O3` | the level of optimization; the default is `-O2` |
+| `--cpu <processor>` | the processor whose instructions the program uses: `x86-64`, the default, for every one; `x86-64-v2`; `x86-64-v3`, with AVX2; `x86-64-v4`, with AVX-512; `native`, the one of this computer; or a name as `haswell`. On a processor without them the program stops at the start and says which are missing |
 | `--emit-ir` | prints the LLVM IR of the program instead of writing the executable |
 
 ## Debug and release

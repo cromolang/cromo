@@ -114,7 +114,7 @@ i32 main() {
 39.60 28.80 true
 ```
 
-`f32x8` holds eight `f32`, and `i16x16` sixteen `i16`: a vector of SIMD, the numbers on which the processor works together with AVX2, SSE or NEON. There are vectors of 128 and of 256 bits for every number, as `i8x32`, `u16x8`, `i32x4` or `f64x4`.
+`f32x8` holds eight `f32`, and `i16x16` sixteen `i16`: a vector of SIMD, the numbers on which the processor works together with AVX2, SSE or NEON. There are vectors of 128 and of 256 bits for every number, as `i8x32`, `u16x8`, `i32x4` or `f64x4`. By default a program uses the instructions that every x86-64 has, and a vector of 256 bits is two of 128; `cromo build --cpu x86-64-v3` uses those of AVX2, in the whole program.
 
 - `f32x8(x)` puts x in each number, `f32x8.load(list, at)` reads eight numbers from a list or an array, `v.store(ref list, at)` writes them, and `v[i]` is one of them.
 - `+`, `-`, `*`, `/` of the floats and the operators of the bits act number by number; a number on one side goes into each number, as `taxed * 1.2`. The integers wrap around, without the checks of overflow.

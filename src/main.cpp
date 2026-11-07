@@ -68,6 +68,10 @@ void printUsage(FILE* out) {
         "  --target     the system of the executable: windows, linux, linux-arm64, android-arm64,\n"
         "               android-x86_64, or android for the APK of an app (build; default: the one\n"
         "               cromo runs on); cromo run --target android runs the app on the phone\n"
+        "  --cpu        the processor of x86-64 whose instructions the program uses: x86-64,\n"
+        "               x86-64-v2, x86-64-v3 (AVX2), x86-64-v4 (AVX-512), native for the one of\n"
+        "               this computer, or a name as haswell (default: x86-64); a processor\n"
+        "               without them stops the program at the start, with a message\n"
         "  --release    no overflow checks: integers wrap around (default: debug, with checks)\n"
         "  -O<n>        optimization level (default: -O2)\n"
         "  --emit-ir    print the generated LLVM IR instead of producing the executable (build)\n",
@@ -245,6 +249,13 @@ bool readOptions(const std::vector<std::string>& args, size_t first, size_t last
                              target.c_str());
                 return false;
             }
+        } else if (arg == "--cpu" && i + 1 < last) {
+            options.cpu = args[++i];  // D513
+            std::string error;
+            if (!cromo::validCpu(options.cpu, error)) {
+                std::fprintf(stderr, "cromo: %s\n", error.c_str());
+                return false;
+            }
         } else if (arg == "--release") {
             compilation.codegen.release = true;  // D57
         } else if (arg == "--emit-ir") {
@@ -266,6 +277,11 @@ bool readOptions(const std::vector<std::string>& args, size_t first, size_t last
         }
     }
     bool windows = options.target == cromo::Target::Windows;
+    if (!options.cpu.empty() && cromo::isArm64(options.target) && !compilation.apk) {
+        std::fprintf(stderr, "cromo: --cpu names a processor of x86-64, and %s is ARM64\n",
+                     cromo::targetName(options.target));
+        return false;
+    }
     if (compilation.runtime) {
         if (options.outputPath.empty() || !compilation.inputPath.empty()) {
             std::fputs("cromo: cromo build --runtime [--target system] -o <object>, for the build of cromo (D393)\n", stderr);
@@ -714,6 +730,7 @@ int buildApk(Compilation& compilation) {
         Compilation part = compilation;
         part.apk = false;
         part.options.target = target;
+        if (target == cromo::Target::AndroidArm64) part.options.cpu.clear();  // --cpu is for x86-64 (D513)
         part.options.sharedLibrary = true;
         part.options.outputPath = (folder / abi / "libmain.so").string();
         int code = build(part);

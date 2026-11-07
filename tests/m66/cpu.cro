@@ -1,0 +1,38 @@
+// A program compiled for x86-64-v3 (D513): LLVM uses AVX2 for the vectors and the
+// loops, and the instructions of the bits; the processor of the tests has them, so
+// the check at the start lets the program run.
+// cromo-flags: --cpu x86-64-v3
+// target: windows linux-x86_64
+// expect-output: ones 20453, dot 43680
+i64 ones(list<u64> values) {
+    i64 total = 0
+    for (i64 i = 0; i < values.len(); i++) {
+        total += i64(countOnes(values[i])) + i64(trailingZeros(values[i] | 1))
+    }
+    ret total
+}
+
+i32 dot(list<i16> a, list<i16> b) {
+    i32x8 sum = i32x8(0)
+    for (i64 i = 0; i + 16 <= a.len(); i += 16) {
+        i16x16 x = i16x16.load(a, i)
+        i16x16 y = i16x16.load(b, i)
+        sum = sum + i32x8(x.low()) * i32x8(y.low()) + i32x8(x.high()) * i32x8(y.high())
+    }
+    ret sum.sum()
+}
+
+i32 main() {
+    list<u64> values
+    for (u64 i = 0; i < 1000; i++) {
+        values.add(i * 2654435761)
+    }
+    list<i16> a
+    list<i16> b
+    for (i64 i = 0; i < 64; i++) {
+        a.add(i16(i))
+        b.add(i16(64 - i))
+    }
+    println("ones {}, dot {}", ones(values), dot(a, b))
+    ret 0
+}

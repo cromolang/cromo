@@ -1,0 +1,7 @@
+// --cpu names a processor of x86-64: with a target of ARM64 it is an error (D513).
+// cromo-flags: --cpu x86-64-v3
+// target: linux-arm64
+// expect-error: --cpu names a processor of x86-64, and linux-arm64 is ARM64
+i32 main() {
+    ret 0
+}

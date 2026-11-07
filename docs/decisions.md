@@ -2459,6 +2459,9 @@ i32 total = sum.sum()
 
 ### D512. The letters spaced in the rich text
 *2026-11-07.* Chosen by the author. `TextStyle` has `spacing`, the room added after each letter as a part of its size, as `letter-spacing` in `em` of CSS: the small capitals of the labels, as `EVENT`, `0.06`. The titles of the groups, of the tabs and of the tables are spaced already by `std.gui` (D479).
+
+### D513. The processor of a program: `--cpu`
+*2026-11-07.* Chosen by the author. As `-march` of GCC and Clang, `-C target-cpu` of Rust and `GOAMD64` of Go: `cromo build --cpu x86-64-v3` compiles the whole program for that processor, and LLVM uses its instructions everywhere, AVX2 for the vectors (D505) and the loops, POPCNT, TZCNT and BMI2 for the bits (D502). Without the option the program runs on every x86-64, with SSE2, as before. The executable has one copy of the code: a copy for each processor, chosen at the start, is not what the languages that Cromo follows do. As in Go, a program compiled for a processor above x86-64 checks at the start that the processor has its instructions, and otherwise says which are missing, instead of stopping somewhere with an illegal instruction.
 ---
 
 ## Proposed
@@ -2741,7 +2744,7 @@ A component keeps the distances from the edges of its parent, the content of the
 - The operators work number by number: `+`, `-` and `*`, `/` of the floats, `&`, `|`, `^` and `!` of the integers, `-` of the signed ones and of the floats, `<<` and `>>` of the integers by a count of the scalars, checked as for them. The integers wrap around, without the checks of overflow. A number on one side of an operator is in each number: `v * 2`. `%` and `/` of the integers are errors: the processors have no division of integer vectors.
 - A comparison gives the mask, the vector of the signed integers of the size of the numbers with -1 where true and 0 where false: `f32x8 > f32x8` gives an `i32x8`. A mask has `all()`, `any()` and `select(a, b)`, the numbers of a where it is true and of b where it is false.
 - `sum()`, `smallest()` and `largest()` give a number, the sum of the floats in any order, as SIMD adds; `abs()` of the signed and of the floats, `min(w)` and `max(w)` number by number; `low()` and `high()`, the halves of a vector of 256 bits; `len()`. The form of debug is that of an array, `[1.0, 2.0]`.
-- LLVM has them as `<16 x i16>`, aligned at their size, as LLVM wants in the structs; their loads and stores say the alignment of their numbers, so that a vector in a list is read unaligned. The operators are the instructions of LLVM on vectors, the methods its intrinsics, as `llvm.vector.reduce.add`, `llvm.smin` and `llvm.fptosi.sat`: SSE2 on x86-64 by default, NEON on ARM64, and the halves of 128 bits where a vector is of 256.
+- LLVM has them as `<16 x i16>`, aligned at their size, as LLVM wants in the structs; their loads and stores say the alignment of their numbers, so that a vector in a list is read unaligned. The operators are the instructions of LLVM on vectors, the methods its intrinsics, as `llvm.vector.reduce.add`, `llvm.smin` and `llvm.fptosi.sat`: SSE2 on x86-64 by default, AVX2 with `--cpu x86-64-v3` (D513), NEON on ARM64, and the halves of 128 bits where a vector is of 256 without AVX2.
 
 
 ### P64. The radio groups, the buttons with two states and the progress bars (D506-D508)
@@ -2761,6 +2764,12 @@ A component keeps the distances from the edges of its parent, the content of the
 - `setDraggable(true)`, `draggable()`: the mouse takes the line in the gap, at least 6 pixels around its middle, 20 on a phone, with the cursor of the arrows; the line moves the first size, or the fixed one, within the least sizes. Under the mouse and while it moves, a line of 2 pixels in the color of the focus is drawn in the middle of the gap, over the panels. `onChange(func(f32))` is called at each move with the part of the room of the first panel now. The split takes no keyboard, and has no tooltip: its panels can.
 - The rest of a component: `setPosition`, `setSize`, `x()`, `y()`, `width()`, `height()`, `setVisible`, `visible()`, `setEnabled`, `enabled()`, `setAnchor`, `horizontalAnchor()`, `verticalAnchor()`.
 - `TextStyle.spacing`, 0 by default, from -0.5 to 1, else a panic when the text is added: `spacing` times the size of the text is added after each letter, the last too, as CSS does, in the measure as in the drawing. `runtime/gui/gui.c` adds it to the advance of each letter.
+
+### P67. The processor of `--cpu` (D513)
+- `--cpu <name>` for `build`, `run` and `test`: `x86-64`, the default, `x86-64-v2`, `x86-64-v3` and `x86-64-v4`, the levels of the ABI of x86-64 that GCC, Clang, Rust and Go know; `native`, the processor of the computer that compiles, with what it has and lacks; or a processor that LLVM knows, as `haswell` or `znver4`. Another name is an error before the compilation. With a target of ARM64 it is an error: those programs stay ARMv8.0 (D407); in the APK of `--target android` it is for the library of x86-64.
+- The C of the runtime and of the libraries stays compiled for x86-64, as libc for a program in C; SDL chooses its own code at the start.
+- `cromo_start` is compiled for x86-64, and LLVM does not bring the functions of the program into it. First it calls `cromo_cpu_check` of the runtime with a bit for each feature of the processor among those that the code of LLVM can use: SSE3, SSSE3, SSE4.1, SSE4.2, POPCNT, CMPXCHG16B and LAHF-SAHF of v2; AVX, AVX2, BMI1, BMI2, F16C, FMA, LZCNT, MOVBE and XSAVE of v3; AVX512F, BW, CD, DQ and VL of v4; AES, PCLMULQDQ, RDRAND, RDSEED, ADX, SHA, GFNI, VAES, VPCLMULQDQ, AVX-VNNI and the other AVX-512 of the newer processors. The runtime reads them with CPUID, those of AVX and AVX-512 only if the system saves their registers (XGETBV).
+- A processor that lacks some ends the program with exit code 1 and `this program was compiled with --cpu x86-64-v3, and this processor lacks AVX, AVX2, ...` on the standard error, or in the window of D427 for a program of the windows without it.
 
 ---
 

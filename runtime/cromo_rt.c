@@ -267,7 +267,8 @@ typedef struct {
 
 #ifdef _WIN32
 
-// Only for the message of out of memory, which writes without the buffers.
+// Only for the messages of out of memory and of the processor, which write
+// without the buffers.
 static void writeRaw(const u8* data, u32 size) {
     u32 written;
     WriteFile(GetStdHandle((u32)-12), data, size, &written, 0);
@@ -958,6 +959,125 @@ NORETURN void cromo_out_of_memory(void) {
     writeRaw((const u8*)"panic: out of memory\n", 21);
     exitProcess(101);
 }
+
+// ---- The processor of --cpu (D513) ----
+//
+// A program compiled for a processor above x86-64 can use its instructions
+// anywhere. cromo_start, compiled for x86-64, calls cromo_cpu_check first, with a
+// bit for each feature that the program can use, in the order of this table,
+// which is that of checkedFeatures in backend.cpp; a processor that lacks one ends
+// the program with a message, as Go does, instead of an illegal instruction.
+
+#ifndef __aarch64__
+
+typedef struct {
+    u32 leaf;     // of CPUID
+    u32 subleaf;
+    u32 word;     // 0 eax, 1 ebx, 2 ecx, 3 edx
+    u32 bit;
+    u32 state;    // the registers that the system must save: 1 those of AVX, 2 also those of AVX-512
+    const char* name;
+} CpuFeature;
+
+static const CpuFeature cpuFeatures[] = {
+    {1, 0, 2, 0, 0, "SSE3"},
+    {1, 0, 2, 9, 0, "SSSE3"},
+    {1, 0, 2, 19, 0, "SSE4.1"},
+    {1, 0, 2, 20, 0, "SSE4.2"},
+    {1, 0, 2, 23, 0, "POPCNT"},
+    {1, 0, 2, 13, 0, "CMPXCHG16B"},
+    {0x80000001, 0, 2, 0, 0, "LAHF-SAHF"},
+    {1, 0, 2, 28, 1, "AVX"},
+    {7, 0, 1, 5, 1, "AVX2"},
+    {7, 0, 1, 3, 0, "BMI1"},
+    {7, 0, 1, 8, 0, "BMI2"},
+    {1, 0, 2, 29, 1, "F16C"},
+    {1, 0, 2, 12, 1, "FMA"},
+    {0x80000001, 0, 2, 5, 0, "LZCNT"},
+    {1, 0, 2, 22, 0, "MOVBE"},
+    {1, 0, 2, 26, 0, "XSAVE"},
+    {7, 0, 1, 16, 2, "AVX512F"},
+    {7, 0, 1, 30, 2, "AVX512BW"},
+    {7, 0, 1, 28, 2, "AVX512CD"},
+    {7, 0, 1, 17, 2, "AVX512DQ"},
+    {7, 0, 1, 31, 2, "AVX512VL"},
+    {1, 0, 2, 25, 0, "AES"},
+    {1, 0, 2, 1, 0, "PCLMULQDQ"},
+    {1, 0, 2, 30, 0, "RDRAND"},
+    {7, 0, 1, 18, 0, "RDSEED"},
+    {7, 0, 1, 19, 0, "ADX"},
+    {7, 0, 1, 29, 0, "SHA"},
+    {7, 0, 2, 8, 0, "GFNI"},
+    {7, 0, 2, 9, 1, "VAES"},
+    {7, 0, 2, 10, 1, "VPCLMULQDQ"},
+    {7, 0, 2, 1, 2, "AVX512VBMI"},
+    {7, 0, 2, 6, 2, "AVX512VBMI2"},
+    {7, 0, 2, 11, 2, "AVX512VNNI"},
+    {7, 0, 2, 12, 2, "AVX512BITALG"},
+    {7, 0, 2, 14, 2, "AVX512VPOPCNTDQ"},
+    {7, 0, 1, 21, 2, "AVX512IFMA"},
+    {7, 0, 3, 23, 2, "AVX512FP16"},
+    {7, 1, 0, 4, 1, "AVX-VNNI"},
+    {7, 1, 0, 5, 2, "AVX512BF16"},
+};
+
+static void cpuid(u32 leaf, u32 subleaf, u32 words[4]) {
+    __asm__ volatile("cpuid" : "=a"(words[0]), "=b"(words[1]), "=c"(words[2]), "=d"(words[3]) : "a"(leaf), "c"(subleaf));
+}
+
+static int cpuHas(const CpuFeature* feature, u32 state) {
+    u32 words[4];
+    cpuid(feature->leaf & 0x80000000, 0, words);  // the last leaf of the group
+    if (words[0] < feature->leaf) return 0;
+    if (feature->subleaf) {
+        cpuid(feature->leaf, 0, words);  // the last subleaf
+        if (words[0] < feature->subleaf) return 0;
+    }
+    if (feature->state > state) return 0;
+    cpuid(feature->leaf, feature->subleaf, words);
+    return (words[feature->word] >> feature->bit) & 1;
+}
+
+void cromo_cpu_check(u64 needs, const u8* name, u64 size) {
+    // The registers that the system saves, from XGETBV when it allows it (OSXSAVE).
+    u32 words[4];
+    cpuid(1, 0, words);
+    u32 state = 0;
+    if ((words[2] >> 27) & 1) {
+        u32 low, high;
+        __asm__ volatile("xgetbv" : "=a"(low), "=d"(high) : "c"(0));
+        (void)high;
+        if ((low & 0x6) == 0x6) state = 1;      // SSE and AVX
+        if ((low & 0xE6) == 0xE6) state = 2;    // and the masks and the registers of AVX-512
+    }
+    static u8 text[1024];
+    u32 length = 0;
+    u32 missing = 0;
+    for (u32 i = 0; i < sizeof cpuFeatures / sizeof cpuFeatures[0]; ++i) {
+        if (!((needs >> i) & 1) || cpuHas(&cpuFeatures[i], state)) continue;
+        if (missing == 0) {
+            static const char start[] = "this program was compiled with --cpu ";
+            for (u32 k = 0; start[k]; ++k) text[length++] = (u8)start[k];
+            for (u64 k = 0; k < size && k < 64; ++k) text[length++] = name[k];
+            static const char lacks[] = ", and this processor lacks ";
+            for (u32 k = 0; lacks[k]; ++k) text[length++] = (u8)lacks[k];
+        } else {
+            text[length++] = ',';
+            text[length++] = ' ';
+        }
+        for (const char* c = cpuFeatures[i].name; *c; ++c) text[length++] = (u8)*c;
+        ++missing;
+    }
+    if (missing == 0) return;
+    text[length++] = '\n';
+#ifdef _WIN32
+    if (windowed() && !errorRedirected()) showFatal(text, length);  // D427
+#endif
+    writeRaw(text, length);
+    exitProcess(1);
+}
+
+#endif
 
 // The object of an exception, made by throw with the stack where it is (D340).
 void* cromo_exception_new(i64 size) {
