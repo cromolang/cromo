@@ -107,7 +107,7 @@ cd greeter
 cromo run
 ```
 
-The other files of the folder are modules, which `main.cro` imports by name: chapter 11 explains them.
+The other files of the folder are modules, which `main.cro` imports by name. A project with more executables lists them in a file `cromo.mod`, and `cromo build` builds them all: chapter 11 explains both.
 
 ## Formatting
 

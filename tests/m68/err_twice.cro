@@ -1,0 +1,7 @@
+// A name declared in two files of a folder, which are one module (D515).
+// expect-error: function 'value' is already defined
+import modules.twice
+
+i32 main() {
+    ret value()
+}

@@ -88,7 +88,7 @@ Il commento all'inizio di un file, prima degli import e separato da ciò che seg
 
 ```cromo file=shapes/circle.cro
 public f64 circleArea(f64 r) {
-    ret 3.14159 * r * r
+    ret pi() * r * r
 }
 ```
 
@@ -98,11 +98,18 @@ public f64 squareArea(f64 s) {
 }
 ```
 
+```cromo file=shapes/constants.cro
+// Privata: la vedono solo i file della cartella.
+f64 pi() {
+    ret 3.14159
+}
+```
+
 ```cromo file=areas.cro
 import shapes
 
 i32 main() {
-    println("{:.2f} {}", circleArea(1.0), squareArea(2.0))
+    println("{:.2f} {}", circleArea(1.0), shapes.squareArea(2.0))
     ret 0
 }
 ```
@@ -111,7 +118,49 @@ i32 main() {
 3.14 4
 ```
 
-`import a.b` indica il file `a/b.cro`, oppure la cartella `a/b`. I percorsi partono dalla cartella del file principale, così un modulo ha lo stesso nome ovunque venga importato. I file di una cartella condividono i loro nomi privati, come parti di un unico modulo; le sottocartelle sono moduli a sé.
+I file di una cartella sono parti di un unico modulo, come i file di un package in Go: ognuno vede tutti i nomi degli altri, anche quelli privati, come `circle.cro` usa `pi` di `constants.cro`, e due di loro non possono dichiarare lo stesso nome. Ogni file scrive i propri import. Fuori dalla cartella si vedono solo i nomi pubblici, con il nome della cartella davanti quando serve: `shapes.squareArea`.
+
+`import a.b` indica il file `a/b.cro`, oppure la cartella `a/b`; le sottocartelle di una cartella sono moduli a sé. I percorsi partono dalla cartella del file principale, o da quella di `cromo.mod` in un progetto, così un modulo ha lo stesso nome ovunque venga importato. Un file di un modulo-cartella non si importa da solo: `import shapes.circle` in un programma che importa `shapes` è un errore.
+
+## Un progetto con più programmi
+
+Un progetto che produce più eseguibili, come un server, un client e uno strumento, li tiene in cartelle proprie e le librerie in cima. Il file `cromo.mod` segna la cima del progetto: la prima riga dà il nome del progetto, e una riga `bin` per ogni eseguibile ne dà il nome e il file principale.
+
+```text
+progetto/
+  cromo.mod
+  shapes/            una libreria: un modulo-cartella
+  geometry.cro       un'altra libreria: un modulo-file
+  cmd/
+    areas.cro        un programma, con main
+    report.cro       un altro programma
+```
+
+```text file=cromo.mod
+module example.com/progetto
+
+bin areas cmd/areas.cro
+bin report cmd/report.cro
+```
+
+Gli import di ogni file partono dalla cartella di `cromo.mod`, che `cromo` cerca nella cartella del file principale e in quelle sopra. Così `cmd/areas.cro` importa `shapes` come faceva `areas.cro`:
+
+```cromo file=cmd/areas.cro
+import shapes
+
+i32 main() {
+    println("{:.2f}", circleArea(2.0))
+    ret 0
+}
+```
+
+```output
+12.57
+```
+
+Nella cartella di `cromo.mod`, `cromo build` senza file costruisce tutti gli eseguibili delle sue righe `bin`, ognuno con il nome della sua riga: `areas.exe` e `report.exe` su Windows, `areas` e `report` su Linux. `cromo build areas` ne costruisce solo uno, `cromo run areas` lo esegue, e `cromo test` esegue i test di ciascuno.
+
+Una libreria di un progetto è un modulo, compilato in ogni eseguibile che la importa, come in Go e in Rust: non c'è una libreria da costruire a parte e da collegare, e un eseguibile tiene solo le funzioni che chiama.
 
 ## La libreria standard
 
@@ -147,7 +196,8 @@ Le librerie scritte da altri saranno **pacchetti**: repository Git, identificati
 
 ## Riepilogo
 
-- Un file è un modulo; una cartella è un modulo formato dai suoi file; `import` rende visibili i loro nomi pubblici.
+- Un file è un modulo; una cartella è un unico modulo formato dai suoi file, che condividono tutti i nomi; `import` rende visibili i loro nomi pubblici.
+- `cromo.mod` segna la cima di un progetto: gli import partono dalla sua cartella, e le sue righe `bin` sono gli eseguibili che `cromo build` costruisce.
 - Tutto è privato, a meno che non sia `public`: anche i campi e i metodi di una struct.
 - I nomi di un modulo importato si usano direttamente, con il modulo davanti quando due nomi entrano in conflitto.
 - `std.x` sono i moduli della libreria standard; i file `_windows` e `_linux` contengono il codice per un solo sistema.

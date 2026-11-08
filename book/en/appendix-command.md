@@ -6,14 +6,14 @@
 cromo <command> [options] [file.cro] [-- arguments]
 ```
 
-Without a file, the commands use `main.cro` of the current folder.
+Without a file, the commands use the executables of the `cromo.mod` of the current folder, or its `main.cro` (chapter 11).
 
 ## Commands
 
 | Command | Does |
 |---|---|
-| `cromo build [file.cro]` | compiles the program into an executable |
-| `cromo run [file.cro] [-- arguments]` | compiles the program into a temporary folder, runs it with the arguments that follow `--`, and ends with its exit code |
+| `cromo build [file.cro \| name]` | compiles the program into an executable; without a file, every executable of `cromo.mod`; with a name, that one |
+| `cromo run [file.cro \| name] [-- arguments]` | compiles the program into a temporary folder, runs it with the arguments that follow `--`, and ends with its exit code |
 | `cromo run --target android [file.cro]` | makes the APK, installs it on the phone or the emulator that `adb` sees, starts the app and shows its output until it ends |
 | `cromo test [file.cro] [names]` | runs the `[[test]]` functions of the program and of its modules; the names choose the tests that contain them |
 | `cromo fmt [--check] [files and folders \| -]` | formats the code, by default of the current folder and its subfolders; `--check` only lists the files to format; `-` formats the standard input |

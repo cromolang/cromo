@@ -1,0 +1,9 @@
+// A program in a folder of a project: its imports start from the folder of cromo.mod,
+// two folders above (D516).
+// expect-output: 9
+import modules.shapes
+
+i32 main() {
+    println("{}", squareArea(3.0))
+    ret 0
+}

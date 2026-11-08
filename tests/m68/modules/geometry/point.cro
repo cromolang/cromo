@@ -1,0 +1,5 @@
+// A file of the folder module geometry (D515).
+public struct Point {
+    public f64 x
+    public f64 y
+}

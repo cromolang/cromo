@@ -1,0 +1,4 @@
+// A module next to cromo.mod, imported from cmd/ (D516).
+public f64 squareArea(f64 side) {
+    ret side * side
+}

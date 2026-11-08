@@ -1,9 +1,9 @@
 // The loader of the modules (D50, D423), as src/loader.cpp: the main file, the core
 // of the library and every module they import, parsed into one tree (P29). `import
-// a.b` is the file a/b.cro, or every .cro file of the folder a/b, next to the main
-// file (D130); `import std.fs` is a module of the library (D201). A file with the
-// suffix of a system or of an architecture joins the module of the file without it
-// (D202, D408).
+// a.b` is the file a/b.cro, or the folder a/b, whose files are one module (D515),
+// next to cromo.mod (D516) or to the main file (D130); `import std.fs` is a module of
+// the library (D201). A file with the suffix of a system or of an architecture joins
+// the module of the file without it (D202, D408).
 import std.fs
 import std.os
 import ast
@@ -37,7 +37,11 @@ public Program load(string path, string text, string library) {
     string coreText = readSource(core)
     loader.program.diag.addFile(core, coreText)
     string main = absolute(path)
-    loader.root = parentOf(main)
+    loader.root = projectFolder(parentOf(main))
+    loader.inProject = loader.root != ""
+    if (!loader.inProject) {
+        loader.root = parentOf(main)
+    }
     loader.loaded[key(main)] = 0
     loader.loaded[key(core)] = 1
     loader.names.add(stemOf(main))
@@ -64,6 +68,7 @@ struct Loader {
     Program program
     string library
     string root
+    bool inProject           // the root is the folder of cromo.mod (D516)
     map<string, i32> loaded  // the files read, by their normal path
     list<string> names       // the module of each file
 
@@ -128,59 +133,49 @@ struct Loader {
             ret files
         }
         if (isFolder) {
-            // A file with the suffix of a system or of an architecture joins the file
-            // without it, or is a module of its own; the files of the others are left
-            // out (D202, D408).
-            map<string, i32> groups
-            list<string> modules
-            list<list<string>> members
+            // D515: one module of the files of the folder, in the order of their names,
+            // the first holding its names; those of another system or architecture are
+            // left out (D202, D408), and so are the tests.
+            list<string> entries
             for (string entry in fs.listFolder(folder)) {
-                string full = folder + "\\" + entry
-                if (fs.extension(entry) != ".cro" || !fs.isFile(full)) {
-                    continue
-                }
                 string stem = stemOf(entry)
-                if (stem.len() > 5 && stem.endsWith("_test")) {
+                if (fs.extension(entry) != ".cro" || !fs.isFile(folder + "\\" + entry) || (stem.len() > 5 && stem.endsWith("_test")) ||
+                    withoutSuffix(stem).other) {
                     continue
                 }
-                Suffixed name = withoutSuffix(stem)
-                if (name.other) {
-                    continue
-                }
-                if (!groups.contains(name.name)) {
-                    groups[name.name] = i32(modules.len())
-                    modules.add(name.name)
-                    list<string> none
-                    members.add(move none)
-                }
-                members[groups[name.name]].add(full)
+                entries.add(entry)
             }
-            if (modules.len() == 0) {
+            if (entries.len() == 0) {
                 program.diag.errorIn(from, line, column, "the folder " + shown + " has no .cro files for this system (D130, D202)")
+                ret files
             }
-            list<string> ordered = modules
-            sort(ref ordered)
-            for (string name in ordered) {
-                list<string> paths = members[groups[name]]
-                // The file without the suffix first.
-                sortBy(ref paths, [](string a, string b) bool { ret stemOf(a).len() < stemOf(b).len() })
-                i32 first = loadFile(paths[0], dotted + "." + name, from, line, column, -1)
-                for (i64 i = 1; i < paths.len(); i++) {
-                    loadFile(paths[i], dotted + "." + name, from, line, column, first)
-                }
-                files.add(first)
+            sort(ref entries)
+            i32 first = loadFile(folder + "\\" + entries[0], dotted, from, line, column, -1)
+            for (i64 i = 1; i < entries.len(); i++) {
+                loadFile(folder + "\\" + entries[i], dotted, from, line, column, first)
             }
+            files.add(first)
             ret files
         }
+        string next = inProject ? "cromo.mod (D516)" : fs.fileName(program.diag.path(0)) + " (D130)"
         program.diag.errorIn(from, line, column, "cannot find the module " + dotted + ": there is no " + shown + ".cro or folder " +
-            shown + " next to " + fs.fileName(program.diag.path(0)) + " (D130)")
+            shown + " next to " + next)
         ret files
     }
 
     i32 loadFile(string path, string name, i32 from, i32 line, i32 column, i32 part) {
         string normal = key(path)
         if (loaded.contains(normal)) {
-            ret loaded[normal]
+            // D515: a file of a folder imported by itself too, before or after.
+            i32 found = loaded[normal]
+            string had = names[found]
+            if (found != 0 && had != name) {
+                string file = had.len() > name.len() ? had : name
+                string folder = had.len() > name.len() ? name : had
+                program.diag.errorIn(from, line, column, "the file " + file.replace(".", "/") + ".cro is a part of the module " + folder +
+                    ": import " + folder + " (D515)")
+            }
+            ret found
         }
         string text
         bool read = true
@@ -300,6 +295,22 @@ Suffixed withoutSuffix(string stem) {
         result.other = !mine
     }
     ret result
+}
+
+// D516: the folder of cromo.mod, from `folder` up to the root of the drive, or "".
+string projectFolder(string folder) {
+    string at = folder
+    for (true) {
+        if (fs.isFile(at + "\\cromo.mod")) {
+            ret at
+        }
+        string up = parentOf(at)
+        if (up == at || up == "") {
+            ret ""
+        }
+        at = up
+    }
+    ret ""
 }
 
 // The name of a file without its folder and its extension.

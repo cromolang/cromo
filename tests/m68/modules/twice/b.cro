@@ -1,0 +1,4 @@
+// The same name in two files of a folder (D515).
+public i32 value() {
+    ret 2
+}

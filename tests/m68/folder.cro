@@ -1,0 +1,19 @@
+// The files of a folder are one module (D515): distance.cro uses Point of point.cro
+// and the private positive of helper.cro; a program sees their public names, also
+// with the name of the folder in front.
+// expect-output: 7
+// expect-output: 3
+import modules.geometry
+
+i32 main() {
+    Point a
+    geometry.Point b
+    b.x = 3.0
+    b.y = -4.0
+    println("{}", manhattan(a, b))
+    Point c
+    c.x = 1.0
+    c.y = -1.0
+    println("{}", geometry.manhattan(a, c) + 1.0)
+    ret 0
+}

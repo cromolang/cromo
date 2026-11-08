@@ -1,0 +1,4 @@
+// A private function, which the other files of the folder see (D515).
+f64 positive(f64 v) {
+    ret v < 0.0 ? -v : v
+}

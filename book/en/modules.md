@@ -88,7 +88,7 @@ The comment at the beginning of a file, before its imports and separated from wh
 
 ```cromo file=shapes/circle.cro
 public f64 circleArea(f64 r) {
-    ret 3.14159 * r * r
+    ret pi() * r * r
 }
 ```
 
@@ -98,11 +98,18 @@ public f64 squareArea(f64 s) {
 }
 ```
 
+```cromo file=shapes/constants.cro
+// Private: only the files of the folder see it.
+f64 pi() {
+    ret 3.14159
+}
+```
+
 ```cromo file=areas.cro
 import shapes
 
 i32 main() {
-    println("{:.2f} {}", circleArea(1.0), squareArea(2.0))
+    println("{:.2f} {}", circleArea(1.0), shapes.squareArea(2.0))
     ret 0
 }
 ```
@@ -111,7 +118,49 @@ i32 main() {
 3.14 4
 ```
 
-`import a.b` is the file `a/b.cro`, or the folder `a/b`. The paths start from the folder of the main file, so a module has the same name wherever it is imported. The files of a folder share their private names, as parts of one module; the subfolders are separate modules.
+The files of a folder are parts of one module, as the files of a package in Go: each sees all the names of the others, also the private ones, as `circle.cro` uses `pi` of `constants.cro`, and two of them cannot declare the same name. Each file writes its own imports. Outside the folder only the public names are seen, with the name of the folder in front when it is needed: `shapes.squareArea`.
+
+`import a.b` is the file `a/b.cro`, or the folder `a/b`; the subfolders of a folder are modules of their own. The paths start from the folder of the main file, or from that of `cromo.mod` in a project, so a module has the same name wherever it is imported. A file of a folder module is not imported by itself: `import shapes.circle` in a program that imports `shapes` is an error.
+
+## A project with more programs
+
+A project that makes more executables, as a server, a client and a tool, keeps them in folders of their own and their libraries at the top. The file `cromo.mod` marks the top of the project: its first line names the project, and a line `bin` for each executable gives its name and its main file.
+
+```text
+project/
+  cromo.mod
+  shapes/            a library: a folder module
+  geometry.cro       another library: a file module
+  cmd/
+    areas.cro        a program, with main
+    report.cro       another program
+```
+
+```text file=cromo.mod
+module example.com/project
+
+bin areas cmd/areas.cro
+bin report cmd/report.cro
+```
+
+The imports of every file start from the folder of `cromo.mod`, which `cromo` looks for in the folder of the main file and in those above it. So `cmd/areas.cro` imports `shapes` as `areas.cro` did:
+
+```cromo file=cmd/areas.cro
+import shapes
+
+i32 main() {
+    println("{:.2f}", circleArea(2.0))
+    ret 0
+}
+```
+
+```output
+12.57
+```
+
+In the folder of `cromo.mod`, `cromo build` without a file builds all the executables of its `bin` lines, each named after its line: `areas.exe` and `report.exe` on Windows, `areas` and `report` on Linux. `cromo build areas` builds only one of them, `cromo run areas` runs it, and `cromo test` runs the tests of each one.
+
+A library of a project is a module, compiled into each executable that imports it, as in Go and Rust: there is no library to build apart and to link, and an executable keeps only the functions that it calls.
 
 ## The standard library
 
@@ -147,7 +196,8 @@ The libraries of other people will be **packages**: Git repositories, named by t
 
 ## Summary
 
-- A file is a module; a folder is a module made of its files; `import` makes their public names visible.
+- A file is a module; a folder is one module made of its files, which share all their names; `import` makes their public names visible.
+- `cromo.mod` marks the top of a project: the imports start from its folder, and its `bin` lines are the executables that `cromo build` builds.
 - Everything is private unless it is `public`, also the fields and methods of a struct.
 - The names of an imported module are used directly, with the module in front when two clash.
 - `std.x` are the modules of the standard library; `_windows` and `_linux` files hold code for one system.

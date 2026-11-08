@@ -836,7 +836,7 @@ extern "kernel32" {
 
 ### D130. Where the modules are
 *2026-10-29.*
-- `import a.b` is the file `a/b.cro`, or the folder `a/b`, of which every `.cro` file is imported, without the subfolders. The paths start from the folder of the main file, as in Go and Java: a module is always written with the same name, wherever it is imported. A file and a folder with the same name are an error.
+- `import a.b` is the file `a/b.cro`, or the folder `a/b`, of which every `.cro` file is imported, without the subfolders. The paths start from the folder of the main file, as in Go and Java: a module is always written with the same name, wherever it is imported. A file and a folder with the same name are an error. Since D516 they start from the folder of `cromo.mod` when there is one; the files of a folder are one module (D515).
 - `std` is the standard library. In M7 it has only its core (`list`, `string`, `Exception`, `Error`), which every module sees without importing it; `import std.x` is an error until the library has modules.
 
 ### D131. The rules of `import`
@@ -934,7 +934,7 @@ extern "kernel32" {
 *2026-10-29.* `main` can receive the arguments of the program: `i32 main(list<string> args)`. As the `argv` of C, `args[0]` is the name of the program and the arguments follow. `main()` without parameters stays valid.
 
 ### D155. `cromo build` without a file
-*2026-10-29.* Without a file, `cromo build` compiles `main.cro` of the current folder, and the executable is named after the folder, as in Go. With a file, it is named after the file. There is no project file for now.
+*2026-10-29.* Without a file, `cromo build` compiles `main.cro` of the current folder, and the executable is named after the folder, as in Go. With a file, it is named after the file. There is no project file for now. Since D517 a `cromo.mod` with `bin` lines lists the executables that `cromo build` builds without a file.
 
 ### D156. `cromo run`
 *2026-10-29.* `cromo run main.cro -- a b` compiles the program in a temporary folder, runs it with the arguments that follow `--`, deletes the folder and ends with the exit code of the program, as `cargo run` and `dotnet run`. Without a file it runs `main.cro` of the current folder (D155).
@@ -1167,7 +1167,7 @@ extern "kernel32" {
 
 ### D210. Files for each system: modules of one system and the language server
 *2026-10-29.*
-- In a folder, `x_linux.cro` without `x.cro` is a module of its own, which exists only on Linux.
+- In a folder, `x_linux.cro` without `x.cro` is a module of its own, which exists only on Linux. Since D515 it is a part of the module of the folder, only on Linux.
 - The language server analyzes the programs with the files of Windows.
 
 ### D211. The first modules of the library: std.fs, std.time and std.os
@@ -1817,7 +1817,7 @@ lines.close()
 *2026-10-30.* The name of a `require` line is the first name of the path: `import geometry` is the root folder of the repository, `import geometry.shapes` its file `shapes.cro` or its folder `shapes` (D130). A folder of the project with the name of a dependency is an error. Every package reads its own `cromo.mod`, so the names are local to the package that writes them.
 
 ### D384. Where `cromo.mod` is
-*2026-10-30.* In the folder of the main file, which is already the root of the imports (D130); without `cromo.mod` a program has no dependencies, as today. The `module` line of a dependency must be the URL it was downloaded from.
+*2026-10-30.* In the folder of the main file, which is already the root of the imports (D130); without `cromo.mod` a program has no dependencies, as today. Since D516 it is looked for also in the folders above the main file, and its folder is the root of the imports. The `module` line of a dependency must be the URL it was downloaded from.
 
 ### D385. The versions
 *2026-10-30.* Tags `vX.Y.Z`, without pre-releases for now; `v0` is a major version as the others. `cromo get url` takes the last version of the major version already required, or the last of all for a new dependency; `@v2` the last `v2.x.y`, `@v1.4.0` that one.
@@ -2465,6 +2465,15 @@ i32 total = sum.sum()
 
 ### D514. Submenus inside submenus
 *2026-11-08.* Chosen by the author. A submenu can have submenus of its own, at any depth, as in the menus of Windows, macOS and GTK: each opens on the right of the card that holds its item, or on its left without room, and the mouse on another item of a level closes the submenu open from it. M64 allowed one level, and a submenu with submenus was a panic.
+
+### D515. The files of a folder are one module
+*2026-11-08.* Chosen by the author. It confirms D50 as Go has it: the files of a folder imported with `import geometry` are one module, which shares all their names, also the private ones, while each file writes its own imports (D131). The compiler made each file a module of its own, so that a file did not see the names of the others, unlike the guide and D50. A file of a folder is not imported by itself as well: `import geometry.point` in a program that imports `geometry` is an error. In a folder, `x_linux.cro` without `x.cro` is a part of the module only on Linux, which changes D210.
+
+### D516. The imports start from the folder of `cromo.mod`
+*2026-11-08.* Chosen by the author. As Go with `go.mod`: `cromo` looks for `cromo.mod` in the folder of the main file and in those above it, and the paths of the imports start from its folder; without it, from the folder of the main file, as before (D130). So the programs of a project stay in folders of their own, as `cmd/server.cro`, and import the modules at the top of the project. `cromo.mod` starts with the line `module name`, as `go.mod` (D377); the packages come later. It changes D384, which wanted it in the folder of the main file.
+
+### D517. The executables of a project are listed in `cromo.mod`
+*2026-11-08.* Chosen by the author. As the `[[bin]]` of Cargo: a line `bin server cmd/server.cro` for each executable, its name and its main file from the folder of `cromo.mod`. `cromo build` without a file, in that folder, builds them all, each named after its line; `cromo build server` and `cromo run server` build or run one of them by its name. Without `bin` lines, `cromo build` compiles `main.cro`, as in D155. The libraries of a project are its modules, compiled into each executable that imports them, as in Go and Rust: there is no library to link. A library for C, a DLL or a `.so` with the functions of `[[export]]`, is decided when a program needs it.
 ---
 
 ## Proposed
@@ -2773,6 +2782,13 @@ A component keeps the distances from the edges of its parent, the content of the
 - The C of the runtime and of the libraries stays compiled for x86-64, as libc for a program in C; SDL chooses its own code at the start.
 - `cromo_start` is compiled for x86-64, and LLVM does not bring the functions of the program into it. First it calls `cromo_cpu_check` of the runtime with a bit for each feature of the processor among those that the code of LLVM can use: SSE3, SSSE3, SSE4.1, SSE4.2, POPCNT, CMPXCHG16B and LAHF-SAHF of v2; AVX, AVX2, BMI1, BMI2, F16C, FMA, LZCNT, MOVBE and XSAVE of v3; AVX512F, BW, CD, DQ and VL of v4; AES, PCLMULQDQ, RDRAND, RDSEED, ADX, SHA, GFNI, VAES, VPCLMULQDQ, AVX-VNNI and the other AVX-512 of the newer processors. The runtime reads them with CPUID, those of AVX and AVX-512 only if the system saves their registers (XGETBV).
 - A processor that lacks some ends the program with exit code 1 and `this program was compiled with --cpu x86-64-v3, and this processor lacks AVX, AVX2, ...` on the standard error, or in the window of D427 for a program of the windows without it.
+
+### P68. The modules of a folder and the projects (D515-D517)
+- A folder imported is one module named by the import: its `.cro` files for the system and the architecture of the build (D202, D408), sorted by their names, the first holding the names of the module and the others parts of it, as the files of a system are; `cromo test` adds every `_test.cro` of the folder (D350). A file of the folder imported by itself too, or a folder whose file is already a module, is an error at the second import: `the file geometry/point.cro is a part of the module geometry: import geometry`. Two files of a folder that declare the same name are the error of a name declared twice.
+- The search for `cromo.mod` goes up from the folder of the main file to the root of the drive, and stops at the first one; the paths of the imports start from its folder. A module that is not there is `cannot find the module geometry: there is no geometry.cro or folder geometry next to cromo.mod`, or `next to main.cro` without it. The language server finds the root the same way.
+- `cromo.mod` has a thing on each line, its words separated by spaces, with comments `//` and blank lines: `module name` first, once, the name of letters, digits and `.`, `-`, `_`, `/`; `bin name path` for an executable, the name of letters, digits, `-` and `_`, not used twice, the path of a `.cro` file from the folder of `cromo.mod`, with `/`. A `require` line says that the packages are not available yet. Another line, a `bin` without its file or two with the same name are errors with their line, when `cromo` reads the executables; compiling a file, it uses only the folder of `cromo.mod`.
+- `cromo build` without a file, in a folder whose `cromo.mod` has `bin` lines, builds each executable in that folder, as `server.exe` on Windows and `server` on Linux, with the same options, one after the other, and stops at the first that fails; `-o` is an error there. With `--target android` each one is `server.apk`.
+- A name that is not a file and has no extension, as `cromo build server` or `cromo run server`, is a `bin` of the `cromo.mod` of the folder, otherwise an error that lists them. `cromo run` without a file runs the only `bin`, or with more of them is an error that lists them. `cromo test` without a file runs the tests of each executable in turn, in the order of the lines, after a line with its name and its file; the names after `cromo test` still choose the tests (D352), and its exit code is 1 when one of the executables fails.
 
 ---
 

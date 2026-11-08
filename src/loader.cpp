@@ -33,6 +33,17 @@ std::string sourceKey(const std::string& path) {
     return key;
 }
 
+std::string projectFolder(const std::string& folder) {
+    std::error_code ec;
+    fs::path at = fs::weakly_canonical(fs::absolute(folder, ec), ec);
+    for (;;) {
+        if (fs::is_regular_file(at / "cromo.mod", ec)) return at.string();
+        fs::path up = at.parent_path();
+        if (up.empty() || up == at) return {};
+        at = up;
+    }
+}
+
 namespace {
 
 // The modules of the library that serve only the library: std.winsock declares
@@ -89,16 +100,18 @@ std::string withoutSuffix(const std::string& stem, Target target, bool& own, boo
 }
 
 // Reads the main file, the standard library and every module they import (D50).
-// `import a.b` is the file a/b.cro, or every .cro file of the folder a/b, in the
-// folder of the main file (D130). `sources` is a deque: Diagnostics keeps their
-// addresses.
+// `import a.b` is the file a/b.cro, or the folder a/b, whose files are one module
+// (D515), in the folder of cromo.mod (D516) or of the main file (D130). `sources` is
+// a deque: Diagnostics keeps their addresses.
 class Loader {
 public:
     Loader(std::deque<SourceFile>& sources, Diagnostics& diag, Target target, const std::map<std::string, std::string>* overlay,
            bool tests)
         : sources_(sources), diag_(diag), target_(target), overlay_(overlay), tests_(tests) {
         fs::path main = fs::absolute(sources[0].path);
-        root_ = main.parent_path();
+        std::string project = projectFolder(main.parent_path().string());
+        root_ = project.empty() ? main.parent_path() : fs::path(project);
+        inProject_ = !project.empty();
         loaded_[fs::weakly_canonical(main)] = 0;
         names_ = {main.stem().string(), "std"};
     }
@@ -158,32 +171,39 @@ private:
             return {index};
         }
         if (isFolder) {
-            // A file with the suffix of a system or of an architecture joins the file
-            // without it, or is a module of its own; the files of the others are left
-            // out (D202, D408).
-            std::map<std::string, std::vector<fs::path>> modules;
+            // D515: one module of the files of the folder, in the order of their names,
+            // the first holding its names; those of another system or architecture are
+            // left out (D202, D408), and the tests join it for cromo test (D350).
+            std::vector<fs::path> paths;
+            std::vector<fs::path> tests;
             for (const fs::directory_entry& entry : fs::directory_iterator(folder, ec)) {
                 if (!entry.is_regular_file() || entry.path().extension() != ".cro") continue;
-                if (isTestFile(entry.path())) continue;  // with its module, by loadTests (D350)
+                if (isTestFile(entry.path())) {
+                    tests.push_back(entry.path());
+                    continue;
+                }
                 bool own, other;
-                std::string name = withoutSuffix(entry.path().stem().string(), target_, own, other);
-                if (!other) modules[name].push_back(entry.path());
+                withoutSuffix(entry.path().stem().string(), target_, own, other);
+                if (!other) paths.push_back(entry.path());
             }
-            if (modules.empty()) diag_.error(import.loc, "the folder " + shown + " has no .cro files for this system (D130, D202)");
-            std::vector<int> files;
-            for (auto& [name, paths] : modules) {
-                std::sort(paths.begin(), paths.end(), [](const fs::path& a, const fs::path& b) {
-                    return a.stem().string().size() < b.stem().string().size();  // the file without the suffix first
-                });
-                int first = loadFile(paths[0], dotted + "." + name, import.loc);
-                for (size_t i = 1; i < paths.size(); ++i) loadFile(paths[i], dotted + "." + name, import.loc, first);
-                loadTests(folder / (name + ".cro"), dotted + "." + name, first);
-                files.push_back(first);
+            if (paths.empty()) {
+                diag_.error(import.loc, "the folder " + shown + " has no .cro files for this system (D130, D202)");
+                return {};
             }
-            return files;
+            auto byName = [](const fs::path& a, const fs::path& b) { return a.filename().string() < b.filename().string(); };
+            std::sort(paths.begin(), paths.end(), byName);
+            std::sort(tests.begin(), tests.end(), byName);
+            int first = loadFile(paths[0], dotted, import.loc);
+            for (size_t i = 1; i < paths.size(); ++i) loadFile(paths[i], dotted, import.loc, first);
+            if (tests_) {
+                for (const fs::path& test : tests) loadFile(test, dotted, import.loc, first);
+            }
+            return {first};
         }
         diag_.error(import.loc, "cannot find the module " + dotted + ": there is no " + shown + ".cro or folder " + shown +
-                                    " next to " + fs::path(sources_[0].path).filename().string() + " (D130)");
+                                    " next to " +
+                                    (inProject_ ? std::string("cromo.mod") : fs::path(sources_[0].path).filename().string()) +
+                                    (inProject_ ? " (D516)" : " (D130)"));
         return {};
     }
 
@@ -206,7 +226,18 @@ private:
     int loadFile(const fs::path& path, const std::string& name, SourceLocation at, int part = -1) {
         fs::path key = fs::weakly_canonical(path);
         auto found = loaded_.find(key);
-        if (found != loaded_.end()) return found->second;
+        if (found != loaded_.end()) {
+            // D515: a file of a folder imported by itself too, before or after.
+            const std::string& had = names_[found->second];
+            if (found->second != 0 && had != name) {
+                const std::string& file = had.size() > name.size() ? had : name;
+                const std::string& folder = had.size() > name.size() ? name : had;
+                std::string shown = file;
+                std::replace(shown.begin(), shown.end(), '.', '/');
+                diag_.error(at, "the file " + shown + ".cro is a part of the module " + folder + ": import " + folder + " (D515)");
+            }
+            return found->second;
+        }
         sources_.push_back({path.string(), {}});
         if (!readText(path.string(), sources_.back().text)) diag_.error(at, "cannot read " + path.string());
         int index = diag_.addFile(sources_.back());
@@ -285,6 +316,7 @@ private:
     const std::map<std::string, std::string>* overlay_;
     bool tests_;
     fs::path root_;
+    bool inProject_ = false;  // the root is the folder of cromo.mod (D516)
     std::map<fs::path, int> loaded_;
     std::vector<std::string> names_;  // of the modules, by file
     Module program_;

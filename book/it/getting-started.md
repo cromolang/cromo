@@ -107,7 +107,7 @@ cd greeter
 cromo run
 ```
 
-Gli altri file della cartella sono moduli, che `main.cro` importa per nome: li spiega il capitolo 11.
+Gli altri file della cartella sono moduli, che `main.cro` importa per nome. Un progetto con più eseguibili li elenca in un file `cromo.mod`, e `cromo build` li costruisce tutti: il capitolo 11 spiega entrambe le cose.
 
 ## Formattazione
 

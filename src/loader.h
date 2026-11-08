@@ -17,6 +17,10 @@ bool readSourceFile(const std::string& path, std::string& text);
 // case on Windows.
 std::string sourceKey(const std::string& path);
 
+// D516: the folder of the cromo.mod of a program, looked for from `folder`, that of
+// its main file, up to the root of the drive; "" without one.
+std::string projectFolder(const std::string& folder);
+
 // Reads the main file (sources[0], already read), the standard library
 // (sources[1]) and every module they import (D50, D130), with the files of the
 // system it is compiled for (D202). `sources` is a deque: Diagnostics keeps their

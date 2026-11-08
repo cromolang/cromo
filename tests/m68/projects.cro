@@ -1,0 +1,78 @@
+// The executables of cromo.mod (D517): in the folder of a project, cromo build without
+// a file builds them all, cromo run runs one by its name, and cromo.mod with errors
+// has them with their lines. The project is written by the test in tests/out. On
+// Windows only: the cromo of the tests is the one of Windows.
+// target: windows
+// program-env: CROMO={cromo}
+// program-env: WORK={dir}/../out/m68_project
+// expect-output: built: 0, server.exe true, client.exe true
+// expect-output: == server == 7
+// expect-output: run client: 0, == client == 7
+// expect-output: run: 2, write which one
+// expect-output: -o: 2, named after their lines
+// expect-output: nobody: 2, cromo.mod has the executables server and client
+// expect-output: errors: 2, 4 lines
+import std.fs
+import std.os
+import std.process
+
+// cromo with its arguments, in the folder of the project: cmd changes the folder.
+process.Output cromo(string work, string args) {
+    string command = os.env("CROMO").replace("/", "\\")
+    ret process.run("cmd", ["/c", "cd /d " + work.replace("/", "\\") + " && " + command + " " + args])
+}
+
+// `part` when a line of the errors contains it, otherwise all the errors.
+string said(process.Output result, string part) {
+    for (string line in result.err.split("\n")) {
+        if (line.contains(part)) {
+            ret part
+        }
+    }
+    ret result.err.trim()
+}
+
+i32 main() {
+    string work = os.env("WORK").replace("\\", "/")
+    fs.removeAll(work)
+    fs.createFolders(work + "/geometry")
+    fs.createFolders(work + "/cmd")
+    fs.writeText(work + "/cromo.mod", "module example.com/project\n\nbin server cmd/server.cro  // the first\nbin client cmd/client.cro\n")
+    fs.writeText(work + "/geometry/point.cro", "public struct Point {\n    public f64 x\n    public f64 y\n}\n")
+    fs.writeText(work + "/geometry/distance.cro",
+        "public f64 manhattan(Point a, Point b) {\n    ret positive(a.x - b.x) + positive(a.y - b.y)\n}\n\nf64 positive(f64 v) {\n    ret v < 0.0 ? -v : v\n}\n")
+    for (string name in ["server", "client"]) {
+        string main = "import geometry\n\ni32 main() {\n    Point a\n    Point b\n    b.x = 3.0\n    b.y = -4.0\n    println(\"== " + name +
+            " == {}\", manhattan(a, b))\n    ret 0\n}\n"
+        fs.writeText(work + "/cmd/" + name + ".cro", main)
+    }
+
+    process.Output built = cromo(work, "build")
+    bool server = fs.isFile(work + "/server.exe")
+    bool client = fs.isFile(work + "/client.exe")
+    println("built: {}, server.exe {}, client.exe {}{}", built.code, server, client, built.err.trim())
+    if (server) {
+        print("{}", process.run(work + "/server.exe", []).out)
+    }
+    process.Output one = cromo(work, "run client")
+    println("run client: {}, {}{}", one.code, one.out.trim(), one.err.trim())
+    process.Output which = cromo(work, "run")
+    println("run: {}, {}", which.code, said(which, "write which one"))
+    process.Output named = cromo(work, "build -o x.exe")
+    println("-o: {}, {}", named.code, said(named, "named after their lines"))
+    process.Output nobody = cromo(work, "build nobody")
+    println("nobody: {}, {}", nobody.code, said(nobody, "cromo.mod has the executables server and client"))
+
+    // without module, a bin twice, one without its file, and require
+    fs.writeText(work + "/cromo.mod", "bin server cmd/server.cro\nbin server cmd/none.cro\nrequire x y\n")
+    process.Output wrong = cromo(work, "build")
+    i64 lines = 0
+    for (string line in wrong.err.split("\n")) {
+        if (line.startsWith("cromo.mod:")) {
+            lines++
+        }
+    }
+    println("errors: {}, {} lines", wrong.code, lines)
+    fs.removeAll(work)
+    ret 0
+}

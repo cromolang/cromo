@@ -515,7 +515,8 @@ i32 main() {
 ```
 
 - There is no preprocessor and there are no header files.
-- A file is a module; a folder is a module that contains the modules of its files. `import a.b` corresponds to `a/b.cro`, or to the folder `a/b`, starting from the folder of the main file (D130).
+- A file is a module; a folder is one module made of its files, which share all their names, also the private ones, while each writes its own imports (D515). `import a.b` corresponds to `a/b.cro`, or to the folder `a/b`, starting from the folder of the main file (D130), or from that of `cromo.mod`, looked for in the folders above it (D516).
+- A project lists its executables in `cromo.mod`, `bin server cmd/server.cro`: `cromo build` without a file builds them all, `cromo run server` runs one (D517). Its libraries are modules, compiled into each executable that imports them.
 - Everything is private to the module, except what is marked `public`: also the fields, the methods and the constructor of a struct (D132).
 - The public names of an imported module are used directly. The module in front, with the last name of its path, is needed only when two imported modules give the same name; the names of the module itself come first (D126).
 - The imports come at the top of the file. They are not transitive, and two modules can import each other (D131).
@@ -990,7 +991,7 @@ FAIL  areaOfTheUnit
 
 *Decided, not implemented yet: see the milestones in [compiler.md](compiler.md).*
 
-A package is a Git repository, named by its URL, and a version is a tag (D376). The dependencies of a project are lines of `cromo.mod`, next to `main.cro` (D377, D384):
+A package is a Git repository, named by its URL, and a version is a tag (D376). The dependencies of a project are lines of `cromo.mod`, at the top of the project (D377, D384, D516):
 
 ```
 // cromo.mod

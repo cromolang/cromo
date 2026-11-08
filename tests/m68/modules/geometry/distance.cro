@@ -1,0 +1,5 @@
+// Point and positive come from the other files of the folder, positive is private to
+// it (D515).
+public f64 manhattan(Point a, Point b) {
+    ret positive(a.x - b.x) + positive(a.y - b.y)
+}

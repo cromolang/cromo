@@ -316,6 +316,7 @@ The tag of an enum is the value of its case, which is its position unless it is 
 - **The installation (D237):** `cromo` reads the library and the runtime from `lib/`: next to its folder `bin/` in an archive, inside its folder in a build, where CMake places them (`build/lib`): `core.cro`, `std/`, `windows/cromo_rt.lib`, `linux/libcromo_rt.a` and `linux_arm64/libcromo_rt.a` (P24). A file of the library is one under that folder (`isLibraryFile`); in the messages of a program it is named `cromo:std/fs.cro`, without the folder where `cromo` is installed.
 - **The archives (D285–D287):** `tools/package.ps1` makes them in `dist/`, with the layout of the site: `package/win_x86_64-<version>.zip` and `package/linux_x86_64-<version>.tar.gz`, each with `bin/`, `lib/` and `extension/` at its root; `release/<version>` and `latest`, the manifest with the SHA-256 of the archives; and, with `-Key`, their signatures `.sig`, made by `tools/sign.cro`, a program in Cromo that makes the keys and signs with Ed25519. The `.tar.gz` is made in WSL, for the permissions of `bin/cromo`, whose symbols are stripped.
 - **Tests with `cromo` for Linux:** `tools/cromo-wsl.cmd` runs it in WSL with the paths of Windows converted, so that `tests\run-tests.ps1 -Cromo tools\cromo-wsl.cmd -Flags '--target linux'` runs the tests with it.
+- **The projects (D515-D517, P68):** `Loader` in `src/loader.cpp` takes the root of the imports from `projectFolder`, the first folder with `cromo.mod` from that of the main file up; a folder imported is loaded as one module, its first file by name holding the names and the others parts of it, as the files of a system. `loadFile` finds a file already loaded under another module name, a file of a folder imported by itself too. `readProject` in `src/main.cpp` reads the lines of `cromo.mod` when a command has no file or has the name of an executable, and `main` builds or tests each one with the same options. The pilot repeats the root and the folders in `compiler/loader.cro`.
 - **Symbol names:** D134. The entry point is called `cromo_start`, and the C names that start with `cromo_` are reserved for the runtime.
 
 ## 5. Runtime (D19)
@@ -565,6 +566,7 @@ Each milestone lists the decisions still open that are needed **before** writing
 | **M65** | `std.gui`: the splits, whose line the user can move, and the letters spaced in the rich text | none: D510-D512 |
 | **M66** | The processor of a program: `--cpu x86-64-v3` and the others, checked at the start | none: D513 |
 | **M67** | `std.gui`: submenus inside submenus | none: D514 |
+| **M68** | The projects: the files of a folder as one module, the imports from the folder of `cromo.mod`, its executables built together | none: D515-D517 |
 | **Later** | Packages: `cromo.mod`, `cromo.sum`, `cromo get`, the archives of the tags over HTTPS, a reader of tar (D376–D391) | none: D376–D391 |
 | **Last** | Compiler written in Cromo that compiles itself and makes the same archives, when the language is mature (§2, D147, D290, D291) | |
 

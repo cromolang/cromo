@@ -6,14 +6,14 @@
 cromo <command> [options] [file.cro] [-- arguments]
 ```
 
-Se non indichi un file, i comandi usano il `main.cro` della cartella corrente.
+Se non indichi un file, i comandi usano gli eseguibili del `cromo.mod` della cartella corrente, oppure il suo `main.cro` (capitolo 11).
 
 ## Comandi
 
 | Comando | Cosa fa |
 |---|---|
-| `cromo build [file.cro]` | compila il programma in un eseguibile |
-| `cromo run [file.cro] [-- arguments]` | compila il programma in una cartella temporanea, lo esegue con gli argomenti che seguono `--` e termina con il suo codice di uscita |
+| `cromo build [file.cro \| nome]` | compila il programma in un eseguibile; senza file, ogni eseguibile di `cromo.mod`; con un nome, quello |
+| `cromo run [file.cro \| nome] [-- arguments]` | compila il programma in una cartella temporanea, lo esegue con gli argomenti che seguono `--` e termina con il suo codice di uscita |
 | `cromo run --target android [file.cro]` | crea l'APK, lo installa sul telefono o sull'emulatore che `adb` vede, avvia l'app e ne mostra l'output finché non termina |
 | `cromo test [file.cro] [names]` | esegue le funzioni `[[test]]` del programma e dei suoi moduli; i nomi selezionano i test che li contengono |
 | `cromo fmt [--check] [files and folders \| -]` | formatta il codice, di default quello della cartella corrente e delle sue sottocartelle; `--check` si limita a elencare i file da formattare; `-` formatta lo standard input |

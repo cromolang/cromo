@@ -24,6 +24,7 @@
 #include <iterator>
 #include <map>
 #include <set>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <vector>
@@ -49,11 +50,14 @@ void printUsage(FILE* out) {
         "       cromo fmt [--check] [files and folders | -]\n"
         "\n"
         "commands (D151):\n"
-        "  build      compiles file.cro, or main.cro of this folder, into an executable\n"
+        "  build      compiles file.cro into an executable; without a file, the executables\n"
+        "             of the cromo.mod of this folder, or its main.cro; with a name, that\n"
+        "             executable of cromo.mod\n"
         "  test       runs the [[test]] functions of file.cro, or of main.cro of this folder, and\n"
         "             of the files name_test.cro of its modules; the names after the file choose\n"
         "             the tests that contain them\n"
-        "  run        compiles and runs the program; its arguments come after --\n"
+        "  run        compiles and runs the program, or an executable of cromo.mod by its name;\n"
+        "             its arguments come after --\n"
         "  fmt        formats the .cro files, by default of this folder and its subfolders;\n"
         "             --check only lists the ones to format, - formats the standard input\n"
         "  lsp        the language server for editors, on the standard input and output\n"
@@ -80,6 +84,12 @@ void printUsage(FILE* out) {
 
 namespace fs = std::filesystem;
 
+// D517: an executable of cromo.mod, its name and its main file.
+struct Executable {
+    std::string name;
+    std::string path;
+};
+
 // The options of build and run, and the program to compile.
 struct Compilation {
     std::string inputPath;
@@ -94,7 +104,88 @@ struct Compilation {
     std::string androidPackage;  // of [[android(...)]] on main (D455), then that of the APK
     std::string androidName;
     bool network = false;  // the program uses std.net: the permission INTERNET (D463)
+    std::vector<Executable> executables;  // D517: those of cromo.mod, without a file
 };
+
+// D517: a name of cromo.mod, of letters, digits and the characters of `others`.
+bool projectName(const std::string& name, const char* others) {
+    if (name.empty()) return false;
+    for (char c : name) {
+        if (!std::isalnum(static_cast<unsigned char>(c)) && !std::strchr(others, c)) return false;
+    }
+    return true;
+}
+
+// D516, D517: the executables of the cromo.mod of this folder (P68). False, after
+// printing the errors with their lines, when it is wrong.
+bool readProject(std::vector<Executable>& executables) {
+    std::string text;
+    if (!cromo::readSourceFile("cromo.mod", text)) {
+        std::fputs("cromo: cannot read cromo.mod\n", stderr);
+        return false;
+    }
+    bool good = true;
+    bool first = true;
+    int number = 0;
+    std::istringstream lines(text);
+    std::string line;
+    while (std::getline(lines, line)) {
+        ++number;
+        size_t comment = line.find("//");
+        if (comment != std::string::npos) line.resize(comment);
+        std::istringstream split(line);
+        std::vector<std::string> words;
+        for (std::string word; split >> word;) words.push_back(word);
+        if (words.empty()) continue;
+        auto fail = [&](const std::string& message) {
+            std::fprintf(stderr, "cromo.mod:%d: error: %s\n", number, message.c_str());
+            good = false;
+        };
+        bool wasFirst = first;
+        first = false;
+        if (words[0] == "module") {
+            if (!wasFirst) {
+                fail("the line module comes first, once");
+            } else if (words.size() != 2 || !projectName(words[1], "._-/")) {
+                fail("module takes the name of the project, as module example.com/app");
+            }
+            continue;
+        }
+        if (wasFirst) fail("cromo.mod starts with the line module, with the name of the project, as module example.com/app");
+        if (words[0] == "bin") {
+            if (words.size() != 3 || !projectName(words[1], "_-") || fs::path(words[2]).extension() != ".cro") {
+                fail("bin takes the name of an executable and its main file, as bin server cmd/server.cro");
+                continue;
+            }
+            std::error_code ec;
+            if (!fs::is_regular_file(words[2], ec)) fail("there is no file " + words[2]);
+            for (const Executable& other : executables) {
+                if (other.name == words[1]) fail("another executable is called " + words[1]);
+            }
+            executables.push_back({words[1], words[2]});
+        } else if (words[0] == "require") {
+            fail("the packages are not available yet: require comes later");
+        } else {
+            fail("unknown line " + words[0] + ": cromo.mod has the lines module and bin");
+        }
+    }
+    if (first) {
+        std::fputs("cromo.mod:1: error: cromo.mod starts with the line module, with the name of the project, as module "
+                   "example.com/app\n",
+                   stderr);
+        good = false;
+    }
+    return good;
+}
+
+// "server, client and tool": the names of the executables.
+std::string executableNames(const std::vector<Executable>& executables) {
+    std::string text;
+    for (size_t i = 0; i < executables.size(); ++i) {
+        text += (i == 0 ? "" : i + 1 == executables.size() ? " and " : ", ") + executables[i].name;
+    }
+    return text;
+}
 
 // Compiles the program and writes the executable. Returns the exit code of cromo.
 int build(Compilation& compilation) {
@@ -289,9 +380,48 @@ bool readOptions(const std::vector<std::string>& args, size_t first, size_t last
         }
         return true;
     }
+    const char* extension = compilation.apk ? ".apk" : windows ? ".exe" : "";
+    std::error_code ec;
+    if (compilation.inputPath.empty() && fs::is_regular_file("cromo.mod", ec)) {
+        // D517: the executables of cromo.mod, all of them, or the only one for run.
+        if (!readProject(compilation.executables)) return false;
+        if (!compilation.executables.empty() && !options.outputPath.empty()) {
+            std::fputs("cromo: -o names one executable, and those of cromo.mod are named after their lines\n", stderr);
+            return false;
+        }
+        if (run && compilation.executables.size() > 1) {
+            std::fprintf(stderr, "cromo: cromo.mod has the executables %s: write which one, as cromo run %s\n",
+                         executableNames(compilation.executables).c_str(), compilation.executables[0].name.c_str());
+            return false;
+        }
+        if (run && compilation.executables.size() == 1) {
+            compilation.inputPath = compilation.executables[0].path;
+            options.outputPath = compilation.executables[0].name + extension;
+            compilation.executables.clear();
+        }
+        if (!compilation.executables.empty()) return true;
+    } else if (!compilation.inputPath.empty() && fs::path(compilation.inputPath).extension().empty() &&
+               !fs::exists(compilation.inputPath, ec)) {
+        // D517: an executable of cromo.mod by its name.
+        std::vector<Executable> executables;
+        if (fs::is_regular_file("cromo.mod", ec) && !readProject(executables)) return false;
+        auto found = std::find_if(executables.begin(), executables.end(),
+                                  [&](const Executable& e) { return e.name == compilation.inputPath; });
+        if (found == executables.end()) {
+            if (executables.empty()) {
+                std::fprintf(stderr, "cromo: there is no file %s, and no cromo.mod here with an executable of that name\n",
+                             compilation.inputPath.c_str());
+            } else {
+                std::fprintf(stderr, "cromo: there is no file %s, and cromo.mod has the executables %s\n",
+                             compilation.inputPath.c_str(), executableNames(executables).c_str());
+            }
+            return false;
+        }
+        if (options.outputPath.empty()) options.outputPath = found->name + extension;
+        compilation.inputPath = found->path;
+    }
     if (compilation.inputPath.empty()) {
         // D155: main.cro of this folder, and the executable named after the folder.
-        std::error_code ec;
         if (!fs::is_regular_file("main.cro", ec)) {
             std::fprintf(stderr,
                          "cromo: there is no main.cro in this folder: write the file to compile, as cromo %s hello.cro "
@@ -306,7 +436,6 @@ bool readOptions(const std::vector<std::string>& args, size_t first, size_t last
         }
     }
     if (options.outputPath.empty()) {
-        const char* extension = compilation.apk ? ".apk" : windows ? ".exe" : "";
         options.outputPath = fs::path(compilation.inputPath).replace_extension(extension).string();
     }
     return true;
@@ -1025,7 +1154,32 @@ int main(int argc, char** argv) {
     Compilation compilation;
     compilation.codegen.tests = command == "test";
     if (!readOptions(args, 2, separator, isRun, compilation)) return 2;
-    if (compilation.codegen.tests) return testCommand(compilation);
+    // D517: each executable of cromo.mod, with the same options.
+    std::vector<Executable> executables = std::move(compilation.executables);
+    compilation.executables.clear();
+    if (compilation.codegen.tests) {
+        if (executables.empty()) return testCommand(compilation);
+        int result = 0;
+        for (const Executable& executable : executables) {
+            Compilation one = compilation;
+            one.inputPath = executable.path;
+            std::printf("%s (%s)\n", executable.name.c_str(), executable.path.c_str());
+            std::fflush(stdout);
+            if (testCommand(one) != 0) result = 1;
+        }
+        return result;
+    }
+    if (!isRun && !executables.empty()) {
+        for (const Executable& executable : executables) {
+            Compilation one = compilation;
+            one.inputPath = executable.path;
+            one.options.outputPath =
+                executable.name + (one.apk ? ".apk" : one.options.target == cromo::Target::Windows ? ".exe" : "");
+            int code = one.apk ? buildApk(one) : build(one);
+            if (code != 0) return code;
+        }
+        return 0;
+    }
     if (!isRun) return compilation.apk ? buildApk(compilation) : build(compilation);
     if (compilation.apk) {
         if (separator != args.size()) {
