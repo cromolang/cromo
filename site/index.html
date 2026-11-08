@@ -218,7 +218,7 @@ i32 main() {
       <div>
         <div class="kicker">Windows and apps</div>
         <h2>One program, <span class="chrome">desktop and phone</span></h2>
-        <p class="section-lead" style="margin-bottom:0"><code>std.gui</code> draws its windows and components itself, with SDL3 inside the program: the same look on Windows and on Linux, light or dark. Compiled with <code>--target android</code>, the same program is an app.</p>
+        <p class="section-lead" style="margin-bottom:0"><code>std.gui</code> draws its windows and components itself, inside the program: the same look on Windows and on Linux, light or dark. Compiled with <code>--target android</code>, the same program is an app.</p>
         <ul class="modes">
           <li><b>std.gui</b><span>Buttons, text boxes, lists that scroll, dialogs, app bars and the icons of Lucide, with anchors that fit them to every size.</span></li>
           <li><b>android</b><span><code>cromo build --target android</code> writes and signs the APK by itself, with no Android SDK and no Java; <code>cromo run --target android</code> starts it on the phone.</span></li>
@@ -513,7 +513,7 @@ cromo @VERSION@ (LLVM 23.1.4)</pre>
             <li><b>M32</b><span>Sema in Cromo begins: the loader and the names of the modules</span></li>
             <li><b>M33</b><span><code>=</code> copies, as in C++; <code>move</code> hands over for free</span></li>
             <li><b>M35</b><span>Windows programs with an icon, and without a console</span></li>
-            <li><b>M36–41</b><span><code>std.gui</code>: windows and components on SDL3, text with Inter, the icons of Lucide</span></li>
+            <li><b>M36–41</b><span><code>std.gui</code>: windows and components, text with Inter, the icons of Lucide</span></li>
             <li><b>M42–44</b><span>Android: the APK written by <code>cromo</code>, <code>std.gui</code> on a phone</span></li>
             <li><b>M45–47</b><span>Lists that scroll, dialogs, snackbars; <code>cromo run</code> on the phone</span></li>
             <li><b>M48–49</b><span><code>embed</code> for the files of a program; the keyboard on the screen</span></li>

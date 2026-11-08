@@ -1,6 +1,6 @@
 # Windows and apps
 
-`std.gui` makes windows with their components: labels, buttons, text boxes, lists, dialogs. It draws them itself, with SDL3 inside the program, so a window looks the same on Windows and on Linux: flat and quiet, with an ochre accent, light or dark, compact as a desktop application. The same program, compiled with `--target android`, is an app for Android.
+`std.gui` makes windows with their components: labels, buttons, text boxes, lists, dialogs. It draws them itself, inside the program, so a window looks the same on Windows and on Linux: flat and quiet, with an ochre accent, light or dark, compact as a desktop application. The same program, compiled with `--target android`, is an app for Android.
 
 > How `std.gui` works is decided: components as handles, handlers on the thread of the window, positions in pixels with anchors. The names of the components and of their methods are still a draft, and can change before version 1.0.
 

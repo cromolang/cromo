@@ -1,6 +1,6 @@
 # Finestre e app
 
-`std.gui` crea finestre con i loro componenti: etichette, pulsanti, caselle di testo, liste, dialoghi. Li disegna da sé, con SDL3 dentro il programma, perciò una finestra appare uguale su Windows e su Linux: piatta e sobria, con un accento ocra, chiara o scura, compatta come un'applicazione desktop. Lo stesso programma, compilato con `--target android`, è un'app per Android.
+`std.gui` crea finestre con i loro componenti: etichette, pulsanti, caselle di testo, liste, dialoghi. Li disegna da sé, dentro il programma, perciò una finestra appare uguale su Windows e su Linux: piatta e sobria, con un accento ocra, chiara o scura, compatta come un'applicazione desktop. Lo stesso programma, compilato con `--target android`, è un'app per Android.
 
 > Il funzionamento di `std.gui` è deciso: componenti come handle, gestori sul thread della finestra, posizioni in pixel con le ancore. I nomi dei componenti e dei loro metodi sono ancora una bozza, e possono cambiare prima della versione 1.0.
 
