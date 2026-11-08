@@ -79,7 +79,7 @@ From the strongest to the weakest, as in [Numbers and operators](operators.md):
 - `c ? a : b` is the weakest: `a || b ? x : y` is `(a || b) ? x : y`, and `a ? b : c ? d : e` is `a ? b : (c ? d : e)`. The condition is a `bool`, and only the branch chosen is computed.
 - `!` on a `bool` is the logical not, on an integer the inversion of its bits; there is no `~` operator.
 - `%` works only on integers; the comparisons do not chain, `a < b < c` is an error.
-- In debug builds an overflow, a division by zero and a shift beyond the width of the type are panics; see [Numbers and operators](operators.md).
+- In debug builds an overflow and a shift beyond the width of the type are panics, and an integer division by zero in every build; see [Numbers and operators](operators.md).
 - `ref x` and `move x` before an argument say how it is passed: they are not operators, see [Ownership](ownership.md).
 
 The assignments are statements, never parts of an expression, so `if (a = b)` is not Cromo:

@@ -87,7 +87,7 @@ By default `cromo` builds a **debug** executable: it is optimized, but it checks
 cromo build --release hello.cro
 ```
 
-The executable runs on any machine with the same system, without installing anything: on Windows it needs only Windows, and on Linux it is a static executable that runs on any Linux x64. The exception is a program for Linux whose C libraries call the C library of the system, as every program with windows: `cromo` links it with glibc, and it needs glibc 2.29 or later where it runs, as `cromo` itself.
+The executable runs on any machine with the same system, without installing anything: on Windows it needs only Windows, and on Linux it is a static executable that runs on any Linux x64. The exception is a program for Linux that uses C libraries which call the C library of the system, as every program with windows: `cromo` links it with glibc, and it needs glibc 2.29 or later where it runs, as `cromo` itself.
 
 `cromo` can also write an executable for the other system:
 

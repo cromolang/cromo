@@ -63,7 +63,7 @@ aligned to 16: true
 
 - `addr(n)` makes an address from an `i64` or a `u64`, and `addr(0)` is the null address.
 - `i64(p)` and `u64(p)` give the number of an address, for alignments and for the values that the system gives as numbers.
-- No other type converts to or from `addr`; there is no arithmetic on it, but `offset`, shown below; it cannot be printed, but as a number.
+- No other type converts to or from `addr`; there is no arithmetic on it, except `offset`, shown below; it is printed only as a number, `i64(p)`.
 
 ```cromo error
 import unsafe

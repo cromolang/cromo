@@ -340,7 +340,7 @@ A `File` has a position, from 0, where the next read or write starts:
 - `read(count)` reads up to `count` bytes from the position, and `write(bytes)` writes there; both move the position after the bytes. `position()` gives it and `seek(position)` moves it.
 - `readAt(position, count)` and `writeAt(position, bytes)` work at a position of their own, and leave the position of the file where it is: the way to reach a record of an index.
 - A read gives fewer bytes than asked at the end of the file, and none after it. A write beyond the end makes the file grow, with zeros between. In `Append` every write goes at the end, also with `writeAt`.
-- `size()` is the size of the file now; `sync()` sends what was written to the disk before it returns, so that the data survive a fall of the system.
+- `size()` is the size of the file now; `sync()` sends what was written to the disk before it returns, so that the data survive a crash of the system.
 
 ```cromo
 import std.fs
@@ -367,7 +367,7 @@ size 11
 []
 ```
 
-What the system refuses is an exception, with the path, as for the other functions of `std.fs`: a file that cannot be opened, a write to a file opened to read, a read of one opened to append. A negative position or count is a mistake of the program, and a panic: `the position in a file is from 0, found -1`.
+What the system refuses is an exception, with the path, as for the other functions of `std.fs`: a file that cannot be opened, a write to a file opened to read, a read from a file opened to append. A negative position or count is a mistake of the program, and a panic: `the position in a file is from 0, found -1`.
 
 ```cromo
 import std.fs

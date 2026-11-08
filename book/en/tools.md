@@ -152,7 +152,7 @@ The extension has two settings:
 
 | Setting | Meaning |
 |---|---|
-| `cromo.path` | the `cromo` executable that runs the language server. Empty, the default: `build\cromo.exe` in a folder of the workspace, if there is one, else `cromo` from the `PATH` |
+| `cromo.path` | the `cromo` executable that runs the language server. When it is empty, the default: `build\cromo.exe` in a folder of the workspace, if there is one, else `cromo` from the `PATH` |
 | `cromo.trace` | writes every message between Visual Studio Code and `cromo lsp` in the *Cromo* panel of the output, to find a problem |
 
 If `cromo` cannot start, a message says so, with a button that opens the setting. The files of Cromo are formatted when they are saved, by default: `editor.formatOnSave` can be turned off for `[cromo]` in the settings.
@@ -287,7 +287,7 @@ with `t`, `to` and the block as code, and *new* in italics. Over `Fahrenheit` it
 
 ## Debugging
 
-A program built without `--release` carries the information that a debugger needs: the functions, the lines, the variables and their types. On Windows it is a PDB file next to the executable, `hello.pdb` next to `hello.exe`, which Visual Studio, WinDbg and the C/C++ extension of Visual Studio Code read; on Linux it is DWARF, inside the executable, for gdb and lldb. The files are named with their full path, so the debugger finds them from any folder. A program built with `--release` has none: it keeps its stack traces, but a debugger sees only the machine code.
+A program built without `--release` carries the information that a debugger needs: the functions, the lines, the variables and their types. On Windows it is a PDB file next to the executable, `hello.pdb` next to `hello.exe`, which Visual Studio, WinDbg and the C/C++ extension of Visual Studio Code read; on Linux it is DWARF, inside the executable, for gdb and lldb. The debug information names the source files with their full path, so the debugger finds them from any folder. A program built with `--release` has none: it keeps its stack traces, but a debugger sees only the machine code.
 
 `cromo run` deletes the executable when the program ends: to debug, build it with `cromo build`, and run the executable in the debugger.
 

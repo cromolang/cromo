@@ -166,7 +166,7 @@ cannot encode JSON: nan is not a number of JSON
 
 `json.decode<T>` starts from the default value of `T`, then fills it with what the text has:
 
-- A member that is missing leaves the field as the default value of the struct makes it, with its initial value.
+- A member that is missing leaves the field with the value it has in the default value of the struct: its initial value, if it has one.
 - A member that is `null` gives the default value of the type of the field: 0, `""`, `false`, an empty list, the first case of an enum. The same holds for the elements of a list and the values of a map.
 - A member without a field is ignored.
 - Of a member written twice, the last one wins.

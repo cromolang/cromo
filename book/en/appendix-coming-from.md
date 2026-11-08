@@ -33,7 +33,7 @@ Cromo borrows from each of these languages. This appendix lists, for each, what 
 
 ## From Go
 
-**Familiar:** one tool that builds, runs, tests and formats; executables that need nothing installed and cross-compile; lightweight tasks that block without `async`; channels; a standard library for networks and HTTP; the dialect behind `import unsafe`; and packages, which come later.
+**Familiar:** one tool that builds, runs, tests and formats; executables that need nothing installed and cross-compile; lightweight tasks that block without `async`; channels; a standard library for networks and HTTP; the dialect behind `import unsafe`; and packages, which are not available yet.
 
 On Linux the executables are static, unless the C libraries of the program call the C library of the system: then `cromo` links them with glibc, as Go does with cgo, and they need glibc 2.29 or later ([Calling C](c-interop.md)). Every program with a window is in this case.
 

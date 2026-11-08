@@ -119,7 +119,7 @@ cromo test main.cro Three Two     # meanOfThree and meanOfTwo
 cromo test Three                  # the same, with main.cro of this folder
 ```
 
-A name that ends with `.cro` is the file of the program; the others choose the tests. When no test contains any of the names, `cromo test` writes `no test has those names` and ends with 1. A program without tests writes `no tests: write them as [[test]] void name()` and ends with 0.
+A name that ends with `.cro` is the file of the program; the others choose the tests. When the name of no test contains any of the names given, `cromo test` writes `no test has those names` and ends with 1. A program without tests writes `no tests: write them as [[test]] void name()` and ends with 0.
 
 A program does not need `main` to be tested: `cromo test shapes.cro` runs the tests of a file that has none, as a module tested alone.
 

@@ -221,7 +221,7 @@ IPv4 and IPv6 work on both systems. A name can have several addresses: `localhos
 Where the addresses come from depends on the system:
 
 - On **Windows**, the resolver of the system answers, the one that every program uses.
-- On **Linux**, a program of Cromo does not use the C library, and a resolver written in Cromo reads `/etc/hosts` first; then it asks the servers of `/etc/resolv.conf` in their order, with UDP, first the addresses of IPv4 and then those of IPv6, waiting two seconds for each server, and `127.0.0.1` when the file names none. It does not use the `search` domains of the file for short names yet, nor TCP for the answers that do not fit in UDP.
+- On **Linux**, a program of Cromo does not use the C library, and a resolver written in Cromo reads `/etc/hosts` first; then it asks the servers of `/etc/resolv.conf` in their order, with UDP, first the addresses of IPv4 and then those of IPv6, waiting two seconds for each server, and asks `127.0.0.1` when the file names no server. It does not use the `search` domains of the file for short names yet, nor TCP for the answers that do not fit in UDP.
 
 ## UDP
 

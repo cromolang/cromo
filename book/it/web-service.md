@@ -133,7 +133,7 @@ import std.thread
 #     string title
 # }
 #
-# // Le attività del servizio, tenute in memoria.
+# // The todos of the service, kept in memory.
 # struct Store {
 #     list<Todo> items
 #     i64 next = 1
@@ -204,7 +204,7 @@ i32 main() {
     })
     service.start()
 
-    // Un client che prova il servizio.
+    // A client that tries the service.
     http.Client client
     http.Response created = client.post(base + "/todos", "{\"title\": \"write the guide\"}", "application/json")
     println("{} {}", created.status, created.text())

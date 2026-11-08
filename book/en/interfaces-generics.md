@@ -98,7 +98,7 @@ error: an interface cannot extend another interface
 
 Code shared by several types goes in a function that takes the interface, as `describe` above; a type that needs several interfaces implements them all, as shown below.
 
-The methods of an interface are public with it. In another module, a method that implements an interface needs no `public` of its own, because it can be called through the interface anyway: [Modules and projects](modules.md) explains `public`.
+The methods of an interface are public when the interface is. In another module, a method that implements an interface needs no `public` of its own, because it can be called through the interface anyway: [Modules and projects](modules.md) explains `public`.
 
 ### Implementing an interface exactly
 
@@ -876,7 +876,7 @@ second false
 Pair { first: "answer", second: 42 }
 ```
 
-A generic struct is always written with its type arguments, also when its constructor is called: `Stack<string>`, `Pair<string, i64>("answer", 42)`. They are not deduced, as those of a function: `Pair("answer", 42)` is the error `Pair is generic: write its type arguments, Pair<...>(...)`, and `Pair<string>` the error `'Pair' takes 2 type arguments, but 1 were given`.
+A generic struct is always written with its type arguments, also when its constructor is called: `Stack<string>`, `Pair<string, i64>("answer", 42)`. Unlike those of a function, they are not deduced: `Pair("answer", 42)` is the error `Pair is generic: write its type arguments, Pair<...>(...)`, and `Pair<string>` the error `'Pair' takes 2 type arguments, but 1 were given`.
 
 Its type parameters can have constraints, and the struct can implement interfaces, as any other struct:
 

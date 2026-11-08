@@ -24,7 +24,7 @@ Se conosci già il C++, Go o Rust, l'[Appendice C](appendix-coming-from.md) rias
 
 ## Come usare questa guida
 
-I capitoli sono pensati per essere letti in ordine: ognuno si basa sui precedenti. Il capitolo 2 è un programma piccolo ma completo, scritto prima di spiegarne i dettagli; i capitoli dal 3 al 12 presentano il linguaggio, quelli dal 13 al 16 la libreria standard; il capitolo 17 mostra come chiamare il C, e il capitolo 18 mette tutto insieme in un servizio web.
+I capitoli sono pensati per essere letti in ordine: ognuno si basa sui precedenti. [Un primo programma](first-program.md) è piccolo ma completo, scritto prima di spiegarne i dettagli; i capitoli da [Concetti comuni](common-concepts.md) a [Test](tests.md) presentano il linguaggio, ciascuno trattando per intero il proprio argomento, così che si possano anche consultare in seguito; quelli da [Thread, task e canali](concurrency.md) a [Finestre e app](gui.md) la libreria standard; [Chiamare il C](c-interop.md) e [Il dialetto unsafe](unsafe.md) scendono fino alla macchina, [Strumenti](tools.md) presenta il formattatore, l'editor e il debugger, e il [progetto finale](web-service.md) mette tutto insieme in un servizio web. Dopo le appendici, le pagine della libreria elencano ogni modulo con tutte le sue funzioni.
 
 Ogni programma di questa guida viene compilato ed eseguito quando si genera la guida, e il suo output è quello riportato subito sotto:
 

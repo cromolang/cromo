@@ -696,7 +696,7 @@ i32 main() {
 39.60 28.80 true
 ```
 
-The types are a number, `x` and how many, for 128 or 256 bits:
+The name of a type is the type of its numbers, `x` and how many they are, for 128 or 256 bits:
 
 | Numbers | 128 bits | 256 bits |
 |---|---|---|

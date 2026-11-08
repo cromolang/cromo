@@ -25,7 +25,7 @@ The default value of every number is 0.
 
 ## Literals
 
-An integer literal is written in decimal, in hexadecimal after `0x`, or in binary after `0b`, with `_` to separate the digits: `1_000_000`, `0xFF`, `0b1010`, `0xFFFF_FFFF`. A zero in front does not make it octal, as in C: `017` is seventeen. There are no suffixes as `5u` or `5L`.
+An integer literal is written in decimal, in hexadecimal after `0x`, or in binary after `0b`, with `_` to separate the digits: `1_000_000`, `0xFF`, `0b1010`, `0xFFFF_FFFF`. A zero in front does not make it octal, unlike C: `017` is seventeen. There are no suffixes as `5u` or `5L`.
 
 A floating-point literal has a decimal point with digits on both sides, an exponent after `e`, or both: `3.14`, `1e-9`, `2.5e3`. `.5` and `5.` are not literals: write `0.5` and `5.0`. A negative number is a literal with `-` in front.
 
@@ -590,7 +590,7 @@ ff ff00000000
 
 `set & (set - 1)` clears the lowest bit at 1, so the loop visits the bits of the set one by one.
 
-The result of these functions depends on the width of the type, so an integer literal cannot be their value: its type would be a guess.
+The result of these functions depends on the width of the type, so an integer literal cannot be their argument: its type would be a guess.
 
 ```cromo error
 i32 main() {

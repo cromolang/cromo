@@ -20,12 +20,12 @@ import std.fs
 
 // ...
 #
-# // Una parola è fatta di lettere; i byte UTF-8 sopra 127 contano come lettere.
+# // A word is made of letters; the bytes of UTF-8 above 127 count as letters.
 # bool isLetter(u8 c) {
 #     ret (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c >= 128
 # }
 #
-# // Le parole di un testo, in minuscolo.
+# // The words of a text, in lower case.
 # list<string> words(string text) {
 #     list<string> found
 #     i64 start = -1
@@ -46,7 +46,7 @@ import std.fs
 #     i64 times
 # }
 #
-# // Prima le più frequenti; a parità di conteggio, in ordine alfabetico.
+# // The most frequent first; with the same count, in alphabetical order.
 # bool before(Count a, Count b) {
 #     if (a.times != b.times) {
 #         ret a.times > b.times
@@ -163,7 +163,7 @@ Tre parole del programma meritano attenzione, perché sono il cuore di Cromo:
 - `counts.add(move c)`: la struct si **sposta** nella lista. Dopo il `move`, `c` non si può più usare: il suo contenuto ora appartiene alla lista.
 - `c.word = word.copy()`: la stringa viene copiata, perché `word` appartiene ancora alla mappa. Anche `c.word = word` la copierebbe: `copy()` rende solo visibile la copia.
 
-Senza `ref`, un parametro è in sola lettura, come `text` in `words(string text)`: la funzione può leggere la stringa ma non cambiarla, e la stringa non viene copiata. Il capitolo 4 spiega queste regole, che sono il nucleo del linguaggio.
+Senza `ref`, un parametro è in sola lettura, come `text` in `words(string text)`: la funzione può leggere la stringa ma non cambiarla, e la stringa non viene copiata. [Possesso](ownership.md) spiega queste regole, che sono il nucleo del linguaggio.
 
 ### Mappe
 
@@ -181,7 +181,7 @@ Una `map` associa chiavi a valori, come una tabella hash. `seen[word]` legge o s
 println("{:>3}  {}", counts[i].times, counts[i].word)
 ```
 
-`{:>3}` stampa un valore allineato a destra su tre caratteri. I formati sono quelli di `std::format` del C++ e di Python: il capitolo 7 li elenca.
+`{:>3}` stampa un valore allineato a destra su tre caratteri. I formati sono quelli di `std::format` del C++ e di Python: [Formattare il testo](formatting.md) li elenca.
 
 ### Errori
 
@@ -197,7 +197,7 @@ uncaught exception: cannot read 'missing.txt': no such file or folder
     at main (words.cro:52)
 ```
 
-Il capitolo 8 mostra come catturare le eccezioni con `try` e `catch`.
+[Errori](errors.md) mostra come catturare le eccezioni con `try` e `catch`.
 
 ## Riepilogo
 

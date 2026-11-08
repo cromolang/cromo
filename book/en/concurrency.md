@@ -934,7 +934,7 @@ false 2
 receive from a closed, empty channel throws
 ```
 
-A sender may be waiting when the channel is closed. With capacity 0 it waits until a receiver has its value: if the channel is closed first, `send()` returns normally, and the value can still be received. A sender that waits on a full channel throws, as a `send()` after `close()`:
+A sender may be waiting when the channel is closed. With capacity 0 it waits until a receiver has its value: if the channel is closed first, `send()` returns normally, and the value can still be received. A `send()` that waits on a full channel throws when the channel is closed, as a `send()` after `close()`:
 
 ```cromo
 import std.thread
