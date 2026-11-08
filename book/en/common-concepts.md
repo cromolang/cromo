@@ -1,6 +1,6 @@
 # Common concepts
 
-This chapter presents what every language has: variables, types, functions, comments and control flow. A C or C++ programmer will recognize most of it; the differences are few, and they matter.
+This chapter presents what every language has: variables and constants, types, functions, comments, and the statements that choose and repeat. A C or C++ programmer will recognize most of it; the differences are few, and they matter. The numbers, with their operators and conversions, have the next chapter, [Numbers and operators](operators.md).
 
 ## Variables
 
@@ -23,6 +23,21 @@ i32 main() {
 
 There is no type inference: the type is written even when the value would say it. The code is longer by a few characters and easier to read, because the type of every variable is in front of you.
 
+The value is always given with `=`. The form of C++ with parentheses, `string name("Cromo")`, is not Cromo, and a struct is made the same way as the other values: `Counter c = Counter(5)`.
+
+```cromo error
+i32 main() {
+    string name("Cromo")
+    ret 0
+}
+```
+
+```output
+error: expected a newline at the end of the statement (one statement per line), found '('
+```
+
+`=` also gives a variable a new value, and `+=`, `-=` and the other compound assignments change it; `i++` and `i--` add and subtract one. They are statements on a line of their own, never parts of an expression: [Numbers and operators](operators.md) lists them all.
+
 ### Every variable has a value
 
 A variable declared without a value takes the **default value** of its type: 0 for numbers, `false` for `bool`, the empty string and the empty list.
@@ -44,86 +59,177 @@ i32 main() {
 
 There are no uninitialized variables in Cromo, and so no undefined behavior that comes from them.
 
-### Constants
+### One name, one variable
 
-Variables can change. `const` makes one immutable:
+A variable lives until the end of the block, between braces, where it is declared. Inside that block its name cannot be declared again, not even in an inner block: there is no shadowing, the name always means the same variable. The same holds for the parameters of a function.
+
+```cromo error
+i32 main() {
+    i32 count = 1
+    for (i32 i = 0; i < 3; i++) {
+        i32 count = i * 2
+        println("{}", count)
+    }
+    ret 0
+}
+```
+
+```output
+error: a variable named 'count' is already visible here (declared at line 2)
+```
+
+Once its block has ended, a name is free again: two loops one after the other can both declare `i32 i`, and two blocks side by side can declare the same name. Inside a method, a variable cannot have the name of a field of the struct either, as [Structs](structs.md) shows.
+
+## Constants
+
+Variables can change. `const` makes one immutable: it must be given its value where it is declared, and that value never changes. The value can come from any expression, also one computed while the program runs, as `final` in Java: a `const` is not necessarily known to the compiler.
+
+```cromo
+i64 square(i64 x) {
+    ret x * x
+}
+
+i32 main() {
+    i64 side = 12
+    const i64 area = square(side)
+    const list<string> days = ["Mon", "Tue", "Wed"]
+    println("{} {} {}", area, days.len(), days[1])
+    ret 0
+}
+```
+
+```output
+144 3 Tue
+```
+
+`const` is deep: a `const` list or string cannot be changed in any part, so only its methods that do not modify it can be called, and it cannot be passed to a function that modifies it, with `ref`.
 
 ```cromo error
 i32 main() {
     const f64 PI = 3.14159
+    const list<i32> primes = [2, 3, 5]
     PI = 3.0
+    primes.add(7)
     ret 0
 }
 ```
 
 ```output
-error: 'PI' is const
+error: 'PI' is const and cannot be modified
+error: cannot call 'add', which is not const
 ```
 
-A `const` must be given its value where it is declared.
+A `const` without a value is an error too: `const i32 n` alone has nothing to keep. A `const` can still be given away with `move`, because its value does not change, it only goes to another owner: [Ownership](ownership.md) explains it.
 
-Outside the functions, a module can declare constants too, as limits and tables of numbers. They hold numbers, `bool` and `char`, or fixed-size arrays of them, written with literals, and only their module sees them:
+### Constants of a module
+
+Outside the functions, a module can declare constants too, as limits and tables of numbers. They hold numbers, `bool` and `char`, or fixed-size arrays of them. Their value is a literal, with `-` in front of a negative number, and for an array a list of literals between square brackets, one for each element. Only their module sees them.
 
 ```cromo
 const i64 minute = 60
+const i64 below = -5
 const u8[4] masks = [1, 2, 4, 8]
 
 i32 main() {
-    println("{} {}", 3 * minute, masks[3])
+    println("{} {} {}", 3 * minute, below, masks[3])
     ret 0
 }
 ```
 
 ```output
-180 8
+180 -5 8
 ```
+
+The value of a module constant cannot be an expression, not even of other constants. There are no global variables: a declaration outside the functions without `const` is an error.
+
+```cromo error
+const i64 minute = 60
+const i64 hour = 60 * minute
+i64 counter = 0
+
+i32 main() {
+    ret 0
+}
+```
+
+```output
+error: the value of a constant of a module is a number, a character, true or false
+error: a variable outside the functions is only for the modules with 'import unsafe'
+```
+
+The second message speaks of the dialect in which the standard library talks to the system, [The unsafe dialect](unsafe.md). In a normal program, a value shared by several functions is passed as a parameter, or kept in a struct.
 
 ## Types
 
-### Integers
+The types built into the language are few:
 
-| Type | Size | Range |
-|---|---|---|
-| `i8`, `u8` | 8 bits | −128 to 127, 0 to 255 |
-| `i16`, `u16` | 16 bits | −32 768 to 32 767, 0 to 65 535 |
-| `i32`, `u32` | 32 bits | about ±2.1 billion, 0 to 4.2 billion |
-| `i64`, `u64` | 64 bits | about ±9.2 × 10¹⁸, 0 to 1.8 × 10¹⁹ |
+| Type | Values |
+|---|---|
+| `i8` `i16` `i32` `i64` | signed integers of 8, 16, 32 and 64 bits |
+| `u8` `u16` `u32` `u64` | unsigned integers of 8, 16, 32 and 64 bits |
+| `f32` `f64` | floating-point numbers of IEEE 754 |
+| `bool` | `true` or `false` |
+| `char` | a byte, another name for `u8` |
+| `string` | text in UTF-8 |
 
-Every type has the same size on every system: there is no `int` whose size depends on the machine, and no `size_t`. Lengths and positions are `i64`.
+Every type has the same size on every system, and there are no 128-bit integers. The numbers, their literals, their operators and their conversions are in [Numbers and operators](operators.md). Lists, maps and fixed-size arrays are in [Lists, maps and text](collections.md); structs and enums, the types a program defines, have chapters of their own.
 
-Integer literals can be written in decimal, hexadecimal and binary, with `_` to separate the digits: `1_000_000`, `0xFF`, `0b1010`.
+### Booleans
 
-### Overflow
+A `bool` is `true` or `false`. The comparisons give one, and `&&`, `||` and `!` combine them:
 
-An integer operation whose result does not fit in its type is an error. In a debug build, the default, the program stops:
-
-```cromo file=overflow.cro
+```cromo
 i32 main() {
-    i8 small = 120
-    for (i32 i = 0; i < 10; i++) {
-        small += 1
-    }
-    println("{}", small)
+    i32 age = 20
+    bool adult = age >= 18
+    bool teen = age >= 13 && age <= 19
+    println("{} {} {}", adult, teen, !adult)
     ret 0
 }
 ```
 
 ```output
-panic: integer overflow at overflow.cro:4:9
-    at main (overflow.cro:4)
+true false false
 ```
 
-A *panic* stops the program, prints where it happened and the calls that led there, and gives the exit code 101. In a release build, with `--release`, integers wrap around instead, as in C: the check costs a little, and a tested program can do without it. Division by zero is always a panic.
+A `bool` is not a number: it does not convert to 0 and 1, and a number is not true or false. The conditions of `if` and `for` want a `bool`.
 
-### Floating point, booleans and characters
+### Characters
 
-- `f32` and `f64` are the floating-point numbers of IEEE 754: `3.14`, `1e-9`.
-- `bool` is `true` or `false`.
-- `char` is a byte, a synonym of `u8`. A character literal is written between single quotes and must be ASCII: `'a'`, `'\n'`, `'\x41'`. Printed with `{}`, a `char` is a number.
+`char` is a byte: it is another name for `u8`, one byte of a UTF-8 string. A character literal is written between single quotes and must be ASCII: `'a'`, `'7'`, `' '`. The escape sequences are `'\n'` (new line), `'\t'` (tab), `'\r'` (carriage return), `'\0'` (zero), `'\\'`, `'\''` and `'\x41'`, a byte in hexadecimal.
+
+Since a `char` is a number, the arithmetic of numbers works on it. Printed with `{}` it is a number; `{:c}` prints the character:
+
+```cromo
+i32 main() {
+    char letter = 'c'
+    char upper = letter - 'a' + 'A'
+    bool isLetter = letter >= 'a' && letter <= 'z'
+    println("{} {:c} {:c} {}", letter, letter, upper, isLetter)
+    ret 0
+}
+```
+
+```output
+99 c C true
+```
+
+A character outside ASCII takes more than one byte in UTF-8, so it is not a `char`, and the compiler says what to write instead:
+
+```cromo error
+i32 main() {
+    char e = 'é'
+    ret 0
+}
+```
+
+```output
+error: the character 'é' does not fit in one byte: use the string "é" or the code point 0xE9
+```
 
 ### Strings
 
-`string` is text in UTF-8. Its length is in bytes, and `s[i]` is a byte:
+`string` is text in UTF-8. `+` joins two strings. The length is in bytes, and `s[i]` is a byte, a `char`:
 
 ```cromo
 i32 main() {
@@ -138,89 +244,25 @@ i32 main() {
 Hello, Torino! has 14 bytes, the first is 72
 ```
 
-Chapter 7 shows the functions of text: searching, splitting, replacing.
-
-### Conversions
-
-A number is converted implicitly only when no information can be lost: an `i32` becomes an `i64` or an `f64` by itself. In every other case the conversion is written as a call with the name of the type:
-
-```cromo
-i32 main() {
-    i32 x = 7
-    i64 big = x
-    f64 exact = f64(x) / 2.0
-    i32 back = i32(exact)
-    i32 wide = 300
-    u8 byte = u8(wide)
-    println("{} {} {} {}", big, exact, back, byte)
-
-    i32 parsed = i32("42") + 1
-    println("{}", parsed)
-    ret 0
-}
-```
-
-```output
-7 3.5 3 44
-43
-```
-
-`i32(exact)` drops the fraction; `u8(wide)` keeps the lowest 8 bits. `i32("42")` reads a number from a text, and throws an exception if the text is not a number.
-
-### Literals take the type of their context
-
-A literal has no type of its own: it takes the one that its place requires. In `i64 total = apples + 10`, `10` is an `i32` like `apples`. Where nothing says the type, the compiler asks for it:
+`s[i]` can be read but not written: a string is changed by building a new one.
 
 ```cromo error
 i32 main() {
-    println("{}", 10 / 3)
+    string city = "Torino"
+    city[0] = 't'
     ret 0
 }
 ```
 
 ```output
-error: the type of this expression cannot be deduced
+error: the bytes of a string are read-only: build a new string
 ```
 
-Writing `i32(10) / 3`, or using a variable, solves it.
-
-## Operators
-
-The operators are those of C, with one difference in precedence: the bitwise operators bind more than the comparisons, so `flags & MASK == 0` means `(flags & MASK) == 0`, as one would expect. From the strongest:
-
-| Operators | Meaning |
-|---|---|
-| `*` `/` `%` | multiplication, division, remainder |
-| `+` `-` | addition, subtraction |
-| `<<` `>>` | shifts |
-| `&` | bitwise and |
-| `^` | bitwise exclusive or |
-| `\|` | bitwise or |
-| `==` `!=` `<` `<=` `>` `>=` | comparisons |
-| `&&` | logical and |
-| `\|\|` | logical or |
-| `? :` | conditional |
-
-`!` negates a `bool` and inverts the bits of an integer. `i++` and `i--` exist, but only as statements on their own, never inside an expression: `a[i++]` is not Cromo.
-
-`countOnes(x)` counts the bits at 1 of an integer, `trailingZeros(x)` and `leadingZeros(x)` the bits at 0 under the lowest bit at 1 and over the highest, and `rotateLeft(x, n)` and `rotateRight(x, n)` turn the bits, those that go out on one side coming in on the other. Each is an instruction of the processor: `trailingZeros(set)` is the index of the lowest bit of a set, and `set & (set - 1)` takes it away.
-
-`c ? a : b` is the value `a` when `c` is true, `b` otherwise, as in C; only the value chosen is computed, and the two have the same type:
-
-```cromo
-i32 main() {
-    i64 n = 7
-    string kind = n % 2 == 0 ? "even" : "odd"
-    println("{} is {}", n, kind)
-    ret 0
-}
-```
-
-```output
-7 is odd
-```
+[Lists, maps and text](collections.md) shows the functions of text: searching, splitting, replacing, and the bytes of the letters outside ASCII.
 
 ## Functions
+
+A function declares the type of its result before its name, and the type of each parameter before the parameter. `ret` returns the value; a function that returns nothing is `void`, and can end without `ret`.
 
 ```cromo
 i64 square(i64 x) {
@@ -246,9 +288,83 @@ Hello, Ada!
 Hello, Ada!
 ```
 
-A function that returns a value must reach a `ret` on every path, or the program does not compile. A `void` function can end without `ret`. The order of the functions in a file does not matter: `main` can come first and call functions written after it.
+The order of the functions in a file does not matter: `main` can come first and call functions written after it. Two functions cannot have the same name, even with different parameters, and the parameters have no default values.
 
-A function has one result. When it may have nothing to give, it returns a conventional value, throws an exception, or returns a `bool` and writes the result in a parameter passed with `ref`, which chapter 4 explains. There is no `null`.
+A parameter is read-only: the function reads the value of the caller and cannot change it. A function that modifies an argument says so with `ref`, and one that takes it for itself with `move`, as [Ownership](ownership.md) explains.
+
+```cromo error
+void reset(i32 n) {
+    n = 0
+}
+
+i32 main() {
+    reset(5)
+    ret 0
+}
+```
+
+```output
+error: parameter 'n' cannot be modified: parameters are read-only
+```
+
+A function has one result, and there is no `null`. When it may have nothing to give, it returns a conventional value, as -1 for a position not found, throws an exception, or returns a `bool` and writes the result in a parameter passed with `ref`.
+
+### Every path ends with ret
+
+A function that returns a value must end, on every path, with a statement that does not go on: `ret`, `throw`, which [Errors](errors.md) explains, a call of `panic`, an `if` with an `else` whose branches all end so, an infinite `for` without a `break`, or a `switch` whose cases all end so and cover every value. Otherwise the program does not compile:
+
+```cromo error
+i32 sign(i64 n) {
+    if (n > 0) {
+        ret 1
+    } else if (n < 0) {
+        ret -1
+    }
+}
+
+i32 main() {
+    ret sign(5)
+}
+```
+
+```output
+error: function 'sign' must end with 'ret' on every path: it returns i32
+```
+
+When `n` is 0, `sign` reaches its end without a value. An `else { ret 0 }` solves it. The two functions below end in the other ways:
+
+```cromo
+// The first power of two that is not smaller than n.
+i64 nextPower(i64 n) {
+    i64 p = 1
+    for {
+        if (p >= n) {
+            ret p
+        }
+        p *= 2
+    }
+}
+
+i64 firstNegative(list<i64> values) {
+    for (i64 v in values) {
+        if (v < 0) {
+            ret v
+        }
+    }
+    throw Error("no negative value")
+}
+
+i32 main() {
+    println("{} {}", nextPower(100), firstNegative([3, -4, 5]))
+    ret 0
+}
+```
+
+```output
+128 -4
+```
+
+Code that comes after a `ret`, `break`, `continue`, `throw` or `panic` in the same block can never run: the compiler accepts it, with the warning `unreachable code`.
 
 ## Comments
 
@@ -278,24 +394,42 @@ struct Point {
 
 ## Statements and lines
 
-A statement ends at the end of its line, without a semicolon. It continues on the next line when the line ends with an operator, a comma or an open parenthesis:
+A statement ends at the end of its line, without a semicolon. It goes on in the next line when the line ends with an operator between two values, as `+` or `&&`, with a comma, an open parenthesis, `?` or `:`, or while a parenthesis or a square bracket is still open:
 
 ```cromo
 i32 main() {
     i64 total = 1 +
         2 +
         3
-    println("{}",
-        total)
+    list<i64> values = [
+        10,
+        20
+    ]
+    println("{} {}",
+        total, values.len())
     ret 0
 }
 ```
 
 ```output
-6
+6 2
 ```
 
-There is one statement for each line.
+The operator goes at the end of the line, not at the start of the next one: there, the first line is already a whole statement.
+
+```cromo error
+i32 main() {
+    i64 total = 1
+        + 2
+    ret 0
+}
+```
+
+```output
+error: expected an expression, found '+'
+```
+
+There is one statement for each line, and `;` appears only in the header of the classic `for`. The compiler also accepts the opening brace on the next line, and `else` on the line after the closing brace, but the style of Cromo keeps them on the same line, and `cromo fmt` moves them there: [Tools: formatting, the editor and the debugger](tools.md) explains it.
 
 ## Conditions
 
@@ -317,7 +451,40 @@ i32 main() {
 mild
 ```
 
-The braces are always required, and the condition must be a `bool`: `if (count)` is an error, `if (count != 0)` is correct.
+The parentheses and the braces are always required, also around a single statement, and the condition must be a `bool`: `if (count)` is an error, `if (count != 0)` is correct.
+
+```cromo error
+i32 main() {
+    i32 count = 3
+    if (count) {
+        println("some")
+    }
+    ret 0
+}
+```
+
+```output
+error: the condition must be a bool, found i32
+```
+
+### Choosing a value
+
+`c ? a : b` is the value `a` when `c` is true, `b` otherwise, as in C. Only the value chosen is computed, and the two have the same type:
+
+```cromo
+i32 main() {
+    i64 n = 7
+    string kind = n % 2 == 0 ? "even" : "odd"
+    println("{} is {}", n, kind)
+    ret 0
+}
+```
+
+```output
+7 is odd
+```
+
+[Numbers and operators](operators.md#the-conditional-expression) gives its precedence and its other rules.
 
 ## Loops
 
@@ -367,7 +534,32 @@ Ada
 Grace
 ```
 
-`break` leaves the loop and `continue` goes to the next round. There is no `while`, no `do`, and no `goto`.
+`break` leaves the loop and `continue` goes to the next round; outside a `for` they are errors. There is no `while`, no `do`, and no `goto`.
+
+`break` and `continue` have no labels: they act on the innermost loop. To leave several loops at once, put them in a function and leave it with `ret`:
+
+```cromo
+// The position of the first value that appears twice, or -1.
+i64 firstRepeated(list<i32> values) {
+    for (i64 i = 0; i < values.len(); i++) {
+        for (i64 j = 0; j < i; j++) {
+            if (values[i] == values[j]) {
+                ret i
+            }
+        }
+    }
+    ret -1
+}
+
+i32 main() {
+    println("{} {}", firstRepeated([4, 7, 1, 7, 4]), firstRepeated([1, 2]))
+    ret 0
+}
+```
+
+```output
+3 -1
+```
 
 ## switch
 
@@ -401,12 +593,13 @@ i32 main() {
 ok, moved, other
 ```
 
-`switch` is most useful with enums, as chapter 6 shows: there the compiler checks that every case is handled.
+`switch` is most useful with enums, as [Enums and switch](enums.md) shows: there the compiler checks that every case is handled.
 
 ## Summary
 
-- The type comes before the name; every variable has a value; `const` makes it immutable.
-- Integers have a fixed size; overflow and division by zero stop the program.
-- Conversions that can lose information are written: `i32(x)`.
-- Functions return with `ret`; there is no `null`.
-- `if` wants braces and a `bool`; `for` is the only loop; `switch` has no fall-through.
+- The type comes before the name, the value after `=`; every variable has a value, and a name is never declared twice in the blocks where it is visible.
+- `const` makes a variable immutable, deeply; module constants hold numbers, `bool` and `char`, written as literals.
+- The built-in types are the numbers, `bool`, `char` (a byte) and `string`; the bytes of a string are read-only.
+- Functions return with `ret` on every path; parameters are read-only; there is no `null` and no overloading.
+- A statement ends at the end of its line, and goes on after an operator, a comma or an open bracket.
+- `if` wants parentheses, braces and a `bool`; `c ? a : b` chooses a value; `for` is the only loop; `break` and `continue` have no labels; `switch` has no fall-through.

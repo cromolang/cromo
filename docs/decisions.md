@@ -1694,7 +1694,7 @@ lines.close()
 *2026-10-30.* After the message, a line for each frame from the innermost, `    at main (main.cro:12)`, with the functions that the optimizer put inside others. The same frame one after the other, as in a recursion, is written once and then `    ... the same 57 more times`. The frames of the runtime and of C are left out; after 63 return addresses the trace ends with `    ...`.
 
 ### D343. The names in a stack trace
-*2026-10-30.* As in the source: `main`, `Point.area`, `list<i64>.add`, `Point.Point` for a constructor and `Point.~Point` for a destructor, as in C++, `main.lambda` for a lambda written in `main`, and `fs.copy` for a function of another module; the functions of the program are written without the name of its module.
+*2026-10-30.* As in the source: `main`, `Point.area`, `list<i64>.add`, `Point.Point` for a constructor and `Point.~Point` for a destructor, as in C++, `main.lambda` for a lambda written in `main`, and `geometry.area` for a function of another module, `std.fs.readText` for one of the library, with the whole name of its module; the functions of the main file are written without the name of its module.
 
 ### D344. A stack overflow is a panic
 *2026-10-30.* `panic: stack overflow` with the stack trace, and exit code 101, as the other errors of the program (D62). On Linux any other fault of memory, which only C code can cause, ends the program as usual, with its signal.

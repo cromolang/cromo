@@ -163,7 +163,7 @@ Three words of the program deserve attention, because they are the heart of Crom
 - `counts.add(move c)`: the struct **moves** into the list. After the `move`, `c` can no longer be used: its content now belongs to the list.
 - `c.word = word.copy()`: the string is copied, as `word` still belongs to the map. `c.word = word` would copy it too: `copy()` only makes the copy visible.
 
-Without `ref`, a parameter is read-only, as `text` in `words(string text)`: the function can read the string, but not change it, and the string is not copied. Chapter 4 explains these rules, which are the core of the language.
+Without `ref`, a parameter is read-only, as `text` in `words(string text)`: the function can read the string, but not change it, and the string is not copied. [Ownership](ownership.md) explains these rules, which are the core of the language.
 
 ### Maps
 
@@ -181,7 +181,7 @@ A `map` associates keys with values, as a hash table. `seen[word]` reads or writ
 println("{:>3}  {}", counts[i].times, counts[i].word)
 ```
 
-`{:>3}` prints a value aligned to the right in three characters. The formats are those of `std::format` in C++ and of Python: chapter 7 lists them.
+`{:>3}` prints a value aligned to the right in three characters. The formats are those of `std::format` in C++ and of Python: [Formatting text](formatting.md) lists them.
 
 ### Errors
 
@@ -197,7 +197,7 @@ uncaught exception: cannot read 'missing.txt': no such file or folder
     at main (words.cro:52)
 ```
 
-Chapter 8 shows how to catch exceptions with `try` and `catch`.
+[Errors](errors.md) shows how to catch exceptions with `try` and `catch`.
 
 ## Summary
 

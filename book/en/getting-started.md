@@ -26,9 +26,9 @@ cromo version
 cromo 0.49.0 (LLVM 23.1.4)
 ```
 
-That is all. `cromo` contains the compiler and the linker: it needs no C compiler, no Visual Studio and no Windows SDK, and the programs it writes do not depend on the C runtime of the system.
+That is all. `cromo` contains the compiler and the linker: it needs no C compiler, no Visual Studio and no Windows SDK. On Linux, `cromo` needs glibc 2.29 or later, as in Ubuntu 20.04, Debian 11 and their later versions; the distributions built on musl, as Alpine, are not supported.
 
-When a new version comes out, `cromo update` installs it next to the one you have, after checking its signature, and makes it the active one; `cromo update 0.27.1` goes back to an older one.
+When a new version comes out, `cromo update` installs it next to the one you have, after checking its signature, and makes it the active one; `cromo update 0.27.1` goes back to an older one. [The cromo command](appendix-command.md) explains the details.
 
 > **Note:** the archive can also be installed by hand: download it from [the download page](https://cromolang.org/download/), with its SHA-256, unpack it anywhere and add its `bin` folder to the `PATH`. `cromo` finds the library in the `lib` folder next to `bin`.
 
@@ -87,14 +87,16 @@ By default `cromo` builds a **debug** executable: it is optimized, but it checks
 cromo build --release hello.cro
 ```
 
-The executable runs on any machine with the same system, without installing anything. `cromo` can also write an executable for the other system:
+The executable runs on any machine with the same system, without installing anything: on Windows it needs only Windows, and on Linux it is a static executable that runs on any Linux x64. The exception is a program for Linux whose C libraries call the C library of the system, as every program with windows: `cromo` links it with glibc, and it needs glibc 2.29 or later where it runs, as `cromo` itself.
+
+`cromo` can also write an executable for the other system:
 
 ```sh
 cromo build --target linux hello.cro     # on Windows: an executable for Linux
 cromo build --target windows hello.cro   # on Linux: hello.exe for Windows
 ```
 
-`--target linux-arm64` writes it for Linux on ARM64, as a Raspberry Pi or a server with Graviton.
+`--target linux-arm64` writes it for Linux on ARM64, as a Raspberry Pi or a server with Graviton, and `--target android` an app for Android ([Windows and apps](gui.md)). [The cromo command](appendix-command.md) lists every target and option.
 
 ## A project
 
@@ -107,11 +109,11 @@ cd greeter
 cromo run
 ```
 
-The other files of the folder are modules, which `main.cro` imports by name. A project with more executables lists them in a file `cromo.mod`, and `cromo build` builds them all: chapter 11 explains both.
+The other files of the folder are modules, which `main.cro` imports by name. A project with more executables lists them in a file `cromo.mod`, and `cromo build` builds them all: [Modules and projects](modules.md) explains both.
 
 ## Formatting
 
-Cromo code has one style, and `cromo fmt` writes it: four spaces of indentation, the opening brace on the same line, one space around operators. There are no options to discuss:
+Cromo code has one style, and `cromo fmt` writes it: four spaces of indentation, the opening brace on the same line, one space around operators. There are no options to discuss, and [Tools: formatting, the editor and the debugger](tools.md) lists its rules:
 
 ```sh
 cromo fmt                 # every .cro file of this folder and its subfolders
@@ -124,12 +126,12 @@ cromo fmt --check         # only lists the files that are not formatted
 The Cromo extension, which the installation adds to Visual Studio Code, colors the code and uses `cromo lsp`, the language server of Cromo, to show:
 
 - the errors while you write, without compiling by hand;
-- the type and the declaration of a name, when the mouse is over it;
+- the type, the declaration and the documentation of a name, when the mouse is over it;
 - the definition of a name, with F12;
-- the members of a value, after a dot;
+- the members of a value after a dot, and the parameters of a call while you write it;
 - the formatting of the file, when it is saved.
 
-Any editor that speaks the Language Server Protocol can use `cromo lsp` in the same way.
+Any editor that speaks the Language Server Protocol can use `cromo lsp` in the same way. [Tools: formatting, the editor and the debugger](tools.md) explains the extension, its settings, the comments that document the code, and how to use a debugger.
 
 ## Summary
 
@@ -137,5 +139,6 @@ Any editor that speaks the Language Server Protocol can use `cromo lsp` in the s
 - A program starts from `main`, which returns its exit code.
 - The type comes before the name; `ret` returns; statements end at the end of the line.
 - `cromo fmt` formats the code, and the extension for Visual Studio Code shows the errors while you write.
+- The executables need nothing installed; on Linux, `cromo` and the programs with windows need glibc 2.29 or later.
 
 In the next chapter you will write a complete program, before learning the details.

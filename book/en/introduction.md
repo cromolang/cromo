@@ -24,7 +24,7 @@ If you already know C++, Go or Rust, [Appendix C](appendix-coming-from.md) summa
 
 ## How to use this guide
 
-The chapters are meant to be read in order: each one builds on the previous ones. Chapter 2 is a small but complete program, written before the details are explained; chapters 3 to 12 present the language; chapters 13 to 16 the standard library; chapter 17 shows how to call C, and chapter 18 puts everything together in a web service.
+The chapters are meant to be read in order: each one builds on the previous ones. [A first program](first-program.md) is small but complete, written before the details are explained; the chapters from [Common concepts](common-concepts.md) to [Tests](tests.md) present the language, each one all of its subject, so that it can also be looked up later; those from [Threads, tasks and channels](concurrency.md) to [Windows and apps](gui.md) the standard library; [Calling C](c-interop.md) and [The unsafe dialect](unsafe.md) go down to the machine, [Tools](tools.md) presents the formatter, the editor and the debugger, and the [final project](web-service.md) puts everything together in a web service. After the appendices, the pages of the library list every module with all its functions.
 
 Every program in this guide is compiled and run when the guide is built, and its output is the one shown below it:
 
