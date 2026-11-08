@@ -69,6 +69,9 @@ LANGUAGES = {
         'months': 'January February March April May June July August September October November December',
         'license': 'The text and the examples are part of the sources of Cromo, under the MIT or the Apache 2.0 license.',
         'checked': 'Every example of this guide was compiled and run with cromo {}, and its output checked, when the guide was made.',
+        'library': 'The library', 'core': 'The core', 'types': 'Types', 'functions': 'Functions',
+        'builtin_functions': 'Built-in functions', 'builtin_types': 'Built-in types',
+        'library_note': 'Made from the documentation in the sources of the library.',
     },
     'it': {
         'name': 'Italiano', 'pdf': 'cromo-guida-it.pdf',
@@ -83,13 +86,17 @@ LANGUAGES = {
         'checked': 'Ogni esempio di questa guida è stato compilato ed eseguito con cromo {}, e il suo output verificato, '
                    'quando la guida è stata generata.',
         'print_contents': 'Sommario',
+        'library': 'La libreria', 'core': 'Il nucleo', 'types': 'Tipi', 'functions': 'Funzioni',
+        'builtin_functions': 'Funzioni predefinite', 'builtin_types': 'Tipi predefiniti',
+        'library_note': 'Generata dalla documentazione nei sorgenti della libreria, che è in inglese.',
     },
 }
 
 KEYWORDS = set('''struct interface enum import extern unsafe const void if else for in break
 continue ret switch case default try catch finally throw ref move public true false func'''.split())
 TYPES = set('i8 i16 i32 i64 u8 u16 u32 u64 f32 f64 bool char string list map addr Self'.split())
-BUILTINS = set('print println eprint eprintln format panic assert wrapAdd wrapSub wrapMul embed'.split())
+BUILTINS = set('''print println eprint eprintln format panic assert wrapAdd wrapSub wrapMul embed countOnes trailingZeros
+leadingZeros rotateLeft rotateRight'''.split())
 
 
 # ---- Highlighting ----
@@ -327,9 +334,86 @@ def render(blocks, links, headings):
     return '\n'.join(out)
 
 
+# ---- The reference of the library (D519) ----
+
+def library_reference(cromo):
+    """The modules of the library with their declarations and documentation, as
+    `cromo build --reference` writes them; None without cromo."""
+    if not cromo or not os.path.exists(cromo):
+        print(f'book: no reference of the library: {cromo} is missing')
+        return None
+    folder = tempfile.mkdtemp(prefix='cromo-reference-')
+    path = os.path.join(folder, 'reference.json')
+    try:
+        result = subprocess.run([cromo, 'build', '--reference', path], capture_output=True, text=True, encoding='utf-8')
+        if result.returncode != 0:
+            print(f'book: no reference of the library:\n{result.stderr}')
+            return None
+        return json.load(open(path, encoding='utf-8'))['modules']
+    finally:
+        shutil.rmtree(folder, ignore_errors=True)
+
+
+def library_page_name(module):
+    return 'core.html' if module == 'std' else module + '.html'
+
+
+# The decisions in the documentation of the library, as (D504) or (D37, D98, P13):
+# for those who work on Cromo, not on the pages of the site.
+DECISIONS = re.compile(r' ?\((?:[DP]\d+(?:[-\u2013][DP]?\d+)?(?:, )?)+\)')
+
+
+def one_line(doc):
+    return ' '.join(line.strip() for line in doc.split('\n') if line.strip())
+
+
+def library_markdown(module, words):
+    """A page of a module as Markdown: its documentation, then its types with their
+    members and its functions, each with its signature and its documentation."""
+    title = words['core'] if module['name'] == 'std' else module['name']
+    out = [f'# {title}', '', module['doc'], '', f'*{words["library_note"]}*', '']
+
+    def code(signature):
+        out.extend(['```cromo', signature, '```'])
+
+    def section(heading, items):
+        if not items:
+            return
+        out.extend([f'## {heading}', ''])
+        for item in items:
+            out.extend([f'### {item["name"]}', ''])
+            code(item['signature'])
+            out.extend(['', item['doc'], ''])
+            for m in item.get('members', []):
+                if m['kind'] == 'constructor':
+                    code(m['signature'])
+                    out.extend(['', m['doc'], ''])
+            simple = [m for m in item.get('members', []) if m['kind'] in ('field', 'case')]
+            if simple:
+                for m in simple:
+                    text = f'- `{m["signature"]}`'
+                    if m['doc']:
+                        text += ': ' + one_line(m['doc'])
+                    out.append(text)
+                out.append('')
+            for m in item.get('members', []):
+                if m['kind'] in ('field', 'case', 'constructor'):
+                    continue
+                out.extend([f'#### {item["name"]}.{m["name"]}', ''])
+                code(m['signature'])
+                out.extend(['', m['doc'], ''])
+    items = module['items']
+    section(words['builtin_functions'], [i for i in items if i['kind'] == 'builtin'])
+    section(words['builtin_types'], [i for i in items if i['kind'] == 'type'])
+    section(words['types'], [i for i in items if i['kind'] in ('struct', 'enum', 'interface')])
+    section(words['functions'], [i for i in items if i['kind'] == 'function'])
+    return DECISIONS.sub('', '\n'.join(out))
+
+
 # ---- The pages ----
 
 NUMBERED = {}  # for each language, how many chapters are numbered: the appendices follow a line ---
+LIBRARY = {}   # for each language, the index of the first page of the library (D519)
 
 
 def read_summary(language):
@@ -363,12 +447,14 @@ def chapter_links(chapters):
     return links
 
 
-def sidebar(chapters, current, words, headings, numbered):
+def sidebar(chapters, current, words, headings, numbered, library=None):
     items = []
     for i, (title, source) in enumerate(chapters):
         number = f'<span class="num">{i}.</span>' if 0 < i < numbered else ''
         if i == numbered:
             items.append('<li class="separator"></li>')
+        if i == library:
+            items.append(f'<li class="separator"></li><li class="part">{html.escape(words["library"])}</li>')
         active = ' class="active"' if i == current else ''
         items.append(f'<li{active}><a href="{page_name(i, source)}">{number}{html.escape(title)}</a>')
         if i == current and headings:
@@ -427,7 +513,7 @@ def page(language, title, book_title, chapters, index, body, headings, previous,
 </header>
 <div class="results" hidden></div>
 <div class="layout">
-<aside>{sidebar(chapters, index, words, headings, NUMBERED[language])}</aside>
+<aside>{sidebar(chapters, index, words, headings, NUMBERED[language], LIBRARY.get(language))}</aside>
 <main>
 <article>
 {body}
@@ -567,7 +653,7 @@ def print_page(language, book_title, parts, pages, checked):
 PRINT = {}  # for each language: the title of the book and its chapters, for the PDF
 
 
-def build(out, checked=False):
+def build(out, checked=False, cromo=None):
     target = os.path.join(out, 'book')
     os.makedirs(target, exist_ok=True)
     shutil.copy(os.path.join(BOOK, 'book.css'), target)
@@ -575,8 +661,19 @@ def build(out, checked=False):
     images = os.path.join(BOOK, 'images')
     if os.path.isdir(images):
         shutil.copytree(images, os.path.join(target, 'images'), dirs_exist_ok=True)
+    reference = library_reference(cromo)
     for language in LANGUAGES:
         book_title, chapters = read_summary(language)
+        guide = len(chapters)  # the chapters, then the pages of the library (D519)
+        words = LANGUAGES[language]
+        pages = {}
+        if reference:
+            LIBRARY[language] = guide
+            for module in reference:
+                title = words['core'] if module['name'] == 'std' else module['name']
+                source = library_page_name(module['name'])[:-5] + '.md'
+                chapters.append((title, source))
+                pages[source] = library_markdown(module, words)
         folder = os.path.join(target, language)
         if os.path.isdir(folder):
             shutil.rmtree(folder)
@@ -584,7 +681,7 @@ def build(out, checked=False):
         links = chapter_links(chapters)
         rendered, search = [], []
         for i, (title, source) in enumerate(chapters):
-            text = open(os.path.join(BOOK, language, source), encoding='utf-8').read()
+            text = pages[source] if i >= guide else open(os.path.join(BOOK, language, source), encoding='utf-8').read()
             headings = []
             body = render(parse(text), links, headings)
             rendered.append((body, headings))
@@ -598,7 +695,8 @@ def build(out, checked=False):
             following = (page_name(i + 1, chapters[i + 1][1]), chapters[i + 1][0]) if i + 1 < len(chapters) else None
             with open(os.path.join(folder, page_name(i, source)), 'w', encoding='utf-8', newline='\n') as f:
                 f.write(page(language, title, book_title, chapters, i, body, headings, previous, following))
-        parts = [print_chapter(language, chapters, i, body, headings) for i, (body, headings) in enumerate(rendered)]
+        # The PDF has the chapters of the guide, without the pages of the library.
+        parts = [print_chapter(language, chapters, i, body, headings) for i, (body, headings) in enumerate(rendered[:guide])]
         PRINT[language] = (book_title, parts, checked)
         with open(os.path.join(folder, 'print.html'), 'w', encoding='utf-8', newline='\n') as f:
             f.write(print_page(language, book_title, parts, {}, checked))
@@ -616,13 +714,15 @@ def build(out, checked=False):
 
 # ---- The check of the examples ----
 
-def check(cromo):
+def check(cromo, only=None, languages=None):
     cromo = os.path.abspath(cromo)
     failures = 0
     total = 0
-    for language in LANGUAGES:
+    for language in languages or LANGUAGES:
         _, chapters = read_summary(language)
         for _, source in chapters:
+            if only and source not in only:
+                continue
             if not os.path.exists(os.path.join(BOOK, language, source)):
                 print(f'MISSING  {language}/{source}')
                 failures += 1
@@ -770,12 +870,16 @@ def main():
     parser = argparse.ArgumentParser(description='Builds the Cromo Guide.')
     parser.add_argument('--out', default=os.path.join(ROOT, 'dist', 'site'))
     parser.add_argument('--check', action='store_true', help='compile and run the examples')
+    parser.add_argument('--only', nargs='+', help='with --check, only these chapters, as modules.md; without building')
+    parser.add_argument('--language', nargs='+', choices=list(LANGUAGES), help='with --check, only these languages')
     parser.add_argument('--pdf', action='store_true', help='print the guide to PDF')
     parser.add_argument('--cromo', default=os.path.join(ROOT, 'build', 'cromo.exe' if os.name == 'nt' else 'cromo'))
     options = parser.parse_args()
-    if options.check and not check(options.cromo):
+    if options.only:
+        sys.exit(0 if check(options.cromo, options.only, options.language) else 1)
+    if options.check and not check(options.cromo, None, options.language):
         sys.exit(1)
-    build(options.out, options.check)
+    build(options.out, options.check, options.cromo)
     if options.pdf:
         pdf(options.out)
 

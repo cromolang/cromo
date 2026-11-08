@@ -534,6 +534,7 @@ add_executable(cromo
   src/loader.cpp
   src/json.cpp
   src/index.cpp
+  src/reference.cpp
   src/lsp.cpp
   src/installation.cpp
   src/llvm_trims.cpp

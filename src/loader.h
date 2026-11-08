@@ -7,6 +7,7 @@
 #include <deque>
 #include <map>
 #include <string>
+#include <vector>
 
 namespace cromo {
 
@@ -16,6 +17,10 @@ bool readSourceFile(const std::string& path, std::string& text);
 // The key of a file among the texts that replace it: its absolute path, in lower
 // case on Windows.
 std::string sourceKey(const std::string& path);
+
+// The modules of lib/std that a program can import, as std.fs, in the order of their
+// names (D201).
+std::vector<std::string> libraryModuleNames();
 
 // D516: the folder of the cromo.mod of a program, looked for from `folder`, that of
 // its main file, up to the root of the drive; "" without one.

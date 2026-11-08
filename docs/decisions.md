@@ -2474,6 +2474,12 @@ i32 total = sum.sum()
 
 ### D517. The executables of a project are listed in `cromo.mod`
 *2026-11-08.* Chosen by the author. As the `[[bin]]` of Cargo: a line `bin server cmd/server.cro` for each executable, its name and its main file from the folder of `cromo.mod`. `cromo build` without a file, in that folder, builds them all, each named after its line; `cromo build server` and `cromo run server` build or run one of them by its name. Without `bin` lines, `cromo build` compiles `main.cro`, as in D155. The libraries of a project are its modules, compiled into each executable that imports them, as in Go and Rust: there is no library to link. A library for C, a DLL or a `.so` with the functions of `[[export]]`, is decided when a program needs it.
+
+### D518. The guide is also the manual of the language
+*2026-11-08.* Chosen by the author. The guide keeps its chapters in the order in which the language is learned, but each one covers all of its subject: the rules, the limits, the errors that the compiler gives, each with an example that runs and its output, so that it is read in order or looked up. What the guide does not explain yet gets its chapter, as the expressions and the operators, the attributes, the dialect `unsafe`, the formatting of the text and the projects. A second book of reference, as the Rust Reference next to the Rust Book, would say the same things twice.
+
+### D519. The reference of the library is made from its documentation
+*2026-11-08.* Chosen by the author. As pkg.go.dev and rustdoc: a page for each module of the library, made from the documentation of its public declarations (D473-D478), is on the site with the guide, so that it never differs from the code. The chapters of the guide explain the ideas and the common uses, and link to those pages for every function.
 ---
 
 ## Proposed

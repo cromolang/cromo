@@ -9,6 +9,7 @@
 #include "ownership.h"
 #include "installation.h"
 #include "parser.h"
+#include "reference.h"
 #include "sema.h"
 
 #include <llvm/Config/llvm-config.h>
@@ -98,6 +99,7 @@ struct Compilation {
     bool emitIr = false;
     bool runtime = false;  // --runtime: the object of std.runtime, for the archive of the runtime (D393)
     bool checkNames = false;  // --check-names: only the names of the modules, for the pilot (D423)
+    std::string reference;    // --reference <file>: the documentation of the library, for the site (D519)
     std::vector<std::string> filters;  // cromo test: the names of the tests to run (D352)
     std::vector<std::string> tests;    // cromo test: the names of the tests, by their number
     bool apk = false;  // --target android: the APK with both architectures (D453)
@@ -208,6 +210,11 @@ int build(Compilation& compilation) {
         codegen.release = true;
         codegen.runtime = true;
         options.objectOnly = true;
+    } else if (!compilation.reference.empty()) {
+        // D519: a program that imports every module of the library, never compiled.
+        std::string imports;
+        for (const std::string& name : cromo::libraryModuleNames()) imports += "import " + name + "\n";
+        sources.push_back({cromo::libraryFile("reference.cro").string(), imports});
     } else {
         sources.push_back({inputPath, {}});
         if (!cromo::readSourceFile(inputPath, sources[0].text)) {
@@ -225,6 +232,13 @@ int build(Compilation& compilation) {
     bool tests = codegen.tests;
     cromo::Module module = cromo::loadProgram(sources, diag, options.target, nullptr, tests);
     for (const cromo::ModuleFile& file : module.files) compilation.network = compilation.network || file.name == "std.net";
+    if (!compilation.reference.empty()) {
+        if (diag.hasErrors()) return 1;
+        std::string error;
+        if (cromo::writeReference(module, sources, cromo::libraryModuleNames(), compilation.reference, error)) return 0;
+        std::fprintf(stderr, "cromo: %s\n", error.c_str());
+        return 1;
+    }
     if (compilation.checkNames) {  // D423: what the pilot of sema checks, and nothing more
         if (!diag.hasErrors()) cromo::checkNames(module, diag);
         return diag.hasErrors() ? 1 : 0;
@@ -353,6 +367,8 @@ bool readOptions(const std::vector<std::string>& args, size_t first, size_t last
             compilation.emitIr = true;
         } else if (arg == "--runtime" && !run && !test) {
             compilation.runtime = true;  // D393: only for the build of cromo, not in the help
+        } else if (arg == "--reference" && !run && !test && i + 1 < last) {
+            compilation.reference = args[++i];  // D519: for tools/book.py, not in the help
         } else if (arg == "--check-names" && !run && !test) {
             compilation.checkNames = true;  // D423: the reference of the pilot, not in the help
         } else if (arg.size() == 3 && arg[0] == '-' && arg[1] == 'O' && arg[2] >= '0' && arg[2] <= '3') {
@@ -368,6 +384,7 @@ bool readOptions(const std::vector<std::string>& args, size_t first, size_t last
         }
     }
     bool windows = options.target == cromo::Target::Windows;
+    if (!compilation.reference.empty()) return true;  // the modules of the library, without a program
     if (!options.cpu.empty() && cromo::isArm64(options.target) && !compilation.apk) {
         std::fprintf(stderr, "cromo: --cpu names a processor of x86-64, and %s is ARM64\n",
                      cromo::targetName(options.target));

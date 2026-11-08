@@ -51,4 +51,7 @@ struct BuiltinDoc {
 };
 const BuiltinDoc* builtinDoc(const std::string& name);
 
+// Every function and type of builtinDoc, in their order, without the vectors (D519).
+const std::vector<BuiltinDoc>& builtinDocs();
+
 }  // namespace cromo

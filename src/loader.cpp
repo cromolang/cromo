@@ -269,18 +269,7 @@ private:
 
     // "std.crypto, std.fs and std.http": the modules of lib/std for the programs.
     static std::string libraryModules() {
-        std::vector<std::string> names;
-        std::error_code ec;
-        for (const fs::directory_entry& entry : fs::directory_iterator(libraryFile("std"), ec)) {
-            if (entry.path().extension() != ".cro") continue;
-            bool own = false;
-            bool other = false;
-            std::string name = "std." + withoutSuffix(entry.path().stem().string(), Target::Windows, own, other);
-            if (own || other) continue;
-            if (std::find(std::begin(kInternalModules), std::end(kInternalModules), name) != std::end(kInternalModules)) continue;
-            names.push_back(name);
-        }
-        std::sort(names.begin(), names.end());
+        std::vector<std::string> names = libraryModuleNames();
         std::string text;
         for (size_t i = 0; i < names.size(); ++i) {
             text += (i == 0 ? "" : i + 1 == names.size() ? " and " : ", ") + names[i];
@@ -323,6 +312,22 @@ private:
 };
 
 }  // namespace
+
+std::vector<std::string> libraryModuleNames() {
+    std::vector<std::string> names;
+    std::error_code ec;
+    for (const fs::directory_entry& entry : fs::directory_iterator(libraryFile("std"), ec)) {
+        if (entry.path().extension() != ".cro") continue;
+        bool own = false;
+        bool other = false;
+        std::string name = "std." + withoutSuffix(entry.path().stem().string(), Target::Windows, own, other);
+        if (own || other) continue;
+        if (std::find(std::begin(kInternalModules), std::end(kInternalModules), name) != std::end(kInternalModules)) continue;
+        names.push_back(name);
+    }
+    std::sort(names.begin(), names.end());
+    return names;
+}
 
 Module loadProgram(std::deque<SourceFile>& sources, Diagnostics& diag, Target target,
                    const std::map<std::string, std::string>* overlay, bool tests) {

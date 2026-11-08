@@ -291,43 +291,63 @@ public struct Mapping {
         ret length
     }
 
+    // The u8, without sign, of the byte at 'position', from 0. A position out of the
+    // file is a panic.
     public u8 u8At(i64 position) const {
         check(position, 1)
         ret copyAt<u8>(offset(data, position))
     }
 
+    // The i8, with sign, of the byte at 'position', from 0. A position out of the
+    // file is a panic.
     public i8 i8At(i64 position) const {
         ret i8(u8At(position))
     }
 
+    // The u16 of the 2 bytes, little-endian from 'position', from 0. Bytes out of the file are a
+    // panic.
     public u16 u16At(i64 position) const {
         ret u16(little(position, 2))
     }
 
+    // The i16 of the 2 bytes, little-endian from 'position', from 0. Bytes out of the file are a
+    // panic.
     public i16 i16At(i64 position) const {
         ret i16(u16(little(position, 2)))
     }
 
+    // The u32 of the 4 bytes, little-endian from 'position', from 0. Bytes out of the file are a
+    // panic.
     public u32 u32At(i64 position) const {
         ret u32(little(position, 4))
     }
 
+    // The i32 of the 4 bytes, little-endian from 'position', from 0. Bytes out of the file are a
+    // panic.
     public i32 i32At(i64 position) const {
         ret i32(u32(little(position, 4)))
     }
 
+    // The u64 of the 8 bytes, little-endian from 'position', from 0. Bytes out of the file are a
+    // panic.
     public u64 u64At(i64 position) const {
         ret little(position, 8)
     }
 
+    // The i64 of the 8 bytes, little-endian from 'position', from 0. Bytes out of the file are a
+    // panic.
     public i64 i64At(i64 position) const {
         ret i64(little(position, 8))
     }
 
+    // The f32 of the 4 bytes, little-endian from 'position', from 0. Bytes out of the file are a
+    // panic.
     public f32 f32At(i64 position) const {
         ret f32.fromBits(u32(little(position, 4)))
     }
 
+    // The f64 of the 8 bytes, little-endian from 'position', from 0. Bytes out of the file are a
+    // panic.
     public f64 f64At(i64 position) const {
         ret f64.fromBits(little(position, 8))
     }

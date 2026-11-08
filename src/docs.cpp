@@ -152,8 +152,8 @@ std::string markdownOf(const std::vector<std::string>& lines) {
     return out;
 }
 
-const BuiltinDoc* builtinDoc(const std::string& name) {
-    static const BuiltinDoc docs[] = {
+const std::vector<BuiltinDoc>& builtinDocs() {
+    static const std::vector<BuiltinDoc> docs = {
         {"print", "void print(string format, ...)",
          "Writes 'format' on the standard output, with the arguments in place of its placeholders, and no newline.\n"
          "The format is a string literal, which the compiler checks against the arguments, as 'std::format' of C++:\n"
@@ -248,7 +248,11 @@ const BuiltinDoc* builtinDoc(const std::string& name) {
         {"f32", "", "A floating-point number of 32 bits, 'float' of C, with about 7 digits."},
         {"f64", "", "A floating-point number of 64 bits, 'double' of C, with about 16 digits."},
     };
-    for (const BuiltinDoc& doc : docs) {
+    return docs;
+}
+
+const BuiltinDoc* builtinDoc(const std::string& name) {
+    for (const BuiltinDoc& doc : builtinDocs()) {
         if (name == doc.name) return &doc;
     }
     // A vector of SIMD (D505): one text for all of them, as `i16x16` or `f32x8`.

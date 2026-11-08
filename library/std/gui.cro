@@ -167,8 +167,8 @@ public enum ButtonStyle {
 // })
 // '''
 public struct FileType {
-    public string name
-    public string extensions
+    public string name        // shown in the dialog, as "Images"
+    public string extensions  // without the dot, between ';', as "png;jpg", or "*"
 
     // A kind of file with its name and its extensions.
     public FileType(string kind, string patterns) {
@@ -246,9 +246,9 @@ public enum Scale {
 // A color with its opacity, for the drawings of a canvas (D483): 'rgb(0x2F6E8F)' is
 // opaque, and 'rgba(0x2F6E8F, 115)' lets what is under it show through.
 public struct Color {
-    public u8 red
-    public u8 green
-    public u8 blue
+    public u8 red    // from 0 to 255
+    public u8 green  // from 0 to 255
+    public u8 blue   // from 0 to 255
     public u8 alpha  // 255 opaque, 0 transparent
 }
 
@@ -280,7 +280,7 @@ public Color rgba(u32 value, u8 alpha) {
 // label.spacing = 0.06   // small capitals, spaced: 6% of the size after each letter
 // '''
 public struct TextStyle {
-    public Ink ink
+    public Ink ink        // the color, a role of the theme (D490)
     public bool strong    // semibold
     public bool italic    // slanted (D493)
     public bool mono      // JetBrains Mono, whose letters are all equally wide (D492)

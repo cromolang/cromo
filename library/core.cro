@@ -1,3 +1,11 @@
+// The core of the standard library: 'string', 'list' and 'map', the interfaces
+// 'Ordered', 'Key' and 'Debug', the functions that sort, and 'Exception' and 'Error'.
+// Every module sees its names without importing them; a name that a module declares
+// comes first, so a name added here never breaks a program. The built-in functions,
+// as 'println', and the types of the numbers belong to the language.
+//
+// The guide: [Lists, maps and text](https://cromolang.org/book/en/collections.html).
+
 // The standard library of Cromo (D97). It is compiled with every program, and
 // every module sees its public names without importing it (D130). It uses the
 // `unsafe` dialect (D37, D98, D127): the type `addr` and the built-in functions
