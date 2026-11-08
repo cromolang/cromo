@@ -31,6 +31,7 @@ struct Scope {
     std::vector<LiveObject> objects;
     const Block* finallyBlock = nullptr;
     std::string handler;
+    size_t temporaries = 0;  // of the statements around it, as a `for` over a new list
 };
 
 // The exception that a `catch` owns, for `throw` alone (D114).
@@ -1412,7 +1413,17 @@ private:
     // An exception is in the slot: leave the scopes up to the nearest `try` body,
     // or out of the function. Nothing is popped: the code goes on after it.
     void emitPropagation() {
-        for (size_t i = temporaries_.size(); i-- > 0;) dropObject(temporaries_[i]);
+        // The temporaries of the statements inside the `try` that catches it, or all
+        // of them out of the function: a statement around the `try`, as a `for` over
+        // a list that is not a variable, still uses its own after the `catch`.
+        size_t mark = 0;
+        for (size_t i = scopes_.size(); i-- > 0;) {
+            if (!scopes_[i].handler.empty()) {
+                mark = scopes_[i].temporaries;
+                break;
+            }
+        }
+        for (size_t i = temporaries_.size(); i-- > mark;) dropObject(temporaries_[i]);
         for (size_t i = scopes_.size(); i-- > 0;) {
             if (!scopes_[i].handler.empty()) {
                 term("br label %" + scopes_[i].handler);
@@ -1476,7 +1487,7 @@ private:
         std::string end = label("try.end");
         std::string dispatch = statement.catches.empty() ? "" : label("try.dispatch");
 
-        scopes_.push_back(Scope{{}, finallyBlock, dispatch});
+        scopes_.push_back(Scope{{}, finallyBlock, dispatch, temporaries_.size()});
         generateBlock(statement.body);
         scopes_.pop_back();
         if (!terminated_) {

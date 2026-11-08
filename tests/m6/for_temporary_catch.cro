@@ -1,0 +1,32 @@
+// An exception caught inside the body of a `for` over a list that is not a
+// variable: the list of the `for` stays alive after the `catch`, and is destroyed
+// once, at the end of the loop (D16, D68).
+// expect-output: first 1
+// expect-output: second 2
+// expect-output: done
+void fail(string name) {
+    throw Error(name)
+}
+
+i32 main() {
+    i64 caught = 0
+    for (string name in ["first", "second"]) {
+        try {
+            fail(name)
+        } catch (Exception e) {
+            caught++
+        }
+        println("{} {}", name, caught)
+    }
+    for (string name in ["a", "b"]) {
+        try {
+            for (string inner in [name + "1", name + "2"]) {
+                fail(inner)
+            }
+        } catch (Exception e) {
+            caught++
+        }
+    }
+    println("done")
+    ret 0
+}
