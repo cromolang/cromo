@@ -25,7 +25,7 @@ Il valore predefinito di ogni numero è 0.
 
 ## Letterali
 
-Un letterale intero si scrive in decimale, in esadecimale dopo `0x` o in binario dopo `0b`, con `_` per separare le cifre: `1_000_000`, `0xFF`, `0b1010`, `0xFFFF_FFFF`. Uno zero davanti non lo rende ottale come in C: `017` è diciassette. Non ci sono suffissi come `5u` o `5L`.
+Un letterale intero si scrive in decimale, in esadecimale dopo `0x` o in binario dopo `0b`, con `_` per separare le cifre: `1_000_000`, `0xFF`, `0b1010`, `0xFFFF_FFFF`. Uno zero davanti non lo rende ottale, a differenza del C: `017` è diciassette. Non ci sono suffissi come `5u` o `5L`.
 
 Un letterale in virgola mobile ha un punto decimale con delle cifre da entrambi i lati, un esponente dopo `e`, o tutti e due: `3.14`, `1e-9`, `2.5e3`. `.5` e `5.` non sono letterali: si scrive `0.5` e `5.0`. Un numero negativo è un letterale preceduto da `-`.
 
