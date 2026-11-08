@@ -1,0 +1,138 @@
+// Submenus inside submenus (D514): a menu of three levels, with the keys and with the
+// mouse; a submenu opens on the left of its card when there is no room on the right, over
+// the menu, and the mouse finds its entries first; another item of a level closes the
+// submenu open from it.
+// target: windows linux-x86_64
+// program-env: SDL_VIDEO_DRIVER=offscreen
+// expect-output: 3 entries
+// expect-output: chosen Large
+// expect-output: chosen Bold
+// expect-output: chosen Red
+import std.gui
+import std.time
+import unsafe
+
+extern "SDL3" {
+    bool SDL_PushEvent(addr event)
+}
+
+// An event for the window, whatever its number among the first ones.
+void push(u32 kind, i64 code, u16 keys, f32 x, f32 y, addr text) {
+    addr event = alloc(128)
+    for (i64 window = 1; window < 8; window++) {
+        for (i64 i = 0; i < 128; i++) {
+            put<u8>(offset(event, i), 0)
+        }
+        put<u32>(event, kind)
+        put<u32>(offset(event, 16), u32(window))
+        if (kind == 0x300) {  // a key: its code and Ctrl or Shift
+            put<u32>(offset(event, 28), u32(code))
+            put<u16>(offset(event, 32), keys)
+            put<u8>(offset(event, 36), 1)
+        } else if (kind == 0x303) {  // a text
+            put<addr>(offset(event, 24), text)
+        } else {  // a button of the mouse
+            put<u8>(offset(event, 24), 1)
+            put<u8>(offset(event, 25), kind == 0x401 ? 1 : 0)
+            put<u8>(offset(event, 26), 1)
+            put<f32>(offset(event, 28), x)
+            put<f32>(offset(event, 32), y)
+        }
+        SDL_PushEvent(event)
+    }
+    free(event)
+}
+
+void click(f32 x, f32 y) {
+    addr none
+    push(0x401, 0, 0, x, y, none)
+    push(0x402, 0, 0, x, y, none)
+    time.msleep(150)
+}
+
+void write(string value) {
+    addr text = alloc(value.len() + 1)  // kept: SDL reads it when the window does
+    for (i64 i = 0; i < value.len(); i++) {
+        put<u8>(offset(text, i), value[i])
+    }
+    put<u8>(offset(text, value.len()), 0)
+    push(0x303, 0, 0, 0, 0, text)
+    time.msleep(150)
+}
+
+void key(i64 code, u16 keys) {
+    addr none
+    push(0x300, code, keys, 0, 0, none)
+    time.msleep(150)
+}
+
+const i64 down = 0x40000051
+const i64 up = 0x40000052
+const i64 right = 0x4000004F
+const i64 left = 0x40000050
+const i64 enter = 13
+
+// Open, Format and Close; Format holds Bold, Size with Small and Large, and Color with Red.
+gui.Menu menu() {
+    gui.Menu sizes
+    sizes.addItem("Small", []() { println("chosen Small") })
+    sizes.addItem("Large", []() { println("chosen Large") })
+    gui.Menu colors
+    colors.addItem("Red", []() { println("chosen Red") })
+    gui.Menu format
+    format.addItem("Bold", []() { println("chosen Bold") })
+    format.addSubmenu("Size", move sizes)
+    format.addSubmenu("Color", move colors)
+    gui.Menu m
+    m.addItem("Open", []() { println("chosen Open") })
+    m.addSubmenu("Format", move format)
+    m.addItem("Close", []() { println("chosen Close") })
+    ret m
+}
+
+i32 main() {
+    gui.Window w = gui.Window("menus", 400, 335)
+    gui.Button button = w.add(gui.Button("Menu", 16, 16, 100, 28))
+    gui.Menu first = menu()
+    println("{} entries", first.len())
+    gui.TextView view = w.add(gui.TextView(0, 250, 400, 40))  // it scrolls once the window is drawn
+    gui.RichText t
+    for (i64 i = 0; i < 20; i++) {
+        t.link(i, format("line {}\n", i), gui.TextStyle(gui.Ink.Normal))
+    }
+    view.setText(move t)
+    view.setMarked(19)
+    w.start()
+    for (i32 i = 0; i < 500 && view.scrollY() == 0; i++) {  // at most 5 seconds
+        time.msleep(10)
+    }
+    time.msleep(300)
+
+    // the keys: Open, Format, into it on Bold, Size, into it on Small, Large, chosen
+    w.showMenuUnder(move first, button)
+    time.msleep(150)
+    list<i64> keys = [down, down, right, down, right, down, enter]
+    for (i64 code in keys) {
+        key(code, 0)
+    }
+
+    // Left closes Size and points at it again: Up goes to Bold
+    w.showMenuUnder(menu(), button)
+    time.msleep(150)
+    list<i64> back = [down, down, right, down, right, left, up, enter]
+    for (i64 code in back) {
+        key(code, 0)
+    }
+
+    // the mouse: the menu at 16, 83, 98 pixels high, its items 30 pixels high after 4;
+    // Format opens its submenu on the right at 202, 113; Size opens its own on the left,
+    // at 16, 143; Color closes it and opens its own there, at 16, 173, whose Red is chosen
+    w.showMenuUnder(menu(), button)
+    time.msleep(150)
+    click(60, 132)   // Format
+    click(300, 162)  // Size
+    click(300, 192)  // Color
+    click(100, 179)  // Red, whose card covers the bottom of the menu there
+    w.close()
+    ret 0
+}

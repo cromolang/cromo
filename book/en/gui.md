@@ -449,7 +449,7 @@ i32 main() {
 - `setTooltip(text)` gives a component a tooltip: the text shows in a small card when the mouse stays on it for a moment, and on a phone after a long press.
 
 - `w.titleBar()` gives a panel in the title bar, where buttons, segmented controls or labels go, over the bar: where there is no component the bar still moves the window.
-- `menu.addSubmenu(text, move submenu)` adds an item that opens a submenu on its right; `RichText.tooltip(piece, text)` and `AppBar.setActionTooltip(index, text)` give tooltips to pieces and actions; `canvas.onWheel` receives the wheel, and `gui.Mouse` says which keys are held, `shift`, `control` and `alt`.
+- `menu.addSubmenu(text, move submenu)` adds an item that opens a submenu on its right, which can have submenus of its own; `RichText.tooltip(piece, text)` and `AppBar.setActionTooltip(index, text)` give tooltips to pieces and actions; `canvas.onWheel` receives the wheel, and `gui.Mouse` says which keys are held, `shift`, `control` and `alt`.
 
 ## Opening and saving files
 

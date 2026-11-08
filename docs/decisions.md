@@ -2462,6 +2462,9 @@ i32 total = sum.sum()
 
 ### D513. The processor of a program: `--cpu`
 *2026-11-07.* Chosen by the author. As `-march` of GCC and Clang, `-C target-cpu` of Rust and `GOAMD64` of Go: `cromo build --cpu x86-64-v3` compiles the whole program for that processor, and LLVM uses its instructions everywhere, AVX2 for the vectors (D505) and the loops, POPCNT, TZCNT and BMI2 for the bits (D502). Without the option the program runs on every x86-64, with SSE2, as before. The executable has one copy of the code: a copy for each processor, chosen at the start, is not what the languages that Cromo follows do. As in Go, a program compiled for a processor above x86-64 checks at the start that the processor has its instructions, and otherwise says which are missing, instead of stopping somewhere with an illegal instruction.
+
+### D514. Submenus inside submenus
+*2026-11-08.* Chosen by the author. A submenu can have submenus of its own, at any depth, as in the menus of Windows, macOS and GTK: each opens on the right of the card that holds its item, or on its left without room, and the mouse on another item of a level closes the submenu open from it. M64 allowed one level, and a submenu with submenus was a panic.
 ---
 
 ## Proposed
@@ -2754,7 +2757,7 @@ A component keeps the distances from the edges of its parent, the content of the
 
 ### P65. The title bar, the submenus, more tooltips and the wheel on a canvas (D496, D497, D509)
 - `Window.titleBar()` gives the same `gui.Panel` at each call, made the first time: from the left edge of the bar to the buttons of the window, as high as the bar, 35 pixels; its components take their positions from its top left corner and are drawn after the bar, over the title, which stays at its center. The hit test of SDL does not drag the window where they are: `drawWindow` gives their rectangles to `runtime/gui/gui.c` at each frame, up to 32. A dialog shown covers them as the rest. On a phone the panel is not shown.
-- `Menu.addSubmenu(text, move submenu)`: an item with an arrow on its right that opens the entries of the submenu on the right of the menu, at its height, or on its left when there is no room: when the mouse is on it, and with Right or Enter while it is pointed at by the keys; Left closes it, and the mouse on another item of the menu too. A submenu with submenus is a panic. `len()` and `setEnabled` count the entries of the menu, the items with a submenu among them, not those of the submenus.
+- `Menu.addSubmenu(text, move submenu)`: an item with an arrow on its right that opens the entries of the submenu on the right of the card that holds the item, at its height, or on its left when there is no room: when the mouse is on it, and with Right or Enter while it is pointed at by the keys; Left closes the last submenu open, and the mouse on another item of the same level closes the one open from it, with those in it. A submenu can have submenus, at any depth (D514); each card is drawn over the one of its item, and the mouse finds the entries of the last one open first. `len()` and `setEnabled` count the entries of the menu, the items with a submenu among them, not those of the submenus.
 - `RichText.tooltip(piece, text)` gives a piece a tooltip, and `AppBar.setActionTooltip(index, text)` an action, an index out of the actions a panic; they show as those of the components, and the wait starts again when the mouse goes on another piece or action.
 - `gui.Mouse` has `shift`, `control` and `alt`, the keys held, for the canvases and the windows. `Canvas.onWheel(func(Mouse, f32))` receives the steps of the wheel over the canvas, more than 0 away from the user; with its handlers the wheel does not scroll the panel under it.
 

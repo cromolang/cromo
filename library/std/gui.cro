@@ -4258,7 +4258,7 @@ public struct Menu {
 
     // Adds an item that opens a submenu, with its text: the entries of 'submenu' show on
     // its right when the mouse is on it, or with the Right arrow, and Left closes it. A
-    // submenu has no submenus: one is a panic.
+    // submenu can have submenus of its own.
     public void addSubmenu(string text, move Menu submenu) {
         Menu sub = move submenu
         MenuItem item
@@ -4269,16 +4269,14 @@ public struct Menu {
         items.add(move item)
         i64 base = actions.len()
         for (i64 k = 0; k < sub.items.len(); k++) {
-            if (sub.items[k].opens) {
-                panic("a submenu has no submenus")
-            }
             MenuItem entry
             entry.text = sub.items[k].text
             entry.icon = sub.items[k].icon
             entry.enabled = sub.items[k].enabled
             entry.separator = sub.items[k].separator
+            entry.opens = sub.items[k].opens
             entry.action = sub.items[k].action >= 0 ? base + sub.items[k].action : -1
-            entry.parent = at
+            entry.parent = sub.items[k].parent >= 0 ? at + 1 + sub.items[k].parent : at  // they follow the item
             items.add(move entry)
         }
         for (sub.actions.len() > 0) {
@@ -5120,18 +5118,14 @@ struct WindowData {
     f32 menuY
     f32 menuW
     f32 menuH
-    i64 menuHot = -1   // the item under the mouse, or chosen with the keys
-    i64 menuHeld = -1  // the item pressed
-    i64 menuSub = -1   // the item whose submenu is open
-    f32 subX           // its place and its size
-    f32 subY
-    f32 subW
-    f32 subH
-    i64 titlePanel    // the panel in the title bar (D509), or 0
-    i64 tipItem = -1  // the item under the mouse when the tooltip started to wait
-    u64 hotSince      // when the mouse came on the component under it (D497)
-    bool tipBlocked   // a press since then: no tooltip until it goes on another one
-    i64 tipPart       // on a phone, the component whose tooltip a long press shows
+    i64 menuHot = -1      // the item under the mouse, or chosen with the keys
+    i64 menuHeld = -1     // the item pressed
+    list<MenuLevel> subs  // the submenus open, each from an item of the one before (D514)
+    i64 titlePanel        // the panel in the title bar (D509), or 0
+    i64 tipItem = -1      // the item under the mouse when the tooltip started to wait
+    u64 hotSince          // when the mouse came on the component under it (D497)
+    bool tipBlocked       // a press since then: no tooltip until it goes on another one
+    i64 tipPart           // on a phone, the component whose tooltip a long press shows
     f32 tipX
     f32 tipY
     i64 longPart  // the component held with a finger, for a long press (D496)
@@ -10114,6 +10108,15 @@ struct MenuItem {
     i64 parent = -1
 }
 
+// A submenu open: the item that opens it, and the place and the size of its card.
+struct MenuLevel {
+    i64 item
+    f32 x
+    f32 y
+    f32 w
+    f32 h
+}
+
 f32 menuRow() {  // an item of a menu
     ret comfortable() ? 44 : 30
 }
@@ -10150,7 +10153,7 @@ void openMenu(i64 window, move Menu menu, i64 anchor) {
         data.windows[i].menuAnchor = anchor
         data.windows[i].menuHot = -1
         data.windows[i].menuHeld = -1
-        data.windows[i].menuSub = -1
+        data.windows[i].subs.clear()
         data.windows[i].popup = 0
     })
     free(box)
@@ -10161,7 +10164,7 @@ void closeMenu(ref WindowData window) {
     window.menuOpen = false
     window.menuHot = -1
     window.menuHeld = -1
-    window.menuSub = -1
+    window.subs.clear()
     window.menu.clear()
 }
 
@@ -10233,47 +10236,85 @@ void placeMenu(ref WindowData window, ref list<PartData> parts) {
     window.menuPlaced = true
 }
 
-// Opens the submenu of an item: on the right of the menu, at the height of the item, or
-// on its left when there is no room.
+// The level of the entries with that parent: 0 for those of the menu, 1 for those of the
+// first submenu open, and so on; -1 for the entries of a submenu that is not open.
+i64 levelOf(ref WindowData window, i64 parent) {
+    if (parent < 0) {
+        ret 0
+    }
+    for (i64 i = 0; i < window.subs.len(); i++) {
+        if (window.subs[i].item == parent) {
+            ret i + 1
+        }
+    }
+    ret -1
+}
+
+// Closes the submenus opened from the entries of a level, and those in them.
+void closeFrom(ref WindowData window, i64 level) {
+    for (window.subs.len() > level) {
+        window.subs.remove(window.subs.len() - 1)
+    }
+}
+
+// Opens the submenu of an item, and closes the others open from its level: on the right
+// of the card of the item, at its height, or on its left when there is no room.
 void openSub(ref WindowData window, i64 item) {
+    i64 level = levelOf(ref window, window.menu.items[item].parent)
+    if (level < 0) {
+        ret
+    }
+    closeFrom(ref window, level)
+    f32 cardX = level == 0 ? window.menuX : window.subs[level - 1].x
+    f32 cardY = level == 0 ? window.menuY : window.subs[level - 1].y
+    f32 cardW = level == 0 ? window.menuW : window.subs[level - 1].w
     f32 w = 0
     f32 h = 0
     levelSize(ref window, item, ref w, ref h)
     f32 right = window.originX + f32(contentWidth(window)) - 4
     f32 bottom = window.originY + f32(contentHeight(window)) - 4
-    f32 x = window.menuX + window.menuW - 4
+    f32 x = cardX + cardW - 4
     if (x + w > right) {
-        x = window.menuX - w + 4
+        x = cardX - w + 4
     }
-    f32 y = window.menuY + itemTop(ref window, item) - menuPad
+    f32 y = cardY + itemTop(ref window, item) - menuPad
     if (y + h > bottom) {
         y = bottom - h
     }
-    window.menuSub = item
-    window.subX = most(x, window.originX + 4)
-    window.subY = most(y, window.originY + 4)
-    window.subW = w
-    window.subH = h
+    MenuLevel sub
+    sub.item = item
+    sub.x = most(x, window.originX + 4)
+    sub.y = most(y, window.originY + 4)
+    sub.w = w
+    sub.h = h
+    window.subs.add(sub)
 }
 
 bool inMenu(ref WindowData window, f32 x, f32 y) {
     bool main = window.menuPlaced && x >= window.menuX && x < window.menuX + window.menuW && y >= window.menuY &&
         y < window.menuY + window.menuH
-    ret main || inSub(ref window, x, y)
+    ret main || subAt(ref window, x, y) >= 0
 }
 
-bool inSub(ref WindowData window, f32 x, f32 y) {
-    ret window.menuSub >= 0 && x >= window.subX && x < window.subX + window.subW && y >= window.subY &&
-        y < window.subY + window.subH
+// The last submenu open, the one on top, whose card is at a point of the window, or -1.
+i64 subAt(ref WindowData window, f32 x, f32 y) {
+    for (i64 i = window.subs.len() - 1; i >= 0; i--) {
+        if (x >= window.subs[i].x && x < window.subs[i].x + window.subs[i].w && y >= window.subs[i].y &&
+            y < window.subs[i].y + window.subs[i].h) {
+            ret i
+        }
+    }
+    ret -1
 }
 
-// The entry of the menu or of the submenu open at a point of the window, or -1.
+// The entry of the menu or of a submenu open at a point of the window, or -1.
 i64 menuItemAt(ref WindowData window, f32 x, f32 y) {
     if (!window.menuPlaced) {
         ret -1
     }
-    i64 parent = inSub(ref window, x, y) ? window.menuSub : -1
-    f32 top = parent >= 0 ? window.subY : window.menuY
+    i64 sub = subAt(ref window, x, y)
+    i64 parent = sub >= 0 ? window.subs[sub].item : -1
+    f32 top = sub >= 0 ? window.subs[sub].y : window.menuY
     if (parent < 0 && !inMenu(ref window, x, y)) {
         ret -1
     }
@@ -10310,21 +10351,30 @@ void chooseMenuItem(ref WindowData window, i64 k, ref list<Call> calls) {
     closeMenu(ref window)
 }
 
-// The mouse on an entry: an item with a submenu opens it, another item of the menu closes
-// the one open.
+// Whether the submenu of an item is open.
+bool subOpen(ref WindowData window, i64 k) {
+    for (ref MenuLevel sub in window.subs) {
+        if (sub.item == k) {
+            ret true
+        }
+    }
+    ret false
+}
+
+// The mouse on an entry: an item with a submenu opens it, and the other submenus open
+// from its level close, with those in them.
 void pointMenu(ref WindowData window, i64 k) {
     window.menuHot = choosable(ref window, k) ? k : -1
-    if (k < 0) {
+    if (k < 0 || subOpen(ref window, k)) {
         ret
     }
-    if (window.menu.items[k].parent < 0) {
-        if (window.menu.items[k].opens && window.menu.items[k].enabled) {
-            if (window.menuSub != k) {
-                openSub(ref window, k)
-            }
-        } else {
-            window.menuSub = -1
-        }
+    i64 level = levelOf(ref window, window.menu.items[k].parent)
+    if (level < 0) {
+        ret
+    }
+    closeFrom(ref window, level)
+    if (window.menu.items[k].opens && window.menu.items[k].enabled) {
+        openSub(ref window, k)
     }
 }
 
@@ -10340,7 +10390,7 @@ bool menuEvent(ref WindowData window, ref list<PartData> parts, addr event, u32 
     }
     if (kind == 0x206) {  // RESIZED: placed again in the new content
         window.menuPlaced = false
-        window.menuSub = -1
+        window.subs.clear()
         ret false
     }
     if (kind == 0x400) {
@@ -10386,8 +10436,8 @@ bool menuEvent(ref WindowData window, ref list<PartData> parts, addr event, u32 
 }
 
 // Up, Down, Home and End move among the items that can be chosen of the level of the item
-// pointed at; Right opens its submenu, Left closes the one open; Enter and Space choose,
-// Esc closes.
+// pointed at; Right opens its submenu, Left closes the last one open; Enter and Space
+// choose, Esc closes.
 void menuKey(ref WindowData window, i64 code, ref list<Call> calls) {
     if (code == 27 || (window.phone && code == keyBack)) {
         closeMenu(ref window)
@@ -10404,9 +10454,9 @@ void menuKey(ref WindowData window, i64 code, ref list<Call> calls) {
         chooseMenuItem(ref window, hot, ref calls)
         ret
     }
-    if (code == keyLeft && window.menuSub >= 0) {
-        window.menuHot = window.menuSub
-        window.menuSub = -1
+    if (code == keyLeft && window.subs.len() > 0) {
+        window.menuHot = window.subs[window.subs.len() - 1].item
+        window.subs.remove(window.subs.len() - 1)
         ret
     }
     i64 step = code == keyDown || code == keyHome ? 1 : code == keyUp || code == keyEnd ? -1 : 0
@@ -10418,9 +10468,7 @@ void menuKey(ref WindowData window, i64 code, ref list<Call> calls) {
     i64 next = firstAt(ref window, parent, step, from)
     if (next >= 0) {
         window.menuHot = next
-        if (parent < 0) {
-            window.menuSub = -1
-        }
+        closeFrom(ref window, levelOf(ref window, parent))
     }
 }
 
@@ -10462,7 +10510,7 @@ void drawLevel(ref WindowData window, ref Colors c, i64 parent, f32 x, f32 y, f3
             continue
         }
         bool enabled = window.menu.items[k].enabled
-        bool hot = (k == window.menuHot || k == window.menuSub) && enabled
+        bool hot = (k == window.menuHot || subOpen(ref window, k)) && enabled
         if (hot) {
             cromo_gui_box(r, x + menuPad, at, w - 2 * menuPad, menuRow(), 5, 0, d, solid(c.accentSoft, true), 0)
         }
@@ -10485,14 +10533,15 @@ void drawLevel(ref WindowData window, ref Colors c, i64 parent, f32 x, f32 y, f3
 // The menu: a card on the surface, with the border of the controls and the shadow of the
 // cards; the item under the mouse in accent 2 on the soft accent, the disabled ones in
 // ink 3, a line of rule for a separator, an arrow for a submenu, which opens on the right
-// (D496).
+// (D496), each over the one that holds its item (D514).
 void drawMenu(ref WindowData window, ref list<PartData> parts, ref Colors c) {
     if (!window.menuPlaced) {
         placeMenu(ref window, ref parts)
     }
     drawLevel(ref window, ref c, -1, window.menuX, window.menuY, window.menuW, window.menuH)
-    if (window.menuSub >= 0) {
-        drawLevel(ref window, ref c, window.menuSub, window.subX, window.subY, window.subW, window.subH)
+    for (i64 i = 0; i < window.subs.len(); i++) {
+        MenuLevel sub = window.subs[i]
+        drawLevel(ref window, ref c, sub.item, sub.x, sub.y, sub.w, sub.h)
     }
 }
 

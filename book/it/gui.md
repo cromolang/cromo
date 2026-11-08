@@ -449,7 +449,7 @@ i32 main() {
 - `setTooltip(testo)` dà un tooltip a un componente: il testo compare in una piccola card quando il mouse resta un momento su di esso, e sul telefono dopo una pressione lunga.
 
 - `w.titleBar()` dà un pannello nella barra del titolo, dove vanno pulsanti, controlli segmentati o etichette, sopra la barra: dove non c'è un componente la barra sposta ancora la finestra.
-- `menu.addSubmenu(testo, move sottomenu)` aggiunge una voce che apre un sottomenu alla sua destra; `RichText.tooltip(pezzo, testo)` e `AppBar.setActionTooltip(indice, testo)` danno tooltip a pezzi e azioni; `canvas.onWheel` riceve la rotella, e `gui.Mouse` dice quali tasti sono premuti, `shift`, `control` e `alt`.
+- `menu.addSubmenu(testo, move sottomenu)` aggiunge una voce che apre un sottomenu alla sua destra, che può avere a sua volta dei sottomenu; `RichText.tooltip(pezzo, testo)` e `AppBar.setActionTooltip(indice, testo)` danno tooltip a pezzi e azioni; `canvas.onWheel` riceve la rotella, e `gui.Mouse` dice quali tasti sono premuti, `shift`, `control` e `alt`.
 
 ## Aprire e salvare file
 
