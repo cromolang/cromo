@@ -349,7 +349,7 @@ error: the C functions are private to the module: it offers safe functions inste
 - Several modules can declare the same C function, each for itself, with the same signature. A different signature is an error: `the C function 'GetLastError' is already declared with another signature, in clock`. The modules of the standard library that the program uses count too: `std.fs` declares the handles of Windows as `i64`, so a program that uses it and declares `CloseHandle(addr handle)` gets the error `... in std.fs`. Inside one module a C function is declared once.
 - A C function and a Cromo function of the same module cannot have the same name.
 - The names that start with `cromo_` are reserved for the runtime of Cromo, whose functions only the standard library declares, in a block `extern "cromo"`. A program that uses that library name, or a name with that start, gets an error.
-- In a file with `import unsafe`, the names of the built-in functions of the dialect, as `alloc`, `free` and `offset`, always mean the built-ins. A C function with one of those names, as the `free` of the C library, is never called: the built-in `free` runs instead.
+- In a file with `import unsafe`, the names of the built-in functions of the dialect, as `alloc`, `free` and `offset`, always mean the built-ins, so a C function or a function of the module with one of those names, as the `free` of the C library, is an error where it is declared: `'free' is a built-in function of the unsafe dialect, which this module calls instead: give this function another name`.
 
 ## Strings and memory
 

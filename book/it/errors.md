@@ -114,7 +114,7 @@ i32 main() {
 ```
 
 ```output
-error: only a struct that implements Exception can be thrown, found string
+error: only a struct or an enum that implements Exception can be thrown, found string
 ```
 
 Anche un enum può implementare `Exception` ([Enum e switch](enums.md)) ed essere lanciato: ogni caso è un tipo di errore, con i suoi dati, e il `catch` li distingue con uno `switch`:
@@ -780,7 +780,7 @@ Le funzioni del file passato a `cromo` compaiono senza il nome del loro modulo.
 
 ### I file
 
-Il file passato a `cromo` compare così come è stato passato, come `names.cro` qui sopra. Gli altri file del programma, come i moduli che importa, compaiono con il loro percorso completo. I file della libreria compaiono come `cromo:` seguito dalla loro posizione nella libreria, senza la cartella in cui è installato `cromo`: `cromo:core.cro`, `cromo:std/fs.cro`. Qui, su Windows, l'errore viene dalla parte di `std.fs` scritta per Windows:
+Il file passato a `cromo` compare così come è stato passato, come `names.cro` qui sopra, e gli altri file del programma, come i moduli che importa, compaiono allo stesso modo, a partire dalla cartella di quel file: `src/geometry.cro` accanto a `src/main.cro`, e con il percorso completo solo quando il file principale è stato passato con il suo percorso completo. I file della libreria compaiono come `cromo:` seguito dalla loro posizione nella libreria, senza la cartella in cui è installato `cromo`: `cromo:core.cro`, `cromo:std/fs.cro`. Qui, su Windows, l'errore viene dalla parte di `std.fs` scritta per Windows:
 
 ```cromo nocheck file=settings.cro
 import std.fs

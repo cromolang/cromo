@@ -3,13 +3,13 @@
 // expect-output: 2.5 -0.001 1e+300 inf nan
 // expect-output: 0.1 0.30000000000000004 5e-324 1.7976931348623157e+308
 // expect-output: f32 0.1 3.4028235e+38
-// expect-output: '300' does not fit in u8 (D199)
-// expect-output: 'abc' is not a valid i32 (D199)
-// expect-output: '-1' does not fit in u32 (D199)
-// expect-output: '1e400' does not fit in f64 (D199)
-// expect-output: '1.5.2' is not a valid f64 (D199)
-// expect-output: ' 1' is not a valid i64 (D199)
-// expect-output: '9223372036854775808' does not fit in i64 (D199)
+// expect-output: '300' does not fit in u8
+// expect-output: 'abc' is not a valid i32
+// expect-output: '-1' does not fit in u32
+// expect-output: '1e400' does not fit in f64
+// expect-output: '1.5.2' is not a valid f64
+// expect-output: ' 1' is not a valid i64
+// expect-output: '9223372036854775808' does not fit in i64
 void attempt(string text) {
     try {
         i64 value = i64(text)

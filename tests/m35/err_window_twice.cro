@@ -1,4 +1,4 @@
-// expect-error: main already has [[window]] (D426)
+// expect-error: main already has [[window]]
 [[window]]
 [[window]]
 i32 main() {

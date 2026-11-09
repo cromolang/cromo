@@ -518,7 +518,7 @@ i32 main() {
 ```output
 error: a Point cannot be printed with {}: give it a method string text() const
 error: a list<i64> cannot be printed with {}: give it a method string text() const
-error: a i32[3] cannot be printed with {}: print its form of debug with {:?}
+error: an i32[3] cannot be printed with {}: print its form of debug with {:?}
 ```
 
 Un valore stampato sia con `{}` sia con `{:?}` si passa due volte, una per ogni segnaposto, come in `println("{} {:?}", p, p)`: il compilatore trasforma ogni argomento in un solo testo, quello di `text()` oppure quello della forma per il debug.

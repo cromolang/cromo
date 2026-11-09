@@ -50,7 +50,7 @@ void printUsage(FILE* out) {
         "usage: cromo <command> [options] [file.cro] [-- arguments]\n"
         "       cromo fmt [--check] [files and folders | -]\n"
         "\n"
-        "commands (D151):\n"
+        "commands:\n"
         "  build      compiles file.cro into an executable; without a file, the executables\n"
         "             of the cromo.mod of this folder, or its main.cro; with a name, that\n"
         "             executable of cromo.mod\n"
@@ -199,7 +199,7 @@ int build(Compilation& compilation) {
     std::deque<cromo::SourceFile> sources;
     // The standard library is compiled together with the program (D97), from lib/ (D237).
     if (cromo::libraryFolder().empty()) {
-        std::fputs("cromo: cannot find the library: lib/ is missing next to the folder of cromo (D237)\n", stderr);
+        std::fputs("cromo: cannot find the library: lib/ is missing next to the folder of cromo\n", stderr);
         return 2;
     }
     if (compilation.runtime) {
@@ -288,8 +288,21 @@ int build(Compilation& compilation) {
     std::string sourceName = fs::path(sources[0].path).filename().string();
     // In the messages of the program, a file of the library is named without the
     // folder where cromo is installed: "cromo:std/fs.cro".
+    // D345: a module as the main file was given, from its folder: "src/geometry.cro"
+    // next to "src/main.cro", and absolute only when the main file was.
+    fs::path given = sources[0].path;
+    std::error_code folderError;
+    fs::path mainFolder = fs::absolute(given, folderError).parent_path();
     for (const cromo::SourceFile& source : sources) {
-        codegen.sourcePaths.push_back(cromo::isLibraryFile(source.path) ? cromo::libraryName(source.path) : source.path);
+        std::string shown = source.path;
+        if (&source != &sources[0] && given.is_relative() && !cromo::isLibraryFile(source.path)) {
+            std::error_code ec;
+            fs::path relative = fs::relative(fs::absolute(source.path, ec), mainFolder, ec);
+            fs::path path = (given.parent_path() / relative).lexically_normal();
+            bool slashes = sources[0].path.find('/') != std::string::npos;  // the separators of the main file
+            if (!ec && !relative.empty()) shown = slashes ? path.generic_string() : path.string();
+        }
+        codegen.sourcePaths.push_back(cromo::isLibraryFile(source.path) ? cromo::libraryName(source.path) : shown);
         std::error_code ec;
         fs::path full = fs::absolute(source.path, ec);  // a debugger finds the file from anywhere (D338)
         codegen.debugPaths.push_back(ec ? source.path : full.lexically_normal().string());
@@ -322,12 +335,12 @@ bool readOptions(const std::vector<std::string>& args, size_t first, size_t last
         const std::string& arg = args[i];
         bool android = arg == "--target" && run && i + 1 < last && args[i + 1] == "android";  // D464
         if (arg == "--target" && run && !android) {
-            std::fputs("cromo: cromo run takes only --target android, which runs the app on the phone (D159, D464)\n",
+            std::fputs("cromo: cromo run takes only --target android, which runs the app on the phone\n",
                        stderr);
             return false;
         }
         if ((arg == "-o" || arg == "--emit-ir" || arg == "--target") && (run || test) && !android) {
-            std::fprintf(stderr, "cromo: %s is an option of cromo build (D159)\n", arg.c_str());
+            std::fprintf(stderr, "cromo: %s is an option of cromo build\n", arg.c_str());
             return false;
         }
         if (arg == "-o" && i + 1 < last) {
@@ -392,7 +405,7 @@ bool readOptions(const std::vector<std::string>& args, size_t first, size_t last
     }
     if (compilation.runtime) {
         if (options.outputPath.empty() || !compilation.inputPath.empty()) {
-            std::fputs("cromo: cromo build --runtime [--target system] -o <object>, for the build of cromo (D393)\n", stderr);
+            std::fputs("cromo: cromo build --runtime [--target system] -o <object>, for the build of cromo\n", stderr);
             return false;
         }
         return true;
@@ -442,7 +455,7 @@ bool readOptions(const std::vector<std::string>& args, size_t first, size_t last
         if (!fs::is_regular_file("main.cro", ec)) {
             std::fprintf(stderr,
                          "cromo: there is no main.cro in this folder: write the file to compile, as cromo %s hello.cro "
-                         "(D155)\n",
+                         "\n",
                          command);
             return false;
         }
@@ -454,6 +467,12 @@ bool readOptions(const std::vector<std::string>& args, size_t first, size_t last
     }
     if (options.outputPath.empty()) {
         options.outputPath = fs::path(compilation.inputPath).replace_extension(extension).string();
+    }
+    fs::path folder = fs::path(options.outputPath).parent_path();
+    if (!folder.empty() && !fs::is_directory(folder, ec)) {  // as the compilers of C: the folder is not made
+        std::fprintf(stderr, "cromo: cannot write %s: there is no folder %s\n", options.outputPath.c_str(),
+                     folder.string().c_str());
+        return false;
     }
     return true;
 }
@@ -491,7 +510,7 @@ bool formatText(const std::string& path, const std::string& text, std::string& o
     cromo::Diagnostics diag(file);
     std::string error;
     if (cromo::formatSource(file, diag, out, error)) return true;
-    if (!error.empty()) std::fprintf(stderr, "cromo: %s: internal error of cromo fmt: %s (D169)\n", path.c_str(), error.c_str());
+    if (!error.empty()) std::fprintf(stderr, "cromo: %s: internal error of cromo fmt: %s\n", path.c_str(), error.c_str());
     return false;
 }
 
@@ -858,7 +877,7 @@ int buildApk(Compilation& compilation) {
     std::vector<std::string> entries;
     fs::path dex = cromo::libraryFolder() / "android" / "classes.dex";
     if (!fs::is_regular_file(dex, ec)) {
-        std::fprintf(stderr, "cromo: the library has no %s: this cromo was built without the SDK of Android (D453)\n",
+        std::fprintf(stderr, "cromo: the library has no %s: this cromo was built without the SDK of Android\n",
                      dex.string().c_str());
         return 1;
     }
@@ -867,7 +886,7 @@ int buildApk(Compilation& compilation) {
         const char* abi = target == cromo::Target::AndroidArm64 ? "arm64-v8a" : "x86_64";
         fs::path sdl = cromo::runtimeLibraryPath(target).parent_path() / "libSDL3.so";
         if (!fs::is_regular_file(sdl, ec)) {
-            std::fprintf(stderr, "cromo: the library has no %s: this cromo was built without the NDK (D453)\n",
+            std::fprintf(stderr, "cromo: the library has no %s: this cromo was built without the NDK\n",
                          sdl.string().c_str());
             fs::remove_all(folder, ec);
             return 1;
@@ -1011,7 +1030,7 @@ int runAndroid(Compilation& compilation) {
     std::string adb = findAdb();
     if (adb.empty()) {
         std::fputs("cromo: adb not found: install the platform tools of the SDK of Android, and set ANDROID_HOME or "
-                   "put adb in PATH (P47)\n",
+                   "put adb in PATH\n",
                    stderr);
         return 1;
     }
@@ -1056,7 +1075,9 @@ int runAndroid(Compilation& compilation) {
 
 // D349-D352: builds the tests of the program in a temporary folder, runs each in
 // its own process and says which failed. Returns 0 when all passed.
-int testCommand(Compilation& compilation) {
+// `unmatched`, with the executables of cromo.mod: set when no test has the names
+// given, which is an error only if no executable has one (D517).
+int testCommand(Compilation& compilation, bool* unmatched = nullptr) {
     std::error_code ec;
 #ifdef _WIN32
     std::string id = std::to_string(GetCurrentProcessId());
@@ -1090,9 +1111,14 @@ int testCommand(Compilation& compilation) {
         runs.push_back(std::move(run));
     }
     if (runs.empty()) {
-        std::printf(compilation.tests.empty() ? "no tests: write them as [[test]] void name() (D349)\n"
-                                              : "no test has those names\n");
         fs::remove_all(folder, ec);
+        if (!compilation.tests.empty() && unmatched) {
+            *unmatched = true;
+            std::printf("no test of this executable has those names\n");
+            return 0;
+        }
+        std::printf(compilation.tests.empty() ? "no tests: write them as [[test]] void name()\n"
+                                              : "no test has those names\n");
         return compilation.tests.empty() ? 0 : 1;
     }
     runTests(fs::path(compilation.options.outputPath), runs);
@@ -1133,7 +1159,7 @@ int main(int argc, char** argv) {
         // D403: a program written in Cromo, in the library of this cromo, compiled
         // and run as by cromo run, with the version asked (D289).
         if (args.size() > 3) {
-            std::fputs("cromo: cromo update takes at most a version, as cromo update 0.28.0 (D289)\n", stderr);
+            std::fputs("cromo: cromo update takes at most a version, as cromo update 0.28.0\n", stderr);
             return 2;
         }
         Compilation compilation;
@@ -1149,12 +1175,12 @@ int main(int argc, char** argv) {
     if (command == "fmt") return formatCommand(args);
     if (command == "lsp") return cromo::runLanguageServer();  // D170
     if (command == "rls") {
-        std::fputs("cromo: the language server is cromo lsp (D170)\n", stderr);
+        std::fputs("cromo: the language server is cromo lsp\n", stderr);
         return 2;
     }
     if (command != "build" && command != "run" && command != "test") {
         if (fs::path(command).extension() == ".cro") {
-            std::fprintf(stderr, "cromo: the command comes first: cromo build %s (D158)\n", command.c_str());
+            std::fprintf(stderr, "cromo: the command comes first: cromo build %s\n", command.c_str());
         } else {
             std::fprintf(stderr, "cromo: unknown command: %s\n\n", command.c_str());
             printUsage(stderr);
@@ -1165,7 +1191,7 @@ int main(int argc, char** argv) {
     bool isRun = command == "run";
     size_t separator = std::find(args.begin() + 2, args.end(), "--") - args.begin();
     if (!isRun && separator != args.size()) {
-        std::fputs("cromo: the arguments after -- are for cromo run (D156)\n", stderr);
+        std::fputs("cromo: the arguments after -- are for cromo run\n", stderr);
         return 2;
     }
     Compilation compilation;
@@ -1177,12 +1203,19 @@ int main(int argc, char** argv) {
     if (compilation.codegen.tests) {
         if (executables.empty()) return testCommand(compilation);
         int result = 0;
+        size_t unmatched = 0;
         for (const Executable& executable : executables) {
             Compilation one = compilation;
             one.inputPath = executable.path;
             std::printf("%s (%s)\n", executable.name.c_str(), executable.path.c_str());
             std::fflush(stdout);
-            if (testCommand(one) != 0) result = 1;
+            bool none = false;
+            if (testCommand(one, compilation.filters.empty() ? nullptr : &none) != 0) result = 1;
+            unmatched += none;
+        }
+        if (unmatched == executables.size()) {  // the names chose no test at all
+            std::printf("no test has those names\n");
+            return 1;
         }
         return result;
     }
@@ -1200,7 +1233,7 @@ int main(int argc, char** argv) {
     if (!isRun) return compilation.apk ? buildApk(compilation) : build(compilation);
     if (compilation.apk) {
         if (separator != args.size()) {
-            std::fputs("cromo: an app of Android has no arguments (P47)\n", stderr);
+            std::fputs("cromo: an app of Android has no arguments\n", stderr);
             return 2;
         }
         return runAndroid(compilation);

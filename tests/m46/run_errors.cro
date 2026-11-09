@@ -6,9 +6,9 @@
 // program-env: ANDROID_HOME=
 // program-env: ANDROID_SDK_ROOT=
 // program-env: PATH=C:\no-such-folder
-// expect-output: linux: 2 cromo run takes only --target android, which runs the app on the phone (D159, D464)
-// expect-output: arguments: 2 an app of Android has no arguments (P47)
-// expect-output: no adb: 1 adb not found: install the platform tools of the SDK of Android, and set ANDROID_HOME or put adb in PATH (P47)
+// expect-output: linux: 2 cromo run takes only --target android, which runs the app on the phone
+// expect-output: arguments: 2 an app of Android has no arguments
+// expect-output: no adb: 1 adb not found: install the platform tools of the SDK of Android, and set ANDROID_HOME or put adb in PATH
 import std.os
 import std.process
 

@@ -344,10 +344,10 @@ public struct string : Key, Ordered {
         checkIndex(from, length + 1)
         checkIndex(to, length + 1)
         if (from > to) {
-            panic(format("the slice starts at {}, after its end {} (D200)", from, to))
+            panic(format("the slice starts at {}, after its end {}", from, to))
         }
         if (!startsCharacter(from) || !startsCharacter(to)) {
-            panic(format("the slice from {} to {} cuts a character of UTF-8 (D200)", from, to))
+            panic(format("the slice from {} to {} cuts a character of UTF-8", from, to))
         }
         string result
         result.reserve(to - from)
@@ -413,7 +413,7 @@ public struct string : Key, Ordered {
     // '''
     public list<string> split(string separator) const {
         if (separator.length == 0) {
-            panic("the separator of split() is empty (D304)")
+            panic("the separator of split() is empty")
         }
         list<string> pieces
         i64 start = 0
@@ -451,7 +451,7 @@ public struct string : Key, Ordered {
     // '"aaa".replace("aa", "b")' is "ba". An empty 'old' is a panic.
     public string replace(string old, string new) const {
         if (old.length == 0) {
-            panic("the text to replace is empty (D304)")
+            panic("the text to replace is empty")
         }
         string result
         result.reserve(length)
@@ -483,7 +483,7 @@ public struct string : Key, Ordered {
     // 0 gives an empty text, a negative one is a panic.
     public string repeat(i64 count) const {
         if (count < 0) {
-            panic(format("repeat() of a negative count, {} (D304)", count))
+            panic(format("repeat() of a negative count, {}", count))
         }
         string result
         result.reserve(length * count)
@@ -816,7 +816,7 @@ public struct map<K : Key, V> {
     addr valueOf(K key) const {
         i64 slot = find(key, key.hash())
         if (slot < 0) {
-            panic("the key is not in the map (D197)")
+            panic("the key is not in the map")
         }
         ret valueAt(slot)
     }
@@ -1033,7 +1033,7 @@ string stringFromMemory(addr data, i64 n) {
 }
 
 Error notUtf8(i64 index) {
-    ret Error(format("the bytes are not valid UTF-8: the character at {} (D200)", index))
+    ret Error(format("the bytes are not valid UTF-8: the character at {}", index))
 }
 
 // `i8("42")` to `i64("42")` (D199): the compiler passes the largest value of the type.
@@ -1057,7 +1057,7 @@ i64 parseSigned(string text, i64 max, string type) {
 u64 parseUnsigned(string text, u64 max, string type) {
     u64 magnitude = integerMagnitude(text, max, type)
     if (text.len() > 0 && text[0] == '-' && magnitude != 0) {
-        throw Error(format("'{}' does not fit in {} (D199)", text, type))
+        throw Error(format("'{}' does not fit in {}", text, type))
     }
     ret magnitude
 }
@@ -1085,7 +1085,7 @@ u64 integerMagnitude(string text, u64 limit, string type) {
                     throw notNumber(text, type)
                 }
             }
-            throw Error(format("'{}' does not fit in {} (D199)", text, type))
+            throw Error(format("'{}' does not fit in {}", text, type))
         }
         value = value * 10 + digit
     }
@@ -1093,7 +1093,7 @@ u64 integerMagnitude(string text, u64 limit, string type) {
 }
 
 Error notNumber(string text, string type) {
-    ret Error(format("'{}' is not a valid {} (D199)", text, type))
+    ret Error(format("'{}' is not a valid {}", text, type))
 }
 
 // `f64("2.5")`, `f32("1e-3")` (D199): the text is checked here, the runtime finds
@@ -1105,7 +1105,7 @@ f64 parseFloat(string text, i64 bits, string type) {
     }
     f64 value = decimalToFloat(text.data, text.length, bits)
     if (kind == 1 && value - value != 0.0) {  // an infinity from a number too large
-        throw Error(format("'{}' does not fit in {} (D199)", text, type))
+        throw Error(format("'{}' does not fit in {}", text, type))
     }
     ret value
 }

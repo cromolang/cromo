@@ -167,7 +167,7 @@ cannot encode JSON: nan is not a number of JSON
 `json.decode<T>` parte dal valore predefinito di `T`, poi lo riempie con ciò che il testo contiene:
 
 - Un membro assente lascia il campo come lo crea il valore predefinito della struct, con il suo valore iniziale.
-- Un membro `null` dà il valore predefinito del tipo del campo: 0, `""`, `false`, una lista vuota, il primo case di un enum. Lo stesso vale per gli elementi di una lista e per i valori di una mappa.
+- Un membro `null` vale come un membro assente: il campo conserva il valore che ha nel valore predefinito della struct. Un elemento di una lista o un valore di una mappa `null` riceve il valore predefinito del suo tipo: 0, `""`, `false`, una lista vuota, il primo case di un enum.
 - Un membro senza un campo corrispondente viene ignorato.
 - Di un membro scritto due volte, vale l'ultimo.
 
@@ -193,7 +193,7 @@ i32 main() {
 
 ```output
 {"retries":3,"mode":"fast","hosts":["alpha",""]}
-{"retries":0,"mode":"","hosts":[]}
+{"retries":3,"mode":"fast","hosts":[]}
 2
 ```
 
@@ -666,7 +666,7 @@ cannot read JSON: line 1, column 9: expected the name of a member, in double quo
 
 - `json.encode`, `json.pretty` e `json.decode<T>` convertono numeri, stringhe, liste, array fissi, mappe con chiavi stringa, enum e struct, con codice scritto dal compilatore; un campo che non si può convertire è un errore di compilazione.
 - Scrittura: i campi nel loro ordine, le chiavi delle mappe ordinate, i float con il testo più breve e con `.0`, né NaN né infiniti, solo le sequenze di escape che JSON richiede.
-- Lettura: JSON rigoroso, annidato fino a 512 livelli; un membro assente conserva il valore predefinito della struct, un `null` dà il valore predefinito del tipo, un membro sconosciuto viene ignorato; gli interi devono essere interi che stanno nel tipo.
+- Lettura: JSON rigoroso, annidato fino a 512 livelli; un membro assente e un `null` conservano il valore predefinito della struct, un `null` in una lista dà il valore predefinito del tipo, un membro sconosciuto viene ignorato; gli interi devono essere interi che stanno nel tipo.
 - `[[json("name")]]` rinomina un campo o un case; `[[json(skip)]]` esclude un campo.
 - `json.parse` restituisce un `json.Value` per dati di forma qualsiasi, con `Int`, `UInt` e `Float` distinti; `toValue` e `fromValue` convertono tra valori e tipi.
 - Una funzione generica che converte il suo `T` scrive `<T : json.Data>`.

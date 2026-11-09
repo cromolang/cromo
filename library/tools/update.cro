@@ -106,10 +106,10 @@ Release readRelease(string base, string asked) {
     }
     http.Response signature = client.get(address + ".sig")
     if (signature.status != 200) {
-        throw Error(format("{} has no signature: the version is refused (D286)", address))
+        throw Error(format("{} has no signature: the version is refused", address))
     }
     if (!signed(manifest.body, signature.text())) {
-        throw Error(format("the signature of {} is not valid: the version is refused (D286)", address))
+        throw Error(format("the signature of {} is not valid: the version is refused", address))
     }
     json.Value text = json.parse(manifest.text())
     Release release

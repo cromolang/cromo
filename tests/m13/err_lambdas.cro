@@ -1,8 +1,8 @@
 // expect-error: this lambda captures by address
-// expect-error: 'total' is not captured: write it between the [] of the lambda (D183)
-// expect-error: 'limit' is captured to be read: capture it with 'ref limit' to modify it (D183)
+// expect-error: 'total' is not captured: write it between the [] of the lambda
+// expect-error: 'limit' is captured to be read: capture it with 'ref limit' to modify it
 // expect-error: unknown name 'missing'
-// expect-error: cannot capture 'words' with 'move': only a local variable or a 'move' parameter can give its value (D183)
+// expect-error: cannot capture 'words' with 'move': only a local variable or a 'move' parameter can give its value
 // expect-error: a value of type func(i32) bool cannot be used as func(i64) bool
 // expect-error: write 'move f'
 // expect-error: overlaps

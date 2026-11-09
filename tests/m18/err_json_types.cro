@@ -1,12 +1,12 @@
 // The types that cannot be converted to JSON are errors that name the field
 // (D251), and so are the attributes that are not valid (D256).
-// expect-error: another field of Bad has the name 'a' in JSON (D256)
-// expect-error: json takes the name of the field in JSON, as json("user_id"), or skip, as json(skip) (D256)
-// expect-error: unknown attribute 'other': for now there is only json (D256)
-// expect-error: the field 'w' already has the attribute json (D256)
-// expect-error: T can be converted to JSON only with a constraint: write <T : json.Data> (D52, D251)
-// expect-error: values of type Config cannot be converted to JSON (D251): Config.log.flush has type func()
-// expect-error: values of type Stats cannot be converted to JSON (D251): Stats.byId has type map<i64, i64> (the keys of JSON are strings)
+// expect-error: another field of Bad has the name 'a' in JSON
+// expect-error: json takes the name of the field in JSON, as json("user_id"), or skip, as json(skip)
+// expect-error: unknown attribute 'other': for now there is only json
+// expect-error: the field 'w' already has the attribute json
+// expect-error: T can be converted to JSON only with a constraint: write <T : json.Data>
+// expect-error: values of type Config cannot be converted to JSON: Config.log.flush has type func()
+// expect-error: values of type Stats cannot be converted to JSON: Stats.byId has type map<i64, i64> (the keys of JSON are strings)
 import std.json
 
 enum Shape {

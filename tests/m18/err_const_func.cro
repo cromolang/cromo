@@ -1,10 +1,10 @@
 // A const func does not modify what it captures, so that several threads can call
 // it at once (D253): no capture with ref, and no func parameter that is not const;
 // a thread cannot call a func parameter that is not const.
-// expect-error: a const func does not modify what it captures: it cannot capture 'calls' with 'ref' (D253)
-// expect-error: 'g' is a parameter func that is not const: only a 'const func' can be given to a 'const func' (D253)
-// expect-error: 'g' is a parameter func that is not const: a const func cannot call it (D253)
-// expect-error: 'handler' is a parameter func that is not const: a thread or a task cannot call it, as it may modify what it captures; declare it 'const func' (D253)
+// expect-error: a const func does not modify what it captures: it cannot capture 'calls' with 'ref'
+// expect-error: 'g' is a parameter func that is not const: only a 'const func' can be given to a 'const func'
+// expect-error: 'g' is a parameter func that is not const: a const func cannot call it
+// expect-error: 'handler' is a parameter func that is not const: a thread or a task cannot call it, as it may modify what it captures; declare it 'const func'
 import std.thread
 
 void twice(const func() f) {

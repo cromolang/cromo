@@ -371,7 +371,7 @@ bool runtimeImports(std::vector<std::string>& names, std::string& error) {
     std::string path = runtimeLibraryPath(Target::Windows).string();
     llvm::ErrorOr<std::unique_ptr<llvm::MemoryBuffer>> data = llvm::MemoryBuffer::getFile(path);
     if (!data) {
-        error = "cannot read the runtime " + path + ": " + data.getError().message() + " (D237)";
+        error = "cannot read the runtime " + path + ": " + data.getError().message() + "";
         return false;
     }
     llvm::Expected<std::unique_ptr<llvm::object::Archive>> archive = llvm::object::Archive::create((*data)->getMemBufferRef());
@@ -440,7 +440,7 @@ bool writeImportLibrary(const ImportLibrary& import, const std::string& path, st
 bool writeIconResources(const std::string& iconPath, const std::string& resPath, std::string& error) {
     llvm::ErrorOr<std::unique_ptr<llvm::MemoryBuffer>> file = llvm::MemoryBuffer::getFile(iconPath);
     if (!file) {
-        error = "cannot read the icon " + iconPath + ": " + file.getError().message() + " (D425)";
+        error = "cannot read the icon " + iconPath + ": " + file.getError().message() + "";
         return false;
     }
     llvm::StringRef data = (*file)->getBuffer();
@@ -456,7 +456,7 @@ bool writeIconResources(const std::string& iconPath, const std::string& resPath,
         valid = size > 0 && start <= data.size() && size <= data.size() - start;
     }
     if (!valid) {
-        error = "the icon " + iconPath + " is not a .ico file (D425)";
+        error = "the icon " + iconPath + " is not a .ico file";
         return false;
     }
 

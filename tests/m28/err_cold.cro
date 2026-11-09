@@ -1,6 +1,6 @@
 // [[cold]] takes no arguments, and a function has it once (D398).
-// expect-error: [[cold]] takes no arguments (D398)
-// expect-error: the function 'twice' already has [[cold]] (D398)
+// expect-error: [[cold]] takes no arguments
+// expect-error: the function 'twice' already has [[cold]]
 import unsafe
 
 [[cold("rarely")]]

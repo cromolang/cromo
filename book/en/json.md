@@ -167,7 +167,7 @@ cannot encode JSON: nan is not a number of JSON
 `json.decode<T>` starts from the default value of `T`, then fills it with what the text has:
 
 - A member that is missing leaves the field with the value it has in the default value of the struct: its initial value, if it has one.
-- A member that is `null` gives the default value of the type of the field: 0, `""`, `false`, an empty list, the first case of an enum. The same holds for the elements of a list and the values of a map.
+- A member that is `null` is as a member that is missing: the field keeps the value it has in the default value of the struct. An element of a list or a value of a map that is `null` gets the default value of its type: 0, `""`, `false`, an empty list, the first case of an enum.
 - A member without a field is ignored.
 - Of a member written twice, the last one wins.
 
@@ -193,7 +193,7 @@ i32 main() {
 
 ```output
 {"retries":3,"mode":"fast","hosts":["alpha",""]}
-{"retries":0,"mode":"","hosts":[]}
+{"retries":3,"mode":"fast","hosts":[]}
 2
 ```
 
@@ -666,7 +666,7 @@ cannot read JSON: line 1, column 9: expected the name of a member, in double quo
 
 - `json.encode`, `json.pretty` and `json.decode<T>` convert numbers, strings, lists, fixed arrays, maps with string keys, enums and structs, with code written by the compiler; a field that cannot be converted is a compile error.
 - Writing: the fields in their order, the keys of the maps sorted, floats with the shortest text and `.0`, no NaN nor infinity, only the escapes that JSON needs.
-- Reading: strict JSON, nested up to 512 levels; a missing member keeps the default value of the struct, a `null` gives the default value of the type, an unknown member is ignored; integers must be integers that fit.
+- Reading: strict JSON, nested up to 512 levels; a missing member and a `null` keep the default value of the struct, a `null` in a list gives the default value of the type, an unknown member is ignored; integers must be integers that fit.
 - `[[json("name")]]` renames a field or a case; `[[json(skip)]]` leaves a field out.
 - `json.parse` gives a `json.Value` for data of any shape, with `Int`, `UInt` and `Float` kept apart; `toValue` and `fromValue` convert between values and types.
 - A generic function that converts its `T` writes `<T : json.Data>`.

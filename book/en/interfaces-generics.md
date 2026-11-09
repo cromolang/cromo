@@ -589,7 +589,7 @@ i32 main() {
 ```output
 error: '+' does not work on values of type T
 error: '==' does not work on values of type T
-error: a T cannot be printed with {}: print its form of debug with {:?}
+error: a T cannot be printed with {}: print its form of debug with {:?}, with the constraint Debug
 ```
 
 These generics are never called, and the errors come all the same: why is explained below, in the section on when a generic is checked.

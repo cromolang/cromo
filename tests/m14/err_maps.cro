@@ -1,10 +1,10 @@
 // Errors with maps (D197, D198).
 // expect-error: f64[2] does not implement Key, required by K of map
-// expect-error: a 'for' over a map names the key and the value: for (string k, i32 v in ...) (D197)
-// expect-error: the keys of a map are read-only: only the value can be 'ref' (D197)
-// expect-error: only a 'for' over a map has a key and a value (D197)
-// expect-error: 'ages[...]' cannot be modified while a 'for' goes over the elements of 'ages' (D101)
-// expect-error: Key uses Self, so it can only be a constraint: <T : Key> (D84)
+// expect-error: a 'for' over a map names the key and the value: for (string k, i32 v in ...)
+// expect-error: the keys of a map are read-only: only the value can be 'ref'
+// expect-error: only a 'for' over a map has a key and a value
+// expect-error: 'ages[...]' cannot be modified while a 'for' goes over the elements of 'ages'
+// expect-error: Key uses Self, so it can only be a constraint: <T : Key>
 // expect-error: map<string, i32> has no method named 'add'
 void show(Key key) {
 }

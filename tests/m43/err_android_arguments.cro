@@ -1,5 +1,5 @@
 // [[android]] takes the package and the name of the app (D455).
-// expect-error: [[android]] takes the package and the name of the app, as [[android("org.example.mail", "Mail")]] (D455)
+// expect-error: [[android]] takes the package and the name of the app, as [[android("org.example.mail", "Mail")]]
 [[android("org.example.mail")]]
 i32 main() {
     ret 0

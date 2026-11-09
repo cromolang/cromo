@@ -176,11 +176,10 @@ An error depends on the whole program: a call to a function of a module is check
 
 1. the file itself, if it has `main`;
 2. otherwise, the nearest `main.cro` in its folder or in the folders above it, as `cromo build` without a file would; the search stops at the folder of the workspace;
-3. otherwise, the file alone, as a module that is not asked to have `main`.
+3. otherwise, the first executable of the `bin` lines of the `cromo.mod` of its project, as in a project whose programs are in `cmd/`;
+4. otherwise, the file alone, as a module that is not asked to have `main`.
 
-The imports are resolved as the compiler does, from the folder of `cromo.mod` when there is one. A module that its `main.cro` does not import is analyzed alone. The server reads the files of the system on which it runs, as `fs_windows.cro` on Windows: the errors of a file of another system, as `fs_linux.cro` on Windows, appear only when the program is compiled for it.
-
-The server does not read the `bin` lines of `cromo.mod` yet: in a project whose programs are in `cmd/` and that has no `main.cro`, a module of the project is analyzed alone. The errors of the editor are then those of the module by itself, and a file of a module of a folder does not see the names of the other files of its folder: `cromo build` is the reference.
+The imports are resolved as the compiler does, from the folder of `cromo.mod` when there is one. A module that the program chosen does not import is analyzed alone: then the errors of the editor are those of the module by itself, and `cromo build` is the reference. The server reads the files of the system on which it runs, as `fs_windows.cro` on Windows: the errors of a file of another system, as `fs_linux.cro` on Windows, appear only when the program is compiled for it.
 
 ### Not available yet
 

@@ -1,4 +1,4 @@
-// expect-error: [[window]] is only for main of the program, whose executable opens no console (D426)
+// expect-error: [[window]] is only for main of the program, whose executable opens no console
 [[window]]
 void open() {
 }

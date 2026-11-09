@@ -518,7 +518,7 @@ i32 main() {
 ```output
 error: a Point cannot be printed with {}: give it a method string text() const
 error: a list<i64> cannot be printed with {}: give it a method string text() const
-error: a i32[3] cannot be printed with {}: print its form of debug with {:?}
+error: an i32[3] cannot be printed with {}: print its form of debug with {:?}
 ```
 
 A value printed both with `{}` and with `{:?}` is passed twice, once for each placeholder, as `println("{} {:?}", p, p)`: the compiler turns each argument into one text, either that of `text()` or that of the form of debug.

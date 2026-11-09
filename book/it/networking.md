@@ -629,7 +629,7 @@ i32 main() {
     try {
         client.get(base + "/report")
     } catch (Exception e) {
-        println("{}", e.message())
+        println("{}", e.message().replace(base, "<server>"))
     }
     os.exit(0)
     ret 0
@@ -640,7 +640,7 @@ i32 main() {
 200 GET /new, from cromo
 200 GET /new, from cromo
 21000 bytes, Content-Encoding ''
-cannot decompress: the data are larger than 10000 bytes
+cannot read the response of <server>/report: the body is larger than 10000 bytes
 ```
 
 Il server HTTP non comprime da sé: un handler può farlo, con `std.gzip`, come qui sopra. Per i corpi delle richieste il server mantiene il suo limite di 16 MB.

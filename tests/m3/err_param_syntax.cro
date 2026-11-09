@@ -1,5 +1,5 @@
-// expect-error: 'ref const' does not exist: a read parameter is already read-only (D22)
-// expect-error: only a 'move' parameter can be const, written 'move const' (D22)
+// expect-error: 'ref const' does not exist: a read parameter is already read-only
+// expect-error: only a 'move' parameter can be const, written 'move const'
 void f(ref const i32 x) {
 }
 

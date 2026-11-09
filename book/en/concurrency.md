@@ -281,13 +281,57 @@ i32 main() {
 
 The compiler does not follow a free thread: its `start()` and `join()` can be anywhere, also in a loop, as here.
 
-### start() and join()
+### Detached threads
 
-- `start()` twice is a panic, and so are `join()` before `start()` and `join()` twice. For a thread of a block, a second `start()` before its `join()` is already an error of the compiler.
+A free thread can also be **detached**: after `start()`, `detach()` lets it go on by itself, as `std::thread::detach` in C++, a `JoinHandle` that Rust drops, or a goroutine of Go. Its variable can end at once: its destructor no longer waits, nobody joins it, and the end of `main` does not wait for it either. It is the way to start work that has no one to wait for it, as the long work that a handler of a window starts ([Windows and apps](gui.md)).
+
+```cromo
+import std.thread
+import std.time
+
+i64 count(thread.Shared<i64> done) {
+    i64 seen = 0
+    done.lock([ref seen](ref i64 n) { seen = n })
+    ret seen
+}
+
+i32 main() {
+    thread.Shared<i64> done = thread.Shared<i64>(0)
+    if (true) {
+        thread.Thread worker = thread.Thread([done]() {
+            time.msleep(100)
+            done.lock([](ref i64 n) { n = 42 })
+        })
+        worker.start()
+        worker.detach()
+    }
+    println("the block did not wait: {}", count(done))
+    for (i32 i = 0; i < 100 && count(done) == 0; i++) {
+        time.msleep(10)
+    }
+    println("the thread has finished: {}", count(done))
+    ret 0
+}
+```
+
+```output
+the block did not wait: 0
+the thread has finished: 42
+```
+
+- Only a free thread can be detached: a thread of a block uses the variables of its block, and `detach()` on it is an error of the compiler, `the thread 'worker' captures by address, and cannot be detached: it uses the variables of its block`.
+- An exception that ends a detached thread stops the program, as one that no `join()` takes.
+- The results come back through what the thread shares: a `thread.Shared`, a channel it owns with `move`, an atomic in a `Shared`, or the components of a window.
+- `thread.Task` has `detach()` too, with the same rules.
+
+### start(), join() and detach()
+
+- `start()` twice is a panic, and so are `join()` before `start()` and `join()` twice. For a thread of a block, a second `start()` in its block is already an error of the compiler, also after its `join()`.
+- `detach()` before `start()` is a panic, and so are `join()`, `start()` and `detach()` after it.
 - A thread that is never started does nothing, and nothing waits for it.
-- A thread that was started and not joined is waited for when its variable ends: at the end of its block, or when the list that holds it ends.
+- A thread that was started, and neither joined nor detached, is waited for when its variable ends: at the end of its block, or when the list that holds it ends.
 
-The panics say `the thread is already started`, `the thread is not started: call start() first` and `the thread is already joined`.
+The panics say `the thread is already started`, `the thread is not started: call start() first`, `the thread is already joined` and `the thread is already joined or detached`.
 
 ### Exceptions and panics in a thread
 

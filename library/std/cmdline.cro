@@ -144,11 +144,11 @@ public struct CmdLine {
     public void choices(string name, list<string> values) {
         i64 at = indexOf(name)
         if (options[at].kind == Kind.Flag) {
-            panic(format("cmdline: --{} is a flag and has no values (D415)", name))
+            panic(format("cmdline: --{} is a flag and has no values", name))
         }
         options[at].choices = values.copy()
         if (!options[at].required && !allowed(options[at], options[at].defaultText)) {
-            panic(format("cmdline: the default of --{} is not among its choices (D415)", name))
+            panic(format("cmdline: the default of --{} is not among its choices", name))
         }
     }
 
@@ -284,17 +284,17 @@ public struct CmdLine {
 
     Option newOption(string name, char letter, string description, Kind kind, bool required) {
         if (name.len() == 0 || name.startsWith("-") || name == "help") {
-            panic(format("cmdline: '{}' cannot be the name of an option (D415)", name))
+            panic(format("cmdline: '{}' cannot be the name of an option", name))
         }
         if (letter == '-' || letter == 'h') {
-            panic(format("cmdline: '{:c}' cannot be the short name of an option (D415)", letter))
+            panic(format("cmdline: '{:c}' cannot be the short name of an option", letter))
         }
         for (Option option in options) {
             if (option.name == name) {
-                panic(format("cmdline: the option --{} is added twice (D415)", name))
+                panic(format("cmdline: the option --{} is added twice", name))
             }
             if (letter != ' ' && option.letter == letter) {
-                panic(format("cmdline: the short name -{:c} is used twice (D415)", letter))
+                panic(format("cmdline: the short name -{:c} is used twice", letter))
             }
         }
         Option option
@@ -312,13 +312,13 @@ public struct CmdLine {
                 ret i
             }
         }
-        panic(format("cmdline: there is no option --{} (D415)", name))
+        panic(format("cmdline: there is no option --{}", name))
     }
 
     i64 kindOf(string name, Kind kind) const {
         i64 at = indexOf(name)
         if (options[at].kind != kind) {
-            panic(format("cmdline: --{} is not an option of {} (D415)", name, kindName(kind)))
+            panic(format("cmdline: --{} is not an option of {}", name, kindName(kind)))
         }
         ret at
     }

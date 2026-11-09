@@ -1,4 +1,4 @@
-// expect-error: an enum has no constructor or destructor (D110)
+// expect-error: an enum has no constructor or destructor
 enum Shape {
     Circle(f64 radius)
 

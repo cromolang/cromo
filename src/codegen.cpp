@@ -277,11 +277,12 @@ public:
         for (const InterfaceDecl& iface : module.interfaces) {
             if (iface.name == "Exception" && iface.loc.file == kLibraryFile) exceptionInterface_ = &iface;
         }
+        // The functions of the main file are written without its module, also in the
+        // tests, whose file may have no main (D343).
+        if (!module.files.empty() && !module.files[0].name.empty()) programModule_ = module.files[0].name + ".";
         for (const FunctionDecl& function : module.functions) {
             if (function.name == "programArguments" && function.loc.file == kLibraryFile) programArguments_ = &function;
-            if (function.name == "main" && function.loc.file == 0 && function.symbol.size() >= 4) {
-                programModule_ = function.symbol.substr(0, function.symbol.size() - 4);  // "name.", or nothing
-            }
+
         }
 
         // Generics are emitted only through their instances with real types (D39).
@@ -397,8 +398,8 @@ public:
         runtime("cromo_hash_bits", "declare i64 @cromo_hash_bits(i64) nounwind readnone");
         runtime("cromo_exit", "declare void @cromo_exit(i32) noreturn nounwind");
         runtime("cromo_main_end", "declare void @cromo_main_end(i32) noreturn nounwind");
-        runtime("cromo_panic", "declare void @cromo_panic(ptr, i64, ptr) noreturn nounwind cold");
-        runtime("cromo_panic_index", "declare void @cromo_panic_index(i64, i64, ptr) noreturn nounwind cold");
+        runtime("cromo_panic", "declare void @cromo_panic(ptr, i64, ptr) noreturn nounwind cold nomerge");  // each with its line in the trace
+        runtime("cromo_panic_index", "declare void @cromo_panic_index(i64, i64, ptr) noreturn nounwind cold nomerge");
         runtime("cromo_alloc", "declare ptr @cromo_alloc(i64) nounwind");
         runtime("cromo_realloc", "declare ptr @cromo_realloc(ptr, i64) nounwind");
         runtime("cromo_free", "declare void @cromo_free(ptr) nounwind");
@@ -2123,7 +2124,7 @@ private:
             }
             term("switch " + llvmType(from) + " " + number.ref + ", label %" + bad + " [" + table + " ]");
             block(bad);
-            panic("the value is not a case of " + decl.name + " (D135)", expr.loc);
+            panic("the value is not a case of " + decl.name + "", expr.loc);
             block(ok);
             Value tag = convert(number, Type::intType(32, true), expr.loc);
             inst("store " + structName(decl) + " " + defaultConstant(expr.type) + ", ptr " + dest);
@@ -2215,7 +2216,7 @@ private:
         std::string empty = temp();
         inst(object + " = extractvalue { ptr, ptr } " + pair.ref + ", 0");
         inst(empty + " = icmp eq ptr " + object + ", null");
-        panicIf(empty, "the value of " + iface.name + " is empty: it was moved, or never given (D361)", call.loc);
+        panicIf(empty, "the value of " + iface.name + " is empty: it was moved, or never given", call.loc);
         inst(table + " = extractvalue { ptr, ptr } " + pair.ref + ", 1");
         inst(entry + " = getelementptr inbounds ptr, ptr " + table + ", i64 " + std::to_string(index));
         inst(target + " = load ptr, ptr " + entry);
@@ -2346,7 +2347,7 @@ private:
             inst(before + " = icmp ult ptr " + first + ", " + secondEnd);
             inst(after + " = icmp ult ptr " + second + ", " + firstEnd);
             inst(overlap + " = and i1 " + before + ", " + after);
-            panicIf(overlap, "the same element is passed twice to a call that modifies it (D35)", loc);
+            panicIf(overlap, "the same element is passed twice to a call that modifies it", loc);
         }
     }
 
@@ -2533,7 +2534,7 @@ private:
             inst(code + " = extractvalue { ptr, ptr } " + body.ref + ", 0");
             inst(env + " = extractvalue { ptr, ptr } " + body.ref + ", 1");
             inst(empty + " = icmp eq ptr " + code + ", null");
-            panicIf(empty, "the function is empty: no lambda was given to it (D189)", call.loc);
+            panicIf(empty, "the function is empty: no lambda was given to it", call.loc);
             if (group) {
                 std::string fn = intrinsic("declare void @cromo_group_start(ptr, ptr, ptr) nounwind", "@cromo_group_start");
                 inst("call void " + fn + "(ptr " + record + ", ptr " + code + ", ptr " + env + ")");
@@ -2966,7 +2967,7 @@ private:
         inst(code + " = extractvalue { ptr, ptr } " + callee.ref + ", 0");
         inst(env + " = extractvalue { ptr, ptr } " + callee.ref + ", 1");
         inst(empty + " = icmp eq ptr " + code + ", null");
-        panicIf(empty, "the function is empty: no lambda was given to it (D189)", call.loc);
+        panicIf(empty, "the function is empty: no lambda was given to it", call.loc);
         return emitCall(*call.signature, env, Type::error(), call.args, dest, call.loc, &call.overlaps, code);
     }
 
@@ -3225,7 +3226,7 @@ private:
             }
             std::string outside = temp();
             inst(outside + " = icmp uge i64 " + wide + ", " + std::to_string(type.bits));  // a negative count is huge
-            panicIf(outside, "shift count out of the width of " + type.name() + " (D195)", loc);
+            panicIf(outside, "shift count out of the width of " + type.name() + "", loc);
         }
         if (rhs.type.bits != type.bits) {
             std::string fitted = temp();

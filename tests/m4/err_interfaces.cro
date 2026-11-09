@@ -1,10 +1,10 @@
-// expect-error: Comparable uses Self, so it can only be a constraint: <T : Comparable> (D84)
-// expect-error: Empty does not implement 'area' of Shape: add 'f64 area() const' (D90)
-// expect-error: 'area' does not match the interface Shape: it must be 'f64 area() const' (D90)
-// expect-error: 'Point' is not an interface: a struct can only implement interfaces (D40)
-// expect-error: Point does not implement Shape (D49)
-// expect-error: cannot call 'grow', which is not const (D24): parameter 'shape' cannot be modified
-// expect-error: Self can be used only in the methods of an interface (D84)
+// expect-error: Comparable uses Self, so it can only be a constraint: <T : Comparable>
+// expect-error: Empty does not implement 'area' of Shape: add 'f64 area() const'
+// expect-error: 'area' does not match the interface Shape: it must be 'f64 area() const'
+// expect-error: 'Point' is not an interface: a struct can only implement interfaces
+// expect-error: Point does not implement Shape
+// expect-error: cannot call 'grow', which is not const: parameter 'shape' cannot be modified
+// expect-error: Self can be used only in the methods of an interface
 interface Shape {
     f64 area() const
     void grow()

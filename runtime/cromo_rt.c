@@ -1105,7 +1105,13 @@ typedef struct {
     void* env;
     void* raised[2];  // the object and its descriptor, or nothing
     i64 kind;
+    u32 state;    // RUNNING, then ENDED when its lambda returns, or DETACHED (D521)
+    void** body;  // of a detached one: its lambda, which the runtime destroys
 } Runnable;
+
+#define RUNNING 0
+#define ENDED 1
+#define DETACHED 2
 
 typedef struct Worker Worker;
 
@@ -1124,6 +1130,7 @@ ThreadBlock cromo_main_block = {&cromo_main_block, 0};
 
 typedef struct {
     Runnable head;
+    void* nextEnded;  // among the detached threads that ended, to free (D521)
 #ifdef _WIN32
     void* handle;
 #else
@@ -1155,6 +1162,42 @@ static void setThreadBlock(ThreadBlock* block) { pthread_setspecific(threadKey, 
 #endif
 
 static void crashStack(ThreadRecord* thread);
+NORETURN void cromo_thread_uncaught(Runnable* record);
+
+// The lambda of a detached thread or task, which the library moved out of its object
+// (D521): the first word of its data is the function that destroys them.
+static void destroyBody(void** body) {
+    void* env = body[1];
+    if (env) {
+        void (*destroy)(void*) = *(void (**)(void*))env;
+        if (destroy) destroy(env);
+    }
+    cromo_free(body);
+}
+
+// The lambda has returned: 1 if the thread or the task is detached, and then the
+// exception that ended it stops the program, and the data of its lambda are
+// destroyed here, on its own stack.
+static int endDetached(Runnable* record) {
+    u32 running = RUNNING;
+    if (__atomic_compare_exchange_n(&record->state, &running, ENDED, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) return 0;
+    if (record->raised[0]) cromo_thread_uncaught(record);
+    destroyBody(record->body);
+    return 1;
+}
+
+// The detached threads of the system that ended: a thread cannot unmap its own
+// stack, so the next start or detach frees them, once they are out (D521).
+static void* endedThreads;
+
+static void pushEnded(ThreadRecord* thread) {
+    void* head = __atomic_load_n(&endedThreads, __ATOMIC_RELAXED);
+    do {
+        thread->nextEnded = head;
+    } while (!__atomic_compare_exchange_n(&endedThreads, &head, thread, 1, __ATOMIC_RELEASE, __ATOMIC_RELAXED));
+}
+
+static void freeEnded(void);
 
 static void runThread(ThreadRecord* thread) {
 #ifdef CROMO_PTHREADS
@@ -1162,6 +1205,7 @@ static void runThread(ThreadRecord* thread) {
 #endif
     crashStack(thread);
     thread->head.code(thread->head.env, thread->head.raised);
+    if (endDetached(&thread->head)) pushEnded(thread);
 }
 
 static NORETURN void threadFailure(void) {
@@ -2088,7 +2132,11 @@ static NORETURN void stackMain(Stack* stack) {
     for (;;) {
         Task* task = stack->task;
         task->head.code(task->head.env, task->head.raised);
-        if (task->head.kind == KIND_GROUP_TASK) finishGroupTask(task);
+        if (task->head.kind == KIND_GROUP_TASK) {
+            finishGroupTask(task);
+        } else {
+            endDetached(&task->head);
+        }
         Worker* worker = currentWorker();
         worker->ended = 1;
         switchToWorker(worker, stack);
@@ -2103,6 +2151,10 @@ static void endTask(Task* task) {
         Group* group = task->group;
         cromo_free(task);
         if (__atomic_sub_fetch(&group->running, 1, __ATOMIC_ACQ_REL) == 0) unpark(&group->running, 1);
+        return;
+    }
+    if (__atomic_load_n(&task->head.state, __ATOMIC_ACQUIRE) == DETACHED) {  // nobody waits for it (D521)
+        cromo_free(task);
         return;
     }
     __atomic_store_n(&task->finished, 1, __ATOMIC_RELEASE);
@@ -2493,6 +2545,7 @@ void cromo_channel_free(Channel* channel) {
 // ---- What the library calls (D214, D269, D273) ----
 
 void* cromo_thread_start(void* code, void* env) {
+    freeEnded();
     ThreadRecord* thread = newThreadRecord(code, env);
     threaded = 1;  // from now on the locks are taken
     cromo_heap_threaded();
@@ -2501,6 +2554,7 @@ void* cromo_thread_start(void* code, void* env) {
 }
 
 void* cromo_task_start(void* code, void* env) {
+    freeEnded();
     Task* task = newTask(code, env, KIND_TASK);
     startScheduler();
     makeReady(task);
@@ -2553,6 +2607,29 @@ void cromo_thread_take(Runnable* record, void** slot) {
 void cromo_thread_free(Runnable* record) {
     if (record->kind == KIND_THREAD) freeSystemThread((ThreadRecord*)record);
     cromo_free(record);
+}
+
+static void freeEnded(void) {
+    ThreadRecord* thread = __atomic_exchange_n((ThreadRecord**)&endedThreads, (ThreadRecord*)0, __ATOMIC_ACQUIRE);
+    while (thread) {
+        ThreadRecord* next = thread->nextEnded;
+        waitSystemThread(thread);  // it has only to leave its stack
+        cromo_thread_free(&thread->head);
+        thread = next;
+    }
+}
+
+// D521: the thread or the task goes on by itself, with its lambda; the runtime frees
+// it when it ends. One that has ended already is freed here, as its end would do.
+void cromo_thread_detach(Runnable* record, void** body) {
+    freeEnded();
+    record->body = body;
+    u32 running = RUNNING;
+    if (__atomic_compare_exchange_n(&record->state, &running, DETACHED, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) return;
+    cromo_thread_wait(record);
+    if (record->raised[0]) cromo_thread_uncaught(record);
+    destroyBody(body);
+    cromo_thread_free(record);
 }
 
 // D217: an exception that no join() takes stops the program, with its message

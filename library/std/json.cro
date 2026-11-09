@@ -266,7 +266,7 @@ public enum Value {
                 ret "an integer"
             }
             case UInt {
-                ret "an integer"
+                ret "an integer too large for i64"  // from 2^63 on (D369)
             }
             case Float {
                 ret "a float"

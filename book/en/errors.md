@@ -114,7 +114,7 @@ i32 main() {
 ```
 
 ```output
-error: only a struct that implements Exception can be thrown, found string
+error: only a struct or an enum that implements Exception can be thrown, found string
 ```
 
 An enum can implement `Exception` too ([Enums and switch](enums.md)), and be thrown: each case is a kind of error, with its own data, and the `catch` tells them apart with a `switch`:
@@ -780,7 +780,7 @@ The functions of the file given to `cromo` are written without the name of their
 
 ### The files
 
-The file given to `cromo` is written as it was given, as `names.cro` above. The other files of the program, as the modules that it imports, are written with their full path. The files of the library are written `cromo:` and their place in the library, without the folder where `cromo` is installed: `cromo:core.cro`, `cromo:std/fs.cro`. Here, on Windows, the error comes from the part of `std.fs` written for Windows:
+The file given to `cromo` is written as it was given, as `names.cro` above, and the other files of the program, as the modules that it imports, are written in the same way, from the folder of that file: `src/geometry.cro` next to `src/main.cro`, and with their full path only when the main file was given with its full path. The files of the library are written `cromo:` and their place in the library, without the folder where `cromo` is installed: `cromo:core.cro`, `cromo:std/fs.cro`. Here, on Windows, the error comes from the part of `std.fs` written for Windows:
 
 ```cromo nocheck file=settings.cro
 import std.fs

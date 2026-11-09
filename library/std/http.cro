@@ -271,7 +271,7 @@ public struct Request {
             bool rest = name.len() > 3 && find(name, "...", 0) == name.len() - 3
             if (rest) {
                 if (i != parts.len() - 1) {
-                    throw Error(format("the pattern '{}' has {{name...}} before its end (D252)", pattern))
+                    throw Error(format("the pattern '{}' has {{name...}} before its end", pattern))
                 }
                 if (i >= given.len()) {
                     ret false
@@ -1083,7 +1083,14 @@ Response talk(ref net.Connection connection, ref Incoming input, bool single, Ur
             }
             res.closes = res.closes || input.available() > 0
             if (compressed && sameName(res.headers.get("content-encoding"), "gzip")) {
-                res.body = gzip.decompressUpTo(res.body, limit)
+                try {
+                    res.body = gzip.decompressUpTo(res.body, limit)
+                } catch (Exception e) {
+                    if (e.message().contains("larger than")) {  // the limit, as for a body without gzip
+                        throw tooLarge(limit)
+                    }
+                    throw Error(format("cannot read the response of {}: {}", target.text(), e.message()))
+                }
                 res.headers.remove("content-encoding")
                 res.headers.set("Content-Length", format("{}", res.body.len()))
             }

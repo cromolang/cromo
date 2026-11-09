@@ -7,7 +7,7 @@
 // expect-error: function 'area' is already defined
 // expect-error: 'println' is a built-in name
 // expect-error: 'Point' is already the name of a type
-// expect-error: a variable outside the functions is only for the modules with 'import unsafe' (D394)
+// expect-error: a variable outside the functions is only for the modules with 'import unsafe'
 // expect-error: constant 'limit' is already defined
 // expect-error: 'f64' is a built-in name
 // expect-error: 'area' is already the name of a function or a type of the module

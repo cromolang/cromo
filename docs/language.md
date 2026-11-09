@@ -481,7 +481,7 @@ Shape biggest = Circle(3.0)                         // the circle moves to the h
 - Calling a generic function, the type arguments are deduced from the arguments: `doubleArea(c)`. They are written when they cannot be deduced, `zero<i64>()` (D86). A generic struct is always written with its type arguments: `Pair<i32, f64>`.
 - A generic is checked once, at its definition: on a `T` only the methods of its constraints can be called (D52). Whether a `T` can be copied is checked for each type it is used with (D85).
 - An interface that uses `Self` can only be a constraint: `T max<T : Comparable>(T a, T b)` (D84).
-- The numbers and `bool` do not implement interfaces yet: the built-in interfaces for comparison, equality, printing and arithmetic will come with the standard library (D87).
+- The numbers and `string` implement `Ordered` and `Key`, `bool` implements `Key` (D87, D197, D421); there are no interfaces for the arithmetic.
 
 ## 13. Modules (D41, D50, D126)
 
@@ -592,7 +592,7 @@ i32 main() {
 - A lambda that captures by address (with `ref`, or reading a value that is not simple) can only be passed as an argument; one that captures only with `move`, or values of simple types, is a value: it can be kept in variables, fields and lists, returned and moved (D184).
 - The type of a function is `func(i32, ref T) bool` (D185). A variable or a field of that type is called as a function; the call is indirect (D186).
 - Function values are moved and not copied; an empty one, as a variable without a value, is a panic when called (D189).
-- A parameter `const func(...)` receives a function that does not modify what it captures, as a lambda of C++ without `mutable`: a lambda without `ref` captures, a named function, or a function value. Several threads can call it at once, as the handler of `http.serve` (D253). A thread cannot call a parameter `func` that is not `const`.
+- A parameter `const func(...)` receives a function that does not modify what it captures, as a lambda of C++ without `mutable`: a lambda without `ref` captures, or a function value; a named function is not a value, and a lambda calls it. Several threads can call it at once, as the handler of `http.serve` (D253). A thread cannot call a parameter `func` that is not `const`.
 
 ## 16. Arrays, maps, lists, text and bytes (D196–D200, D304–D317, D470)
 
@@ -772,6 +772,7 @@ println("{}", count.load())   // 2
 - `close()` ends it: the values already sent can still be received, then `receive()` throws; `send()` to a closed channel throws, also when it was waiting; a second `close()` does nothing (D327, D331, D334). `next(ref v)` is `receive()` without the exception: false once the channel is closed and empty (D332).
 - `for (T v in channel)` receives until the end: `v` belongs to the body, which can move it elsewhere; the channel is a variable or a field (D333). The values left in a channel end with it.
 - `thread.Atomic<T>` holds an integer or a bool, 0 or `false` by default, or the value of `thread.Atomic<T>(x)`; it cannot be copied (D335). `load`, `store`, `add` and `exchange`, which return the value before, and `compareExchange(expected, desired)`, true if it wrote, are all sequentially consistent (D328, D336); `loadRelaxed`, `storeRelaxed` and `addRelaxed` have no order among the threads, for counters and statistics (D503). Another `T`, or `add` of a bool, is an error where it is written (D337).
+- A thread or a task that owns all that it uses can be detached with `detach()`, as in C++ and Rust: its destructor and the end of `main` no longer wait for it (D521).
 
 ## 19. Network (D223–D226)
 

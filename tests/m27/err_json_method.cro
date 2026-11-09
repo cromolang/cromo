@@ -1,5 +1,5 @@
 // In an enum an attribute goes before a case, not before a method (D365).
-// expect-error: in an enum an attribute is written only before a case (D365)
+// expect-error: in an enum an attribute is written only before a case
 enum Other {
     One
 

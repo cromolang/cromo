@@ -1,5 +1,5 @@
 // Without import unsafe there are no addresses (D127, P13).
-// expect-error: 'addr' belongs to the unsafe dialect: the module must write 'import unsafe' (D127)
+// expect-error: 'addr' belongs to the unsafe dialect: the module must write 'import unsafe'
 
 i32 main() {
     i64 place = 4096

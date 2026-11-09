@@ -40,7 +40,7 @@ i32 main(list<string> args) {
         Formatted formatted = formatSource("<stdin>", text, ref diag)
         if (!formatted.ok) {
             if (formatted.error.len() > 0) {
-                eprintln("cromo: <stdin>: internal error of cromo fmt: {} (D169)", formatted.error)
+                eprintln("cromo: <stdin>: internal error of cromo fmt: {}", formatted.error)
             }
             ret 1
         }
@@ -84,7 +84,7 @@ i32 main(list<string> args) {
         Formatted formatted = formatSource(file, text, ref diag)
         if (!formatted.ok) {
             if (formatted.error.len() > 0) {
-                eprintln("cromo: {}: internal error of cromo fmt: {} (D169)", file, formatted.error)
+                eprintln("cromo: {}: internal error of cromo fmt: {}", file, formatted.error)
             }
             result = 1
             continue

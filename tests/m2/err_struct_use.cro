@@ -1,11 +1,11 @@
-// expect-error: Point has no constructor: Point() gives its default value (D71)
-// expect-error: values of type File cannot be copied (D424)
-// expect-error: a Point cannot be printed with {}: give it a method string text() const (D318), or print its form of debug with {:?} (D319)
-// expect-error: '==' does not work on structs yet (D76)
-// expect-error: 'x' is a field of Point: choose another name (D70)
-// expect-error: cannot call 'shift', which is not const (D24)
-// expect-error: method 'peek' is const and cannot modify the fields (D24)
-// expect-error: 'origin' is const and cannot be modified (D26)
+// expect-error: Point has no constructor: Point() gives its default value
+// expect-error: values of type File cannot be copied
+// expect-error: a Point cannot be printed with {}: give it a method string text() const, or print its form of debug with {:?}
+// expect-error: '==' does not work on structs yet
+// expect-error: 'x' is a field of Point: choose another name
+// expect-error: cannot call 'shift', which is not const
+// expect-error: method 'peek' is const and cannot modify the fields
+// expect-error: 'origin' is const and cannot be modified
 // expect-error: Point has no field named 'z'
 // expect-error: Point has no method named 'scale'
 // expect-error: parameter 'p' cannot be modified

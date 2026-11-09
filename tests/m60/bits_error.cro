@@ -1,8 +1,8 @@
 // The functions of the bits take integers (D502).
-// expect-error: countOnes() works on integers, not on f64 (D502)
-// expect-error: rotateLeft() takes an integer and the bits to turn it by (D502)
-// expect-error: the bits to turn by are an integer, not bool (D502)
-// expect-error: the type of this literal cannot be deduced: write it, for example countOnes(u64(5)) (D55)
+// expect-error: countOnes() works on integers, not on f64
+// expect-error: rotateLeft() takes an integer and the bits to turn it by
+// expect-error: the bits to turn by are an integer, not bool
+// expect-error: the type of this literal cannot be deduced: write it, for example countOnes(u64(5))
 i32 main() {
     f64 x = 1.5
     i32 a = countOnes(x)

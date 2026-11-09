@@ -1,5 +1,5 @@
 // A private name of a folder module is private to the folder (D515).
-// expect-error: 'positive' of geometry is private to its module: it is not marked public (D50)
+// expect-error: 'positive' of geometry is private to its module: it is not marked public
 import modules.geometry
 
 i32 main() {

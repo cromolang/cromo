@@ -1,7 +1,7 @@
 // The bitwise operators only work on integers (D193, D194).
-// expect-error: '&' only works on integers (D193)
-// expect-error: '!' needs a bool or an integer, found f64 (D194)
-// expect-error: '<<' works on integers, found f64 (D195)
+// expect-error: '&' only works on integers
+// expect-error: '!' needs a bool or an integer, found f64
+// expect-error: '<<' works on integers, found f64
 i32 main() {
     f64 a = 1.5
     f64 b = 2.5

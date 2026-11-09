@@ -1,5 +1,5 @@
 // After a move the variable cannot be used; a copy leaves it valid (D424, D23).
-// expect-error: 'b' has been moved and can no longer be used (D23)
+// expect-error: 'b' has been moved and can no longer be used
 i32 main() {
     string a = "x"
     string b = a

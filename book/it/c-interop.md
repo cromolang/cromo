@@ -349,7 +349,7 @@ error: the C functions are private to the module: it offers safe functions inste
 - Più moduli possono dichiarare la stessa funzione C, ciascuno per sé, con la stessa firma. Una firma diversa è un errore: `the C function 'GetLastError' is already declared with another signature, in clock`. Contano anche i moduli della libreria standard che il programma usa: `std.fs` dichiara gli handle di Windows come `i64`, quindi un programma che lo usa e dichiara `CloseHandle(addr handle)` riceve l'errore `... in std.fs`. All'interno di un modulo, una funzione C si dichiara una volta sola.
 - Una funzione C e una funzione Cromo dello stesso modulo non possono avere lo stesso nome.
 - I nomi che iniziano con `cromo_` sono riservati al runtime di Cromo, le cui funzioni sono dichiarate solo dalla libreria standard, in un blocco `extern "cromo"`. Un programma che usa quel nome di libreria, o un nome con quell'inizio, riceve un errore.
-- In un file con `import unsafe`, i nomi delle funzioni integrate del dialetto, come `alloc`, `free` e `offset`, indicano sempre le funzioni integrate. Una funzione C con uno di quei nomi, come la `free` della libreria C, non viene mai chiamata: al suo posto viene eseguita la `free` integrata.
+- In un file con `import unsafe`, i nomi delle funzioni integrate del dialetto, come `alloc`, `free` e `offset`, indicano sempre le funzioni integrate, perciò una funzione C o del modulo con uno di quei nomi, come la `free` della libreria C, è un errore dove viene dichiarata: `'free' is a built-in function of the unsafe dialect, which this module calls instead: give this function another name`.
 
 ## Stringhe e memoria
 

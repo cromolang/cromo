@@ -1,13 +1,13 @@
 // The checks of the tasks of a block (D215, D269) and of the groups (D273).
-// expect-error: 'values' is used by the task 'a' until a.join() (D215)
-// expect-error: 'a' is a task of its block, which captures by address: it cannot be moved, assigned, returned, passed with 'ref' or captured (D215)
-// expect-error: a task whose lambda captures by address belongs to its block: declare it, as thread.Task t = thread.Task(...) (D215)
-// expect-error: the tasks of a group run at the same time: they cannot capture 'total' with 'ref'; read it, or take it with 'move' (D273)
-// expect-error: the tasks of the group 'g' read 'late', declared after the group: declare it before, or take it with 'move' (D273)
-// expect-error: 'names' cannot be modified after the group 'g', whose tasks read it (D273)
-// expect-error: 'names' cannot be modified while the tasks of the group 'g' read it (D273)
-// expect-error: 'g' is a group of tasks, which read the variables of its block: it cannot be moved, assigned, returned, passed with 'ref' or captured (D273)
-// expect-error: the task 'other' cannot start: 'names' is used by the tasks of the group 'g' until the end of its block (D273)
+// expect-error: 'values' is used by the task 'a' until a.join()
+// expect-error: 'a' is a task of its block, which captures by address: it cannot be moved, assigned, returned, passed with 'ref' or captured
+// expect-error: a task whose lambda captures by address belongs to its block: declare it, as thread.Task t = thread.Task(...)
+// expect-error: the tasks of a group run at the same time: they cannot capture 'total' with 'ref'; read it, or take it with 'move'
+// expect-error: the tasks of the group 'g' read 'late', declared after the group: declare it before, or take it with 'move'
+// expect-error: 'names' cannot be modified after the group 'g', whose tasks read it
+// expect-error: 'names' cannot be modified while the tasks of the group 'g' read it
+// expect-error: 'g' is a group of tasks, which read the variables of its block: it cannot be moved, assigned, returned, passed with 'ref' or captured
+// expect-error: the task 'other' cannot start: 'names' is used by the tasks of the group 'g' until the end of its block
 import std.thread
 
 void keep(move thread.Task t) {

@@ -1,10 +1,10 @@
 // The checks of the values of an interface (D357, D358) and of the initial values
 // of the fields (D360).
-// expect-error: values of type Shape cannot be copied (D424): write 'move a'
-// expect-error: a variable cannot be of Ordered, which uses Self: it can only be a constraint, <T : Ordered> (D84)
-// expect-error: values of type Holder cannot be copied (D424)
-// expect-error: the initial value of a field cannot throw an exception: it is computed wherever the default value is made (D360)
-// expect-error: the initial value of a field cannot read the field 'first' (D360)
+// expect-error: values of type Shape cannot be copied: write 'move a'
+// expect-error: a variable cannot be of Ordered, which uses Self: it can only be a constraint, <T : Ordered>
+// expect-error: values of type Holder cannot be copied
+// expect-error: the initial value of a field cannot throw an exception: it is computed wherever the default value is made
+// expect-error: the initial value of a field cannot read the field 'first'
 interface Shape {
     f64 area() const
 }

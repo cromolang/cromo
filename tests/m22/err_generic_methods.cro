@@ -1,7 +1,7 @@
 // The errors of the methods with type parameters of their own (D92).
 // expect-error: 'T' is already a type parameter of Box
-// expect-error: cannot deduce U in this call of 'map': write the type arguments, map<...>(...) (D86)
-// expect-error: 'len' has no type parameters (D92)
+// expect-error: cannot deduce U in this call of 'map': write the type arguments, map<...>(...)
+// expect-error: 'len' has no type parameters
 struct Box<T> {
     T item
 

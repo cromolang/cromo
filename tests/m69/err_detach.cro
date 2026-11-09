@@ -1,0 +1,18 @@
+// A thread of a block captures by address, and cannot be detached (D521); a second
+// start() in its block is an error also after join() (D219).
+// expect-error: the thread 'adder' captures by address, and cannot be detached: it uses the variables of its block
+// expect-error: the thread 'counter' is already started
+import std.thread
+
+i32 main() {
+    i64 total = 0
+    thread.Thread adder = thread.Thread([ref total]() { total++ })
+    adder.start()
+    adder.detach()
+    i64 more = 0
+    thread.Thread counter = thread.Thread([ref more]() { more++ })
+    counter.start()
+    counter.join()
+    counter.start()
+    ret 0
+}

@@ -1,5 +1,5 @@
 // An addr converts only to an integer of 64 bits, and back (P13).
-// expect-error: cannot convert addr to u32: an addr converts to i64 or u64, and back (P13)
+// expect-error: cannot convert addr to u32: an addr converts to i64 or u64, and back
 import unsafe
 
 i32 main() {

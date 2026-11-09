@@ -46,7 +46,7 @@ struct Parser {
         }
         for (!check(Kind.EndOfFile)) {
             if (check(Kind.KwImport)) {
-                errorAt(at(0), "the imports come before the declarations of the module (D131)")
+                errorAt(at(0), "the imports come before the declarations of the module")
                 skipToNextDeclaration()
             } else if (check(Kind.KwExtern)) {
                 parseExtern()
@@ -69,9 +69,9 @@ struct Parser {
             i64 token = advance()
             if (check(Kind.KwExtern) || check(Kind.KwImport)) {
                 if (check(Kind.KwExtern)) {
-                    errorAt(token, "an extern block is not public: the module offers safe functions instead (D42, D133)")
+                    errorAt(token, "an extern block is not public: the module offers safe functions instead")
                 } else {
-                    errorAt(token, "an import is not public: each module writes its own (D131)")
+                    errorAt(token, "an import is not public: each module writes its own")
                 }
                 advance()
                 skipToNextDeclaration()
@@ -82,7 +82,7 @@ struct Parser {
         if (attributes.len() > 0 && (check(Kind.KwStruct) || check(Kind.KwEnum) || check(Kind.KwInterface) ||
             check(Kind.KwExtern))) {
             diag.error(attributes[0].line, attributes[0].column,
-                "an attribute is written before a field, or [[test]] before a function (D256, D349)")
+                "an attribute is written before a field, or [[test]] before a function")
             skipToNextDeclaration()
             ret
         }
@@ -112,9 +112,9 @@ struct Parser {
             tree.interfaces.add(move decl)
         } else if (check(Kind.KwConst) || startsModuleVariable()) {
             if (isPublic || attributes.len() > 0) {
-                string message = "a module variable has no attributes and is not public: only its module sees it (D394)"
+                string message = "a module variable has no attributes and is not public: only its module sees it"
                 if (check(Kind.KwConst)) {
-                    message = "a constant of a module has no attributes and is not public: only its module sees it (D414)"
+                    message = "a constant of a module has no attributes and is not public: only its module sees it"
                 }
                 if (isPublic) {
                     errorAt(at(0), message)
@@ -203,10 +203,10 @@ struct Parser {
     void parseExtern() {
         i64 keyword = advance()  // 'extern'
         if (!tree.files[file].isUnsafe) {
-            errorAt(keyword, "an extern block needs 'import unsafe' at the top of the module (D127)")
+            errorAt(keyword, "an extern block needs 'import unsafe' at the top of the module")
         }
         if (!check(Kind.StringLiteral)) {
-            errorAtCurrent("the name of the library in quotes, as \"kernel32\" (D128)")
+            errorAtCurrent("the name of the library in quotes, as \"kernel32\"")
             skipToNextDeclaration()
             ret
         }
@@ -214,9 +214,9 @@ struct Parser {
         string library = tokens[libraryToken].text.copy()
         bool separators = library.contains("/") || library.contains("\\") || library.contains(":")
         if (library.len() == 0 || separators) {
-            errorAt(libraryToken, "the library is a name, as \"kernel32\": cromo looks for it (D133)")
+            errorAt(libraryToken, "the library is a name, as \"kernel32\": cromo looks for it")
         } else if (library.endsWith(".lib") || library.endsWith(".dll")) {
-            errorAt(libraryToken, "write the library without extension, as \"kernel32\" (D133)")
+            errorAt(libraryToken, "write the library without extension, as \"kernel32\"")
         }
         skipNewlines()
         if (!expect(Kind.LBrace, "to open the extern block")) {
@@ -226,7 +226,7 @@ struct Parser {
         skipNewlines()
         for (!check(Kind.RBrace) && !check(Kind.EndOfFile)) {
             if (check(Kind.KwPublic)) {
-                errorAt(at(0), "the C functions are private to the module: it offers safe functions instead (D42, D133)")
+                errorAt(at(0), "the C functions are private to the module: it offers safe functions instead")
                 advance()
             }
             Function function
@@ -238,11 +238,11 @@ struct Parser {
                 continue
             }
             if (check(Kind.LBrace)) {
-                errorAt(at(0), "a C function has no body: it is in the library (D128)")
+                errorAt(at(0), "a C function has no body: it is in the library")
                 parseBlock()
             }
             if (function.typeParams.len() > 0) {
-                diag.error(function.typeParams[0].line, function.typeParams[0].column, "a C function cannot be generic (D129)")
+                diag.error(function.typeParams[0].line, function.typeParams[0].column, "a C function cannot be generic")
                 function.typeParams.clear()
             }
             tree.topFunctions.add(addFunction(move function))
@@ -667,10 +667,10 @@ struct Parser {
                 }
                 if (check(Kind.KwConst)) {
                     if (param.mode == ParamMode.Ref) {
-                        errorAt(at(0), "'ref const' does not exist: a read parameter is already read-only (D22)")
+                        errorAt(at(0), "'ref const' does not exist: a read parameter is already read-only")
                     } else {
-                        errorAt(at(0), "only a 'move' parameter can be const, written 'move const' (D22), and a " +
-                            "function, written 'const func' (D253)")
+                        errorAt(at(0), "only a 'move' parameter can be const, written 'move const', and a " +
+                            "function, written 'const func'")
                     }
                     ret false
                 }
@@ -731,7 +731,7 @@ struct Parser {
         }
         if (check(Kind.KwConst)) {
             if (!inStruct) {
-                errorAt(at(0), "only methods can be const (D24)")
+                errorAt(at(0), "only methods can be const")
                 ret false
             }
             function.isConst = true
@@ -803,13 +803,13 @@ struct Parser {
             publicToken = advance()
         }
         if (check(Kind.Tilde) || (check(Kind.Identifier) && tokens[at(0)].text == decl.name && kind(1) == Kind.LParen)) {
-            errorAt(at(0), "an enum has no constructor or destructor (D110)")
+            errorAt(at(0), "an enum has no constructor or destructor")
             ret false
         }
         i64 afterType = skipType(0, true)
         if (afterType != 0 && kind(afterType) == Kind.Identifier) {  // a method
             if (attributes.len() > 0) {
-                diag.error(attributes[0].line, attributes[0].column, "in an enum an attribute is written only before a case (D365)")
+                diag.error(attributes[0].line, attributes[0].column, "in an enum an attribute is written only before a case")
                 ret false
             }
             Function method
@@ -826,7 +826,7 @@ struct Parser {
             ret false
         }
         if (publicToken >= 0) {
-            errorAt(publicToken, "the cases of an enum are public with it (D132)")
+            errorAt(publicToken, "the cases of an enum are public with it")
             ret false
         }
         Case item
@@ -842,7 +842,7 @@ struct Parser {
             }
             for (Param param in data.params) {
                 if (param.mode != ParamMode.Read) {
-                    diag.error(param.line, param.column, "the data of a case have no 'ref' or 'move' (D104)")
+                    diag.error(param.line, param.column, "the data of a case have no 'ref' or 'move'")
                     ret false
                 }
                 Field field
@@ -875,11 +875,11 @@ struct Parser {
         decl.line = tokens[name].line
         decl.column = tokens[name].column
         if (check(Kind.Less)) {
-            errorAt(at(0), "an interface has no type parameters: its methods use Self (D84)")
+            errorAt(at(0), "an interface has no type parameters: its methods use Self")
             ret false
         }
         if (check(Kind.Colon)) {
-            errorAt(at(0), "an interface cannot extend another interface (D90)")
+            errorAt(at(0), "an interface cannot extend another interface")
             ret false
         }
         skipNewlines()
@@ -889,7 +889,7 @@ struct Parser {
         skipNewlines()
         for (!check(Kind.RBrace) && !check(Kind.EndOfFile)) {
             if (check(Kind.KwPublic)) {
-                errorAt(at(0), "the methods of an interface are public with it (D132)")
+                errorAt(at(0), "the methods of an interface are public with it")
                 advance()
             }
             Function method
@@ -897,10 +897,10 @@ struct Parser {
             i64 afterType = skipType(0, true)
             bool ok = false
             if (afterType != 0 && kind(afterType) == Kind.Identifier && kind(afterType + 1) != Kind.LParen) {
-                errorAt(at(afterType), "an interface contains only methods (D90)")
+                errorAt(at(afterType), "an interface contains only methods")
             } else if (parseSignature(ref method, true)) {
                 if (check(Kind.LBrace)) {
-                    errorAt(at(0), "the methods of an interface have no body (D90)")
+                    errorAt(at(0), "the methods of an interface have no body")
                     parseBlock()  // skipped, to go on with the next method
                 }
                 decl.methods.add(addFunction(move method))
@@ -1023,7 +1023,7 @@ struct Parser {
         if (check(Kind.KwPublic)) {
             i64 token = advance()
             if (check(Kind.Tilde)) {
-                errorAt(token, "a destructor has no 'public': it runs wherever its object ends (D132)")
+                errorAt(token, "a destructor has no 'public': it runs wherever its object ends")
                 ret false
             }
             isPublic = true
@@ -1040,7 +1040,7 @@ struct Parser {
             decl.fields[decl.fields.len() - 1].isPublic = isPublic
             decl.fields[decl.fields.len() - 1].attributes = move attributes
         } else if (attributes.len() > 0) {
-            diag.error(attributes[0].line, attributes[0].column, "an attribute is written only before a field, for now (D256)")
+            diag.error(attributes[0].line, attributes[0].column, "an attribute is written only before a field, for now")
             ret false
         }
         ret true
@@ -1218,7 +1218,15 @@ struct Parser {
             case KwContinue {
                 ret addStmt(stmtAt(StmtKind.Continue, advance()))
             }
+            case KwRef {
+                errorAt(at(0), "a variable is not a reference: 'ref' is written on parameters and on captures")
+                ret -1
+            }
             default {
+                if (check(Kind.Identifier) && tokens[at(0)].text == "while" && kind(1) == Kind.LParen) {
+                    errorAt(at(0), "Cromo has no while: write the condition in a for, as for (condition)")
+                    ret -1
+                }
                 if (startsDeclaration()) {
                     ret parseVarDecl()
                 }
@@ -1566,7 +1574,7 @@ struct Parser {
             node.form = ForForm.Each
             node.isRef = match(Kind.KwRef)
             if (check(Kind.Identifier) && kind(1) == Kind.KwIn) {
-                errorAt(at(0), "write the type of the element: for (T " + tokens[at(0)].text + " in ...) (D54)")
+                errorAt(at(0), "write the type of the element: for (T " + tokens[at(0)].text + " in ...)")
                 ret -1
             }
             node.type = parseType(true)
@@ -2023,6 +2031,10 @@ struct Parser {
                 continue
             }
             advance()
+            if (check(Kind.Tilde)) {
+                errorAt(at(0), "a destructor is not called by hand: it runs when its object ends")
+                ret -1
+            }
             if (!check(Kind.Identifier)) {
                 errorAtCurrent("the name of a field or method after '.'")
                 ret -1

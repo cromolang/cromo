@@ -34,7 +34,7 @@ error: 'addr' belongs to the unsafe dialect: the module must write 'import unsaf
 error: 'sizeOf' belongs to the unsafe dialect: the module must write 'import unsafe'
 ```
 
-Gli altri moduli usano solo ciò che il modulo rende pubblico. Il compilatore non controlla che questa interfaccia sia sicura: una funzione pubblica potrebbe restituire un `addr`, e i moduli che la importano potrebbero passarlo in giro. Tenere `addr` e la memoria grezza del modulo fuori dalle sue funzioni e dai suoi campi pubblici è la regola che fa restare il dialetto dentro il suo modulo, e una ricerca di `import unsafe` trova allora ogni punto in cui la sicurezza del programma dipende dalla cura del suo autore.
+Gli altri moduli usano solo ciò che il modulo rende pubblico, e il compilatore controlla che questa interfaccia sia sicura: una funzione, un campo o un metodo pubblico che usa `addr` è l'errore `function 'block' is public, but its type addr is only for the modules with 'import unsafe': offer a safe type instead`. Tenere `addr` e la memoria grezza del modulo fuori dalla sua interfaccia pubblica è la regola che fa restare il dialetto dentro il suo modulo, e una ricerca di `import unsafe` trova allora ogni punto in cui la sicurezza del programma dipende dalla cura del suo autore.
 
 ## addr
 
@@ -347,7 +347,7 @@ Le regole:
 - Una variabile di modulo è privata del suo modulo, che la vede in tutti i suoi file, anche in quelli senza `import unsafe`. `public` e gli attributi sono errori.
 - Contiene numeri, `bool`, `char`, `addr`, e array di dimensione fissa e struct fatti di questi, i cui campi non hanno valori iniziali.
 - Il suo valore all'avvio è il suo valore predefinito, oppure un letterale: un numero, preceduto da `-` se negativo, un carattere, `true` o `false`. Il valore è scritto nell'eseguibile: nessun codice gira prima di `main` e nessuno dopo, quindi una variabile di modulo non ha distruttore, e un tipo che ha bisogno di codice per essere creato o distrutto, come `string` o `list`, è un errore.
-- Una variabile locale o un parametro con lo stesso nome la nasconde, all'interno della sua funzione.
+- Una variabile locale o un parametro non può avere il suo nome: `a variable named 'count' is already visible here`, come per le altre variabili.
 - Nulla protegge una variabile di modulo dai thread: due thread che la scrivono nello stesso momento sono una data race, che il compilatore non vede. Un programma che condivide dati tra thread usa i tipi di `std.thread`, come `thread.Mutex<T>` e `thread.Atomic<T>`, nel codice normale: vedi [Thread, task e canali](concurrency.md).
 
 ```cromo error
@@ -525,7 +525,7 @@ In un file con `import unsafe` tutti questi nomi sono funzioni integrate:
 - `alloc`, `resize`, `free`, `sizeOf`, `offset`, `take`, `put`, `destroy`, `copyAt`, `copyMemory`, `compareMemory`, `checkIndex` e `variableAddress`, di questo capitolo;
 - `argumentCount`, `argumentLength`, `argumentData`, `environment`, `exitProcess`, `systemCall`, `decimalToFloat`, `hashBytes`, `equalAt`, `jsonWrite`, `jsonRead`, `debugWrite`, `selfAddress`, `threadStart`, `threadWait`, `threadRethrow`, `threadUncaught`, `threadFree`, `taskStart`, `groupStart`, `mutexLock`, `mutexUnlock`, `atomicLoad`, `atomicStore`, `atomicAdd`, `atomicExchange`, `atomicCompareExchange`, `atomicLoadRelaxed`, `atomicStoreRelaxed` e `atomicAddRelaxed`, della libreria.
 
-Una funzione del modulo, o una funzione C, con uno di questi nomi non viene mai chiamata in quel file: al suo posto viene eseguita la funzione integrata. Dai alle tue funzioni altri nomi. Nei file senza `import unsafe` questi nomi sono liberi.
+Una funzione del modulo, o una funzione C, con uno di questi nomi non verrebbe mai chiamata in quel file, perciò è un errore dove viene dichiarata: dai alle tue funzioni altri nomi. Nei file senza `import unsafe` questi nomi sono liberi.
 
 ## Che cosa il compilatore non controlla più
 
@@ -535,8 +535,7 @@ Il dialetto, con le funzioni C che chiama, è l'unico posto in cui un programma 
 - liberare un blocco due volte, o mai;
 - `take` di un posto che non contiene nulla, `put` sopra un valore che poi non viene mai distrutto, un tipo `T` diverso da quello presente in memoria;
 - l'`addr` di `cstring()` conservato dopo la sua istruzione;
-- una variabile di modulo scritta da due thread nello stesso momento;
-- un `addr` che esce dal modulo attraverso una funzione pubblica.
+- una variabile di modulo scritta da due thread nello stesso momento.
 
 Per questo il codice nel dialetto resta breve, e viene incapsulato al più presto in una struct con un distruttore e un'interfaccia sicura. Il resto del programma mantiene così tutte le garanzie di Cromo.
 

@@ -75,6 +75,14 @@ struct Loader {
     void run() {
         parseFile(1, -1)
         parseFile(0, -1)
+        // D202: the files of the system of the main file join it, as for a module.
+        string main = program.diag.path(0)
+        string base = parentOf(absolute(main)) + "\\" + stemOf(main)
+        for (string suffix in ownSuffixes()) {
+            if (fs.isFile(base + suffix + ".cro")) {
+                loadFile(base + suffix + ".cro", names[0].copy(), 0, 1, 1, 0)
+            }
+        }
         // The list of files grows while their imports are loaded.
         for (i32 i = 0; i < program.diag.fileCount(); i++) {
             bool fromLibrary = isLibraryFile(program.diag.path(i))
@@ -118,7 +126,7 @@ struct Loader {
         bool isFolder = fs.isFolder(folder)
         if (isFile && isFolder) {
             program.diag.errorIn(from, line, column, "both " + shown + ".cro and the folder " + shown +
-                " exist: rename one of them (D130)")
+                " exist: rename one of them")
             ret files
         }
         if (isFile) {
@@ -146,7 +154,7 @@ struct Loader {
                 entries.add(entry)
             }
             if (entries.len() == 0) {
-                program.diag.errorIn(from, line, column, "the folder " + shown + " has no .cro files for this system (D130, D202)")
+                program.diag.errorIn(from, line, column, "the folder " + shown + " has no .cro files for this system")
                 ret files
             }
             sort(ref entries)
@@ -157,7 +165,7 @@ struct Loader {
             files.add(first)
             ret files
         }
-        string next = inProject ? "cromo.mod (D516)" : fs.fileName(program.diag.path(0)) + " (D130)"
+        string next = inProject ? "cromo.mod" : fs.fileName(program.diag.path(0)) + ""
         program.diag.errorIn(from, line, column, "cannot find the module " + dotted + ": there is no " + shown + ".cro or folder " +
             shown + " next to " + next)
         ret files
@@ -173,7 +181,7 @@ struct Loader {
                 string file = had.len() > name.len() ? had : name
                 string folder = had.len() > name.len() ? name : had
                 program.diag.errorIn(from, line, column, "the file " + file.replace(".", "/") + ".cro is a part of the module " + folder +
-                    ": import " + folder + " (D515)")
+                    ": import " + folder + "")
             }
             ret found
         }
@@ -205,7 +213,7 @@ struct Loader {
         string path = library + "\\" + base + ".cro"
         if (parts != 2 || !fs.isFile(path) || (hidden && !fromLibrary)) {
             program.diag.errorIn(from, line, column, "the standard library has no module " + dotted + ": it has " +
-                libraryModules() + ", and its core is visible without import (D201)")
+                libraryModules() + ", and its core is visible without import")
             ret files
         }
         i32 first = loadFile(path, dotted, from, line, column, -1)
@@ -247,7 +255,7 @@ struct Loader {
         for (Import item in program.tree.files[file].imports) {
             string qualifier = item.path[item.path.len() - 1]
             if (seen.contains(qualifier)) {
-                program.diag.errorIn(file, item.line, item.column, "another import is also called " + qualifier + " (D131)")
+                program.diag.errorIn(file, item.line, item.column, "another import is also called " + qualifier + "")
             }
             seen[qualifier] = true
         }

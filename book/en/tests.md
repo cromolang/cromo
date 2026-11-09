@@ -186,14 +186,14 @@ ok    quiet
 FAIL  wrongSum
       adding
       panic: assertion failed: total == 6 (total is 5) at checks.cro:20:5
-          at checks.wrongSum (checks.cro:20)
+          at wrongSum (checks.cro:20)
 FAIL  badPort
       uncaught exception: 70000 is not a port
-          at checks.parsePort (checks.cro:6)
-          at checks.badPort (checks.cro:25)
+          at parsePort (checks.cro:6)
+          at badPort (checks.cro:25)
 FAIL  outOfRange
       panic: index out of bounds: the index is 2 but the length is 2 at checks.cro:31:24
-          at checks.outOfRange (checks.cro:31)
+          at outOfRange (checks.cro:31)
 FAIL  exits
       the test ended with the exit code 3
 1 passed, 4 failed

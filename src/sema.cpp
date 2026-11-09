@@ -92,6 +92,16 @@ std::optional<Intrinsic> findIntrinsic(const std::string& name) {
     return found->second;
 }
 
+// The name with its article, as English says it: "a Point", "an Error", "an i32" and
+// "an f64", read letter by letter, "a u8".
+std::string withArticle(const std::string& name) {
+    if (name.empty()) return "a";
+    char first = static_cast<char>(std::tolower(static_cast<unsigned char>(name[0])));
+    bool letters = name.size() > 1 && std::isdigit(static_cast<unsigned char>(name[1]));
+    bool an = letters ? std::strchr("aefhilmnorsx", first) != nullptr : std::strchr("aeiou", first) != nullptr;
+    return (an ? "an " : "a ") + name;
+}
+
 // An enum whose cases have no data: it can be compared and converted to numbers (D112).
 bool withoutData(const StructDecl& decl) {
     for (const EnumCase& item : decl.cases) {
@@ -343,6 +353,7 @@ public:
         declareFunctions();
         declareGlobals();
         checkPublicSignatures();
+        checkHiddenByIntrinsics();
         // A method with type parameters of its own is checked once, with them as types (D52, D92).
         for (StructDecl& decl : module_.structs) {
             if (!decl.typeParams.empty()) continue;
@@ -366,7 +377,7 @@ public:
         for (const auto& [function, loc] : defaultFields_) {
             if (function->canThrow && !function->isAbstract) {
                 diag_->error(loc, "the initial value of a field cannot throw an exception: it is computed wherever the "
-                                  "default value is made (D360)");
+                                  "default value is made");
             }
         }
     }
@@ -441,7 +452,7 @@ private:
             if (scope.functions.count(function.name)) {
                 diag_->error(function.loc, "function '" + function.name + "' is already defined");
             } else if (function.isExtern && function.library == "cromo" && !fileOf(function.loc.file).isLibrary) {
-                diag_->error(function.loc, "the library \"cromo\" is the runtime: only the standard library declares its functions (D240)");
+                diag_->error(function.loc, "the library \"cromo\" is the runtime: only the standard library declares its functions");
             } else if (function.isExtern && function.library != "cromo" && function.name.rfind("cromo_", 0) == 0) {
                 diag_->error(function.loc, "the name '" + function.name + "' is reserved for the runtime");
             } else if (isBuiltinFunction(function.name) || findBuiltinType(function.name)) {
@@ -455,8 +466,8 @@ private:
         for (GlobalDecl& global : module_.globals) {
             ModuleScope& scope = modules_[scopeOf(global.loc.file)];
             if (!isUnsafe(global.loc) && !global.isConst) {
-                diag_->error(global.loc, "a variable outside the functions is only for the modules with 'import unsafe' (D394); "
-                                         "a constant is written 'const' (D414)");
+                diag_->error(global.loc, "a variable outside the functions is only for the modules with 'import unsafe'; "
+                                         "a constant is written 'const'");
             } else if (scope.globals.count(global.name)) {
                 diag_->error(global.loc, (global.isConst ? "constant '" : "module variable '") + global.name +
                                              "' is already defined");
@@ -495,7 +506,7 @@ private:
             if (type && !isStaticType(*type)) {
                 diag_->error(global.typeName.loc, "a module variable holds numbers, bool, addr, or arrays and structs of them "
                                                   "whose fields have no initial values, not " + type->name() +
-                                                  ": no code runs to make it (D394)");
+                                                  ": no code runs to make it");
                 variable->type = Type::error();
             }
             if (global.init && !variable->type.isError()) {
@@ -509,7 +520,7 @@ private:
                 Type target = variable->type;
                 if (!literal || !(target.isNumeric() || target.isBool())) {
                     diag_->error(init.loc, "the initial value of a module variable is a number, a character, true or false "
-                                           "(D394)");
+                                           "");
                 } else if (!coerce(global.init, target)) {
                     variable->type = Type::error();
                 }
@@ -526,18 +537,18 @@ private:
         Type element = type.isArray() ? type.array->element : type;
         if (!element.isNumeric() && !element.isBool()) {
             diag_->error(global.typeName.loc, "a constant of a module is a number, bool or char, or an array of them, not " +
-                                                  type.name() + " (D414)");
+                                                  type.name() + "");
             variable.type = Type::error();
             return;
         }
         if (!global.init) {
-            diag_->error(global.loc, "constant '" + global.name + "' needs its value (D414)");
+            diag_->error(global.loc, "constant '" + global.name + "' needs its value");
             variable.type = Type::error();
             return;
         }
         auto literal = [&](ExprPtr& value) {
             if (!isConstantLiteral(*value)) {
-                diag_->error(value->loc, "the value of a constant of a module is a number, a character, true or false (D414)");
+                diag_->error(value->loc, "the value of a constant of a module is a number, a character, true or false");
                 return false;
             }
             return coerce(value, element);
@@ -547,14 +558,14 @@ private:
             return;
         }
         if (global.init->kind != ExprKind::ListLiteral) {
-            diag_->error(global.init->loc, "the value of a constant array is a list of literals in square brackets (D414)");
+            diag_->error(global.init->loc, "the value of a constant array is a list of literals in square brackets");
             variable.type = Type::error();
             return;
         }
         auto& list = static_cast<ListLiteralExpr&>(*global.init);
         if (static_cast<int64_t>(list.elements.size()) != type.array->count) {
             diag_->error(list.loc, "the array has " + std::to_string(type.array->count) + " elements, and the list " +
-                                       std::to_string(list.elements.size()) + " (D414)");
+                                       std::to_string(list.elements.size()) + "");
             variable.type = Type::error();
             return;
         }
@@ -645,7 +656,7 @@ private:
         if (!ambiguous_.insert({at.file, at.line, at.column}).second) return;
         std::string where = first == second ? "twice in " + first : "in both " + first + " and " + second;
         diag_->error(at, "'" + name + "' is " + where + ": write " + first + "." + name +
-                             (first == second ? "" : " or " + second + "." + name) + " (D126)");
+                             (first == second ? "" : " or " + second + "." + name) + "");
     }
 
     // The imported module that has a name, but not public: for a clearer error.
@@ -681,7 +692,7 @@ private:
     }
 
     void reportPrivate(SourceLocation loc, const std::string& what) {
-        diag_->error(loc, what + " is private to its module: it is not marked public (D50)");
+        diag_->error(loc, what + " is private to its module: it is not marked public");
     }
 
     // The signatures of the interface methods, where `Self` is allowed (D84).
@@ -696,7 +707,7 @@ private:
                 names[method.name] = &method;
                 if (!method.typeParams.empty()) {
                     diag_->error(method.typeParams[0].loc, "a method of an interface cannot have type parameters of its "
-                                                           "own: its table has one entry for each method (D92)");
+                                                           "own: its table has one entry for each method");
                 }
                 resolveSignature(method);
                 bool usesSelf = method.resolvedReturn.kind == TypeKind::SelfType;
@@ -721,7 +732,7 @@ private:
                 for (const TypeName& constraint : param.constraints) {
                     InterfaceDecl* found = findDecl(&ModuleScope::interfaces, constraint.name, constraint.loc, constraint.module);
                     if (!found || !constraint.args.empty()) {
-                        diag_->error(constraint.loc, "a constraint must be an interface, found '" + constraint.name + "' (D52)");
+                        diag_->error(constraint.loc, "a constraint must be an interface, found '" + constraint.name + "'");
                     } else {
                         param.interfaces.push_back(found);
                     }
@@ -818,9 +829,9 @@ private:
                 if (iface == debugInterface_) {
                     if (args[i].isParam()) {
                         diag_->error(loc, args[i].name() + " can be printed with {:?} only with a constraint: write <" +
-                                              args[i].name() + " : Debug> (D52, D319)");
+                                              args[i].name() + " : Debug>");
                     } else {
-                        diag_->error(loc, "values of type " + args[i].name() + " cannot be printed with {:?} (D319): " +
+                        diag_->error(loc, "values of type " + args[i].name() + " cannot be printed with {:?}: " +
                                               debugProblem(args[i]));
                     }
                     ok = false;
@@ -829,15 +840,15 @@ private:
                 if (iface == dataInterface_) {
                     if (args[i].isParam()) {
                         diag_->error(loc, args[i].name() + " can be converted to JSON only with a constraint: write <" +
-                                              args[i].name() + " : json.Data> (D52, D251)");
+                                              args[i].name() + " : json.Data>");
                     } else {
-                        diag_->error(loc, "values of type " + args[i].name() + " cannot be converted to JSON (D251): " +
+                        diag_->error(loc, "values of type " + args[i].name() + " cannot be converted to JSON: " +
                                               jsonProblem(args[i]));
                     }
                     ok = false;
                     continue;
                 }
-                std::string reason = args[i].isStruct() || args[i].isParam() ? " (D52)" : " (D52, D87)";
+                std::string reason = args[i].isStruct() || args[i].isParam() ? "" : "";
                 diag_->error(loc, args[i].name() + " does not implement " + iface->name + ", required by " + params[i].name +
                                       " of " + what + reason);
                 ok = false;
@@ -867,7 +878,7 @@ private:
             return nullptr;
         }
         if (isThreadType(generic, "Atomic") && !args[0].isParam() && !args[0].isInt() && !args[0].isBool()) {
-            diag_->error(useLoc, "thread.Atomic holds an integer or a bool, not " + args[0].name() + " (D328)");
+            diag_->error(useLoc, "thread.Atomic holds an integer or a bool, not " + args[0].name() + "");
             return nullptr;
         }
 
@@ -1016,15 +1027,15 @@ private:
         std::optional<Type> type = resolveNamedType(name);
         if (!type || name.dimensions.empty()) return type;
         if (type->isVoid() || type->kind == TypeKind::SelfType || type->isInterface()) {
-            diag_->error(name.loc, "an array cannot have elements of type " + type->name() + " (D196)");
+            diag_->error(name.loc, "an array cannot have elements of type " + type->name() + "");
             return std::nullopt;
         }
         for (size_t i = name.dimensions.size(); i-- > 0;) {
             int64_t count = name.dimensions[i];
             int64_t element = sizeOf(*type);
             if (count < 1 || count > INT32_MAX || (element > 0 && count > INT32_MAX / element)) {
-                diag_->error(name.loc, count < 1 ? "an array has at least one element (D196)"
-                                                 : "this array is too large: an array takes at most 2 GB (D196)");
+                diag_->error(name.loc, count < 1 ? "an array has at least one element"
+                                                 : "this array is too large: an array takes at most 2 GB");
                 return std::nullopt;
             }
             type = Type::arrayType(internArray(*type, count));
@@ -1066,16 +1077,16 @@ private:
         }
         if (name.name == "addr" && name.module.empty() && !findDecl(&ModuleScope::structs, name.name, name.loc)) {
             if (isUnsafe(name.loc)) return Type::addrType();
-            diag_->error(name.loc, "'addr' belongs to the unsafe dialect: the module must write 'import unsafe' (D127)");
+            diag_->error(name.loc, "'addr' belongs to the unsafe dialect: the module must write 'import unsafe'");
             return std::nullopt;
         }
         if (!name.module.empty() && !importsQualifier(name.loc, name.module)) {
-            diag_->error(name.loc, "no imported module is called '" + name.module + "' (D126)");
+            diag_->error(name.loc, "no imported module is called '" + name.module + "'");
             return std::nullopt;
         }
         if (name.name == "Self" && name.module.empty()) {
             if (!selfAllowed_) {
-                diag_->error(name.loc, "Self can be used only in the methods of an interface (D84)");
+                diag_->error(name.loc, "Self can be used only in the methods of an interface");
                 return std::nullopt;
             }
             return Type::selfType();
@@ -1107,7 +1118,7 @@ private:
         }
         if (InterfaceDecl* iface = findDecl(&ModuleScope::interfaces, name.name, name.loc, name.module)) {
             if (!name.args.empty()) {
-                diag_->error(name.loc, "an interface has no type arguments (D84)");
+                diag_->error(name.loc, "an interface has no type arguments");
                 return std::nullopt;
             }
             return Type::interfaceType(iface);
@@ -1149,7 +1160,7 @@ private:
     bool checkNotInterface(Type type, SourceLocation loc, const std::string& what) {
         if (!type.isInterface() || !type.interfaceDecl->usesSelf) return true;
         diag_->error(loc, what + " cannot be of " + type.name() + ", which uses Self: it can only be a constraint, <T : " +
-                              type.name() + "> (D84)");
+                              type.name() + ">");
         return false;
     }
 
@@ -1195,11 +1206,11 @@ private:
         bool seen = false;
         for (const Attribute& attribute : field.attributes) {
             if (attribute.name != "json") {
-                diag_->error(attribute.loc, "unknown attribute '" + attribute.name + "': for now there is only json (D256)");
+                diag_->error(attribute.loc, "unknown attribute '" + attribute.name + "': for now there is only json");
                 continue;
             }
             if (seen) {
-                diag_->error(attribute.loc, "the field '" + field.name + "' already has the attribute json (D256)");
+                diag_->error(attribute.loc, "the field '" + field.name + "' already has the attribute json");
                 continue;
             }
             seen = true;
@@ -1211,7 +1222,7 @@ private:
                 field.jsonName = attribute.args[0].text;
             } else {
                 diag_->error(attribute.loc, "json takes the name of the field in JSON, as json(\"user_id\"), or skip, "
-                                            "as json(skip) (D256)");
+                                            "as json(skip)");
             }
         }
     }
@@ -1231,7 +1242,7 @@ private:
             fieldNames[field.name] = &field;
             readAttributes(field);
             if (!field.jsonName.empty() && !jsonNames.insert(field.jsonName).second) {
-                diag_->error(field.loc, "another field of " + decl.name + " has the name '" + field.jsonName + "' in JSON (D256)");
+                diag_->error(field.loc, "another field of " + decl.name + " has the name '" + field.jsonName + "' in JSON");
             }
             field.resolved = resolveType(field.type).value_or(Type::error());
             if (field.resolved.isVoid()) {
@@ -1258,11 +1269,11 @@ private:
                 if (named) {
                     item.jsonName = attribute.args[0].text;
                 } else {
-                    diag_->error(attribute.loc, "a case has only the attribute json(\"name\"), its name in JSON (D365)");
+                    diag_->error(attribute.loc, "a case has only the attribute json(\"name\"), its name in JSON");
                 }
             }
             if (!caseNames.insert(item.jsonName).second) {
-                diag_->error(item.loc, "another case of " + decl.name + " has the name '" + item.jsonName + "' in JSON (D365)");
+                diag_->error(item.loc, "another case of " + decl.name + " has the name '" + item.jsonName + "' in JSON");
             }
             if (fieldNames.count(item.name)) diag_->error(item.loc, "case '" + item.name + "' is already defined in " + decl.name);
             fieldNames[item.name] = nullptr;
@@ -1280,7 +1291,7 @@ private:
                 if (!checkNotInterface(field.resolved, field.type.loc, "the data of a case")) field.resolved = Type::error();
             }
         }
-        if (decl.isEnum && decl.cases.empty()) diag_->error(decl.loc, "an enum needs at least one case (D104)");
+        if (decl.isEnum && decl.cases.empty()) diag_->error(decl.loc, "an enum needs at least one case");
         caseValues(decl);
 
         for (FunctionDecl& member : decl.members) {
@@ -1288,16 +1299,19 @@ private:
             member.typeBindings = decl.typeBindings;
             member.isAbstract = decl.isAbstract;
             if (!member.typeParams.empty() && member.kind != FunctionKind::Method) {
-                diag_->error(member.typeParams[0].loc, "only a method can have type parameters of its own (D92)");
+                diag_->error(member.typeParams[0].loc, "only a method can have type parameters of its own");
                 member.typeParams.clear();
             }
             if (member.kind == FunctionKind::Constructor) {
-                if (decl.constructor) diag_->error(member.loc, "a struct has only one constructor (D69)");
+                if (decl.constructor) diag_->error(member.loc, "a struct has only one constructor");
                 else decl.constructor = &member;
             } else if (member.kind == FunctionKind::Destructor) {
                 if (decl.destructor) diag_->error(member.loc, "a struct has only one destructor");
                 else decl.destructor = &member;
                 if (!member.params.empty()) diag_->error(member.params[0].loc, "a destructor has no parameters");
+            } else if (member.name == decl.name) {  // a constructor has no type (D71)
+                diag_->error(member.loc, "a method cannot have the name of its struct: a constructor is written without a "
+                                         "type, as " + decl.name + "(...)");
             } else if (fieldNames.count(member.name)) {
                 diag_->error(member.loc, "'" + member.name + "' is already " + (decl.isEnum ? "a case" : "a field") + " of " +
                                              decl.name);
@@ -1327,11 +1341,11 @@ private:
             item.value = static_cast<int64_t>(i);
             if (!written) continue;
             if (!item.valueExpr) {
-                diag_->error(item.loc, "give a value to every case of " + decl.name + ", or to none (D135)");
+                diag_->error(item.loc, "give a value to every case of " + decl.name + ", or to none");
                 continue;
             }
             if (!item.fields.empty()) {
-                diag_->error(item.valueExpr->loc, "only the cases of an enum without data can have a value (D135)");
+                diag_->error(item.valueExpr->loc, "only the cases of an enum without data can have a value");
                 continue;
             }
             const Expr* value = item.valueExpr.get();
@@ -1341,19 +1355,19 @@ private:
                 value = static_cast<const UnaryExpr*>(value)->operand.get();
             }
             if (value->kind != ExprKind::IntLiteral || static_cast<const IntLiteralExpr*>(value)->isChar) {
-                diag_->error(item.valueExpr->loc, "the value of a case is an integer literal (D135)");
+                diag_->error(item.valueExpr->loc, "the value of a case is an integer literal");
                 continue;
             }
             uint64_t magnitude = static_cast<const IntLiteralExpr*>(value)->magnitude;
             if (!fits(magnitude, negative, Type::intType(32, true))) {
-                diag_->error(item.valueExpr->loc, "the value of a case must fit in an i32 (D135)");
+                diag_->error(item.valueExpr->loc, "the value of a case must fit in an i32");
                 continue;
             }
             item.value = negative ? -static_cast<int64_t>(magnitude) : static_cast<int64_t>(magnitude);
             auto [other, fresh] = seen.emplace(item.value, &item);
             if (!fresh) {
                 diag_->error(item.valueExpr->loc, "the value " + std::to_string(item.value) + " is already the one of " +
-                                                      other->second->name + " (D135)");
+                                                      other->second->name + "");
             }
         }
     }
@@ -1412,7 +1426,7 @@ private:
                 if (layoutState_[inner] == 1) {
                     diag_->error(field.loc, std::string(decl.isEnum ? "enum '" : "struct '") + decl.name +
                                                 "' contains itself through " + (decl.isEnum ? "the data '" : "field '") + field.name +
-                                                "': use a list instead (D11)");
+                                                "': use a list instead");
                     field.resolved = Type::error();
                     continue;
                 }
@@ -1436,7 +1450,7 @@ private:
         for (const TypeName& name : decl.interfaces) {
             InterfaceDecl* found = findDecl(&ModuleScope::interfaces, name.name, name.loc, name.module);
             if (!found || !name.args.empty()) {
-                diag_->error(name.loc, "'" + name.name + "' is not an interface: a struct can only implement interfaces (D40)");
+                diag_->error(name.loc, "'" + name.name + "' is not an interface: a struct can only implement interfaces");
             } else if (std::find(decl.implements.begin(), decl.implements.end(), found) != decl.implements.end()) {
                 diag_->error(name.loc, decl.name + " already implements " + name.name);
             } else {
@@ -1482,10 +1496,10 @@ private:
                 auto found = decl.methods.find(required.name);
                 if (found == decl.methods.end()) {
                     diag_->error(decl.loc, decl.name + " does not implement '" + required.name + "' of " + iface->name +
-                                               ": add '" + signatureText(required, self) + "' (D90)");
+                                               ": add '" + signatureText(required, self) + "'");
                 } else if (!sameSignature(*found->second, required, self)) {
                     diag_->error(found->second->loc, "'" + required.name + "' does not match the interface " + iface->name +
-                                                         ": it must be '" + signatureText(required, self) + "' (D90)");
+                                                         ": it must be '" + signatureText(required, self) + "'");
                 }
             }
         }
@@ -1504,7 +1518,7 @@ private:
             }
             if (type.isInterface() && type.interfaceDecl->usesSelf) {
                 diag_->error(param.type.loc, type.name() + " uses Self, so it can only be a constraint: <T : " + type.name() +
-                                                 "> (D84)");
+                                                 ">");
                 type = Type::error();
             }
             function.paramTypes.push_back(type);
@@ -1558,7 +1572,7 @@ private:
                          isString(elementOf(function.paramTypes[0]));
         if (!function.params.empty() && !arguments) {
             diag_->error(function.params[0].loc, "main has no parameters, or one with the arguments of the program: "
-                                                 "list<string> args (D154)");
+                                                 "list<string> args");
         }
     }
 
@@ -1567,11 +1581,11 @@ private:
     void readExport(FunctionDecl& function) {
         const Attribute& attribute = function.attributes[0];
         if (!isUnsafe(function.loc)) {
-            diag_->error(attribute.loc, "[[export]] is only for the modules with 'import unsafe' (D395)");
+            diag_->error(attribute.loc, "[[export]] is only for the modules with 'import unsafe'");
             return;
         }
         if (function.attributes.size() > 1) {
-            diag_->error(function.attributes[1].loc, "an exported function has no other attributes (D395)");
+            diag_->error(function.attributes[1].loc, "an exported function has no other attributes");
             return;
         }
         bool named = attribute.args.size() == 1 && attribute.args[0].isText && !attribute.args[0].text.empty();
@@ -1579,22 +1593,29 @@ private:
             if (!std::isalnum(static_cast<unsigned char>(c)) && c != '_') named = false;
         }
         if (!named || std::isdigit(static_cast<unsigned char>(attribute.args[0].text[0]))) {
-            diag_->error(attribute.loc, "[[export]] takes the name of the function in C, as [[export(\"cromo_alloc\")]] (D395)");
+            diag_->error(attribute.loc, "[[export]] takes the name of the function in C, as [[export(\"cromo_alloc\")]]");
             return;
         }
         if (!function.typeParams.empty()) {
-            diag_->error(function.loc, "an exported function cannot be generic: C calls it as it is (D395)");
+            diag_->error(function.loc, "an exported function cannot be generic: C calls it as it is");
             return;
         }
         for (size_t i = 0; i < function.params.size(); ++i) {
             if (function.params[i].mode != ParamMode::Read || !isCType(function.paramTypes[i])) {
                 diag_->error(function.params[i].loc, "the parameters of an exported function are numbers, bool or addr, "
-                                                     "passed by value (D395)");
+                                                     "passed by value");
                 return;
             }
         }
         if (!function.resolvedReturn.isVoid() && !isCType(function.resolvedReturn)) {
-            diag_->error(function.loc, "an exported function returns a number, a bool, an addr or nothing (D395)");
+            diag_->error(function.loc, "an exported function returns a number, a bool, an addr or nothing");
+            return;
+        }
+        // One name of C for each function: two would be the same symbol (D395).
+        auto [first, added] = exportedNames_.emplace(attribute.args[0].text, attribute.loc);
+        if (!added) {
+            diag_->error(attribute.loc, "another function is exported as '" + attribute.args[0].text + "', at line " +
+                                            std::to_string(first->second.line) + ": a name of C is used once");
             return;
         }
         function.isExported = true;
@@ -1612,11 +1633,11 @@ private:
                 continue;
             }
             if (!isUnsafe(function.loc)) {
-                diag_->error(it->loc, "[[cold]] is only for the modules with 'import unsafe' (D398)");
+                diag_->error(it->loc, "[[cold]] is only for the modules with 'import unsafe'");
             } else if (!it->args.empty()) {
-                diag_->error(it->loc, "[[cold]] takes no arguments (D398)");
+                diag_->error(it->loc, "[[cold]] takes no arguments");
             } else if (function.isCold) {
-                diag_->error(it->loc, "the function '" + function.name + "' already has [[cold]] (D398)");
+                diag_->error(it->loc, "the function '" + function.name + "' already has [[cold]]");
             } else {
                 function.isCold = true;
             }
@@ -1635,11 +1656,11 @@ private:
             }
             auto main = modules_[0].functions.find("main");
             if (main == modules_[0].functions.end() || main->second != &function) {
-                diag_->error(it->loc, "[[window]] is only for main of the program, whose executable opens no console (D426)");
+                diag_->error(it->loc, "[[window]] is only for main of the program, whose executable opens no console");
             } else if (!it->args.empty()) {
-                diag_->error(it->loc, "[[window]] takes no arguments (D426)");
+                diag_->error(it->loc, "[[window]] takes no arguments");
             } else if (function.isWindow) {
-                diag_->error(it->loc, "main already has [[window]] (D426)");
+                diag_->error(it->loc, "main already has [[window]]");
             } else {
                 function.isWindow = true;
             }
@@ -1658,15 +1679,15 @@ private:
             }
             auto main = modules_[0].functions.find("main");
             if (main == modules_[0].functions.end() || main->second != &function) {
-                diag_->error(it->loc, "[[android]] is only for main of the program, whose app it names (D455)");
+                diag_->error(it->loc, "[[android]] is only for main of the program, whose app it names");
             } else if (it->args.size() != 2 || !it->args[0].isText || !it->args[1].isText || it->args[1].text.empty()) {
                 diag_->error(it->loc, "[[android]] takes the package and the name of the app, as "
-                                      "[[android(\"org.example.mail\", \"Mail\")]] (D455)");
+                                      "[[android(\"org.example.mail\", \"Mail\")]]");
             } else if (!isAndroidPackage(it->args[0].text)) {
                 diag_->error(it->args[0].loc, "the package of an app is names of letters, digits and _, each starting with a "
-                                              "letter, joined by dots, as org.example.mail (D455)");
+                                              "letter, joined by dots, as org.example.mail");
             } else if (!function.androidPackage.empty()) {
-                diag_->error(it->loc, "main already has [[android]] (D455)");
+                diag_->error(it->loc, "main already has [[android]]");
             } else {
                 function.androidPackage = it->args[0].text;
                 function.androidName = it->args[1].text;
@@ -1697,27 +1718,27 @@ private:
     void readTestAttribute(FunctionDecl& function) {
         for (const Attribute& attribute : function.attributes) {
             if (attribute.name != "test" || !attribute.args.empty()) {
-                diag_->error(attribute.loc, "unknown attribute '" + attribute.name + "': a function has only [[test]] (D349)" +
+                diag_->error(attribute.loc, "unknown attribute '" + attribute.name + "': a function has only [[test]]" +
                                                 std::string(isUnsafe(function.loc)
-                                                                ? ", [[export(\"name\")]] (D395) or [[cold]] (D398)"
+                                                                ? ", [[export(\"name\")]] or [[cold]]"
                                                                 : "") +
                                                 std::string(function.name == "main"
-                                                                ? ", and main [[window]] (D426) or [[android(...)]] (D455)"
+                                                                ? ", and main [[window]] or [[android(...)]]"
                                                                 : ""));
                 return;
             }
         }
         if (function.attributes.size() > 1) {
-            diag_->error(function.attributes[1].loc, "the function '" + function.name + "' already has [[test]] (D349)");
+            diag_->error(function.attributes[1].loc, "the function '" + function.name + "' already has [[test]]");
             return;
         }
         if (!function.typeParams.empty()) {
-            diag_->error(function.loc, "a test cannot be generic: cromo test calls it as it is (D349)");
+            diag_->error(function.loc, "a test cannot be generic: cromo test calls it as it is");
             return;
         }
         if (!function.params.empty() || !function.resolvedReturn.isVoid()) {
             diag_->error(function.loc, "a test takes no parameters and returns nothing: [[test]] void " + function.name +
-                                           "() (D349)");
+                                           "()");
             return;
         }
         function.isTest = true;
@@ -1740,20 +1761,20 @@ private:
     void checkExtern(const FunctionDecl& function) {
         Type ret = function.resolvedReturn;
         if (!ret.isError() && !ret.isVoid() && !isCType(ret)) {
-            diag_->error(function.returnType.loc, "a C function returns a number, bool or addr, not " + ret.name() + " (D129)");
+            diag_->error(function.returnType.loc, "a C function returns a number, bool or addr, not " + ret.name() + "");
         }
         for (size_t i = 0; i < function.params.size(); ++i) {
             const Param& param = function.params[i];
             Type type = function.paramTypes[i];
             if (type.isError()) continue;
             if (param.mode == ParamMode::Move) {
-                diag_->error(param.loc, "a C function has no 'move' parameters (D129)");
+                diag_->error(param.loc, "a C function has no 'move' parameters");
             } else if (param.mode == ParamMode::Ref && !isCPointee(type)) {
                 diag_->error(param.type.loc, "'ref' to a C function is a pointer to a number or to a struct of numbers, not " +
-                                                 type.name() + " (D129)");
+                                                 type.name() + "");
             } else if (param.mode == ParamMode::Read && !isCType(type)) {
                 diag_->error(param.type.loc, "a C function takes numbers, bool, addr and 'ref' to numbers or structs of "
-                                             "numbers, not " + type.name() + " (D129)");
+                                             "numbers, not " + type.name() + "");
             }
         }
     }
@@ -1766,10 +1787,30 @@ private:
         return true;
     }
 
+    // In a module with `import unsafe` a call of `free` or `offset` is the built-in of
+    // the dialect (D98): a function of the module or of C with that name would never
+    // be called, so it is an error where it is declared.
+    void checkHiddenByIntrinsics() {
+        for (const FunctionDecl& function : module_.functions) {
+            if (function.owner || !isUnsafe(function.loc) || !findIntrinsic(function.name)) continue;
+            diag_->error(function.loc, "'" + function.name + "' is a built-in function of the unsafe dialect, which this "
+                                       "module calls instead: give this function another name");
+        }
+    }
+
     // D132: what a public declaration shows must be public too, or the modules that
     // use it could not name it.
     void checkExposed(Type type, SourceLocation loc, const std::string& what) {
         type = baseElement(type);
+        // D127: the other modules use only a safe interface; the modules that only the
+        // library imports, as std.winsock, are used by modules with `import unsafe` (D232).
+        const std::string& module = fileOf(loc.file).name;
+        bool internal = module == "std.winsock" || module == "std.runtime";
+        if (type.kind == TypeKind::Addr && !internal) {
+            diag_->error(loc, what + " is public, but its type addr is only for the modules with 'import unsafe': "
+                                     "offer a safe type instead");
+            return;
+        }
         if (type.isStruct()) {
             const StructDecl* decl = type.structDecl;
             for (Type arg : decl->typeArgs) checkExposed(arg, loc, what);
@@ -1778,7 +1819,7 @@ private:
         } else if (!type.isInterface() || type.interfaceDecl->isPublic) {
             return;
         }
-        diag_->error(loc, what + " is public, but its type " + type.name() + " is private to the module (D132)");
+        diag_->error(loc, what + " is public, but its type " + type.name() + " is private to the module");
     }
 
     void checkPublicSignatures() {
@@ -1815,9 +1856,9 @@ private:
         if (found == decl.methods.end()) return;
         const FunctionDecl& copy = *found->second;
         if (!decl.needsDestruction) {
-            diag_->error(copy.loc, decl.name + " is copied implicitly: its copy() is generated by the compiler (D83)");
+            diag_->error(copy.loc, decl.name + " is copied implicitly: its copy() is generated by the compiler");
         } else if (!copy.params.empty() || !copy.isConst || copy.resolvedReturn != Type::structType(&decl)) {
-            diag_->error(copy.loc, "copy() must be written '" + decl.name + " copy() const' (D83)");
+            diag_->error(copy.loc, "copy() must be written '" + decl.name + " copy() const'");
         }
     }
 
@@ -1832,13 +1873,13 @@ private:
         regions_.clear();
         // D113, D122: the functions that the compiler calls where nobody can catch.
         if (function.kind == FunctionKind::Destructor) {
-            regions_.push_back({0, "a destructor cannot let an exception out: catch it inside (D113)"});
+            regions_.push_back({0, "a destructor cannot let an exception out: catch it inside"});
         } else if (function.kind == FunctionKind::Method && function.owner && !function.isGenerated) {
             if (function.name == "copy" && function.owner->needsDestruction) {
-                regions_.push_back({0, "copy() cannot let an exception out: catch it inside (D122)"});
+                regions_.push_back({0, "copy() cannot let an exception out: catch it inside"});
             }
             if (function.name == "message" && implementsException(*function.owner)) {
-                regions_.push_back({0, "message() cannot let an exception out: catch it inside (D122)"});
+                regions_.push_back({0, "message() cannot let an exception out: catch it inside"});
             }
         }
         for (size_t i = 0; i < function.params.size(); ++i) {
@@ -1887,14 +1928,16 @@ private:
             return nullptr;
         }
         if (importsQualifier(loc, name)) {
-            diag_->error(loc, "'" + name + "' is the name of an imported module (D131)");
+            diag_->error(loc, "'" + name + "' is the name of an imported module");
             return nullptr;
         }
         if (ownFieldIndex(name) >= 0) {
-            diag_->error(loc, "'" + name + "' is a field of " + current_->owner->name + ": choose another name (D70)");
+            diag_->error(loc, "'" + name + "' is a field of " + current_->owner->name + ": choose another name");
             return nullptr;
         }
-        if (Variable* existing = lookup(name)) {  // D66: no shadowing
+        Variable* existing = lookup(name);  // D66: no shadowing, also of the variables of the module
+        if (!existing) existing = findGlobal(name, loc);
+        if (existing) {
             diag_->error(loc, "a variable named '" + name + "' is already visible here (declared at line " +
                                  std::to_string(existing->loc.line) + ")");
             return nullptr;
@@ -1918,35 +1961,35 @@ private:
             const Variable* variable = static_cast<const NameExpr&>(expr).variable;
             if (!variable) return "";
             if (variable->kind == VariableKind::ReadParam) {
-                return "parameter '" + variable->name + "' cannot be modified: parameters are read-only (D22)";
+                return "parameter '" + variable->name + "' cannot be modified: parameters are read-only";
             }
             if (variable->kind == VariableKind::Captured && variable->isConst) {
                 return "'" + variable->name + "' is captured to be read: capture it with 'ref " + variable->name +
-                       "' to modify it (D183)";
+                       "' to modify it";
             }
             if (variable->kind == VariableKind::Element && variable->isConst) {
                 return "'" + variable->name + "' is an element of a read-only 'for': write 'for (ref " + variable->type.name() +
-                       " " + variable->name + " in ...)' to modify it (D25)";
+                       " " + variable->name + " in ...)' to modify it";
             }
             if (variable->kind == VariableKind::Binding && variable->isConst) {
                 return "'" + variable->name + "' is data of the case, read-only: write 'ref " + variable->type.name() + " " +
-                       variable->name + "' in the case to modify it (D107)";
+                       variable->name + "' in the case to modify it";
             }
             if (variable->kind == VariableKind::Caught) {
-                return "'" + variable->name + "' is the exception of a 'catch', which is read-only (D114)";
+                return "'" + variable->name + "' is the exception of a 'catch', which is read-only";
             }
-            if (variable->isConst) return "'" + variable->name + "' is const and cannot be modified (D26)";
+            if (variable->isConst) return "'" + variable->name + "' is const and cannot be modified";
             return "";
         }
         case ExprKind::Field:
             return readOnlyReason(*static_cast<const FieldExpr&>(expr).object);  // const is deep (D24)
         case ExprKind::Index: {
             const Expr& object = *static_cast<const IndexExpr&>(expr).object;
-            if (isString(object.type)) return "the bytes of a string are read-only: build a new string (D200)";
+            if (isString(object.type)) return "the bytes of a string are read-only: build a new string";
             return readOnlyReason(object);
         }
         case ExprKind::Self:
-            if (current_->isConst) return "method '" + current_->name + "' is const and cannot modify the fields (D24)";
+            if (current_->isConst) return "method '" + current_->name + "' is const and cannot modify the fields";
             return "";
         default:
             return "";
@@ -1999,8 +2042,8 @@ private:
 
     // Who has a variable while it runs: a thread, a task, or the tasks of a group.
     static std::string holderText(const Variable& holder) {
-        if (holder.group) return "the tasks of the group '" + holder.name + "' until the end of its block (D273)";
-        return "the " + threadWord(holder) + " '" + holder.name + "' until " + holder.name + ".join() (D215)";
+        if (holder.group) return "the tasks of the group '" + holder.name + "' until the end of its block";
+        return "the " + threadWord(holder) + " '" + holder.name + "' until " + holder.name + ".join()";
     }
 
     // A thread of a block stays where it is declared, as its lambda (D184); so does
@@ -2008,12 +2051,12 @@ private:
     bool checkNotBlockThread(const Variable& variable, SourceLocation loc) {
         if (variable.group) {
             diag_->error(loc, "'" + variable.name + "' is a group of tasks, which read the variables of its block: it "
-                                                    "cannot be moved, assigned, returned, passed with 'ref' or captured (D273)");
+                                                    "cannot be moved, assigned, returned, passed with 'ref' or captured");
             return false;
         }
         if (!variable.blockThread) return true;
         diag_->error(loc, "'" + variable.name + "' is a " + threadWord(variable) + " of its block, which captures by address: "
-                                                "it cannot be moved, assigned, returned, passed with 'ref' or captured (D215)");
+                                                "it cannot be moved, assigned, returned, passed with 'ref' or captured");
         return false;
     }
 
@@ -2028,27 +2071,34 @@ private:
     }
 
     // `t.start()` and `t.join()` of a thread of a block: from start() on, what the
-    // thread captures by address is lent to it, as the elements of a `for` (D101).
+    // thread captures by address is lent to it, as the elements of a `for` (D101). It
+    // cannot be detached, as it uses the variables of its block (D521).
     void threadControl(const MethodCallExpr& call) {
-        if (call.object->kind != ExprKind::Name || (call.method != "start" && call.method != "join")) return;
+        if (call.object->kind != ExprKind::Name ||
+            (call.method != "start" && call.method != "join" && call.method != "detach")) {
+            return;
+        }
         const Variable* thread = static_cast<const NameExpr&>(*call.object).variable;
         if (!thread || !thread->blockThread) return;
         std::string word = threadWord(*thread);
+        if (call.method == "detach") {
+            diag_->error(call.loc, "the " + word + " '" + thread->name +
+                                       "' captures by address, and cannot be detached: it uses the variables of its block");
+            return;
+        }
         auto declared = scopes_.back().find(thread->name);
         if (declared == scopes_.back().end() || declared->second != thread) {
             diag_->error(call.loc, call.method + "() of a " + word + " of a block is written directly in the block that "
-                                                 "declares '" + thread->name + "' (D215)");
+                                                 "declares '" + thread->name + "'");
             return;
         }
         if (call.method == "join") {
             endThread(*thread);
             return;
         }
-        for (const ThreadBorrow& borrow : threadBorrows_) {
-            if (borrow.thread == thread) {
-                diag_->error(call.loc, "the " + word + " '" + thread->name + "' is already started (D214)");
-                return;
-            }
+        if (!startedThreads_.insert(thread).second) {  // also after join() (D219)
+            diag_->error(call.loc, "the " + word + " '" + thread->name + "' is already started");
+            return;
         }
         for (const Capture& capture : thread->blockThread->captures) {
             if (!capture.outer || !capture.byAddress) continue;
@@ -2062,7 +2112,7 @@ private:
             threadBorrows_.push_back({thread, capture.outer, exclusive});
             Path path;
             path.variable = capture.outer;
-            loopBorrows_.push_back({path, "while the " + word + " '" + thread->name + "' runs (D215)", thread});
+            loopBorrows_.push_back({path, "while the " + word + " '" + thread->name + "' runs", thread});
         }
     }
 
@@ -2077,7 +2127,7 @@ private:
             if (outer.loc.file == group.loc.file &&
                 (outer.loc.line > group.loc.line || (outer.loc.line == group.loc.line && outer.loc.column > group.loc.column))) {
                 diag_->error(capture.loc, "the tasks of the group '" + group.name + "' read '" + capture.name +
-                                              "', declared after the group: declare it before, or take it with 'move' (D273)");
+                                              "', declared after the group: declare it before, or take it with 'move'");
                 continue;
             }
             Path path;
@@ -2087,7 +2137,7 @@ private:
                 for (const auto& [modified, where] : log.modified) {
                     if (overlaps(modified, path) == Overlap::No) continue;
                     diag_->error(where, "'" + capture.name + "' cannot be modified after the group '" + group.name +
-                                            "', whose tasks read it (D273)");
+                                            "', whose tasks read it");
                     break;
                 }
             }
@@ -2095,7 +2145,7 @@ private:
             for (const ThreadBorrow& borrow : threadBorrows_) lent = lent || (borrow.thread == &group && borrow.captured == &outer);
             if (lent) continue;
             threadBorrows_.push_back({&group, &outer, false});
-            loopBorrows_.push_back({path, "while the tasks of the group '" + group.name + "' read it (D273)", &group});
+            loopBorrows_.push_back({path, "while the tasks of the group '" + group.name + "' read it", &group});
         }
     }
 
@@ -2200,7 +2250,7 @@ private:
         }
         std::string advice = isPlace(*value) && canMove(*value) ? "write 'move " + placeText(*value) + "'"
                                                                  : "it can be neither moved nor copied here";
-        diag_->error(value->loc, "values of type " + type.name() + " cannot be copied (D424): " + advice);
+        diag_->error(value->loc, "values of type " + type.name() + " cannot be copied: " + advice);
         return false;
     }
 
@@ -2209,14 +2259,14 @@ private:
         if (isTemporary(*node.operand)) {
             Type ignored = checkExpr(node.operand, std::nullopt);
             (void)ignored;
-            diag_->error(node.loc, "'move' is not needed before a new object: it is moved anyway (D23)");
+            diag_->error(node.loc, "'move' is not needed before a new object: it is moved anyway");
             return Type::error();
         }
         Type type = checkExpr(node.operand, std::nullopt);
         if (type.isError()) return type;
         const Expr& operand = *node.operand;
         if (!isPlace(operand)) {
-            diag_->error(node.loc, "'move' is written before a variable or a field (D82)");
+            diag_->error(node.loc, "'move' is written before a variable or a field");
             return Type::error();
         }
         if (!needsDestruction(type)) {
@@ -2238,20 +2288,20 @@ private:
                 return type;
             case VariableKind::ReadParam:
                 diag_->error(node.loc, "parameter '" + variable->name +
-                                          "' is read-only: it belongs to the caller and cannot be moved (D82)");
+                                          "' is read-only: it belongs to the caller and cannot be moved");
                 return Type::error();
             case VariableKind::Caught:
-                diag_->error(node.loc, "cannot move '" + variable->name + "': it is the exception of a 'catch' (D114)");
+                diag_->error(node.loc, "cannot move '" + variable->name + "': it is the exception of a 'catch'");
                 return Type::error();
             case VariableKind::Captured:
-                diag_->error(node.loc, "cannot move '" + variable->name + "': it is captured, and the lambda can run again (D183)");
+                diag_->error(node.loc, "cannot move '" + variable->name + "': it is captured, and the lambda can run again");
                 return Type::error();
             case VariableKind::Binding:
             case VariableKind::Element:
                 if (variable->isConst) {
                     diag_->error(node.loc, "cannot move '" + variable->name + "': " +
-                                              (variable->kind == VariableKind::Element ? "it is an element of a read-only 'for' (D25)"
-                                                                                        : "it is read-only data of the case (D107)"));
+                                              (variable->kind == VariableKind::Element ? "it is an element of a read-only 'for'"
+                                                                                        : "it is read-only data of the case"));
                     return Type::error();
                 }
                 node.moveKind = MoveKind::Take;  // D78
@@ -2312,10 +2362,10 @@ private:
         case StmtKind::Continue:
             if (!switchLoops_.empty() && switchLoops_.back() == loops_.size()) {
                 diag_->error(statement.loc, std::string("'") + (statement.kind == StmtKind::Break ? "break" : "continue") +
-                                               "' cannot be used in a 'switch': a branch ends by itself (D116)");
+                                               "' cannot be used in a 'switch': a branch ends by itself");
             } else if (!finallyLoops_.empty() && loops_.size() <= finallyLoops_.back()) {
                 diag_->error(statement.loc, std::string("'") + (statement.kind == StmtKind::Break ? "break" : "continue") +
-                                               "' cannot leave a 'finally' block (D120)");
+                                               "' cannot leave a 'finally' block");
             } else if (loops_.empty()) {
                 diag_->error(statement.loc, std::string("'") + (statement.kind == StmtKind::Break ? "break" : "continue") +
                                                "' can only be used inside a 'for'");
@@ -2336,7 +2386,7 @@ private:
         }
         if (!checkNotInterface(type, decl.typeName.loc, "a variable")) type = Type::error();
         if (decl.isConst && !decl.init) {
-            diag_->error(decl.nameLoc, "a const variable must have a value (D51)");
+            diag_->error(decl.nameLoc, "a const variable must have a value");
         }
         if (decl.init && !type.isError()) {
             threadInit_ = decl.init.get();
@@ -2368,18 +2418,18 @@ private:
                 return;
             }
             if (assign.op == AssignOp::Rem && !type.isInt()) {
-                diag_->error(assign.loc, "'%' only works on integers (D59)");
+                diag_->error(assign.loc, "'%' only works on integers");
                 return;
             }
             if (assign.op >= AssignOp::BitAnd && !type.isInt()) {
-                diag_->error(assign.loc, "the bitwise operators only work on integers (D193)");
+                diag_->error(assign.loc, "the bitwise operators only work on integers");
                 return;
             }
             if (assign.op == AssignOp::Shl || assign.op == AssignOp::Shr) {  // the count is any integer (D195)
                 Type count = checkExpr(assign.value, type);
                 if (count.isUntyped() && !coerce(assign.value, type)) return;
                 if (!count.isError() && !count.isInt() && !count.isUntyped()) {
-                    diag_->error(assign.loc, "the count of a shift is an integer, found " + count.name() + " (D195)");
+                    diag_->error(assign.loc, "the count of a shift is an integer, found " + count.name() + "");
                 }
                 return;
             }
@@ -2428,7 +2478,7 @@ private:
     Type checkEmbed(ExprPtr& expr) {
         auto& call = static_cast<CallExpr&>(*expr);
         if (call.args.size() != 1 || call.args[0]->kind != ExprKind::StringLiteral) {
-            diag_->error(call.loc, "embed takes the name of a file as a string literal: embed(\"logo.png\") (D470)");
+            diag_->error(call.loc, "embed takes the name of a file as a string literal: embed(\"logo.png\")");
             checkIgnored(call.args);
             return Type::error();
         }
@@ -2437,7 +2487,7 @@ private:
         std::string bytes;
         std::string problem = readEmbedded(file.lexically_normal(), bytes);
         if (!problem.empty()) {
-            diag_->error(call.args[0]->loc, "cannot embed " + name + ": " + problem + " (D470)");
+            diag_->error(call.args[0]->loc, "cannot embed " + name + ": " + problem + "");
             return Type::error();
         }
         SourceLocation loc = call.loc;
@@ -2452,7 +2502,7 @@ private:
         call.intrinsic = Intrinsic::Assert;
         call.typeArg = stringType();  // of the message
         if (call.args.size() != 1 || !call.typeArgs.empty()) {
-            diag_->error(call.loc, "assert takes one condition: assert(total == 7) (D351)");
+            diag_->error(call.loc, "assert takes one condition: assert(total == 7)");
             checkIgnored(call.args);
             return Type::error();
         }
@@ -2494,7 +2544,7 @@ private:
         Type type = checkExpr(condition, Type::boolType());
         if (!type.isBool() && !type.isError()) {
             diag_->error(condition->loc, "the condition must be a bool, found " + type.name() +
-                                            " (D32): compare it explicitly, for example x != 0");
+                                            ": compare it explicitly, for example x != 0");
         }
     }
 
@@ -2512,7 +2562,7 @@ private:
         if (!statement.value) {
             if (!current_->owner || !current_->owner->isEnum) {
                 diag_->error(statement.loc, "'switch' needs a value, switch (x) { ... }: only in the methods of an enum it "
-                                            "looks at the value of the method (D117)");
+                                            "looks at the value of the method");
                 return Flow::Continues;
             }
             statement.value = std::make_unique<SelfExpr>(statement.loc);
@@ -2521,7 +2571,7 @@ private:
         bool isEnum = type.isStruct() && type.structDecl->isEnum;
         bool ok = !type.isError();
         if (ok && !isEnum && !type.isInt() && !isString(type)) {
-            diag_->error(statement.value->loc, "'switch' works on enums, integers and strings, found " + type.name() + " (D109)");
+            diag_->error(statement.value->loc, "'switch' works on enums, integers and strings, found " + type.name() + "");
             ok = false;
         }
         const Expr& value = *statement.value;
@@ -2542,7 +2592,7 @@ private:
                     checkLiteralPattern(pattern, type, seen);
                 }
             }
-            if (named && path) loopBorrows_.push_back({*path, "while a 'switch' uses the data of its case (D125)"});
+            if (named && path) loopBorrows_.push_back({*path, "while a 'switch' uses the data of its case"});
             flows.push_back(checkBlock(branch.body));
             if (named && path) loopBorrows_.pop_back();
             scopes_.pop_back();
@@ -2558,7 +2608,7 @@ private:
                 if (!covered[i]) missing += (missing.empty() ? "" : ", ") + type.structDecl->cases[i].name;
             }
             diag_->error(statement.loc, "'switch' does not cover " + missing + " of " + type.name() +
-                                            ": add the cases, or 'default' (D34)");
+                                            ": add the cases, or 'default'");
         }
         if (!statement.exhaustive) return Flow::Continues;
         bool returns = true;
@@ -2574,7 +2624,7 @@ private:
                           const Expr& value) {
         const StructDecl& decl = *type.structDecl;
         if (pattern.literal) {
-            diag_->error(pattern.loc, "the cases of " + decl.name + " are written by their name (D106)");
+            diag_->error(pattern.loc, "the cases of " + decl.name + " are written by their name");
             return false;
         }
         int index = -1;
@@ -2591,13 +2641,14 @@ private:
         if (!pattern.hasBindings) return false;
         const EnumCase& item = decl.cases[index];
         if (patterns > 1) {
-            diag_->error(pattern.loc, "a branch with several cases cannot name their data (D108)");
+            diag_->error(pattern.loc, "a branch with several cases cannot name their data");
             return false;
         }
         if (pattern.bindings.size() != item.fields.size()) {
             size_t count = item.fields.size();
             diag_->error(pattern.loc, "case '" + item.name + "' has " + std::to_string(count) + " data" +
-                                          ", but " + std::to_string(pattern.bindings.size()) + " names were given (D107)");
+                                          ", but " + std::to_string(pattern.bindings.size()) +
+                                          (pattern.bindings.size() == 1 ? " name was given" : " names were given"));
             return false;
         }
         for (size_t i = 0; i < pattern.bindings.size(); ++i) {
@@ -2606,7 +2657,7 @@ private:
             Type written = resolveType(binding.type).value_or(Type::error());
             if (!written.isError() && written != field.resolved) {
                 diag_->error(binding.type.loc, "the data '" + field.name + "' of " + item.name + " is " + field.resolved.name() +
-                                                   ": write " + field.resolved.name() + " " + binding.name + " (D107)");
+                                                   ": write " + field.resolved.name() + " " + binding.name + "");
                 written = Type::error();
             }
             if (binding.isRef && !modifiable) {
@@ -2625,7 +2676,7 @@ private:
     // A literal in a `switch` on an integer or a string (D109).
     void checkLiteralPattern(CasePattern& pattern, Type type, std::vector<std::string>& seen) {
         if (!pattern.literal) {
-            diag_->error(pattern.loc, "the cases of a switch on a " + type.name() + " are literals (D109)");
+            diag_->error(pattern.loc, "the cases of a switch on a " + type.name() + " are literals");
             return;
         }
         bool text = pattern.literal->kind == ExprKind::StringLiteral;
@@ -2669,7 +2720,7 @@ private:
     Flow checkThrow(ThrowStmt& statement) {
         if (!statement.value) {
             if (catchTypes_.empty()) {
-                diag_->error(statement.loc, "'throw' alone rethrows the exception of a 'catch': it can be used only inside one (D114)");
+                diag_->error(statement.loc, "'throw' alone rethrows the exception of a 'catch': it can be used only inside one");
             } else {
                 Type caught = catchTypes_.back();
                 noteThrow(caught.isStruct() ? caught.structDecl : nullptr, statement.loc);
@@ -2680,8 +2731,8 @@ private:
         Type type = checkExpr(statement.value, std::nullopt);
         if (type.isError()) return Flow::Returns;
         if (!type.isStruct() || !implementsException(*type.structDecl)) {
-            diag_->error(statement.value->loc, "only a struct that implements Exception can be thrown, found " + type.name() +
-                                                   " (D36)");
+            diag_->error(statement.value->loc, "only a struct or an enum that implements Exception can be thrown, found " + type.name() +
+                                                   "");
             return Flow::Returns;
         }
         copyIfNeeded(statement.value, type);
@@ -2700,14 +2751,14 @@ private:
             bool all = type.isInterface() && type.interfaceDecl == exceptionDecl_;
             if (!all && !(type.isStruct() && implementsException(*type.structDecl))) {
                 diag_->error(clause.type.loc, "a 'catch' takes a struct that implements Exception, or Exception itself, found " +
-                                                  type.name() + " (D118)");
+                                                  type.name() + "");
                 clause.resolved = Type::error();
                 continue;
             }
             bool repeated = !all && std::find(context.caught.begin(), context.caught.end(), type.structDecl) != context.caught.end();
             if (context.catchAll || repeated) {
                 diag_->error(clause.type.loc, "this 'catch' is never reached: a previous one already catches " +
-                                                  (context.catchAll ? std::string("every exception") : type.name()) + " (D118)");
+                                                  (context.catchAll ? std::string("every exception") : type.name()) + "");
             }
             if (all) {
                 context.catchAll = true;
@@ -2731,7 +2782,7 @@ private:
             scopes_.pop_back();
         }
         if (statement.finallyBlock) {
-            regions_.push_back({tryContexts_.size(), "a 'finally' block cannot let an exception out: catch it inside (D113)"});
+            regions_.push_back({tryContexts_.size(), "a 'finally' block cannot let an exception out: catch it inside"});
             finallyLoops_.push_back(loops_.size());
             Flow ignored = checkBlock(*statement.finallyBlock);
             (void)ignored;
@@ -2821,7 +2872,7 @@ private:
         for (const FunctionDecl& function : module_.functions) {
             if (function.isExported && function.canThrow) {
                 diag_->error(function.loc, "the exported function '" + function.name + "' can throw, and C has no exceptions: "
-                                           "catch them inside it (D395)");
+                                           "catch them inside it");
             }
         }
     }
@@ -2838,18 +2889,18 @@ private:
             return checkForChannel(statement, list, element);
         }
         if (ok && statement.hasValue) {
-            diag_->error(statement.valueLoc, "only a 'for' over a map has a key and a value (D197)");
+            diag_->error(statement.valueLoc, "only a 'for' over a map has a key and a value");
             ok = false;
         }
         if (ok && !isList(list) && !list.isArray()) {
             diag_->error(statement.list->loc, "'for' goes over the elements of a list or of an array, found " + list.name() +
-                                                  " (D25)");
+                                                  "");
             ok = false;
         } else if (ok && element != elementOf(list)) {
             diag_->error(statement.elementType.loc, std::string("the elements of this ") + (list.isArray() ? "array" : "list") +
                                                         " are " + elementOf(list).name() + ": write for (" +
                                                         std::string(statement.isRef ? "ref " : "") + elementOf(list).name() +
-                                                        " " + statement.elementName + " in ...) (D101)");
+                                                        " " + statement.elementName + " in ...)");
             ok = false;
         }
         if (ok && statement.isRef) {
@@ -2867,7 +2918,7 @@ private:
         statement.element = variable;
 
         std::optional<Path> path = pathOf(*statement.list);
-        if (path) loopBorrows_.push_back({*path, "while a 'for' goes over the elements of '" + placeText(*statement.list) + "' (D101)"});
+        if (path) loopBorrows_.push_back({*path, "while a 'for' goes over the elements of '" + placeText(*statement.list) + "'"});
         loops_.push_back(false);
         checkBlock(statement.body);
         loops_.pop_back();
@@ -2885,21 +2936,21 @@ private:
         Type value = Type::error();
         if (!statement.hasValue) {
             diag_->error(statement.elementLoc, "a 'for' over a map names the key and the value: for (" + keyType.name() + " " +
-                                                   statement.elementName + ", " + valueType.name() + " v in ...) (D197)");
+                                                   statement.elementName + ", " + valueType.name() + " v in ...)");
             ok = false;
         } else {
             value = resolveType(statement.valueType).value_or(Type::error());
             ok = !value.isError();
         }
         if (ok && statement.isRef) {
-            diag_->error(statement.elementLoc, "the keys of a map are read-only: only the value can be 'ref' (D197)");
+            diag_->error(statement.elementLoc, "the keys of a map are read-only: only the value can be 'ref'");
             ok = false;
         }
         if (ok && (key != keyType || value != valueType)) {
             diag_->error(statement.elementType.loc, "the keys of this map are " + keyType.name() + " and the values " +
                                                         valueType.name() + ": write for (" + keyType.name() + " " +
                                                         statement.elementName + ", " + (statement.valueIsRef ? "ref " : "") +
-                                                        valueType.name() + " " + statement.valueName + " in ...) (D197)");
+                                                        valueType.name() + " " + statement.valueName + " in ...)");
             ok = false;
         }
         if (ok && statement.valueIsRef) {
@@ -2923,7 +2974,7 @@ private:
         }
 
         std::optional<Path> path = pathOf(*statement.list);
-        if (path) loopBorrows_.push_back({*path, "while a 'for' goes over the elements of '" + placeText(*statement.list) + "' (D101)"});
+        if (path) loopBorrows_.push_back({*path, "while a 'for' goes over the elements of '" + placeText(*statement.list) + "'"});
         loops_.push_back(false);
         checkBlock(statement.body);
         loops_.pop_back();
@@ -2940,15 +2991,15 @@ private:
         Type valueType = channel.structDecl->typeArgs[0];
         bool ok = false;
         if (statement.hasValue) {
-            diag_->error(statement.valueLoc, "only a 'for' over a map has a key and a value (D197)");
+            diag_->error(statement.valueLoc, "only a 'for' over a map has a key and a value");
         } else if (statement.isRef) {
             diag_->error(statement.elementLoc, "the values of a channel belong to the loop that receives them: write for (" +
-                                                   valueType.name() + " " + statement.elementName + " in ...) (D327)");
+                                                   valueType.name() + " " + statement.elementName + " in ...)");
         } else if (element != valueType) {
             diag_->error(statement.elementType.loc, "the values of this channel are " + valueType.name() + ": write for (" +
-                                                        valueType.name() + " " + statement.elementName + " in ...) (D327)");
+                                                        valueType.name() + " " + statement.elementName + " in ...)");
         } else if (!isPlace(*statement.list)) {
-            diag_->error(statement.list->loc, "a 'for' receives from a channel in a variable or in a field (D327)");
+            diag_->error(statement.list->loc, "a 'for' receives from a channel in a variable or in a field");
         } else {
             ok = true;
         }
@@ -3003,7 +3054,7 @@ private:
     }
 
     void checkReturn(ReturnStmt& ret) {
-        if (!finallyLoops_.empty()) diag_->error(ret.loc, "'ret' cannot leave a 'finally' block (D120)");
+        if (!finallyLoops_.empty()) diag_->error(ret.loc, "'ret' cannot leave a 'finally' block");
         Type type = current_->resolvedReturn;
         if (type.isError()) return;
         if (type.isVoid()) {
@@ -3046,7 +3097,7 @@ private:
                 expr = std::make_unique<ConversionExpr>(loc, std::move(inner), target, false);
                 return true;
             }
-            diag_->error(expr->loc, type.name() + " does not implement " + target.name() + " (D49)");
+            diag_->error(expr->loc, type.name() + " does not implement " + target.name() + "");
             return false;
         }
         if (type.isVoid()) {
@@ -3065,9 +3116,13 @@ private:
         }
         if (type.isStruct() || target.isStruct()) {
             diag_->error(expr->loc, "a value of type " + type.name() + " cannot be used as " + target.name());
+        } else if (target.isBool() && type.isNumeric()) {  // a number is not converted to bool (D61)
+            diag_->error(expr->loc, "a value of type " + type.name() + " cannot be used as bool: compare it, as x != 0");
+        } else if (type.isBool() && target.isNumeric()) {
+            diag_->error(expr->loc, "a bool cannot be used as " + target.name() + ": choose the number, as b ? 1 : 0");
         } else {
             diag_->error(expr->loc, "a value of type " + type.name() + " cannot be used as " + target.name() +
-                                       " without an explicit conversion, for example " + target.name() + "(x) (D33)");
+                                       " without an explicit conversion, for example " + target.name() + "(x)");
         }
         return false;
     }
@@ -3111,12 +3166,12 @@ private:
         case ExprKind::Move:
             if (!moveAllowed) {
                 diag_->error(expr->loc, "'move' is written only in an initialization, an assignment, the argument of a "
-                                       "'move' parameter or after 'ret' (D82)");
+                                       "'move' parameter or after 'ret'");
                 return Type::error();
             }
             return checkMove(static_cast<MoveExpr&>(*expr));
         case ExprKind::Ref:
-            diag_->error(expr->loc, "'ref' is written only in the argument of a 'ref' parameter (D22)");
+            diag_->error(expr->loc, "'ref' is written only in the argument of a 'ref' parameter");
             return Type::error();
         case ExprKind::Conversion:
         case ExprKind::Print:
@@ -3184,11 +3239,11 @@ private:
             (current_->owner && current_->owner->methods.count(name.name))) {
             diag_->error(name.loc, "'" + name.name + "' is a function: call it with '()'");
         } else if (importsQualifier(name.loc, name.name)) {
-            diag_->error(name.loc, "'" + name.name + "' is a module: write " + name.name + ".name (D126)");
+            diag_->error(name.loc, "'" + name.name + "' is a module: write " + name.name + ".name");
         } else if (hiddenByLambda(name.name)) {
-            diag_->error(name.loc, "'" + name.name + "' is not captured: write it between the [] of the lambda (D183)");
+            diag_->error(name.loc, "'" + name.name + "' is not captured: write it between the [] of the lambda");
         } else if (readsOtherField(name.name)) {
-            diag_->error(name.loc, "the initial value of a field cannot read the field '" + name.name + "' (D360)");
+            diag_->error(name.loc, "the initial value of a field cannot read the field '" + name.name + "'");
         } else {
             diag_->error(name.loc, "unknown name '" + name.name + "'");
         }
@@ -3224,7 +3279,7 @@ private:
             std::optional<Type> type = resolveType(static_cast<const TypeRefExpr&>(object).name);
             if (!type) return Type::error();
             if (!type->isStruct() || !type->structDecl->isEnum) {
-                diag_->error(object.loc, type->name() + " is not an enum: only the values of an enum are created with '.' (D105)");
+                diag_->error(object.loc, type->name() + " is not an enum: only the values of an enum are created with '.'");
                 return Type::error();
             }
             return type;
@@ -3251,7 +3306,7 @@ private:
         StructDecl* found = findDecl(&ModuleScope::structs, name, object.loc, module);
         if (!found || !found->isEnum) return std::nullopt;
         if (!found->typeParams.empty()) {
-            diag_->error(object.loc, name + " is generic: write its type arguments, " + name + "<...>." + "Case (D92)");
+            diag_->error(object.loc, name + " is generic: write its type arguments, " + name + "<...>." + "Case");
             return Type::error();
         }
         return Type::structType(found);
@@ -3277,7 +3332,7 @@ private:
         const EnumCase& item = decl.cases[index];
         std::string what = "'" + decl.name + "." + name + "'";
         if (!args && !item.fields.empty()) {
-            diag_->error(loc, what + " has data: write " + decl.name + "." + name + "(...) (D105)");
+            diag_->error(loc, what + " has data: write " + decl.name + "." + name + "(...)");
             return Type::error();
         }
         auto node = std::make_unique<EnumCaseExpr>(loc, &decl, index);
@@ -3308,7 +3363,7 @@ private:
         Type object = checkExpr(field.object, std::nullopt);
         if (object.isError()) return object;
         if (!object.isStruct()) {
-            diag_->error(field.loc, "a " + object.name() + " has no fields");
+            diag_->error(field.loc, withArticle(object.name()) + " has no fields");
             return Type::error();
         }
         const auto& fields = object.structDecl->fields;
@@ -3332,14 +3387,14 @@ private:
         switch (param.mode) {
         case ParamMode::Read:
             if (arg->kind == ExprKind::Ref || arg->kind == ExprKind::Move) {
-                diag_->error(arg->loc, name + " is read-only: remove '" + (arg->kind == ExprKind::Ref ? "ref" : "move") + "' (D22)");
+                diag_->error(arg->loc, name + " is read-only: remove '" + (arg->kind == ExprKind::Ref ? "ref" : "move") + "'");
                 return false;
             }
             lambdaArgument_ = arg->kind == ExprKind::Lambda;  // it may capture by address (D184)
             return coerce(arg, type, true);
         case ParamMode::Ref: {
             if (arg->kind != ExprKind::Ref) {
-                diag_->error(arg->loc, name + " is 'ref': write 'ref' before the argument (D22)");
+                diag_->error(arg->loc, name + " is 'ref': write 'ref' before the argument");
                 return false;
             }
             auto& ref = static_cast<RefExpr&>(*arg);
@@ -3350,7 +3405,7 @@ private:
                 return false;
             }
             if (!isPlace(*ref.operand)) {
-                diag_->error(ref.loc, "only a variable or a field can be passed with 'ref' (D82)");
+                diag_->error(ref.loc, "only a variable or a field can be passed with 'ref'");
                 return false;
             }
             std::string reason = readOnlyReason(*ref.operand);
@@ -3360,7 +3415,7 @@ private:
             }
             if (found != type && !(type.isInterface() && satisfies(found, type.interfaceDecl))) {
                 diag_->error(ref.loc, name + " is 'ref " + type.name() + "': the argument must have exactly that type, found " +
-                                         found.name() + " (D82)");
+                                         found.name() + "");
                 return false;
             }
             ref.type = found;
@@ -3368,7 +3423,7 @@ private:
         }
         case ParamMode::Move: {
             if (arg->kind == ExprKind::Ref) {
-                diag_->error(arg->loc, name + " is 'move', not 'ref' (D22)");
+                diag_->error(arg->loc, name + " is 'move', not 'ref'");
                 return false;
             }
             if (!coerceValue(arg, type)) return false;
@@ -3462,13 +3517,16 @@ private:
                 std::string message = "'" + placeText(*second.expr) + "' overlaps '" + placeText(*first.expr) +
                                       "' in the same call, ";
                 if (first.arg == -2 || second.arg == -2) {
-                    message += "which a lambda of the call captures (D184)";
+                    message += "which a lambda of the call captures";
                 } else if (read.modifies) {
-                    message += "and the call can modify both (D22)";
+                    message += "and the call can modify both";
                 } else if (read.arg < 0) {
-                    message += "which is the object of the method (D22)";
+                    message += "which is the object of the method";
                 } else {
-                    message += "which the call can modify, and values of type " + read.expr->type.name() + " are not copied implicitly (D79)";
+                    message += canCopy(read.expr->type)
+                                   ? "which the call can modify: pass a copy, as " + placeText(*read.expr) + ".copy()"
+                                   : "which the call can modify, and values of type " + read.expr->type.name() +
+                                         " cannot be copied";
                 }
                 diag_->error(second.expr->loc, message);
                 ok = false;
@@ -3531,7 +3589,10 @@ private:
         if (object.isNumeric() && call.method == "compare") return checkKeyMethod(expr, object);  // D421
         if (isString(object) && call.method == "cstring") return checkCString(expr);
         if (!object.isStruct()) {
-            diag_->error(call.loc, "a " + object.name() + " has no methods");
+            std::string has = object.isNumeric() ? ": it has hash(), equals() and compare()"
+                              : object.isBool()  ? ": it has hash() and equals()"
+                                                 : "";
+            diag_->error(call.loc, withArticle(object.name()) + " has no method " + call.method + "()" + has);
             return Type::error();
         }
         FunctionDecl* method = nullptr;
@@ -3551,7 +3612,7 @@ private:
             method = copyFunction(*object.structDecl, call.loc);
             if (!method) {
                 diag_->error(call.loc, object.name() + " cannot be copied: it has a destructor, or a field that cannot be "
-                                                      "copied, and it does not define copy() (D35)");
+                                                      "copied, and it does not define copy()");
                 return Type::error();
             }
         } else {
@@ -3562,10 +3623,10 @@ private:
             reportPrivate(call.loc, "method '" + call.method + "' of " + object.name());
             return Type::error();
         }
-        if (call.method == "add" && isThreadType(*object.structDecl, "Atomic")) {  // D328
+        if ((call.method == "add" || call.method == "addRelaxed") && isThreadType(*object.structDecl, "Atomic")) {  // D328, D503
             Type held = object.structDecl->typeArgs[0];
             if (!held.isInt() && !held.isParam()) {
-                diag_->error(call.loc, "add() is for an atomic integer, not for " + object.name() + " (D328)");
+                diag_->error(call.loc, call.method + "() is for an atomic integer, not for " + object.name());
                 return Type::error();
             }
         }
@@ -3581,13 +3642,13 @@ private:
             }
             method = instance;
         } else if (!call.typeArgs.empty()) {
-            diag_->error(call.loc, "'" + call.method + "' has no type parameters (D92)");
+            diag_->error(call.loc, "'" + call.method + "' has no type parameters");
             return Type::error();
         }
         if (!method->isConst) {
             std::string reason = readOnlyReason(*call.object);
             if (!reason.empty()) {
-                diag_->error(call.loc, "cannot call '" + call.method + "', which is not const (D24): " +
+                diag_->error(call.loc, "cannot call '" + call.method + "', which is not const: " +
                                           reason);
                 return Type::error();
             }
@@ -3625,12 +3686,12 @@ private:
             if (element.isUntyped() || element.isVoid()) {
                 diag_->error(list.elements[0]->loc, "the type of the elements cannot be deduced: write the type of the list, "
                                                     "as list<i64> values = [1, 2], or of the first element, as [i64(1), 2] "
-                                                    "(D55, D308)");
+                                                    "");
                 return Type::error();
             }
             checkedFirst = true;
         } else {
-            diag_->error(list.loc, "the type of an empty list cannot be deduced: write it, as list<i64> values = [] (D308)");
+            diag_->error(list.loc, "the type of an empty list cannot be deduced: write it, as list<i64> values = []");
             return Type::error();
         }
         StructDecl* decl = instantiateStruct(*listDecl_, {element}, list.loc);
@@ -3645,7 +3706,7 @@ private:
         for (size_t i = 0; i < list.elements.size(); ++i) {
             ExprPtr& value = list.elements[i];
             if (value->kind == ExprKind::Ref) {
-                diag_->error(value->loc, "an element of a list is given to it, not passed with 'ref' (D308)");
+                diag_->error(value->loc, "an element of a list is given to it, not passed with 'ref'");
                 ok = false;
                 continue;
             }
@@ -3670,7 +3731,7 @@ private:
     Type checkCString(ExprPtr& expr) {
         auto& call = static_cast<MethodCallExpr&>(*expr);
         if (!isUnsafe(call.loc)) {
-            diag_->error(call.loc, "cstring() is for the C functions: the module must write 'import unsafe' (D204)");
+            diag_->error(call.loc, "cstring() is for the C functions: the module must write 'import unsafe'");
             return Type::error();
         }
         if (!call.args.empty()) {
@@ -3731,7 +3792,7 @@ private:
     Type checkVariableAddress(CallExpr& call) {
         call.intrinsic = Intrinsic::VariableAddress;
         if (call.args.size() != 1 || !call.typeArgs.empty()) {
-            diag_->error(call.loc, "variableAddress() takes a module variable (D394)");
+            diag_->error(call.loc, "variableAddress() takes a module variable");
             checkIgnored(call.args);
             return Type::error();
         }
@@ -3744,7 +3805,7 @@ private:
         }
         const Variable* variable = place->kind == ExprKind::Name ? static_cast<const NameExpr*>(place)->variable : nullptr;
         if (!variable || variable->kind != VariableKind::Module) {
-            diag_->error(call.args[0]->loc, "variableAddress() takes a module variable, or a field or an element of one (D394)");
+            diag_->error(call.args[0]->loc, "variableAddress() takes a module variable, or a field or an element of one");
             return Type::error();
         }
         return Type::addrType();
@@ -3771,7 +3832,7 @@ private:
         auto& call = static_cast<MethodCallExpr&>(*expr);
         Type bits = Type::intType(type.bits, false);
         if (call.args.size() != 1) {
-            diag_->error(call.loc, "fromBits() takes the bits of the number, a " + bits.name() + " (D397)");
+            diag_->error(call.loc, "fromBits() takes the bits of the number, a " + bits.name() + "");
             checkIgnored(call.args);
             return Type::error();
         }
@@ -3793,7 +3854,7 @@ private:
         auto& call = static_cast<MethodCallExpr&>(*expr);
         Type number = vector.array->element;
         if (call.args.size() != 2) {
-            diag_->error(call.loc, "load() takes a list or an array of " + number.name() + " and the index of the first (D505)");
+            diag_->error(call.loc, "load() takes a list or an array of " + number.name() + " and the index of the first");
             checkIgnored(call.args);
             return Type::error();
         }
@@ -3802,7 +3863,7 @@ private:
         if (source.isError() || !atOk) return Type::error();
         if (!holdsNumbers(source, number)) {
             diag_->error(call.args[0]->loc, "load() reads a list<" + number.name() + "> or an array of " + number.name() +
-                                                ", not " + source.name() + " (D505)");
+                                                ", not " + source.name() + "");
             return Type::error();
         }
         SourceLocation loc = call.loc;
@@ -3838,7 +3899,7 @@ private:
         };
         auto arguments = [&](size_t count, const std::string& usage) {
             if (call.args.size() == count) return true;
-            diag_->error(loc, name + "() takes " + usage + " (D505)");
+            diag_->error(loc, name + "() takes " + usage + "");
             checkIgnored(call.args);
             return false;
         };
@@ -3851,7 +3912,7 @@ private:
         if (name == "sum" || name == "smallest" || name == "largest" || name == "abs") {
             if (!arguments(0, "no arguments")) return Type::error();
             if (name == "abs" && number.isInt() && !number.isSigned) {
-                diag_->error(loc, "abs() of an unsigned vector is the vector itself (D505)");
+                diag_->error(loc, "abs() of an unsigned vector is the vector itself");
                 return Type::error();
             }
             Intrinsic kind = name == "sum"        ? Intrinsic::VectorSum
@@ -3869,7 +3930,7 @@ private:
         if (name == "low" || name == "high") {
             if (!arguments(0, "no arguments")) return Type::error();
             if (sizeOf(vector) != 32) {
-                diag_->error(loc, name + "() gives half of a vector of 256 bits, and " + vector.name() + " has 128 (D505)");
+                diag_->error(loc, name + "() gives half of a vector of 256 bits, and " + vector.name() + " has 128");
                 return Type::error();
             }
             made->typeArg = vectorOf(number, vector.array->count / 2);
@@ -3879,7 +3940,7 @@ private:
             if (!arguments(2, "'ref' a list or an array of its numbers, and the index of the first")) return Type::error();
             ExprPtr& target = call.args[0];
             if (target->kind != ExprKind::Ref) {
-                diag_->error(target->loc, "store() changes the list or the array: pass it with 'ref' (D505)");
+                diag_->error(target->loc, "store() changes the list or the array: pass it with 'ref'");
                 return Type::error();
             }
             Type place = checkExpr(static_cast<RefExpr&>(*target).operand, std::nullopt);
@@ -3887,12 +3948,12 @@ private:
             if (place.isError() || !atOk) return Type::error();
             if (!holdsNumbers(place, number)) {
                 diag_->error(target->loc, "store() writes into a list<" + number.name() + "> or an array of " + number.name() +
-                                              ", not " + place.name() + " (D505)");
+                                              ", not " + place.name() + "");
                 return Type::error();
             }
             ExprPtr& written = static_cast<RefExpr&>(*target).operand;
             if (!isPlace(*written)) {
-                diag_->error(written->loc, "store() writes into a variable, a field or an element (D505)");
+                diag_->error(written->loc, "store() writes into a variable, a field or an element");
                 return Type::error();
             }
             std::string reason = readOnlyReason(*written);
@@ -3914,7 +3975,7 @@ private:
             if (first.isError()) return first;
             if (!first.isVector() || first.array->count != vector.array->count ||
                 first.array->element.bits != number.bits) {
-                diag_->error(call.args[0]->loc, "select() takes two vectors with as many numbers as the mask, of its size (D505)");
+                diag_->error(call.args[0]->loc, "select() takes two vectors with as many numbers as the mask, of its size");
                 return Type::error();
             }
             if (!coerce(call.args[1], first)) return Type::error();
@@ -3922,14 +3983,14 @@ private:
             made->args.push_back(std::move(call.args[1]));
             return finish(Intrinsic::VectorSelect, first);
         }
-        diag_->error(loc, "a " + vector.name() + " has no method " + name + "() (D505)");
+        diag_->error(loc, withArticle(vector.name()) + " has no method " + name + "()");
         return Type::error();
     }
 
     Type checkArrayMethod(ExprPtr& expr, Type object) {
         auto& call = static_cast<MethodCallExpr&>(*expr);
         if (call.method != "len" && call.method != "copy") {
-            diag_->error(call.loc, "an array has only len() and copy(), not '" + call.method + "' (D196)");
+            diag_->error(call.loc, "an array has only len() and copy(), not '" + call.method + "'");
             return Type::error();
         }
         if (!call.args.empty()) {
@@ -3946,7 +4007,7 @@ private:
             return i64;
         }
         if (!canCopy(object)) {
-            diag_->error(loc, object.name() + " cannot be copied: its elements are not simple values, move it instead (D196)");
+            diag_->error(loc, object.name() + " cannot be copied: its elements are not simple values, move it instead");
             return Type::error();
         }
         ExprPtr operand = std::move(call.object);
@@ -3969,14 +4030,14 @@ private:
         if (!method) {
             // D85: whether T can be copied is checked in each instance.
             if (object.isParam() && call.method == "copy" && call.args.empty()) return object;
-            std::string hint = object.isParam() ? ": only the methods of its constraints can be called (D52)" : "";
+            std::string hint = object.isParam() ? ": only the methods of its constraints can be called" : "";
             diag_->error(call.loc, object.name() + " has no method named '" + call.method + "'" + hint);
             return Type::error();
         }
         if (!method->isConst) {
             std::string reason = readOnlyReason(*call.object);
             if (!reason.empty()) {
-                diag_->error(call.loc, "cannot call '" + call.method + "', which is not const (D24): " + reason);
+                diag_->error(call.loc, "cannot call '" + call.method + "', which is not const: " + reason);
                 return Type::error();
             }
         }
@@ -3996,12 +4057,12 @@ private:
             Type type = checkExpr(unary.operand, hint);
             if (type.isUntyped() && !type.isError()) {
                 diag_->error(unary.loc, "the type of this expression cannot be deduced: write the type of the value, for "
-                                        "example !u8(0) (D55)");
+                                        "example !u8(0)");
                 return Type::error();
             }
             if (type.isVector() && type.array->element.isInt()) return type;  // its bits (D505)
             if (!type.isBool() && !type.isInt()) {
-                if (!type.isError()) diag_->error(unary.loc, "'!' needs a bool or an integer, found " + type.name() + " (D194)");
+                if (!type.isError()) diag_->error(unary.loc, "'!' needs a bool or an integer, found " + type.name() + "");
                 return Type::error();
             }
             return type;
@@ -4031,13 +4092,13 @@ private:
         if (type.isVector()) {  // D505
             Type number = type.array->element;
             if (number.isInt() && !number.isSigned) {
-                diag_->error(unary.loc, "cannot negate an unsigned vector (" + type.name() + ") (D59)");
+                diag_->error(unary.loc, "cannot negate an unsigned vector (" + type.name() + ")");
                 return Type::error();
             }
             return type;
         }
         if (type.isInt() && !type.isSigned) {
-            diag_->error(unary.loc, "cannot negate an unsigned value (" + type.name() + ") (D59)");
+            diag_->error(unary.loc, "cannot negate an unsigned value (" + type.name() + ")");
             return Type::error();
         }
         if (!type.isNumeric()) {
@@ -4052,7 +4113,7 @@ private:
     Type checkWrap(ExprPtr& expr) {
         auto& call = static_cast<CallExpr&>(*expr);
         if (call.args.size() != 2) {
-            diag_->error(call.loc, call.callee + "() takes two integers of the same type (D396)");
+            diag_->error(call.loc, call.callee + "() takes two integers of the same type");
             checkIgnored(call.args);
             return Type::error();
         }
@@ -4065,7 +4126,7 @@ private:
         Type operand = unify(static_cast<BinaryExpr&>(*expr), std::nullopt);
         if (operand.isError()) return operand;
         if (!operand.isInt()) {
-            diag_->error(loc, name + "() works on integers, not on " + operand.name() + " (D396)");
+            diag_->error(loc, name + "() works on integers, not on " + operand.name() + "");
             return Type::error();
         }
         static_cast<BinaryExpr&>(*expr).operandType = operand;
@@ -4079,8 +4140,8 @@ private:
         bool rotate = kind == Intrinsic::RotateLeft || kind == Intrinsic::RotateRight;
         size_t count = rotate ? 2 : 1;
         if (call.args.size() != count) {
-            diag_->error(call.loc, call.callee + (rotate ? "() takes an integer and the bits to turn it by (D502)"
-                                                         : "() takes one integer (D502)"));
+            diag_->error(call.loc, call.callee + (rotate ? "() takes an integer and the bits to turn it by"
+                                                         : "() takes one integer"));
             checkIgnored(call.args);
             return Type::error();
         }
@@ -4093,13 +4154,13 @@ private:
             } else {
                 if (!typed) {
                     diag_->error(call.args[0]->loc, "the type of this literal cannot be deduced: write it, for example " +
-                                                        call.callee + "(u64(5)" + (rotate ? ", 1" : "") + ") (D55)");
+                                                        call.callee + "(u64(5)" + (rotate ? ", 1" : "") + ")");
                 }
                 value = Type::error();
             }
         }
         if (!value.isError() && !value.isInt()) {
-            diag_->error(call.args[0]->loc, call.callee + "() works on integers, not on " + value.name() + " (D502)");
+            diag_->error(call.args[0]->loc, call.callee + "() works on integers, not on " + value.name() + "");
             value = Type::error();
         }
         if (value.isError()) {
@@ -4117,7 +4178,7 @@ private:
         }
         if (amount.isError()) return amount;
         if (!amount.isInt()) {
-            diag_->error(call.args[1]->loc, "the bits to turn by are an integer, not " + amount.name() + " (D502)");
+            diag_->error(call.args[1]->loc, "the bits to turn by are an integer, not " + amount.name() + "");
             return Type::error();
         }
         return value;
@@ -4151,7 +4212,7 @@ private:
 
         if (operand.isParam() || operand.isInterface()) {
             diag_->error(binary.loc, std::string("'") + spelling(binary.op) + "' does not work on values of type " +
-                                         operand.name() + ": no interface provides it yet (D87)");
+                                         operand.name() + ": no interface provides it yet");
             return Type::error();
         }
         bool equality = binary.op == BinaryOp::Eq || binary.op == BinaryOp::Ne;
@@ -4159,13 +4220,13 @@ private:
             for (const EnumCase& item : operand.structDecl->cases) {
                 if (item.fields.empty()) continue;
                 diag_->error(binary.loc, std::string("'") + spelling(binary.op) +
-                                             "' works on the enums whose cases have no data: tell the case with 'switch' (D112)");
+                                             "' works on the enums whose cases have no data: tell the case with 'switch'");
                 return Type::error();
             }
             return Type::boolType();
         }
         if (operand.isStruct()) {
-            diag_->error(binary.loc, std::string("'") + spelling(binary.op) + "' does not work on structs yet (D76)");
+            diag_->error(binary.loc, std::string("'") + spelling(binary.op) + "' does not work on structs yet");
             return Type::error();
         }
         if (operand.isVector()) return checkVectorOperator(binary, operand);  // D505
@@ -4179,11 +4240,11 @@ private:
                 return Type::error();
             }
             if (binary.op == BinaryOp::Rem && !operand.isInt()) {
-                diag_->error(binary.loc, "'%' only works on integers (D59)");
+                diag_->error(binary.loc, "'%' only works on integers");
                 return Type::error();
             }
             if (isBitwise(binary.op) && !operand.isInt()) {
-                diag_->error(binary.loc, std::string("'") + spelling(binary.op) + "' only works on integers (D193)");
+                diag_->error(binary.loc, std::string("'") + spelling(binary.op) + "' only works on integers");
                 return Type::error();
             }
             return operand;
@@ -4200,13 +4261,17 @@ private:
     Type checkVectorOperator(BinaryExpr& binary, Type vector) {
         Type number = vector.array->element;
         std::string what = std::string("'") + spelling(binary.op) + "'";
-        if (binary.op == BinaryOp::Rem || (binary.op == BinaryOp::Div && !number.isFloat())) {
+        if (binary.op == BinaryOp::Rem) {
+            diag_->error(binary.loc, "'%' does not work on vectors: the processors have no remainder of vectors");
+            return Type::error();
+        }
+        if (binary.op == BinaryOp::Div && !number.isFloat()) {
             diag_->error(binary.loc, what + " works on vectors of floats only: the processors have no division of integer "
-                                            "vectors (D505)");
+                                            "vectors");
             return Type::error();
         }
         if (isBitwise(binary.op) && !number.isInt()) {
-            diag_->error(binary.loc, what + " works on vectors of integers (D505)");
+            diag_->error(binary.loc, what + " works on vectors of integers");
             return Type::error();
         }
         if (isArithmetic(binary.op)) return vector;
@@ -4228,7 +4293,7 @@ private:
         if (type.isUntyped()) {
             if (!expected || !expected->isInt()) {
                 diag_->error(binary.loc, "the type of this expression cannot be deduced: write the type of the value, for "
-                                         "example u32(1) << n (D55)");
+                                         "example u32(1) << n");
                 return Type::error();
             }
             if (!coerce(binary.lhs, *expected)) return Type::error();
@@ -4246,11 +4311,11 @@ private:
             return type;
         }
         if (!type.isInt()) {
-            diag_->error(binary.loc, std::string("'") + spelling(binary.op) + "' works on integers, found " + type.name() + " (D195)");
+            diag_->error(binary.loc, std::string("'") + spelling(binary.op) + "' works on integers, found " + type.name() + "");
             return Type::error();
         }
         if (!count.isInt()) {
-            diag_->error(binary.loc, "the count of a shift is an integer, found " + count.name() + " (D195)");
+            diag_->error(binary.loc, "the count of a shift is an integer, found " + count.name() + "");
             return Type::error();
         }
         binary.operandType = type;
@@ -4295,7 +4360,7 @@ private:
             return boolean;
         }
         default:
-            diag_->error(loc, std::string("'") + spelling(op) + "' does not work on strings (D95)");
+            diag_->error(loc, std::string("'") + spelling(op) + "' does not work on strings");
             return Type::error();
         }
     }
@@ -4325,14 +4390,14 @@ private:
             if (constant && (*constant < 0 || *constant >= object.array->count)) {
                 diag_->error(node.index->loc, "the index " + std::to_string(*constant) + " is outside the " +
                                                   (object.isVector() ? "vector" : "array") + ", which has " +
-                                                  std::to_string(object.array->count) + " elements (D30)");
+                                                  std::to_string(object.array->count) + " elements");
                 return Type::error();
             }
             return object.array->element;
         }
         if (isString(object)) return Type::intType(8, false);  // a byte, as the length is in bytes (D200)
         if (!isList(object)) {
-            diag_->error(node.loc, "only a list, an array and a string have elements, found " + object.name() + " (D35)");
+            diag_->error(node.loc, "only a list, an array and a string have elements, found " + object.name() + "");
             return Type::error();
         }
         return elementOf(object);
@@ -4433,7 +4498,7 @@ private:
     FunctionDecl* debugFunction(Type type, SourceLocation loc) {
         std::string problem = debugProblem(type);
         if (!problem.empty()) {
-            diag_->error(loc, "values of type " + type.name() + " cannot be printed with {:?} (D319): " + problem);
+            diag_->error(loc, "values of type " + type.name() + " cannot be printed with {:?}: " + problem);
             return nullptr;
         }
         auto library = [&](const std::string& name) -> FunctionDecl* {
@@ -4650,7 +4715,7 @@ private:
             if (isMap(type) && decl.typeArgs[0] == stringType()) return generic(prefix + "Map", decl.typeArgs[1]);
             if (!isMap(type)) return generatedJson(write, decl, loc);
         }
-        diag_->error(loc, "values of type " + type.name() + " cannot be converted to JSON (D251): " + jsonProblem(type));
+        diag_->error(loc, "values of type " + type.name() + " cannot be converted to JSON: " + jsonProblem(type));
         return nullptr;
     }
 
@@ -4841,8 +4906,10 @@ private:
             if (field.jsonName.empty()) continue;
             std::string param = "F" + std::to_string(i);
             bindings.emplace_back(param, field.resolved);
-            cases += "case " + quoted(field.jsonName) + " {\ntry {\nresult." + field.name + " = jsonRead<" + param +
-                     ">(member.value)\n} catch (Mismatch e) {\nthrow e.inside(" + quoted(field.jsonName) + ")\n}\n}\n";
+            // A null leaves the field as a member that is missing, with its initial value (D257).
+            cases += "case " + quoted(field.jsonName) + " {\nif (!member.value.isNull()) {\ntry {\nresult." + field.name +
+                     " = jsonRead<" + param + ">(member.value)\n} catch (Mismatch e) {\nthrow e.inside(" +
+                     quoted(field.jsonName) + ")\n}\n}\n}\n";
         }
         text += "T result\n";
         if (cases.empty()) {
@@ -5000,7 +5067,7 @@ private:
         case Intrinsic::None: break;
         }
         if (atomic && !element.isParam() && !element.isInt() && !element.isBool()) {
-            diag_->error(call.loc, what + " takes an integer or a bool, not " + element.name() + " (D328)");
+            diag_->error(call.loc, what + " takes an integer or a bool, not " + element.name() + "");
             checkIgnored(call.args);
             return Type::error();
         }
@@ -5008,7 +5075,7 @@ private:
         if (kind == Intrinsic::CopyAt && !element.isParam()) {  // D85: checked for each type
             if (!canCopy(element)) {
                 diag_->error(call.loc, "values of type " + element.name() + " cannot be copied: it has a destructor, or a "
-                                                                            "field that cannot be copied, and no copy() (D35)");
+                                                                            "field that cannot be copied, and no copy()");
                 checkIgnored(call.args);
                 return Type::error();
             }
@@ -5017,7 +5084,7 @@ private:
         if (kind == Intrinsic::EqualAt && element.isStruct()) {  // the equals() of Key (D198)
             auto found = element.structDecl->methods.find("equals");
             if (found == element.structDecl->methods.end()) {
-                diag_->error(call.loc, element.name() + " has no method equals() (D198)");
+                diag_->error(call.loc, element.name() + " has no method equals()");
                 checkIgnored(call.args);
                 return Type::error();
             }
@@ -5061,7 +5128,7 @@ private:
         for (ExprPtr* branch : {&node.whenTrue, &node.whenFalse}) {
             if ((*branch)->kind == ExprKind::Move) {
                 diag_->error((*branch)->loc, "'move' is not written in a branch of '?' for now: the moves are followed "
-                                             "along the statements (P28)");
+                                             "along the statements");
                 return Type::error();
             }
         }
@@ -5075,7 +5142,7 @@ private:
             type = *expected;
         } else if (trueLiteral && falseLiteral) {
             diag_->error(node.loc, "the type of this expression cannot be deduced: write the type of one of the values, "
-                                   "for example i32(5) (D55)");
+                                   "for example i32(5)");
             return Type::error();
         } else if (trueLiteral || falseLiteral) {
             ExprPtr& typed = trueLiteral ? node.whenFalse : node.whenTrue;
@@ -5096,12 +5163,12 @@ private:
                 type = first;
             } else {
                 diag_->error(node.loc, "the two values of '?' have different types, " + first.name() + " and " +
-                                           second.name() + " (D422)");
+                                           second.name() + "");
                 return Type::error();
             }
         }
         if (type.isInterface() || type.isFunction()) {
-            diag_->error(node.loc, "a '?' with values of " + type.name() + " is not possible yet: write an if (P28)");
+            diag_->error(node.loc, "a '?' with values of " + type.name() + " is not possible yet: write an if");
             return Type::error();
         }
         if (!copyIfNeeded(node.whenTrue, type) || !copyIfNeeded(node.whenFalse, type)) return Type::error();
@@ -5114,7 +5181,7 @@ private:
         if (leftLiteral && rightLiteral) {
             if (!hint) {
                 diag_->error(binary.loc, "the type of this expression cannot be deduced: write the type of one of the values, "
-                                        "for example i32(5) (D55)");
+                                        "for example i32(5)");
                 return Type::error();
             }
             bool ok = coerce(binary.lhs, *hint);
@@ -5150,10 +5217,10 @@ private:
         }
         if (left.isInt() && right.isInt() && left.isSigned != right.isSigned) {
             diag_->error(binary.loc, "cannot mix " + left.name() + " and " + right.name() +
-                                        ": convert one of them explicitly, for example i64(x) (D56)");
+                                        ": convert one of them explicitly, for example i64(x)");
         } else {
             diag_->error(binary.loc, "mismatched types " + left.name() + " and " + right.name() +
-                                        ": convert one of them explicitly (D33)");
+                                        ": convert one of them explicitly");
         }
         return Type::error();
     }
@@ -5209,7 +5276,7 @@ private:
             return Type::error();
         }
         if (!type.isFunction()) {
-            diag_->error(call.loc, "a " + type.name() + " is not a function");
+            diag_->error(call.loc, withArticle(type.name()) + " is not a function");
             checkIgnored(call.args);
             return Type::error();
         }
@@ -5235,17 +5302,17 @@ private:
             for (const Capture& capture : static_cast<const LambdaExpr&>(arg).captures) {
                 if (capture.mode == ParamMode::Ref) {
                     diag_->error(capture.loc, "a const func does not modify what it captures: it cannot capture '" +
-                                                  capture.name + "' with 'ref' (D253)");
+                                                  capture.name + "' with 'ref'");
                 } else if (capture.outer && mayModifyCaptures(*capture.outer)) {
                     diag_->error(capture.loc, "'" + capture.name + "' is a parameter func that is not const: a const func "
-                                                                   "cannot call it (D253)");
+                                                                   "cannot call it");
                 }
             }
         } else if (arg.kind == ExprKind::Name) {
             const Variable* variable = static_cast<const NameExpr&>(arg).variable;
             if (variable && mayModifyCaptures(*variable)) {
                 diag_->error(arg.loc, "'" + variable->name + "' is a parameter func that is not const: only a 'const func' "
-                                                             "can be given to a 'const func' (D253)");
+                                                             "can be given to a 'const func'");
             }
         }
     }
@@ -5264,7 +5331,7 @@ private:
             Variable* outer = lookup(capture.name);
             if (!outer) {
                 if (ownFieldIndex(capture.name) >= 0) {
-                    diag_->error(capture.loc, "'" + capture.name + "' is a field: copy it into a variable to capture it (D183)");
+                    diag_->error(capture.loc, "'" + capture.name + "' is a field: copy it into a variable to capture it");
                 } else {
                     diag_->error(capture.loc, "unknown name '" + capture.name + "'");
                 }
@@ -5273,11 +5340,11 @@ private:
             capture.outer = outer;
             if (lambda.forThread && mayModifyCaptures(*outer)) {
                 diag_->error(capture.loc, "'" + capture.name + "' is a parameter func that is not const: a thread or a task "
-                                          "cannot call it, as it may modify what it captures; declare it 'const func' (D253)");
+                                          "cannot call it, as it may modify what it captures; declare it 'const func'");
             }
             if (lambda.group && capture.mode == ParamMode::Ref) {
                 diag_->error(capture.loc, "the tasks of a group run at the same time: they cannot capture '" + capture.name +
-                                              "' with 'ref'; read it, or take it with 'move' (D273)");
+                                              "' with 'ref'; read it, or take it with 'move'");
             }
             checkNotBlockThread(*outer, capture.loc);
             checkNotUsedByThread(*outer, capture.loc);
@@ -5292,7 +5359,7 @@ private:
                 bool owned = outer->kind == VariableKind::Local || outer->kind == VariableKind::MoveParam;
                 if (needsDestruction(outer->type) && !owned) {
                     diag_->error(capture.loc, "cannot capture '" + capture.name + "' with 'move': only a local variable or a "
-                                              "'move' parameter can give its value (D183)");
+                                              "'move' parameter can give its value");
                 }
                 if (needsDestruction(outer->type) && owned) outer->needsDropFlag = true;
             } else {
@@ -5371,7 +5438,7 @@ private:
         if (lambda.group) groupReads(lambda);
         if (lambda.borrows && !asArgument) {
             diag_->error(lambda.loc, "this lambda captures by address (with 'ref', or reading a value that is not simple): "
-                                     "it can only be passed as an argument; capture with 'move' to keep it (D184)");
+                                     "it can only be passed as an argument; capture with 'move' to keep it");
             return Type::error();
         }
         std::vector<ParamMode> modes;
@@ -5400,7 +5467,7 @@ private:
             if (std::optional<Type> target = findBuiltinType(call.callee)) return checkConversion(expr, *target);
             if (call.callee == "addr" && !findDecl(&ModuleScope::structs, call.callee, call.loc)) {  // P13
                 if (isUnsafe(call.loc)) return checkConversion(expr, Type::addrType());
-                diag_->error(call.loc, "'addr' belongs to the unsafe dialect: the module must write 'import unsafe' (D127)");
+                diag_->error(call.loc, "'addr' belongs to the unsafe dialect: the module must write 'import unsafe'");
                 return Type::error();
             }
             if (isPrintFunction(call.callee)) return checkPrint(expr);
@@ -5434,7 +5501,7 @@ private:
 
         if (StructDecl* decl = findDecl(&ModuleScope::structs, call.callee, call.loc, call.module)) {
             if (!decl->typeParams.empty() && !typed) {
-                diag_->error(call.loc, decl->name + " is generic: write its type arguments, " + decl->name + "<...>(...) (D92)");
+                diag_->error(call.loc, decl->name + " is generic: write its type arguments, " + decl->name + "<...>(...)");
                 checkIgnored(call.args);
                 return Type::error();
             }
@@ -5476,7 +5543,7 @@ private:
             } else if (!where.empty()) {
                 reportPrivate(call.loc, "'" + call.callee + "' of " + where);
             } else if (!qualified && findIntrinsic(call.callee)) {
-                diag_->error(call.loc, "'" + call.callee + "' belongs to the unsafe dialect: the module must write 'import unsafe' (D127)");
+                diag_->error(call.loc, "'" + call.callee + "' belongs to the unsafe dialect: the module must write 'import unsafe'");
             } else if (qualified) {
                 diag_->error(call.loc, "the module " + call.module + " has no function '" + call.callee + "'");
             } else {
@@ -5597,7 +5664,7 @@ private:
         for (size_t i = 0; i < deduced.size(); ++i) {
             if (!deduced[i]) {
                 diag_->error(loc, "cannot deduce " + generic.typeParams[i].name + " in this call of " + what +
-                                      ": write the type arguments, " + generic.name + "<...>(...) (D86)");
+                                      ": write the type arguments, " + generic.name + "<...>(...)");
                 return false;
             }
             args.push_back(*deduced[i]);
@@ -5648,7 +5715,7 @@ private:
             }
             if (*deduced[i] == actual) return true;
             diag_->error(loc, generic.typeParams[i].name + " is " + deduced[i]->name() + " for a previous argument, but " +
-                                  actual.name() + " here: write the type arguments, " + generic.name + "<...>(...) (D86)");
+                                  actual.name() + " here: write the type arguments, " + generic.name + "<...>(...)");
             return false;
         }
         if (!pattern.args.empty() && actual.isStruct() && actual.structDecl->generic &&
@@ -5687,14 +5754,14 @@ private:
             if (thread && node.args[0]->kind == ExprKind::Lambda && static_cast<LambdaExpr&>(*node.args[0]).borrows) {
                 if (!declared) {
                     std::string word = decl->name == "Task" ? "task" : "thread";
-                    diag_->error(node.loc, "a " + word + " whose lambda captures by address belongs to its block: declare it, "
-                                           "as thread." + decl->name + " t = thread." + decl->name + "(...) (D215)");
+                    diag_->error(node.loc, withArticle(word) + " whose lambda captures by address belongs to its block: declare it, "
+                                           "as thread." + decl->name + " t = thread." + decl->name + "(...)");
                     return Type::error();
                 }
                 node.blockThread = static_cast<const LambdaExpr*>(node.args[0].get());
             }
         } else if (!node.args.empty()) {
-            diag_->error(node.loc, decl->name + " has no constructor: " + decl->name + "() gives its default value (D71)");
+            diag_->error(node.loc, decl->name + " has no constructor: " + decl->name + "() gives its default value");
             return Type::error();
         }
         return type;
@@ -5725,7 +5792,7 @@ private:
             Type number = toAddress ? type : target;
             if (number.kind != TypeKind::Addr && !(number.isInt() && number.bits == 64)) {
                 diag_->error(call.loc, "cannot convert " + type.name() + " to " + target.name() +
-                                           ": an addr converts to i64 or u64, and back (P13)");
+                                           ": an addr converts to i64 or u64, and back");
                 return Type::error();
             }
         }
@@ -5740,7 +5807,7 @@ private:
             return Type::error();
         }
         if (type.isBool() != target.isBool()) {
-            diag_->error(call.loc, "cannot convert " + type.name() + " to " + target.name() + " (D61)");
+            diag_->error(call.loc, "cannot convert " + type.name() + " to " + target.name() + "");
             return Type::error();
         }
         SourceLocation loc = call.loc;
@@ -5764,14 +5831,14 @@ private:
         if (type.isVector()) {
             if (type.array->count != target.array->count) {
                 diag_->error(loc, "cannot convert " + type.name() + " to " + target.name() +
-                                      ": a vector converts to one with as many numbers (D505)");
+                                      ": a vector converts to one with as many numbers");
                 return Type::error();
             }
             expr = type == target ? std::move(operand) : std::make_unique<ConversionExpr>(loc, std::move(operand), target, true);
             return target;
         }
         if (!type.isNumeric()) {
-            diag_->error(loc, "cannot convert " + type.name() + " to " + target.name() + ": a vector takes a number (D505)");
+            diag_->error(loc, "cannot convert " + type.name() + " to " + target.name() + ": a vector takes a number");
             return Type::error();
         }
         if (type != number) {  // the number first converted as a number, explicitly
@@ -5785,7 +5852,7 @@ private:
     Type checkEnumConversion(ExprPtr& expr, StructDecl* decl) {
         auto& call = static_cast<CallExpr&>(*expr);
         if (!withoutData(*decl)) {
-            diag_->error(call.loc, decl->name + " has data: its values are created with " + decl->name + ".Case(...) (D105)");
+            diag_->error(call.loc, decl->name + " has data: its values are created with " + decl->name + ".Case(...)");
             checkIgnored(call.args);
             return Type::error();
         }
@@ -5795,7 +5862,7 @@ private:
         Type type = checkExpr(operand, expected);
         if (type.isError()) return type;
         if (!type.isInt()) {
-            diag_->error(operand->loc, "a " + decl->name + " is made from an integer, not from " + type.name() + " (D135)");
+            diag_->error(operand->loc, withArticle(decl->name) + " is made from an integer, not from " + type.name() + "");
             return Type::error();
         }
         SourceLocation loc = call.loc;
@@ -5812,7 +5879,7 @@ private:
         bool newline = call.callee.size() >= 2 && call.callee.compare(call.callee.size() - 2, 2, "ln") == 0;
 
         if (call.args.empty() || call.args[0]->kind != ExprKind::StringLiteral) {
-            diag_->error(call.loc, "the first argument of " + call.callee + " must be a string literal with the format (D38)");
+            diag_->error(call.loc, "the first argument of " + call.callee + " must be a string literal with the format");
             return Type::error();
         }
         auto print = std::make_unique<PrintExpr>(call.loc, stream, newline);
@@ -5827,7 +5894,7 @@ private:
             } else {
                 Type type = checkExpr(arg, std::nullopt);
                 if (type.isUntyped()) {
-                    diag_->error(arg->loc, "the type of this literal cannot be deduced: write it explicitly, for example i32(5) (D64)");
+                    diag_->error(arg->loc, "the type of this literal cannot be deduced: write it explicitly, for example i32(5)");
                     ok = false;
                 } else if (type.isVoid()) {
                     diag_->error(arg->loc, "this call does not return a value");
@@ -5860,8 +5927,8 @@ private:
         for (size_t i = 0; i < print.args.size(); ++i) {
             ExprPtr& arg = print.args[i];
             Type type = arg->type;
-            if (debug[i] && plain[i] && !basicPrintable(type)) {
-                diag_->error(arg->loc, "this argument is printed both with {} and with {:?}: pass it twice (D319)");
+            if (debug[i] && plain[i]) {  // as two values, also for the numbers and the strings (D320)
+                diag_->error(arg->loc, "this argument is printed both with {} and with {:?}: pass it twice");
                 ok = false;
             } else if (debug[i]) {
                 ok = toDebugText(arg) && ok;
@@ -5911,13 +5978,13 @@ private:
             const auto& constraints = type.param->interfaces;
             if (std::find(constraints.begin(), constraints.end(), debugInterface_) == constraints.end()) {
                 diag_->error(arg->loc, type.name() + " can be printed with {:?} only with a constraint: write <" + type.name() +
-                                           " : Debug> (D52, D319)");
+                                           " : Debug>");
                 return false;
             }
         } else {
             std::string problem = debugProblem(type);
             if (!problem.empty()) {
-                diag_->error(arg->loc, "values of type " + type.name() + " cannot be printed with {:?} (D319): " + problem);
+                diag_->error(arg->loc, "values of type " + type.name() + " cannot be printed with {:?}: " + problem);
                 return false;
             }
         }
@@ -5948,12 +6015,16 @@ private:
             if (found != type.structDecl->methods.end()) method = found->second;
         }
         if (!type.isStruct()) {  // an array, a function, an interface or a T: no methods of its own
-            diag_->error(arg->loc, "a " + type.name() + " cannot be printed with {}: print its form of debug with {:?} (D319)");
+            bool debug = type.isArray() || type.isVector();  // those with a form of debug (D321)
+            std::string hint = debug ? ": print its form of debug with {:?}"
+                               : type.isParam() ? ": print its form of debug with {:?}, with the constraint Debug"
+                                                : ": it has no text to print";
+            diag_->error(arg->loc, withArticle(type.name()) + " cannot be printed with {}" + hint);
             return false;
         }
         if (!method || !method->params.empty() || !method->isConst || !isString(method->resolvedReturn)) {
-            diag_->error(arg->loc, "a " + type.name() + " cannot be printed with {}: give it a method string text() const "
-                                                         "(D318), or print its form of debug with {:?} (D319)");
+            diag_->error(arg->loc, withArticle(type.name()) + " cannot be printed with {}: give it a method string text() const, "
+                                                         "or print its form of debug with {:?}");
             return false;
         }
         if (!memberVisible(*method, *type.structDecl, arg->loc)) {
@@ -6120,7 +6191,7 @@ private:
         }
         // bool and string literals
         if (spec.type && spec.type != 's') return fail(std::string("'") + spec.type + "' is not a format for a " + type.name());
-        if (numberFlags) return fail("a " + type.name() + " only allows fill, alignment, width" +
+        if (numberFlags) return fail(withArticle(type.name()) + " only allows fill, alignment, width" +
                                      (type.isBool() ? std::string() : std::string(" and precision")));
         if (type.isBool() && spec.precision >= 0) return fail("a precision is not allowed for a bool");
         return true;
@@ -6179,6 +6250,8 @@ private:
         bool exclusive;  // with `ref`: the block cannot even read it
     };
     std::vector<ThreadBorrow> threadBorrows_;
+    std::set<const Variable*> startedThreads_;  // the threads of a block with their start() written
+    std::map<std::string, SourceLocation> exportedNames_;  // [[export("name")]], by name (D395)
     bool threadLambda_ = false;           // the next lambda checked is given to a thread (D215)
     const Variable* groupLambda_ = nullptr;  // the next lambda checked is given to this group (D273)
     // The groups whose block is being checked, with what was modified after each (D273).

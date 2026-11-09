@@ -119,6 +119,15 @@ public:
     Module load() {
         parseFile(kLibraryFile);
         parseFile(0);
+        // D202: the files of the system of the main file join it, as for a module.
+        fs::path main = fs::absolute(sources_[0].path);
+        for (const std::string& suffix : ownSuffixes(target_)) {
+            fs::path own = main.parent_path() / (main.stem().string() + suffix + ".cro");
+            std::error_code ec;
+            if (fs::is_regular_file(own, ec) || (overlay_ && overlay_->count(sourceKey(own.string())))) {
+                loadFile(own, names_[0], SourceLocation{1, 1, 0}, 0);
+            }
+        }
         loadTests(fs::absolute(sources_[0].path), names_[0], 0);
         // The list of files grows while their imports are loaded.
         for (size_t i = 0; i < sources_.size(); ++i) {
@@ -157,7 +166,7 @@ private:
         bool isFolder = fs::is_directory(folder, ec);
         std::string shown = relative.generic_string();
         if (isFile && isFolder) {
-            diag_.error(import.loc, "both " + shown + ".cro and the folder " + shown + " exist: rename one of them (D130)");
+            diag_.error(import.loc, "both " + shown + ".cro and the folder " + shown + " exist: rename one of them");
             return {};
         }
         if (isFile) {
@@ -187,7 +196,7 @@ private:
                 if (!other) paths.push_back(entry.path());
             }
             if (paths.empty()) {
-                diag_.error(import.loc, "the folder " + shown + " has no .cro files for this system (D130, D202)");
+                diag_.error(import.loc, "the folder " + shown + " has no .cro files for this system");
                 return {};
             }
             auto byName = [](const fs::path& a, const fs::path& b) { return a.filename().string() < b.filename().string(); };
@@ -203,7 +212,7 @@ private:
         diag_.error(import.loc, "cannot find the module " + dotted + ": there is no " + shown + ".cro or folder " + shown +
                                     " next to " +
                                     (inProject_ ? std::string("cromo.mod") : fs::path(sources_[0].path).filename().string()) +
-                                    (inProject_ ? " (D516)" : " (D130)"));
+                                    (inProject_ ? "" : ""));
         return {};
     }
 
@@ -234,7 +243,7 @@ private:
                 const std::string& folder = had.size() > name.size() ? name : had;
                 std::string shown = file;
                 std::replace(shown.begin(), shown.end(), '.', '/');
-                diag_.error(at, "the file " + shown + ".cro is a part of the module " + folder + ": import " + folder + " (D515)");
+                diag_.error(at, "the file " + shown + ".cro is a part of the module " + folder + ": import " + folder + "");
             }
             return found->second;
         }
@@ -256,7 +265,7 @@ private:
         std::error_code ec;
         if (import.path.size() != 2 || !fs::is_regular_file(path, ec) || (hidden && !fromLibrary)) {
             diag_.error(import.loc, "the standard library has no module " + dotted + ": it has " + libraryModules() +
-                                        ", and its core is visible without import (D201)");
+                                        ", and its core is visible without import");
             return {};
         }
         int first = loadFile(path, dotted, import.loc);
@@ -282,7 +291,7 @@ private:
         std::set<std::string> seen;
         for (const ImportDecl& import : file.imports) {
             if (!seen.insert(import.qualifier()).second) {
-                diag_.error(import.loc, "another import is also called " + import.qualifier() + " (D131)");
+                diag_.error(import.loc, "another import is also called " + import.qualifier() + "");
             }
         }
     }

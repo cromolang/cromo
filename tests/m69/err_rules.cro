@@ -1,0 +1,22 @@
+// The rules that the compiler now follows as the decisions say: a value printed
+// both with {} and with {:?} is passed twice, also a number (D320); a local variable
+// does not hide a variable of the module (D66); the public interface of a module with
+// import unsafe does not use addr (D127).
+// expect-error: this argument is printed both with {} and with {:?}: pass it twice
+// expect-error: a variable named 'counter' is already visible here
+// expect-error: function 'raw' is public, but its type addr is only for the modules with 'import unsafe'
+import unsafe
+
+i64 counter = 0
+
+public addr raw() {
+    addr none
+    ret none
+}
+
+i32 main() {
+    f64 x = 9.0
+    println("{0} {0:?}", x)
+    i64 counter = 1
+    ret 0
+}

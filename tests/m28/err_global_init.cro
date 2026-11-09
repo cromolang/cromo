@@ -1,5 +1,5 @@
 // The initial value of a module variable is a literal (D394).
-// expect-error: the initial value of a module variable is a number, a character, true or false (D394)
+// expect-error: the initial value of a module variable is a number, a character, true or false
 import unsafe
 
 i64 start = 2 + 3

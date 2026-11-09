@@ -167,6 +167,11 @@ i64 receiveFrom(i64 handle, addr data, i64 most, ref Address from) {
     addr raw = alloc(28)
     i32 length = 28
     i32 count = recvfrom(handle, data, i32(chunk(most)), 0, raw, ref length)
+    if (count < 0 && WSAGetLastError() == 10040) {  // WSAEMSGSIZE: its first bytes, as on Linux
+        from = fromSocketAddress(raw)
+        free(raw)
+        ret chunk(most)
+    }
     if (count < 0) {
         free(raw)
         if (wouldWait()) {

@@ -1,0 +1,27 @@
+// A null of JSON leaves a field as a member that is missing, with its initial value
+// (D257); in a list it gives the default value of the elements.
+// expect-output: 3 fast High
+// expect-output: 3 fast High
+// expect-output: [0, 2]
+import std.json
+
+enum Level {
+    Low
+    High
+}
+
+struct Settings {
+    i64 retries = 3
+    string mode = "fast"
+    Level level = Level.High
+}
+
+i32 main() {
+    Settings missing = json.decode<Settings>("{}")
+    println("{} {} {:?}", missing.retries, missing.mode, missing.level)
+    Settings nulls = json.decode<Settings>("{\"retries\": null, \"mode\": null, \"level\": null}")
+    println("{} {} {:?}", nulls.retries, nulls.mode, nulls.level)
+    list<i64> numbers = json.decode<list<i64>>("[null, 2]")
+    println("{:?}", numbers)
+    ret 0
+}

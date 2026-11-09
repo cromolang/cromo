@@ -1,7 +1,7 @@
-// expect-error: 'a' overlaps 'a' in the same call, and the call can modify both (D22)
-// expect-error: 'h.file' overlaps 'h' in the same call, which the call can modify, and values of type File are not copied implicitly (D79)
-// expect-error: 'p.x' overlaps 'p' in the same call, and the call can modify both (D22)
-// expect-error: 'p.x' overlaps 'p' in the same call, which is the object of the method (D22)
+// expect-error: 'a' overlaps 'a' in the same call, and the call can modify both
+// expect-error: 'h.file' overlaps 'h' in the same call, which the call can modify, and values of type File cannot be copied
+// expect-error: 'p.x' overlaps 'p' in the same call, and the call can modify both
+// expect-error: 'p.x' overlaps 'p' in the same call, which is the object of the method
 struct File {
     i32 fd
 

@@ -63,10 +63,10 @@ private:
         if (!(bits & kMoved)) return;
         if (report_) {
             if (bits == kMoved) {
-                diag_.error(loc, "'" + variable->name + "' has been moved and can no longer be used (D23)");
+                diag_.error(loc, "'" + variable->name + "' has been moved and can no longer be used");
             } else {
                 diag_.error(loc, "'" + variable->name +
-                                     "' may have been moved, on another path or in a previous iteration of a loop (D81)");
+                                     "' may have been moved, on another path or in a previous iteration of a loop");
             }
         }
         bits = kLive;  // one error per move

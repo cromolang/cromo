@@ -1,0 +1,12 @@
+// A detached task cannot be joined (D521).
+// expect-exit: 101
+// expect-stderr: the task is already joined or detached
+import std.thread
+
+i32 main() {
+    thread.Task task = thread.Task([]() {})
+    task.start()
+    task.detach()
+    task.join()
+    ret 0
+}

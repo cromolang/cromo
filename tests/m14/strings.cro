@@ -6,7 +6,7 @@
 // expect-output: [  42] 3.50 true é
 // expect-output: count 5
 // expect-output: nested <x=1> y
-// expect-output: caught the bytes are not valid UTF-8: the character at 1 (D200)
+// expect-output: caught the bytes are not valid UTF-8: the character at 1
 i32 main() {
     string s = "hi"
     println("{} {} {}", s[0], s[1], s.len())

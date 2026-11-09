@@ -1,5 +1,5 @@
 // The two values of ?: have the same type (D422).
-// expect-error: the two values of '?' have different types, i64 and string (D422)
+// expect-error: the two values of '?' have different types, i64 and string
 i32 main() {
     i64 n = 5
     string s = "x"

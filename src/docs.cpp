@@ -2,6 +2,7 @@
 
 #include <map>
 #include <optional>
+#include <regex>
 
 #include "lexer.h"
 #include "types.h"
@@ -134,6 +135,13 @@ std::vector<std::string> DocComments::module() const {
     return out;
 }
 
+// D520: the decisions that a comment cites, as " (D504)" or " (D37, D98, P13)", are
+// for who works on Cromo, not for the documentation that the editor shows.
+std::string withoutDecisions(const std::string& line) {
+    static const std::regex numbers(R"( ?\((?:[DP]\d+[a-z]?(?:-[DP]?\d+)?(?:, ?)?)+\))");
+    return std::regex_replace(line, numbers, "");
+}
+
 std::string markdownOf(const std::vector<std::string>& lines) {
     std::string out;
     bool block = false;
@@ -144,7 +152,7 @@ std::string markdownOf(const std::vector<std::string>& lines) {
         } else if (block) {
             out += line + "\n";
         } else {
-            out += inlineMarkdown(line) + "\n";
+            out += inlineMarkdown(withoutDecisions(line)) + "\n";
         }
     }
     if (block) out += "```\n";
@@ -200,10 +208,10 @@ const std::vector<BuiltinDoc>& builtinDocs() {
          "The product of two integers of the same type, keeping the low bits when it goes out of the range, without "
          "the check of overflow, also in debug: for hashes, checksums and random numbers."},
         {"countOnes", "i32 countOnes(T x)",
-         "The bits at 1 of an integer, of any type: 'countOnes(0b1011)' is 3. It is one instruction of the processor, "
+         "The bits at 1 of an integer, of any type: 'countOnes(u8(0b1011))' is 3. It is one instruction of the processor, "
          "for the boards of bits and the sets of bits."},
         {"trailingZeros", "i32 trailingZeros(T x)",
-         "The bits at 0 under the lowest bit at 1 of an integer: the index of that bit, from 0. 'trailingZeros(8)' "
+         "The bits at 0 under the lowest bit at 1 of an integer: the index of that bit, from 0. 'trailingZeros(u32(8))' "
          "is 3, and for 0 it is the bits of the type, 64 for an i64."},
         {"leadingZeros", "i32 leadingZeros(T x)",
          "The bits at 0 over the highest bit at 1 of an integer: 'leadingZeros(u32(1))' is 31, and for 0 it is the "

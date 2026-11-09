@@ -1,5 +1,5 @@
 // A file of a folder imported by itself too (D515).
-// expect-error: the file modules/geometry/point.cro is a part of the module modules.geometry: import modules.geometry (D515)
+// expect-error: the file modules/geometry/point.cro is a part of the module modules.geometry: import modules.geometry
 import modules.geometry
 import modules.geometry.point
 

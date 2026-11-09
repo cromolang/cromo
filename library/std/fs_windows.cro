@@ -38,6 +38,9 @@ addr loadFile(string path, ref i64 size) {
     i64 file = CreateFileW(name, 0x80000000, 3, none, 3, 0x80, none)
     free(name)
     if (file == -1) {
+        if (isFolder(path)) {  // the reason of Linux, not "access denied"
+            throw fileError("read", path, "it is a folder")
+        }
         throw failure("read", path, GetLastError())
     }
     i64 length = 0
@@ -159,6 +162,9 @@ public void rename(string from, string to) {
 // does not exist or is a folder. On Linux the copy does not keep the permissions of
 // the original: call makeExecutable for a program.
 public void copy(string from, string to) {
+    if (isFolder(from)) {  // the reason of Linux, not "access denied"
+        throw fileError("copy", from, "it is a folder")
+    }
     addr source = wide(from)
     addr target = wide(to)
     i32 done = CopyFileW(source, target, 0)
@@ -267,12 +273,16 @@ public list<string> listFolder(string path) {
 // exists already, and on Windows if 'target' is not a folder.
 public void createLink(string target, string path) {
     // A junction (D288): an empty folder with a reparse point that names the target
-    // as \??\C:\path, as mklink /J writes it.
+    // as \??\C:\path, as mklink /J writes it. A relative target is from the folder of
+    // the link, as for the links of Linux (P18).
     addr none
-    if (!isFolder(target)) {
+    string home = parent(path)  // the folder of the link
+    bool rooted = (target.len() >= 2 && target[1] == ':') || target.startsWith("\\") || target.startsWith("/")
+    string resolved = rooted || home == "" ? target : joinPath(home, target)
+    if (!isFolder(resolved)) {
         throw fileError("link to", target, "on Windows a link is a junction, to a folder")
     }
-    string full = fullPath(target)
+    string full = fullPath(resolved)
     addr substitute = wide("\\??\\" + full)
     addr print = wide(full)
     i64 substituteSize = wideLength(substitute) * 2

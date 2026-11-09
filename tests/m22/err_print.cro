@@ -1,9 +1,9 @@
 // The errors of printing (D318, D319).
-// expect-error: a Plain cannot be printed with {}: give it a method string text() const (D318), or print its form of debug with {:?} (D319)
-// expect-error: values of type Handlers cannot be printed with {:?} (D319): Handlers.done has type func()
-// expect-error: T can be printed with {:?} only with a constraint: write <T : Debug> (D52, D319)
-// expect-error: this argument is printed both with {} and with {:?}: pass it twice (D319)
-// expect-error: a Mutable cannot be printed with {}: give it a method string text() const (D318), or print its form of debug with {:?} (D319)
+// expect-error: a Plain cannot be printed with {}: give it a method string text() const, or print its form of debug with {:?}
+// expect-error: values of type Handlers cannot be printed with {:?}: Handlers.done has type func()
+// expect-error: T can be printed with {:?} only with a constraint: write <T : Debug>
+// expect-error: this argument is printed both with {} and with {:?}: pass it twice
+// expect-error: a Mutable cannot be printed with {}: give it a method string text() const, or print its form of debug with {:?}
 struct Plain {
     i64 x
 }

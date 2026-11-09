@@ -1,10 +1,10 @@
 // expect-error: cannot find the module modules.missing
-// expect-error: the standard library has no module std.io: it has std.cmdline, std.crypto, std.fs, std.gui, std.gzip, std.http, std.json, std.jwt, std.net, std.os, std.process, std.tar, std.thread, std.time, std.websocket and std.zip, and its core is visible without import (D201)
-// expect-error: another import is also called geometry (D131)
-// expect-error: both modules/both.cro and the folder modules/both exist: rename one of them (D130)
-// expect-error: the imports come before the declarations of the module (D131)
-// expect-error: an extern block needs 'import unsafe' at the top of the module (D127)
-// expect-error: an import is not public: each module writes its own (D131)
+// expect-error: the standard library has no module std.io: it has std.cmdline, std.crypto, std.fs, std.gui, std.gzip, std.http, std.json, std.jwt, std.net, std.os, std.process, std.tar, std.thread, std.time, std.websocket and std.zip, and its core is visible without import
+// expect-error: another import is also called geometry
+// expect-error: both modules/both.cro and the folder modules/both exist: rename one of them
+// expect-error: the imports come before the declarations of the module
+// expect-error: an extern block needs 'import unsafe' at the top of the module
+// expect-error: an import is not public: each module writes its own
 import modules.missing
 import std.io
 import modules.geometry

@@ -255,7 +255,7 @@ cannot remove 'old': the folder is not empty
 false false
 ```
 
-Gli altri errori si leggono allo stesso modo: `cannot create 'logs': it exists already`, `cannot list 'notes.txt': a part of the path is not a folder`, `cannot copy 'photos': it is a folder` (su Windows, `access denied`).
+Gli altri errori si leggono allo stesso modo: `cannot create 'logs': it exists already`, `cannot list 'notes.txt': a part of the path is not a folder`, `cannot copy 'photos': it is a folder`.
 
 ## Link e file eseguibili
 
@@ -293,7 +293,7 @@ true
 I due sistemi creano link diversi:
 
 - Su **Linux** il link è un link simbolico, a un file o a una cartella, che contiene `target` così come è scritto. Una destinazione relativa si legge a partire dalla cartella del link, non dalla cartella corrente: `createLink("1.2", "releases/current")` punta a `releases/1.2`.
-- Su **Windows** il link è una *junction*, che qualsiasi utente può creare, mentre un link simbolico richiede i diritti di amministratore o la modalità sviluppatore di Windows. Una junction punta solo a una cartella, e ne contiene il percorso assoluto: una destinazione relativa si legge a partire dalla cartella corrente. Una destinazione che non è una cartella è l'eccezione `cannot link to 'notes.txt': on Windows a link is a junction, to a folder`.
+- Su **Windows** il link è una *junction*, che qualsiasi utente può creare, mentre un link simbolico richiede i diritti di amministratore o la modalità sviluppatore di Windows. Una junction punta solo a una cartella, e ne contiene il percorso assoluto: una destinazione relativa si legge a partire dalla cartella del link, come su Linux. Una destinazione che non è una cartella è l'eccezione `cannot link to 'notes.txt': on Windows a link is a junction, to a folder`.
 
 Quindi un link che funziona su entrambi i sistemi punta a una cartella, con un percorso assoluto, come nell'esempio. `readLink` restituisce la destinazione così come la contiene il link: su Windows, il percorso assoluto. Un percorso che non è un link è l'eccezione `cannot read the link 'releases': it is not a link`. Un link la cui destinazione manca è comunque un link: `isLink` è `true`, mentre `exists` è `false`.
 

@@ -61,11 +61,11 @@ bool chooseDevice(string adb) {
         }
     }
     if (devices.len() == 0) {
-        eprintln("cromo: no Android device for adb: connect a phone or start an emulator (D465)")
+        eprintln("cromo: no Android device for adb: connect a phone or start an emulator")
         ret false
     }
     if (devices.len() > 1) {
-        eprintln("cromo: more than one Android device: choose one with the variable ANDROID_SERIAL (D465)")
+        eprintln("cromo: more than one Android device: choose one with the variable ANDROID_SERIAL")
         for (i64 i = 0; i < devices.len(); i++) {
             eprintln("  {}", devices[i])
         }

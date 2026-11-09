@@ -1,11 +1,11 @@
-// expect-error: cannot deduce T in this call of 'max': write the type arguments, max<...>(...) (D86)
-// expect-error: i32 does not implement Comparable, required by T of 'max' (D52, D87)
-// expect-error: T is i32 for a previous argument, but i64 here: write the type arguments, pick<...>(...) (D86)
+// expect-error: cannot deduce T in this call of 'max': write the type arguments, max<...>(...)
+// expect-error: i32 does not implement Comparable, required by T of 'max'
+// expect-error: T is i32 for a previous argument, but i64 here: write the type arguments, pick<...>(...)
 // expect-error: 'Pair' takes 2 type arguments, but 1 were given
-// expect-error: Pair is generic: write its type arguments, Pair<...>(...) (D92)
-// expect-error: '+' does not work on values of type T: no interface provides it yet (D87)
-// expect-error: T has no method named 'area': only the methods of its constraints can be called (D52)
-// expect-error: a constraint must be an interface, found 'Point' (D52)
+// expect-error: Pair is generic: write its type arguments, Pair<...>(...)
+// expect-error: '+' does not work on values of type T: no interface provides it yet
+// expect-error: T has no method named 'area': only the methods of its constraints can be called
+// expect-error: a constraint must be an interface, found 'Point'
 // expect-error: 'zero' is not generic: it has no type arguments
 interface Comparable {
     i32 compare(Self other) const

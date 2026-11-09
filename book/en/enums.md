@@ -182,7 +182,7 @@ i32 main() {
 
 ```output
 error: the data 'radius' of Circle is f64: write f64 r
-error: case 'Rect' has 2 data, but 1 names were given
+error: case 'Rect' has 2 data, but 1 name was given
 ```
 
 ### Every case is covered

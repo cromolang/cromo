@@ -77,7 +77,7 @@ public struct Process {
     // does not read it any more, as when it has ended.
     public void write(string text) {
         if (input < 0) {
-            throw Error("cannot write to the program: its input is closed (D307)")
+            throw Error("cannot write to the program: its input is closed")
         }
         writeAll(input, text.cstring(), text.len())
     }
@@ -85,7 +85,7 @@ public struct Process {
     // Writes the bytes to the standard input of the program, as write() does.
     public void writeBytes(list<u8> bytes) {
         if (input < 0) {
-            throw Error("cannot write to the program: its input is closed (D307)")
+            throw Error("cannot write to the program: its input is closed")
         }
         addr data = alloc(bytes.len())
         for (i64 i = 0; i < bytes.len(); i++) {

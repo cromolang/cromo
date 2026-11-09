@@ -1,13 +1,13 @@
 // The operators that the vectors do not have, and their methods used wrongly (D505).
-// expect-error: '%' works on vectors of floats only: the processors have no division of integer vectors (D505)
-// expect-error: '/' works on vectors of floats only: the processors have no division of integer vectors (D505)
-// expect-error: '&' works on vectors of integers (D505)
-// expect-error: cannot convert i16x16 to i32x8: a vector converts to one with as many numbers (D505)
-// expect-error: load() reads a list<i16> or an array of i16, not list<i32> (D505)
-// expect-error: low() gives half of a vector of 256 bits, and i32x4 has 128 (D505)
-// expect-error: cannot negate an unsigned vector (u8x16) (D59)
-// expect-error: store() changes the list or the array: pass it with 'ref' (D505)
-// expect-error: a i32x4 has no method sort() (D505)
+// expect-error: '%' does not work on vectors: the processors have no remainder of vectors
+// expect-error: '/' works on vectors of floats only: the processors have no division of integer vectors
+// expect-error: '&' works on vectors of integers
+// expect-error: cannot convert i16x16 to i32x8: a vector converts to one with as many numbers
+// expect-error: load() reads a list<i16> or an array of i16, not list<i32>
+// expect-error: low() gives half of a vector of 256 bits, and i32x4 has 128
+// expect-error: cannot negate an unsigned vector (u8x16)
+// expect-error: store() changes the list or the array: pass it with 'ref'
+// expect-error: an i32x4 has no method sort()
 i32 main() {
     i32x8 a = i32x8(1)
     i32x8 r = a % a

@@ -1,0 +1,15 @@
+// An exception that ends a detached thread stops the program, as one that no join()
+// takes (D217, D521).
+// expect-exit: 1
+// expect-stderr: uncaught exception in a thread: lost in the background
+import std.thread
+import std.time
+
+i32 main() {
+    thread.Thread worker = thread.Thread([]() { throw Error("lost in the background") })
+    worker.start()
+    worker.detach()
+    time.msleep(5000)
+    println("not reached")
+    ret 0
+}

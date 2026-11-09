@@ -154,7 +154,11 @@ public void rename(string from, string to) {
 // does not exist or is a folder. On Linux the copy does not keep the permissions of
 // the original: call makeExecutable for a program.
 public void copy(string from, string to) {
-    // The bytes, 64 KB at a time; the new file has the permissions 0644.
+    // The bytes, 64 KB at a time; the new file has the permissions 0644. A folder is
+    // refused before the target is made, as on Windows.
+    if (isFolder(from)) {
+        throw fileError("copy", from, "it is a folder")
+    }
     i64 source = systemCall(i64(Call.OpenAt), -100, from.cstring(), 0x80000, 0, 0, 0)  // O_RDONLY | O_CLOEXEC
     if (source < 0) {
         throw failure("copy", from, source)

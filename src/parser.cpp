@@ -25,7 +25,7 @@ public:
         }
         while (!check(TokenKind::EndOfFile)) {
             if (check(TokenKind::KwImport)) {
-                diag_.error(peek().loc, "the imports come before the declarations of the module (D131)");
+                diag_.error(peek().loc, "the imports come before the declarations of the module");
                 skipToNextDeclaration();
             } else if (check(TokenKind::KwExtern)) {
                 parseExtern(module, info.isUnsafe);
@@ -47,8 +47,8 @@ private:
             SourceLocation loc = advance().loc;
             if (check(TokenKind::KwExtern) || check(TokenKind::KwImport)) {
                 diag_.error(loc, check(TokenKind::KwExtern)
-                                     ? "an extern block is not public: the module offers safe functions instead (D42, D133)"
-                                     : "an import is not public: each module writes its own (D131)");
+                                     ? "an extern block is not public: the module offers safe functions instead"
+                                     : "an import is not public: each module writes its own");
                 advance();
                 skipToNextDeclaration();
                 return;
@@ -57,7 +57,7 @@ private:
         }
         if (!attributes.empty() && (check(TokenKind::KwStruct) || check(TokenKind::KwEnum) ||
                                     check(TokenKind::KwInterface) || check(TokenKind::KwExtern))) {
-            diag_.error(attributes[0].loc, "an attribute is written before a field, or [[test]] before a function (D256, D349)");
+            diag_.error(attributes[0].loc, "an attribute is written before a field, or [[test]] before a function");
             return skipToNextDeclaration();
         }
         if (check(TokenKind::KwStruct) || check(TokenKind::KwEnum)) {
@@ -74,8 +74,8 @@ private:
             if (isPublic || !attributes.empty()) {
                 diag_.error(isPublic ? peek().loc : attributes[0].loc,
                             check(TokenKind::KwConst)
-                                ? "a constant of a module has no attributes and is not public: only its module sees it (D414)"
-                                : "a module variable has no attributes and is not public: only its module sees it (D394)");
+                                ? "a constant of a module has no attributes and is not public: only its module sees it"
+                                : "a module variable has no attributes and is not public: only its module sees it");
             }
             StmtPtr decl = parseVarDecl();
             if (!decl) return skipToNextDeclaration();
@@ -136,9 +136,9 @@ private:
     // extern := 'extern' string '{' { signature } '}'   (D128)
     void parseExtern(Module& module, bool isUnsafe) {
         SourceLocation loc = advance().loc;  // 'extern'
-        if (!isUnsafe) diag_.error(loc, "an extern block needs 'import unsafe' at the top of the module (D127)");
+        if (!isUnsafe) diag_.error(loc, "an extern block needs 'import unsafe' at the top of the module");
         if (!check(TokenKind::StringLiteral)) {
-            errorAtCurrent("the name of the library in quotes, as \"kernel32\" (D128)");
+            errorAtCurrent("the name of the library in quotes, as \"kernel32\"");
             return skipToNextDeclaration();
         }
         SourceLocation libraryLoc = peek().loc;
@@ -148,16 +148,16 @@ private:
             return library.size() >= n && library.compare(library.size() - n, n, suffix) == 0;
         };
         if (library.empty() || library.find_first_of("/\\:") != std::string::npos) {
-            diag_.error(libraryLoc, "the library is a name, as \"kernel32\": cromo looks for it (D133)");
+            diag_.error(libraryLoc, "the library is a name, as \"kernel32\": cromo looks for it");
         } else if (endsWith(".lib") || endsWith(".dll")) {
-            diag_.error(libraryLoc, "write the library without extension, as \"kernel32\" (D133)");
+            diag_.error(libraryLoc, "write the library without extension, as \"kernel32\"");
         }
         skipNewlines();
         if (!expect(TokenKind::LBrace, "to open the extern block")) return skipToNextDeclaration();
         skipNewlines();
         while (!check(TokenKind::RBrace) && !check(TokenKind::EndOfFile)) {
             if (check(TokenKind::KwPublic)) {
-                diag_.error(peek().loc, "the C functions are private to the module: it offers safe functions instead (D42, D133)");
+                diag_.error(peek().loc, "the C functions are private to the module: it offers safe functions instead");
                 advance();
             }
             FunctionDecl function;
@@ -169,11 +169,11 @@ private:
                 continue;
             }
             if (check(TokenKind::LBrace)) {
-                diag_.error(peek().loc, "a C function has no body: it is in the library (D128)");
+                diag_.error(peek().loc, "a C function has no body: it is in the library");
                 parseBlock();
             }
             if (!function.typeParams.empty()) {
-                diag_.error(function.typeParams[0].loc, "a C function cannot be generic (D129)");
+                diag_.error(function.typeParams[0].loc, "a C function cannot be generic");
                 function.typeParams.clear();
             }
             module.functions.push_back(std::move(function));
@@ -437,9 +437,9 @@ private:
                 }
                 if (check(TokenKind::KwConst)) {
                     diag_.error(peek().loc, param.mode == ParamMode::Ref
-                                                ? "'ref const' does not exist: a read parameter is already read-only (D22)"
-                                                : "only a 'move' parameter can be const, written 'move const' (D22), and a "
-                                                  "function, written 'const func' (D253)");
+                                                ? "'ref const' does not exist: a read parameter is already read-only"
+                                                : "only a 'move' parameter can be const, written 'move const', and a "
+                                                  "function, written 'const func'");
                     return false;
                 }
                 if (!parseType(param.type)) return false;
@@ -480,7 +480,7 @@ private:
         if (!parseParams(function)) return false;
         if (check(TokenKind::KwConst)) {
             if (!inStruct) {
-                diag_.error(peek().loc, "only methods can be const (D24)");
+                diag_.error(peek().loc, "only methods can be const");
                 return false;
             }
             function.isConst = true;
@@ -544,13 +544,13 @@ private:
         if (check(TokenKind::KwPublic)) publicLoc = advance().loc;
         if (check(TokenKind::Tilde) ||
             (check(TokenKind::Identifier) && peek().text == decl.name && peek(1).kind == TokenKind::LParen)) {
-            diag_.error(peek().loc, "an enum has no constructor or destructor (D110)");
+            diag_.error(peek().loc, "an enum has no constructor or destructor");
             return false;
         }
         size_t afterType = skipType(0);
         if (afterType && peek(afterType).kind == TokenKind::Identifier) {  // a method
             if (!attributes.empty()) {
-                diag_.error(attributes[0].loc, "in an enum an attribute is written only before a case (D365)");
+                diag_.error(attributes[0].loc, "in an enum an attribute is written only before a case");
                 return false;
             }
             auto method = parseFunction(true);
@@ -565,7 +565,7 @@ private:
             return false;
         }
         if (publicLoc) {
-            diag_.error(*publicLoc, "the cases of an enum are public with it (D132)");
+            diag_.error(*publicLoc, "the cases of an enum are public with it");
             return false;
         }
         EnumCase item;
@@ -577,7 +577,7 @@ private:
             if (!parseParams(data)) return false;
             for (Param& param : data.params) {
                 if (param.mode != ParamMode::Read) {
-                    diag_.error(param.loc, "the data of a case have no 'ref' or 'move' (D104)");
+                    diag_.error(param.loc, "the data of a case have no 'ref' or 'move'");
                     return false;
                 }
                 FieldDecl field;
@@ -607,11 +607,11 @@ private:
         decl.loc = peek().loc;
         advance();
         if (check(TokenKind::Less)) {
-            diag_.error(peek().loc, "an interface has no type parameters: its methods use Self (D84)");
+            diag_.error(peek().loc, "an interface has no type parameters: its methods use Self");
             return std::nullopt;
         }
         if (check(TokenKind::Colon)) {
-            diag_.error(peek().loc, "an interface cannot extend another interface (D90)");
+            diag_.error(peek().loc, "an interface cannot extend another interface");
             return std::nullopt;
         }
         skipNewlines();
@@ -619,7 +619,7 @@ private:
         skipNewlines();
         while (!check(TokenKind::RBrace) && !check(TokenKind::EndOfFile)) {
             if (check(TokenKind::KwPublic)) {
-                diag_.error(peek().loc, "the methods of an interface are public with it (D132)");
+                diag_.error(peek().loc, "the methods of an interface are public with it");
                 advance();
             }
             FunctionDecl method;
@@ -627,10 +627,10 @@ private:
             size_t afterType = skipType(0);
             bool ok = false;
             if (afterType && peek(afterType).kind == TokenKind::Identifier && peek(afterType + 1).kind != TokenKind::LParen) {
-                diag_.error(peek(afterType).loc, "an interface contains only methods (D90)");
+                diag_.error(peek(afterType).loc, "an interface contains only methods");
             } else if (parseSignature(method, true)) {
                 if (check(TokenKind::LBrace)) {
-                    diag_.error(peek().loc, "the methods of an interface have no body (D90)");
+                    diag_.error(peek().loc, "the methods of an interface have no body");
                     parseBlock();  // skipped, to go on with the next method
                 }
                 decl.methods.push_back(std::move(method));
@@ -736,7 +736,7 @@ private:
         if (check(TokenKind::KwPublic)) {
             SourceLocation loc = advance().loc;
             if (check(TokenKind::Tilde)) {
-                diag_.error(loc, "a destructor has no 'public': it runs wherever its object ends (D132)");
+                diag_.error(loc, "a destructor has no 'public': it runs wherever its object ends");
                 return false;
             }
             isPublic = true;
@@ -749,7 +749,7 @@ private:
             decl.fields.back().isPublic = isPublic;
             decl.fields.back().attributes = std::move(attributes);
         } else if (!attributes.empty()) {
-            diag_.error(attributes[0].loc, "an attribute is written only before a field, for now (D256)");
+            diag_.error(attributes[0].loc, "an attribute is written only before a field, for now");
             return false;
         }
         return true;
@@ -890,7 +890,14 @@ private:
             return std::make_unique<BreakStmt>(advance().loc);
         case TokenKind::KwContinue:
             return std::make_unique<ContinueStmt>(advance().loc);
+        case TokenKind::KwRef:
+            diag_.error(peek().loc, "a variable is not a reference: 'ref' is written on parameters and on captures");
+            return nullptr;
         default:
+            if (check(TokenKind::Identifier) && peek().text == "while" && peek(1).kind == TokenKind::LParen) {
+                diag_.error(peek().loc, "Cromo has no while: write the condition in a for, as for (condition)");
+                return nullptr;
+            }
             if (startsDeclaration()) return parseVarDecl();
             return parseSimpleStatement();
         }
@@ -1114,7 +1121,7 @@ private:
             stmt->form = ForForm::Each;
             stmt->isRef = match(TokenKind::KwRef);
             if (check(TokenKind::Identifier) && peek(1).kind == TokenKind::KwIn) {
-                diag_.error(peek().loc, "write the type of the element: for (T " + peek().text + " in ...) (D54)");
+                diag_.error(peek().loc, "write the type of the element: for (T " + peek().text + " in ...)");
                 return nullptr;
             }
             if (!parseType(stmt->elementType)) return nullptr;
@@ -1424,6 +1431,10 @@ private:
                 continue;
             }
             advance();
+            if (check(TokenKind::Tilde)) {
+                diag_.error(peek().loc, "a destructor is not called by hand: it runs when its object ends");
+                return nullptr;
+            }
             if (!check(TokenKind::Identifier)) {
                 errorAtCurrent("the name of a field or method after '.'");
                 return nullptr;

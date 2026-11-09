@@ -1,7 +1,7 @@
 // The default value of an interface is empty: a method on it is a panic (D361).
 // expect-output: moved
 // expect-exit: 101
-// expect-stderr: the value of Shape is empty: it was moved, or never given (D361)
+// expect-stderr: the value of Shape is empty: it was moved, or never given
 interface Shape {
     f64 area() const
 }

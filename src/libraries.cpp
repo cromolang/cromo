@@ -55,7 +55,7 @@ bool readExports(const fs::path& dll, std::set<std::string>& names, std::string&
     }
     const auto* coff = llvm::dyn_cast<llvm::object::COFFObjectFile>(file->getBinary());
     if (!coff || coff->getMachine() != 0x8664) {  // IMAGE_FILE_MACHINE_AMD64
-        error = dll.filename().string() + " is not a DLL for x64 (D139)";
+        error = dll.filename().string() + " is not a DLL for x64";
         return false;
     }
     for (const llvm::object::ExportDirectoryEntryRef& entry : coff->export_directories()) {
@@ -162,10 +162,10 @@ Libraries findLibraries(const Module& module, const std::deque<SourceFile>& sour
             } else if (use.folders.size() == 1 && use.folders[0] == runtimeLibraryPath(target).parent_path()) {
                 // A module of the library, as std.gui on ARM64, which has no SDL yet (P31).
                 diag.error(use.functions[0]->loc, "the library has no " + file + " for this system, in " +
-                                                      use.folders[0].string() + " (P31)");
+                                                      use.folders[0].string() + "");
             } else {
                 diag.error(use.functions[0]->loc, "cannot find the library '" + use.name + "': there is no " + file +
-                                                      " next to the modules that use it (D143)");
+                                                      " next to the modules that use it");
             }
         }
         return libraries;
@@ -200,7 +200,7 @@ Libraries findLibraries(const Module& module, const std::deque<SourceFile>& sour
         if (dll.empty()) {
             diag.error(use.functions[0]->loc, "cannot find the library '" + use.name + "': there is no " + use.name +
                                                   ".lib or " + use.name + ".dll next to the modules that use it, nor " +
-                                                  use.name + ".dll in " + system.string() + " (D137)");
+                                                  use.name + ".dll in " + system.string() + "");
             continue;
         }
         std::set<std::string> exported;
@@ -212,7 +212,7 @@ Libraries findLibraries(const Module& module, const std::deque<SourceFile>& sour
         ImportLibrary import{use.name + ".dll", {}};
         for (const FunctionDecl* function : use.functions) {
             if (!exported.count(function->name)) {
-                diag.error(function->loc, use.name + ".dll has no function '" + function->name + "' (D137)");
+                diag.error(function->loc, use.name + ".dll has no function '" + function->name + "'");
             } else if (std::find(import.functions.begin(), import.functions.end(), function->name) ==
                        import.functions.end()) {
                 import.functions.push_back(function->name);  // several modules can declare it (D133)
@@ -241,7 +241,7 @@ bool callsTheCLibrary(const std::vector<std::string>& archives, bool& calls, std
         const auto* elf = file ? llvm::dyn_cast<llvm::object::ELFObjectFileBase>(file->getBinary()) : nullptr;
         if (!elf) {
             if (!file) llvm::consumeError(file.takeError());
-            error = "cannot read the stub of glibc " + path.string() + " (D428)";
+            error = "cannot read the stub of glibc " + path.string() + "";
             return false;
         }
         for (const llvm::object::ELFSymbolRef& symbol : elf->getDynamicSymbolIterators()) {
@@ -275,7 +275,7 @@ bool copyLibraries(const std::vector<std::string>& dlls, const std::string& exec
         if (!ec) fs::copy_file(from, to, fs::copy_options::overwrite_existing, ec);
         if (!ec) fs::last_write_time(to, time, ec);
         if (ec) {
-            error = "cannot copy " + from.filename().string() + " next to the executable: " + ec.message() + " (D138)";
+            error = "cannot copy " + from.filename().string() + " next to the executable: " + ec.message() + "";
             return false;
         }
     }

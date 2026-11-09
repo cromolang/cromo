@@ -1,12 +1,12 @@
 // The checks of the threads of a block (D215).
-// expect-error: 'values' is used by the thread 'a' until a.join() (D215)
-// expect-error: 'names' cannot be modified while the thread 'b' runs (D215)
-// expect-error: 'values' is used by the thread 'a' until a.join() (D215)
-// expect-error: the thread 'other' cannot start: 'values' is used by the thread 'a' until a.join() (D215)
-// expect-error: start() of a thread of a block is written directly in the block that declares 'c' (D215)
-// expect-error: 'a' is a thread of its block, which captures by address: it cannot be moved, assigned, returned, passed with 'ref' or captured (D215)
-// expect-error: a thread whose lambda captures by address belongs to its block: declare it, as thread.Thread t = thread.Thread(...) (D215)
-// expect-error: the thread 'b' is already started (D214)
+// expect-error: 'values' is used by the thread 'a' until a.join()
+// expect-error: 'names' cannot be modified while the thread 'b' runs
+// expect-error: 'values' is used by the thread 'a' until a.join()
+// expect-error: the thread 'other' cannot start: 'values' is used by the thread 'a' until a.join()
+// expect-error: start() of a thread of a block is written directly in the block that declares 'c'
+// expect-error: 'a' is a thread of its block, which captures by address: it cannot be moved, assigned, returned, passed with 'ref' or captured
+// expect-error: a thread whose lambda captures by address belongs to its block: declare it, as thread.Thread t = thread.Thread(...)
+// expect-error: the thread 'b' is already started
 import std.thread
 
 void keep(move thread.Thread t) {

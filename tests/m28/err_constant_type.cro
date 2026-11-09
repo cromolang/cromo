@@ -1,5 +1,5 @@
 // A constant of a module is a number, bool or char, or an array of them (D414).
-// expect-error: a constant of a module is a number, bool or char, or an array of them, not string (D414)
+// expect-error: a constant of a module is a number, bool or char, or an array of them, not string
 const string name = "cromo"
 
 i32 main() {

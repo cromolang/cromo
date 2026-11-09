@@ -34,7 +34,7 @@ error: 'addr' belongs to the unsafe dialect: the module must write 'import unsaf
 error: 'sizeOf' belongs to the unsafe dialect: the module must write 'import unsafe'
 ```
 
-The other modules use only what the module makes public. The compiler does not check that this interface is safe: a public function could return an `addr`, and the modules that import it could pass it around. Keeping `addr` and the module's raw memory out of its public functions and fields is the rule that makes the dialect stay inside its module, and a search for `import unsafe` then finds every place where the safety of the program depends on the care of its author.
+The other modules use only what the module makes public, and the compiler checks that this interface is safe: a public function, field or method that uses `addr` is the error `function 'block' is public, but its type addr is only for the modules with 'import unsafe': offer a safe type instead`. Keeping `addr` and the module's raw memory out of its public interface is the rule that makes the dialect stay inside its module, and a search for `import unsafe` then finds every place where the safety of the program depends on the care of its author.
 
 ## addr
 
@@ -347,7 +347,7 @@ The rules:
 - A module variable is private to its module, which sees it in all its files, also those without `import unsafe`. `public` and the attributes are errors.
 - It holds numbers, `bool`, `char`, `addr`, and fixed-size arrays and structs of them, whose fields have no initial values.
 - Its value at the start is its default value, or a literal: a number, with `-` in front when negative, a character, `true` or `false`. The value is written in the executable: no code runs before `main` and none after it, so a module variable has no destructor, and a type that needs code to be made or destroyed, as `string` or `list`, is an error.
-- A local variable or a parameter with the same name hides it, inside its function.
+- A local variable or a parameter cannot have its name: `a variable named 'count' is already visible here`, as for the other variables.
 - Nothing protects a module variable from threads: two threads that write it at the same time are a data race, which the compiler does not see. A program that shares data between threads uses the types of `std.thread`, as `thread.Mutex<T>` and `thread.Atomic<T>`, in normal code: see [Threads, tasks and channels](concurrency.md).
 
 ```cromo error
@@ -525,7 +525,7 @@ In a file with `import unsafe` all these names are built-in functions:
 - `alloc`, `resize`, `free`, `sizeOf`, `offset`, `take`, `put`, `destroy`, `copyAt`, `copyMemory`, `compareMemory`, `checkIndex` and `variableAddress`, of this chapter;
 - `argumentCount`, `argumentLength`, `argumentData`, `environment`, `exitProcess`, `systemCall`, `decimalToFloat`, `hashBytes`, `equalAt`, `jsonWrite`, `jsonRead`, `debugWrite`, `selfAddress`, `threadStart`, `threadWait`, `threadRethrow`, `threadUncaught`, `threadFree`, `taskStart`, `groupStart`, `mutexLock`, `mutexUnlock`, `atomicLoad`, `atomicStore`, `atomicAdd`, `atomicExchange`, `atomicCompareExchange`, `atomicLoadRelaxed`, `atomicStoreRelaxed` and `atomicAddRelaxed`, of the library.
 
-A function of the module, or a C function, with one of these names is never called there: the built-in function runs instead. Give your functions other names. In the files without `import unsafe` these names are free.
+A function of the module, or a C function, with one of these names would never be called there, so it is an error where it is declared: give your functions other names. In the files without `import unsafe` these names are free.
 
 ## What the compiler no longer checks
 
@@ -535,8 +535,7 @@ The dialect, with the C functions that it calls, is the only place where a Cromo
 - freeing a block twice, or never;
 - `take` of a place that holds nothing, `put` over a value that is then never destroyed, a type `T` that is not the one in the memory;
 - the `addr` of `cstring()` kept after its statement;
-- a module variable written by two threads at the same time;
-- an `addr` that leaves the module through a public function.
+- a module variable written by two threads at the same time.
 
 So the code in the dialect stays short, and is wrapped as soon as possible in a struct with a destructor and a safe interface. The rest of the program then keeps all the guarantees of Cromo.
 

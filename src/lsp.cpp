@@ -17,11 +17,13 @@
 #include <cstdlib>
 #include <deque>
 #include <filesystem>
+#include <fstream>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <set>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <vector>
@@ -493,8 +495,8 @@ private:
         }
     }
 
-    // D172: the file itself if it has main, else the nearest main.cro above it,
-    // else the file alone.
+    // D172: the file itself if it has main, else the nearest main.cro above it, else
+    // the first executable of the cromo.mod of its project (D517), else the file alone.
     std::string findRoot(const Document& document, bool& requireMain) const {
         SourceFile file{document.path, document.text};
         Diagnostics quiet(file);
@@ -521,6 +523,21 @@ private:
             fs::path parent = folder.parent_path();
             if (parent == folder) break;
             folder = parent;
+        }
+        std::string project = projectFolder(fs::path(document.path).parent_path().string());
+        if (!project.empty()) {
+            std::ifstream in((fs::path(project) / "cromo.mod").string());
+            for (std::string line; std::getline(in, line);) {
+                std::istringstream words(line);
+                std::string kind, name, path;
+                if (!(words >> kind >> name >> path) || kind != "bin") continue;
+                fs::path main = fs::path(project) / path;
+                std::error_code ec;
+                if (sourceKey(main.string()) != documentKey && fs::is_regular_file(main, ec)) {
+                    requireMain = true;
+                    return main.string();
+                }
+            }
         }
         requireMain = false;
         return document.path;

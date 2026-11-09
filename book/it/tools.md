@@ -176,11 +176,10 @@ Un errore dipende dall'intero programma: una chiamata a una funzione di un modul
 
 1. il file stesso, se ha `main`;
 2. altrimenti, il `main.cro` più vicino nella sua cartella o nelle cartelle sopra di essa, come farebbe `cromo build` senza un file; la ricerca si ferma alla cartella del workspace;
-3. altrimenti, il file da solo, come un modulo a cui non si chiede di avere `main`.
+3. altrimenti, il primo eseguibile delle righe `bin` del `cromo.mod` del suo progetto, come in un progetto i cui programmi sono in `cmd/`;
+4. altrimenti, il file da solo, come un modulo a cui non si chiede di avere `main`.
 
-Gli import vengono risolti come fa il compilatore, a partire dalla cartella di `cromo.mod` quando c'è. Un modulo che il suo `main.cro` non importa viene analizzato da solo. Il server legge i file del sistema su cui gira, come `fs_windows.cro` su Windows: gli errori di un file di un altro sistema, come `fs_linux.cro` su Windows, compaiono solo quando il programma viene compilato per quel sistema.
-
-Il server non legge ancora le righe `bin` di `cromo.mod`: in un progetto i cui programmi sono in `cmd/` e che non ha un `main.cro`, un modulo del progetto viene analizzato da solo. Gli errori dell'editor sono allora quelli del modulo preso da solo, e un file di un modulo fatto da una cartella non vede i nomi degli altri file della sua cartella: il riferimento è `cromo build`.
+Gli import vengono risolti come fa il compilatore, a partire dalla cartella di `cromo.mod` quando c'è. Un modulo che il programma scelto non importa viene analizzato da solo: allora gli errori dell'editor sono quelli del modulo preso da solo, e il riferimento è `cromo build`. Il server legge i file del sistema su cui gira, come `fs_windows.cro` su Windows: gli errori di un file di un altro sistema, come `fs_linux.cro` su Windows, compaiono solo quando il programma viene compilato per quel sistema.
 
 ### Non ancora disponibile
 

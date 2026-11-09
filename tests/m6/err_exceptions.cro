@@ -1,14 +1,14 @@
-// expect-error: a destructor cannot let an exception out: catch it inside (D113)
-// expect-error: a 'finally' block cannot let an exception out: catch it inside (D113)
-// expect-error: 'ret' cannot leave a 'finally' block (D120)
-// expect-error: 'break' cannot leave a 'finally' block (D120)
-// expect-error: 'throw' alone rethrows the exception of a 'catch': it can be used only inside one (D114)
-// expect-error: only a struct that implements Exception can be thrown, found integer literal (D36)
-// expect-error: a 'catch' takes a struct that implements Exception, or Exception itself, found Point (D118)
-// expect-error: this 'catch' is never reached: a previous one already catches every exception (D118)
-// expect-error: 'e' is the exception of a 'catch', which is read-only (D114)
-// expect-error: message() cannot let an exception out: catch it inside (D122)
-// expect-error: copy() cannot let an exception out: catch it inside (D122)
+// expect-error: a destructor cannot let an exception out: catch it inside
+// expect-error: a 'finally' block cannot let an exception out: catch it inside
+// expect-error: 'ret' cannot leave a 'finally' block
+// expect-error: 'break' cannot leave a 'finally' block
+// expect-error: 'throw' alone rethrows the exception of a 'catch': it can be used only inside one
+// expect-error: only a struct or an enum that implements Exception can be thrown, found integer literal
+// expect-error: a 'catch' takes a struct that implements Exception, or Exception itself, found Point
+// expect-error: this 'catch' is never reached: a previous one already catches every exception
+// expect-error: 'e' is the exception of a 'catch', which is read-only
+// expect-error: message() cannot let an exception out: catch it inside
+// expect-error: copy() cannot let an exception out: catch it inside
 struct Point {
     i32 x
 }

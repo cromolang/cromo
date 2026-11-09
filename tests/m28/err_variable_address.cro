@@ -1,5 +1,5 @@
 // A local variable has no address that lasts (D394).
-// expect-error: variableAddress() takes a module variable, or a field or an element of one (D394)
+// expect-error: variableAddress() takes a module variable, or a field or an element of one
 import unsafe
 
 i32 main() {

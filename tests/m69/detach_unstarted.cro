@@ -1,0 +1,10 @@
+// Only a started thread can be detached (D521).
+// expect-exit: 101
+// expect-stderr: the thread is not started: call start() first
+import std.thread
+
+i32 main() {
+    thread.Thread worker = thread.Thread([]() {})
+    worker.detach()
+    ret 0
+}

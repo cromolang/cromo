@@ -1,0 +1,58 @@
+// detach() of the free threads and tasks (D521): the block that declares them does
+// not wait for them, their lambdas go on with what they own, and the runtime frees
+// them when they end, also when they ended before detach().
+// expect-output: after the block: 0
+// expect-output: the thread: 1
+// expect-output: the tasks: 201
+// expect-output: the threads: 251
+import std.thread
+import std.time
+
+void add(thread.Shared<i64> count) {
+    count.lock([](ref i64 n) { n++ })
+}
+
+i64 total(thread.Shared<i64> count) {
+    i64 seen = 0
+    count.lock([ref seen](ref i64 n) { seen = n })
+    ret seen
+}
+
+void waitFor(thread.Shared<i64> count, i64 wanted) {
+    for (i32 i = 0; i < 2000 && total(count) < wanted; i++) {
+        time.msleep(5)
+    }
+}
+
+i32 main() {
+    thread.Shared<i64> count = thread.Shared<i64>(0)
+    if (true) {
+        thread.Thread worker = thread.Thread([count]() {
+            time.msleep(300)
+            add(count)
+        })
+        worker.start()
+        worker.detach()
+    }
+    println("after the block: {}", total(count))
+    waitFor(count, 1)
+    println("the thread: {}", total(count))
+    for (i64 i = 0; i < 200; i++) {
+        thread.Task task = thread.Task([count]() { add(count) })
+        task.start()
+        task.detach()
+    }
+    waitFor(count, 201)
+    println("the tasks: {}", total(count))
+    for (i64 i = 0; i < 50; i++) {
+        thread.Thread worker = thread.Thread([count]() { add(count) })
+        worker.start()
+        if (i % 2 == 0) {
+            time.msleep(2)  // often ended before detach()
+        }
+        worker.detach()
+    }
+    waitFor(count, 251)
+    println("the threads: {}", total(count))
+    ret 0
+}

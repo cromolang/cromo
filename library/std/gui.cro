@@ -6095,7 +6095,7 @@ public struct Window {
             if (data.windows[i].phone) {
                 for (i64 other = 0; other < data.windows.len(); other++) {
                     if (other != i && data.windows[other].started) {
-                        panic("an app of Android has one window: this is a second one (D459)")
+                        panic("an app of Android has one window: this is a second one")
                     }
                 }
             }
@@ -9969,13 +9969,13 @@ void drawTable(ref WindowData window, ref PartData table, ref Colors c) {
         bool hot = window.hot == table.id && window.hotItem == -2 - col && on
         f32 size = bandTitleWidth(ref window, table.columns[col].title)
         bool sorted = table.sortColumn == col
-        f32 arrow = sorted ? 16 : 0
+        f32 mark = sorted ? 16 : 0  // the room of the arrow of the order
         f32 left = cx + 8
         Horizontal align = table.columns[col].align
         if (align == Horizontal.Right) {
-            left = cx + widths[col] - 8 - size - arrow
+            left = cx + widths[col] - 8 - size - mark
         } else if (align == Horizontal.Center) {
-            left = cx + (widths[col] - size - arrow) / 2
+            left = cx + (widths[col] - size - mark) / 2
         }
         clipInside(r, ref table, cx, y, widths[col], header)
         bandTitle(ref window, table.columns[col].title, most(left, cx + 8), y, header, hot ? c.ink2 : c.ink3, on)
@@ -10180,8 +10180,8 @@ void levelSize(ref WindowData window, i64 parent, ref f32 w, ref f32 h) {
             h = h + menuLine
         } else {
             f32 icon = item.icon != Icon.None ? 24 : 0
-            f32 arrow = item.opens ? 20 : 0
-            w = most(w, textWidth(window.body, item.text, item.text.len()) + icon + arrow + 2 * menuPad + 36)
+            f32 mark = item.opens ? 20 : 0  // the room of the arrow of a submenu
+            w = most(w, textWidth(window.body, item.text, item.text.len()) + icon + mark + 2 * menuPad + 36)
             h = h + menuRow()
         }
     }

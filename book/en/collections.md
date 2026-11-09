@@ -766,7 +766,7 @@ i32 main() {
 
 ```output
 error: '/' works on vectors of floats only: the processors have no division of integer vectors
-error: a i32x4 cannot be printed with {}: print its form of debug with {:?}
+error: an i32x4 cannot be printed with {}: print its form of debug with {:?}
 ```
 
 By default a program uses the instructions that every x86-64 processor has, SSE2, and a vector of 256 bits is two of 128; `cromo build --cpu x86-64-v3` compiles the whole program for the processors with AVX2. On ARM64 the vectors use NEON.

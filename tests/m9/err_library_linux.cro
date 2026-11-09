@@ -1,5 +1,5 @@
 // target: linux
-// expect-error: cannot find the library 'nosuchlibrary': there is no libnosuchlibrary.a next to the modules that use it (D143)
+// expect-error: cannot find the library 'nosuchlibrary': there is no libnosuchlibrary.a next to the modules that use it
 // For Linux an extern block is a static library next to the module (D143).
 import unsafe
 

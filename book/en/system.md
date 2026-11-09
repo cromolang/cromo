@@ -255,7 +255,7 @@ cannot remove 'old': the folder is not empty
 false false
 ```
 
-The other errors read in the same way: `cannot create 'logs': it exists already`, `cannot list 'notes.txt': a part of the path is not a folder`, `cannot copy 'photos': it is a folder` (on Windows, `access denied`).
+The other errors read in the same way: `cannot create 'logs': it exists already`, `cannot list 'notes.txt': a part of the path is not a folder`, `cannot copy 'photos': it is a folder`.
 
 ## Links and executable files
 
@@ -293,7 +293,7 @@ true
 The two systems make different links:
 
 - On **Linux** the link is a symbolic link, to a file or to a folder, that holds `target` as it is written. A relative target is read from the folder of the link, not from the current folder: `createLink("1.2", "releases/current")` points to `releases/1.2`.
-- On **Windows** the link is a *junction*, which any user can create, while a symbolic link needs the rights of an administrator or the developer mode of Windows. A junction points only to a folder, and holds its absolute path: a relative target is read from the current folder. A target that is not a folder is the exception `cannot link to 'notes.txt': on Windows a link is a junction, to a folder`.
+- On **Windows** the link is a *junction*, which any user can create, while a symbolic link needs the rights of an administrator or the developer mode of Windows. A junction points only to a folder, and holds its absolute path: a relative target is read from the folder of the link, as on Linux. A target that is not a folder is the exception `cannot link to 'notes.txt': on Windows a link is a junction, to a folder`.
 
 So a link that works on both systems points to a folder, with an absolute path, as in the example. `readLink` gives the target as the link holds it: on Windows, the absolute path. A path that is not a link is the exception `cannot read the link 'releases': it is not a link`. A link whose target is missing is still a link: `isLink` is `true`, while `exists` is `false`.
 

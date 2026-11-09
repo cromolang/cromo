@@ -89,12 +89,11 @@ i32 main() {
 }
 ```
 
-When the work starts from a handler, as after a click, the handler hands it to a thread that `main` started, and returns at once. The two share a `thread.Shared`, a handle to a value with its lock, which both capture by copy ([Threads, tasks and channels](concurrency.md)):
+When the work starts from a handler, as after a click, the handler starts a thread for it, detaches it and returns at once ([Threads, tasks and channels](concurrency.md)). The thread gives the result to the components, whose methods work from any thread:
 
 ```cromo norun
 import std.gui
 import std.thread
-import std.time
 
 // How many primes there are below the limit: a long work.
 i64 primesBelow(i64 limit) {
@@ -114,36 +113,26 @@ i32 main() {
     gui.Window w = gui.Window("Primes", 420, 150)
     gui.Button count = w.add(gui.Button("Count", 16, 16, 100, 28))
     gui.Label result = w.add(gui.Label("", 16, 60, 388, 20))
-    thread.Shared<i64> request = thread.Shared<i64>(0)  // the limit asked for, 0 for none
-    count.onClick([request, count, result]() {
+    count.onClick([count, result]() {
         count.setEnabled(false)
         result.setText("Counting...")
-        request.lock([](ref i64 limit) { limit = 5000000 })
+        thread.Thread work = thread.Thread([count, result]() {
+            i64 limit = 5000000
+            result.setText(format("{} primes below {}", primesBelow(limit), limit))
+            count.setEnabled(true)
+        })
+        work.start()
+        work.detach()
     })
-    thread.Thread worker = thread.Thread([w, request, count, result]() {
-        for (!w.closed()) {
-            i64 limit = 0
-            request.lock([ref limit](ref i64 asked) {
-                limit = asked
-                asked = 0
-            })
-            if (limit == 0) {
-                time.msleep(20)
-            } else {
-                result.setText(format("{} primes below {}", primesBelow(limit), limit))
-                count.setEnabled(true)
-            }
-        }
-    })
-    worker.start()
     w.start()
     ret 0
 }
 ```
 
-- The handler of `Count` only leaves the request and returns: the window keeps drawing while the worker counts.
-- The worker captures only handles, which are simple values, so it can run while `main` goes on. It ends when the window is closed, and the end of `main` waits for it.
-- A thread or a task declared inside a handler would not help: at the end of the handler's block its destructor waits for it, and the window would freeze anyway.
+- The handler of `Count` only starts the thread and returns: the window keeps drawing while the thread counts.
+- The thread captures only the handles of the components, which are simple values: it owns all that it uses, so it can be detached, and nothing waits for it. A thread that was not detached would be waited for by its destructor at the end of the handler, and the window would freeze.
+- The end of `main` waits for the windows, not for the detached threads: a window closed while the thread counts ends the program.
+- For work that waits, as a request to the network, a `thread.Task` is detached in the same way.
 
 An exception that leaves a handler stops the program, as one that leaves a thread that nobody joins: it prints `uncaught exception in a thread:` with the message and the stack trace, and the program ends with exit code 1. A handler that can fail catches its exceptions, and shows the error in the window, as with a snackbar.
 

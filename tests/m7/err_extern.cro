@@ -1,7 +1,7 @@
-// expect-error: a C function takes numbers, bool, addr and 'ref' to numbers or structs of numbers, not string (D129)
-// expect-error: a C function has no 'move' parameters (D129)
-// expect-error: 'ref' to a C function is a pointer to a number or to a struct of numbers, not Named (D129)
-// expect-error: a C function returns a number, bool or addr, not Pair (D129)
+// expect-error: a C function takes numbers, bool, addr and 'ref' to numbers or structs of numbers, not string
+// expect-error: a C function has no 'move' parameters
+// expect-error: 'ref' to a C function is a pointer to a number or to a struct of numbers, not Named
+// expect-error: a C function returns a number, bool or addr, not Pair
 // expect-error: the name 'cromo_write' is reserved for the runtime
 // expect-error: the C function 'GetLastError' is already declared with another signature, in err_extern
 import unsafe

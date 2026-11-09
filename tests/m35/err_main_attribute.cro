@@ -1,4 +1,4 @@
-// expect-error: unknown attribute 'windows': a function has only [[test]] (D349), and main [[window]] (D426)
+// expect-error: unknown attribute 'windows': a function has only [[test]], and main [[window]]
 [[windows]]
 i32 main() {
     ret 0

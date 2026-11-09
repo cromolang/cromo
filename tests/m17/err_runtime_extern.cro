@@ -1,5 +1,5 @@
 // The C functions of the runtime are declared only by the standard library (D240).
-// expect-error: the library "cromo" is the runtime: only the standard library declares its functions (D240)
+// expect-error: the library "cromo" is the runtime: only the standard library declares its functions
 import unsafe
 
 extern "cromo" {

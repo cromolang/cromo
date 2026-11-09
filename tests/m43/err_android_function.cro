@@ -1,5 +1,5 @@
 // [[android]] names the app of main only (D455).
-// expect-error: [[android]] is only for main of the program, whose app it names (D455)
+// expect-error: [[android]] is only for main of the program, whose app it names
 [[android("org.example.mail", "Mail")]]
 void helper() {
 }

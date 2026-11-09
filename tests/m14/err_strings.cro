@@ -1,6 +1,6 @@
 // Errors with strings and bytes (D200).
-// expect-error: the bytes of a string are read-only: build a new string (D200)
-// expect-error: a i32[2] cannot be printed with {}: print its form of debug with {:?} (D319)
+// expect-error: the bytes of a string are read-only: build a new string
+// expect-error: an i32[2] cannot be printed with {}: print its form of debug with {:?}
 i32 main() {
     string s = "abc"
     s[0] = 'x'

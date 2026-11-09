@@ -1,5 +1,5 @@
 // A constant of a module never changes (D414).
-// expect-error: 'table' is const and cannot be modified (D26)
+// expect-error: 'table' is const and cannot be modified
 const i32[2] table = [1, 2]
 
 i32 main() {

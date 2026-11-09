@@ -1,5 +1,5 @@
 // std.cmdline (D415): a wrong use of the module is a panic, an error of the program.
-// expect-stderr: panic: cmdline: --port is not an option of string (D415)
+// expect-stderr: panic: cmdline: --port is not an option of string
 // expect-exit: 101
 import std.cmdline
 

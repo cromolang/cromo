@@ -1,5 +1,5 @@
 // A module variable is for the modules with import unsafe (D394).
-// expect-error: a variable outside the functions is only for the modules with 'import unsafe' (D394)
+// expect-error: a variable outside the functions is only for the modules with 'import unsafe'
 i64 count
 
 i32 main() {

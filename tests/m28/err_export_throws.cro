@@ -1,5 +1,5 @@
 // C has no exceptions (D395).
-// expect-error: the exported function 'check' can throw, and C has no exceptions: catch them inside it (D395)
+// expect-error: the exported function 'check' can throw, and C has no exceptions: catch them inside it
 import unsafe
 
 [[export("check_value")]]

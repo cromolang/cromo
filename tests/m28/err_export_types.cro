@@ -1,5 +1,5 @@
 // The parameters of an exported function are those of C (D395).
-// expect-error: the parameters of an exported function are numbers, bool or addr, passed by value (D395)
+// expect-error: the parameters of an exported function are numbers, bool or addr, passed by value
 import unsafe
 
 [[export("count_words")]]

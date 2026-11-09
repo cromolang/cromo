@@ -61,7 +61,7 @@ public list<Scope> declareNames(ref Tree tree, ref Diagnostics diag) {
             errorAt(ref diag, file, line, column, "function '" + name + "' is already defined")
         } else if (isExtern && library == "cromo" && !tree.files[file].isLibrary) {
             errorAt(ref diag, file, line, column,
-                "the library \"cromo\" is the runtime: only the standard library declares its functions (D240)")
+                "the library \"cromo\" is the runtime: only the standard library declares its functions")
         } else if (isExtern && library != "cromo" && name.startsWith("cromo_")) {
             errorAt(ref diag, file, line, column, "the name '" + name + "' is reserved for the runtime")
         } else if (isBuiltinFunction(name) || isBuiltinType(name)) {
@@ -81,7 +81,7 @@ public list<Scope> declareNames(ref Tree tree, ref Diagnostics diag) {
         bool isConst = tree.globals[i].isConst
         if (!tree.files[file].isUnsafe && !isConst) {
             errorAt(ref diag, file, line, column, "a variable outside the functions is only for the modules with 'import " +
-                "unsafe' (D394); a constant is written 'const' (D414)")
+                "unsafe'; a constant is written 'const'")
         } else if (scopes[at].globals.contains(name)) {
             errorAt(ref diag, file, line, column, (isConst ? "constant '" : "module variable '") + name + "' is already defined")
         } else if (isBuiltinFunction(name) || isBuiltinType(name)) {

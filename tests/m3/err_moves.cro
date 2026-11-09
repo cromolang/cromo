@@ -1,14 +1,14 @@
-// expect-error: parameter 'p' is read-only: it belongs to the caller and cannot be moved (D82)
+// expect-error: parameter 'p' is read-only: it belongs to the caller and cannot be moved
 // expect-error: cannot move 'h.f': parameter 'h' cannot be modified
-// expect-error: 'move' is not needed before a new object: it is moved anyway (D23)
-// expect-error: values of type File cannot be copied (D424): write 'move d'
-// expect-error: 'move' is written only in an initialization, an assignment, the argument of a 'move' parameter or after 'ret' (D82)
-// expect-error: parameter 'n' is 'ref': write 'ref' before the argument (D22)
-// expect-error: parameter 'n' is read-only: remove 'ref' (D22)
-// expect-error: cannot pass 'k' with 'ref': 'k' is const and cannot be modified (D26)
-// expect-error: parameter 'n' is 'ref i64': the argument must have exactly that type, found i32 (D82)
-// expect-error: only a variable or a field can be passed with 'ref' (D82)
-// expect-error: 'ref' is written only in the argument of a 'ref' parameter (D22)
+// expect-error: 'move' is not needed before a new object: it is moved anyway
+// expect-error: values of type File cannot be copied: write 'move d'
+// expect-error: 'move' is written only in an initialization, an assignment, the argument of a 'move' parameter or after 'ret'
+// expect-error: parameter 'n' is 'ref': write 'ref' before the argument
+// expect-error: parameter 'n' is read-only: remove 'ref'
+// expect-error: cannot pass 'k' with 'ref': 'k' is const and cannot be modified
+// expect-error: parameter 'n' is 'ref i64': the argument must have exactly that type, found i32
+// expect-error: only a variable or a field can be passed with 'ref'
+// expect-error: 'ref' is written only in the argument of a 'ref' parameter
 struct File {
     i32 fd
 

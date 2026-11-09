@@ -1,11 +1,11 @@
 // Errors on arrays (D196).
-// expect-error: the index 4 is outside the array, which has 4 elements (D30)
-// expect-error: an array has at least one element (D196)
-// expect-error: an array has only len() and copy(), not 'add' (D196)
-// expect-error: string[2] cannot be copied: its elements are not simple values, move it instead (D196)
-// expect-error: values of type string[2] cannot be copied (D424): write 'move names'
+// expect-error: the index 4 is outside the array, which has 4 elements
+// expect-error: an array has at least one element
+// expect-error: an array has only len() and copy(), not 'add'
+// expect-error: string[2] cannot be copied: its elements are not simple values, move it instead
+// expect-error: values of type string[2] cannot be copied: write 'move names'
 // expect-error: '==' does not work on values of type i32[4]
-// expect-error: the elements of this array are i32: write for (i32 x in ...) (D101)
+// expect-error: the elements of this array are i32: write for (i32 x in ...)
 i32 main() {
     i32[4] a
     a[4] = 1

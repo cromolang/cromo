@@ -1,13 +1,13 @@
-// expect-error: 'square' of geometry is private to its module: it is not marked public (D50)
-// expect-error: field 'visits' of Point is private to its module: it is not marked public (D50)
-// expect-error: method 'touch' of Point is private to its module: it is not marked public (D50)
-// expect-error: 'describe' is in both geometry and text: write geometry.describe or text.describe (D126)
-// expect-error: no imported module is called 'nothing' (D126)
-// expect-error: 'geometry' is the name of an imported module (D131)
+// expect-error: 'square' of geometry is private to its module: it is not marked public
+// expect-error: field 'visits' of Point is private to its module: it is not marked public
+// expect-error: method 'touch' of Point is private to its module: it is not marked public
+// expect-error: 'describe' is in both geometry and text: write geometry.describe or text.describe
+// expect-error: no imported module is called 'nothing'
+// expect-error: 'geometry' is the name of an imported module
 // expect-error: the module geometry has no function 'nope'
-// expect-error: 'Secret' of geometry is private to its module: it is not marked public (D50)
-// expect-error: function 'make' is public, but its type Hidden is private to the module (D132)
-// expect-error: the constructor of Token is private to its module: it is not marked public (D50)
+// expect-error: 'Secret' of geometry is private to its module: it is not marked public
+// expect-error: function 'make' is public, but its type Hidden is private to the module
+// expect-error: the constructor of Token is private to its module: it is not marked public
 // expect-error: unknown function 'pong'
 import modules.geometry
 import modules.text

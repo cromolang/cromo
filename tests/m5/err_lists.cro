@@ -1,13 +1,13 @@
-// expect-error: the elements of this list are i32: write for (i32 x in ...) (D101)
-// expect-error: 'v' cannot be modified while a 'for' goes over the elements of 'v' (D101)
-// expect-error: 'x' is an element of a read-only 'for': write 'for (ref i32 x in ...)' to modify it (D25)
-// expect-error: cannot modify the elements: 'fixed' is const and cannot be modified (D26)
-// expect-error: only a list, an array and a string have elements, found i32 (D35)
-// expect-error: 'addr' belongs to the unsafe dialect: the module must write 'import unsafe' (D127)
-// expect-error: 'alloc' belongs to the unsafe dialect: the module must write 'import unsafe' (D127)
-// expect-error: field 'length' of string is private to its module: it is not marked public (D50)
-// expect-error: values of type File cannot be copied (D424): write 'move f'
-// expect-error: 'v[0]' overlaps 'v[0]' in the same call, and the call can modify both (D22)
+// expect-error: the elements of this list are i32: write for (i32 x in ...)
+// expect-error: 'v' cannot be modified while a 'for' goes over the elements of 'v'
+// expect-error: 'x' is an element of a read-only 'for': write 'for (ref i32 x in ...)' to modify it
+// expect-error: cannot modify the elements: 'fixed' is const and cannot be modified
+// expect-error: only a list, an array and a string have elements, found i32
+// expect-error: 'addr' belongs to the unsafe dialect: the module must write 'import unsafe'
+// expect-error: 'alloc' belongs to the unsafe dialect: the module must write 'import unsafe'
+// expect-error: field 'length' of string is private to its module: it is not marked public
+// expect-error: values of type File cannot be copied: write 'move f'
+// expect-error: 'v[0]' overlaps 'v[0]' in the same call, and the call can modify both
 // expect-error: 'panic' is a built-in name
 struct File {
     i32 fd

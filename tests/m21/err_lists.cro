@@ -1,7 +1,7 @@
 // The errors of the literals of a list (D308).
-// expect-error: the type of the elements cannot be deduced: write the type of the list, as list<i64> values = [1, 2], or of the first element, as [i64(1), 2] (D55, D308)
-// expect-error: the type of an empty list cannot be deduced: write it, as list<i64> values = [] (D308)
-// expect-error: an element of a list is given to it, not passed with 'ref' (D308)
+// expect-error: the type of the elements cannot be deduced: write the type of the list, as list<i64> values = [1, 2], or of the first element, as [i64(1), 2]
+// expect-error: the type of an empty list cannot be deduced: write it, as list<i64> values = []
+// expect-error: an element of a list is given to it, not passed with 'ref'
 i32 main() {
     string s = "y"
     string t = "z"

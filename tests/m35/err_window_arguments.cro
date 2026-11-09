@@ -1,4 +1,4 @@
-// expect-error: [[window]] takes no arguments (D426)
+// expect-error: [[window]] takes no arguments
 [[window(console)]]
 i32 main() {
     ret 0

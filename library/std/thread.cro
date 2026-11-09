@@ -36,6 +36,7 @@ extern "cromo" {
     void cromo_channel_close(addr channel)
     i64 cromo_channel_drain(addr channel, addr value)  // 0: empty
     void cromo_channel_free(addr channel)
+    void cromo_thread_detach(addr record, addr body)
 }
 
 // A thread of the system, made from a lambda, started with start() and waited for
@@ -55,8 +56,9 @@ extern "cromo" {
 // '''
 public struct Thread {
     func() body
-    addr record  // of the runtime, from start() on
+    addr record  // of the runtime, from start() on, until detach()
     bool joined
+    bool detached
 
     // A thread that will run 'work', which is moved into it; it starts with start().
     public Thread(move func() work) {
@@ -77,8 +79,8 @@ public struct Thread {
 
     // Starts the thread. Starting it a second time is a panic.
     public void start() {
-        if (started()) {
-            panic("the thread is already started (D214)")
+        if (started() || detached) {
+            panic("the thread is already started")
         }
         record = threadStart(body)
     }
@@ -86,16 +88,46 @@ public struct Thread {
     // Waits for the end of the thread, and throws again the exception that ended it,
     // if any. A panic if the thread is not started or is already joined.
     public void join() {
+        if (detached) {
+            panic("the thread is already joined or detached")
+        }
         if (!started()) {
-            panic("the thread is not started: call start() first (D214)")
+            panic("the thread is not started: call start() first")
         }
         if (joined) {
-            panic("the thread is already joined (D214)")
+            panic("the thread is already joined")
         }
         joined = true
         if (threadWait(record)) {
             threadRethrow(record)
         }
+    }
+
+    // Lets the thread go on by itself, as std::thread::detach of C++ (D521): its
+    // destructor no longer waits for it, nobody joins it, and the end of main does not
+    // wait for it; an exception that ends it stops the program. Only a thread that owns
+    // all that it uses can be detached: the compiler refuses one that captures by
+    // address, which belongs to its block. A panic if the thread is not started, or is
+    // already joined or detached.
+    //
+    // '''
+    // thread.Thread worker = thread.Thread([progress]() { slowWork(progress) })
+    // worker.start()
+    // worker.detach()
+    // '''
+    public void detach() {
+        if (joined || detached) {
+            panic("the thread is already joined or detached")
+        }
+        if (!started()) {
+            panic("the thread is not started: call start() first")
+        }
+        addr kept = alloc(sizeOf<func()>())  // the runtime destroys it at the end
+        put<func()>(kept, move body)
+        cromo_thread_detach(record, kept)
+        addr none
+        record = none
+        detached = true
     }
 
     bool started() const {
@@ -115,8 +147,9 @@ public struct Thread {
 // for long computations.
 public struct Task {
     func() body
-    addr record  // of the runtime, from start() on
+    addr record  // of the runtime, from start() on, until detach()
     bool joined
+    bool detached
 
     // A task that will run 'work', which is moved into it; it starts with start().
     public Task(move func() work) {
@@ -137,8 +170,8 @@ public struct Task {
 
     // Starts the task. Starting it a second time is a panic.
     public void start() {
-        if (started()) {
-            panic("the task is already started (D269)")
+        if (started() || detached) {
+            panic("the task is already started")
         }
         record = taskStart(body)
     }
@@ -146,16 +179,39 @@ public struct Task {
     // Waits for the end of the task, and throws again the exception that ended it, if
     // any. A panic if the task is not started or is already joined.
     public void join() {
+        if (detached) {
+            panic("the task is already joined or detached")
+        }
         if (!started()) {
-            panic("the task is not started: call start() first (D269)")
+            panic("the task is not started: call start() first")
         }
         if (joined) {
-            panic("the task is already joined (D269)")
+            panic("the task is already joined")
         }
         joined = true
         if (threadWait(record)) {
             threadRethrow(record)
         }
+    }
+
+    // Lets the task go on by itself, as detach() of Thread (D521): its destructor no
+    // longer waits for it, nobody joins it, and the end of main does not wait for it;
+    // an exception that ends it stops the program. The compiler refuses it for a task
+    // that captures by address. A panic if the task is not started, or is already
+    // joined or detached.
+    public void detach() {
+        if (joined || detached) {
+            panic("the task is already joined or detached")
+        }
+        if (!started()) {
+            panic("the task is not started: call start() first")
+        }
+        addr kept = alloc(sizeOf<func()>())  // the runtime destroys it at the end
+        put<func()>(kept, move body)
+        cromo_thread_detach(record, kept)
+        addr none
+        record = none
+        detached = true
     }
 
     bool started() const {
@@ -310,7 +366,7 @@ public struct Channel<T> {
     // sender waits until a receiver has the value. A negative count is a panic.
     public Channel(i64 count) {
         if (count < 0) {
-            panic(format("the capacity of a channel is 0 or more, found {} (D326)", count))
+            panic(format("the capacity of a channel is 0 or more, found {}", count))
         }
         capacity = count
     }
@@ -337,7 +393,7 @@ public struct Channel<T> {
         if (cromo_channel_send(own(), place) == 0) {
             destroy<T>(place)
             free(place)
-            throw Error("cannot send: the channel is closed (D327)")
+            throw Error("cannot send: the channel is closed")
         }
         free(place)
     }
@@ -348,7 +404,7 @@ public struct Channel<T> {
         addr place = alloc(sizeOf<T>())
         if (cromo_channel_receive(own(), place) == 0) {
             free(place)
-            throw Error("cannot receive: the channel is closed (D327)")
+            throw Error("cannot receive: the channel is closed")
         }
         T value = take<T>(place)
         free(place)
