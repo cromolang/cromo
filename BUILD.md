@@ -37,7 +37,7 @@ powershell -ExecutionPolicy Bypass -File build.ps1
 build\cromo.exe version
 ```
 
-The last command prints `cromo 0.49.0 (LLVM 23.1.4)`, with the version of the sources.
+The last command prints `cromo 0.69.0 (LLVM 23.1.4)`, with the version of the sources.
 
 `build.ps1` accepts:
 
@@ -126,7 +126,7 @@ npx ovsx publish tools\vscode-cromo\dist\cromo-<version>.vsix -p <token>
 
 ## Making a release
 
-The version is in `CMakeLists.txt`, in `project(cromo VERSION 0.49.0)`: `0.<milestone>.<fix>` until 1.0. With the two builds of the same version:
+The version is in `CMakeLists.txt`, in `project(cromo VERSION 0.69.0)`: `0.<milestone>.<fix>` until 1.0. With the two builds of the same version:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File tools\package.ps1 -Key <private key>

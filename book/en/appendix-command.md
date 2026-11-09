@@ -19,7 +19,7 @@ The command always comes first: `cromo hello.cro` is an error that shows the rig
 | `cromo fmt [--check] [files and folders \| -]` | formats the code, by default of the current folder and its subfolders ([Tools](tools.md)) |
 | `cromo lsp` | the language server, for editors, on the standard input and output ([Tools](tools.md)) |
 | `cromo update [version]` | installs the latest version of Cromo, or the one named, and makes it the active one |
-| `cromo version` | prints the version of `cromo` and of LLVM, as `cromo 0.49.0 (LLVM 23.1.4)` |
+| `cromo version` | prints the version of `cromo` and of LLVM, as `cromo 0.69.0 (LLVM 23.1.4)` |
 | `cromo help` | prints the commands and the options |
 
 ### The program to compile

@@ -109,7 +109,8 @@ Invoke-Tool 'llvm-ar.exe' @('rcs', "$glibcTests\libgreet.a", "$out\greet.o")
 
 # SDL3 of the lib/ of the cromo of the tests (D429), next to the tests of SDL.
 $cromoFolder = Split-Path $Cromo
-$cromoLib = @((Join-Path $cromoFolder 'lib'), (Join-Path (Split-Path $cromoFolder) 'lib')) | Where-Object { Test-Path "$_\core.cro" } | Select-Object -First 1
+# tools\cromo-wsl.cmd has no lib/ next to it: the one of the build of Windows (D292).
+$cromoLib = @((Join-Path $cromoFolder 'lib'), (Join-Path (Split-Path $cromoFolder) 'lib'), (Join-Path $PSScriptRoot '..\build\lib')) | Where-Object { Test-Path "$_\core.cro" } | Select-Object -First 1
 foreach ($sdl in @('windows\SDL3.lib', 'linux\libSDL3.a')) {
     $from = Join-Path $cromoLib $sdl
     $to = Join-Path $glibcTests ('sdl\' + (Split-Path -Leaf $sdl))
