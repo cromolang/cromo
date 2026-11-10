@@ -1,0 +1,30 @@
+// The components are found by halves of the list (D522): with windows made among them,
+// whose ids leave holes, every handle still reaches its own component.
+// expect-output: 3 windows, 600 labels, all found
+// expect-output: w1: 1, w2: 2, w3: 3
+import std.gui
+
+i32 main() {
+    list<gui.Window> windows
+    list<gui.Label> labels
+    for (i64 k = 0; k < 3; k++) {
+        gui.Window w = gui.Window(format("w{}", k + 1), 300, 200)
+        windows.add(w)
+        for (i64 i = 0; i < 200; i++) {
+            labels.add(w.add(gui.Label(format("label {}", labels.len()), 0, 0, 100, 20)))
+        }
+    }
+    for (i64 i = labels.len() - 1; i >= 0; i -= 2) {
+        labels[i].setText(format("again {}", i))
+    }
+    i64 found = 0
+    for (i64 i = 0; i < labels.len(); i++) {
+        string expected = i % 2 == 1 ? format("again {}", i) : format("label {}", i)
+        if (labels[i].text() == expected) {
+            found++
+        }
+    }
+    println("{} windows, {} labels, {}", windows.len(), labels.len(), found == labels.len() ? "all found" : "missing")
+    println("w1: {}, w2: {}, w3: {}", windows[0].title().slice(1, 2), windows[1].title().slice(1, 2), windows[2].title().slice(1, 2))
+    ret 0
+}

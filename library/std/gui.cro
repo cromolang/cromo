@@ -22,6 +22,9 @@
 // - The methods of the windows and of the components can be called from any thread.
 //   When the program changes a component, as with 'setText' or 'setChecked', the
 //   handlers are not called: they are for what the user does.
+// - A window is drawn when something in it changes: an event, a change of the program,
+//   or what moves by itself, as the caret that blinks. A still window does not use the
+//   processor.
 //
 // '''
 // import std.gui
@@ -694,7 +697,7 @@ public struct Button : Component {
     public ButtonStyle style() const {
         i64 me = id
         ButtonStyle result = ButtonStyle.Normal
-        withData([me, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, me)].style })
+        readData([me, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, me)].style })
         ret result
     }
 
@@ -724,7 +727,7 @@ public struct Button : Component {
     public bool toggle() const {
         i64 me = id
         bool result = false
-        withData([me, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, me)].toggle })
+        readData([me, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, me)].toggle })
         ret result
     }
 
@@ -1468,7 +1471,7 @@ public struct ComboBox : Component {
     public list<string> items() const {
         list<string> result
         i64 me = id
-        withData([me, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, me)].items })
+        readData([me, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, me)].items })
         ret result
     }
 
@@ -1495,7 +1498,7 @@ public struct ComboBox : Component {
     public i64 selected() const {
         i64 me = id
         i64 result = -1
-        withData([me, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, me)].selected })
+        readData([me, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, me)].selected })
         ret result
     }
 
@@ -1503,7 +1506,7 @@ public struct ComboBox : Component {
     public string text() const {
         i64 me = id
         string result
-        withData([me, ref result](ref Shared data) {
+        readData([me, ref result](ref Shared data) {
             i64 p = partIndexOf(ref data, me)
             if (data.parts[p].selected >= 0) {
                 result = data.parts[p].items[data.parts[p].selected]
@@ -1680,7 +1683,7 @@ public struct ImageBox : Component {
     public Scale scale() const {
         i64 me = id
         Scale result = Scale.Fit
-        withData([me, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, me)].scale })
+        readData([me, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, me)].scale })
         ret result
     }
 
@@ -2094,7 +2097,7 @@ public struct Split : Component {
     public Direction direction() const {
         i64 me = id
         Direction result = Direction.Across
-        withData([me, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, me)].direction })
+        readData([me, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, me)].direction })
         ret result
     }
 
@@ -2118,7 +2121,7 @@ public struct Split : Component {
     public f32 ratio() const {
         i64 me = id
         f32 result = 0
-        withData([me, ref result](ref Shared data) {
+        readData([me, ref result](ref Shared data) {
             i64 p = partIndexOf(ref data, me)
             arrangeNow(ref data, p)
             result = data.parts[p].fixed == 0 ? data.parts[p].ratio : ratioNow(ref data.parts[p])
@@ -2166,7 +2169,7 @@ public struct Split : Component {
     public i32 gap() const {
         i64 me = id
         i32 result = 0
-        withData([me, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, me)].gap })
+        readData([me, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, me)].gap })
         ret result
     }
 
@@ -2182,7 +2185,7 @@ public struct Split : Component {
     public bool draggable() const {
         i64 me = id
         bool result = false
-        withData([me, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, me)].draggable })
+        readData([me, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, me)].draggable })
         ret result
     }
 
@@ -2468,7 +2471,7 @@ public struct NavigationBar : Component {
     public i64 selected() const {
         i64 me = id
         i64 result = 0
-        withData([me, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, me)].selected })
+        readData([me, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, me)].selected })
         ret result
     }
 
@@ -2652,7 +2655,7 @@ public struct ListView : Component {
     public i64 count() const {
         i64 me = id
         i64 result = 0
-        withData([me, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, me)].items.len() })
+        readData([me, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, me)].items.len() })
         ret result
     }
 
@@ -2660,7 +2663,7 @@ public struct ListView : Component {
     public string itemTitle(i64 index) const {
         i64 me = id
         string result
-        withData([me, index, ref result](ref Shared data) { result = data.parts[listIndex(ref data, me, index)].items[index] })
+        readData([me, index, ref result](ref Shared data) { result = data.parts[listIndex(ref data, me, index)].items[index] })
         ret result
     }
 
@@ -2669,7 +2672,7 @@ public struct ListView : Component {
     public string itemSubtitle(i64 index) const {
         i64 me = id
         string result
-        withData([me, index, ref result](ref Shared data) { result = data.parts[listIndex(ref data, me, index)].subtitles[index] })
+        readData([me, index, ref result](ref Shared data) { result = data.parts[listIndex(ref data, me, index)].subtitles[index] })
         ret result
     }
 
@@ -2678,7 +2681,7 @@ public struct ListView : Component {
     public string itemDetail(i64 index) const {
         i64 me = id
         string result
-        withData([me, index, ref result](ref Shared data) { result = data.parts[listIndex(ref data, me, index)].details[index] })
+        readData([me, index, ref result](ref Shared data) { result = data.parts[listIndex(ref data, me, index)].details[index] })
         ret result
     }
 
@@ -2687,7 +2690,7 @@ public struct ListView : Component {
     public Icon itemIcon(i64 index) const {
         i64 me = id
         Icon result = Icon.None
-        withData([me, index, ref result](ref Shared data) { result = data.parts[listIndex(ref data, me, index)].icons[index] })
+        readData([me, index, ref result](ref Shared data) { result = data.parts[listIndex(ref data, me, index)].icons[index] })
         ret result
     }
 
@@ -2709,7 +2712,7 @@ public struct ListView : Component {
     public i64 selected() const {
         i64 me = id
         i64 result = -1
-        withData([me, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, me)].selected })
+        readData([me, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, me)].selected })
         ret result
     }
 
@@ -3049,7 +3052,7 @@ public struct Slider : Component {
     public i64 value() const {
         i64 me = id
         i64 result = 0
-        withData([me, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, me)].value })
+        readData([me, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, me)].value })
         ret result
     }
 
@@ -3057,7 +3060,7 @@ public struct Slider : Component {
     public i64 minimum() const {
         i64 me = id
         i64 result = 0
-        withData([me, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, me)].minimum })
+        readData([me, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, me)].minimum })
         ret result
     }
 
@@ -3065,7 +3068,7 @@ public struct Slider : Component {
     public i64 maximum() const {
         i64 me = id
         i64 result = 0
-        withData([me, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, me)].maximum })
+        readData([me, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, me)].maximum })
         ret result
     }
 
@@ -3217,7 +3220,7 @@ public struct Table : Component {
     public i64 columnCount() const {
         i64 me = id
         i64 count = 0
-        withData([me, ref count](ref Shared data) { count = data.parts[partIndexOf(ref data, me)].columns.len() })
+        readData([me, ref count](ref Shared data) { count = data.parts[partIndexOf(ref data, me)].columns.len() })
         ret count
     }
 
@@ -3250,7 +3253,7 @@ public struct Table : Component {
     public i64 rowCount() const {
         i64 me = id
         i64 count = 0
-        withData([me, ref count](ref Shared data) { count = data.parts[partIndexOf(ref data, me)].tableRows })
+        readData([me, ref count](ref Shared data) { count = data.parts[partIndexOf(ref data, me)].tableRows })
         ret count
     }
 
@@ -3287,7 +3290,7 @@ public struct Table : Component {
     public string cell(i64 row, i64 column) const {
         i64 me = id
         string value
-        withData([me, row, column, ref value](ref Shared data) {
+        readData([me, row, column, ref value](ref Shared data) {
             i64 p = partIndexOf(ref data, me)
             if (data.parts[p].cells.contains(row)) {
                 list<string> cells = data.parts[p].cells[row]
@@ -3332,7 +3335,7 @@ public struct Table : Component {
     public i64 sortColumn() const {
         i64 me = id
         i64 column = -1
-        withData([me, ref column](ref Shared data) { column = data.parts[partIndexOf(ref data, me)].sortColumn })
+        readData([me, ref column](ref Shared data) { column = data.parts[partIndexOf(ref data, me)].sortColumn })
         ret column
     }
 
@@ -3340,7 +3343,7 @@ public struct Table : Component {
     public bool sortDescending() const {
         i64 me = id
         bool descending = false
-        withData([me, ref descending](ref Shared data) { descending = data.parts[partIndexOf(ref data, me)].sortDescending })
+        readData([me, ref descending](ref Shared data) { descending = data.parts[partIndexOf(ref data, me)].sortDescending })
         ret descending
     }
 
@@ -3381,7 +3384,7 @@ public struct Table : Component {
     public i64 selected() const {
         i64 me = id
         i64 row = -1
-        withData([me, ref row](ref Shared data) { row = data.parts[partIndexOf(ref data, me)].selected })
+        readData([me, ref row](ref Shared data) { row = data.parts[partIndexOf(ref data, me)].selected })
         ret row
     }
 
@@ -3390,7 +3393,7 @@ public struct Table : Component {
     public list<i64> selectedRows() const {
         i64 me = id
         list<i64> rows
-        withData([me, ref rows](ref Shared data) {
+        readData([me, ref rows](ref Shared data) {
             i64 p = partIndexOf(ref data, me)
             for (i64 k = 0; k + 1 < data.parts[p].ranges.len(); k += 2) {
                 for (i64 row = data.parts[p].ranges[k]; row < data.parts[p].ranges[k + 1]; row++) {
@@ -3685,7 +3688,7 @@ public struct TextView : Component {
     public i64 marked() const {
         i64 me = id
         i64 piece = -1
-        withData([me, ref piece](ref Shared data) { piece = data.parts[partIndexOf(ref data, me)].marked })
+        readData([me, ref piece](ref Shared data) { piece = data.parts[partIndexOf(ref data, me)].marked })
         ret piece
     }
 
@@ -3715,7 +3718,7 @@ public struct TextView : Component {
     public f32 textSize() const {
         i64 me = id
         f32 size = 0
-        withData([me, ref size](ref Shared data) { size = data.parts[partIndexOf(ref data, me)].textSize })
+        readData([me, ref size](ref Shared data) { size = data.parts[partIndexOf(ref data, me)].textSize })
         ret size > 0 ? size : bodySize()
     }
 
@@ -3733,7 +3736,7 @@ public struct TextView : Component {
     public f32 lineSpacing() const {
         i64 me = id
         f32 value = 0
-        withData([me, ref value](ref Shared data) { value = data.parts[partIndexOf(ref data, me)].lineSpacing })
+        readData([me, ref value](ref Shared data) { value = data.parts[partIndexOf(ref data, me)].lineSpacing })
         ret value
     }
 
@@ -3883,7 +3886,7 @@ public struct TabView : Component {
     public i64 pageCount() const {
         i64 me = id
         i64 count = 0
-        withData([me, ref count](ref Shared data) { count = data.parts[partIndexOf(ref data, me)].items.len() })
+        readData([me, ref count](ref Shared data) { count = data.parts[partIndexOf(ref data, me)].items.len() })
         ret count
     }
 
@@ -3930,7 +3933,7 @@ public struct TabView : Component {
     public i64 selected() const {
         i64 me = id
         i64 result = 0
-        withData([me, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, me)].selected })
+        readData([me, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, me)].selected })
         ret result
     }
 
@@ -4066,7 +4069,7 @@ public struct Segmented : Component {
     public list<string> items() const {
         list<string> result
         i64 me = id
-        withData([me, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, me)].items })
+        readData([me, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, me)].items })
         ret result
     }
 
@@ -4087,7 +4090,7 @@ public struct Segmented : Component {
     public i64 selected() const {
         i64 me = id
         i64 result = -1
-        withData([me, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, me)].selected })
+        readData([me, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, me)].selected })
         ret result
     }
 
@@ -4095,7 +4098,7 @@ public struct Segmented : Component {
     public string text() const {
         i64 me = id
         string result
-        withData([me, ref result](ref Shared data) {
+        readData([me, ref result](ref Shared data) {
             i64 p = partIndexOf(ref data, me)
             if (data.parts[p].selected >= 0) {
                 result = data.parts[p].items[data.parts[p].selected]
@@ -4340,7 +4343,7 @@ public struct RadioGroup : Component {
     public list<string> items() const {
         list<string> result
         i64 me = id
-        withData([me, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, me)].items })
+        readData([me, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, me)].items })
         ret result
     }
 
@@ -4361,7 +4364,7 @@ public struct RadioGroup : Component {
     public i64 selected() const {
         i64 me = id
         i64 result = -1
-        withData([me, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, me)].selected })
+        readData([me, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, me)].selected })
         ret result
     }
 
@@ -4369,7 +4372,7 @@ public struct RadioGroup : Component {
     public string text() const {
         i64 me = id
         string result
-        withData([me, ref result](ref Shared data) {
+        readData([me, ref result](ref Shared data) {
             i64 p = partIndexOf(ref data, me)
             if (data.parts[p].selected >= 0) {
                 result = data.parts[p].items[data.parts[p].selected]
@@ -4511,7 +4514,7 @@ public struct ProgressBar : Component {
     public f64 value() const {
         i64 me = id
         f64 done = 0
-        withData([me, ref done](ref Shared data) { done = data.parts[partIndexOf(ref data, me)].done })
+        readData([me, ref done](ref Shared data) { done = data.parts[partIndexOf(ref data, me)].done })
         ret done
     }
 
@@ -4951,7 +4954,7 @@ public struct Dialog {
     public T add<T : Component>(T component) const {
         i64 me = id
         i64 body = 0
-        withData([me, ref body](ref Shared data) { body = data.parts[partIndexOf(ref data, me)].inner })
+        readData([me, ref body](ref Shared data) { body = data.parts[partIndexOf(ref data, me)].inner })
         addPart(0, body, component.componentId())
         ret component
     }
@@ -5004,7 +5007,7 @@ public struct Dialog {
     public bool shown() const {
         i64 me = id
         bool result = false
-        withData([me, ref result](ref Shared data) {
+        readData([me, ref result](ref Shared data) {
             for (i64 i = 0; i < data.windows.len(); i++) {
                 result = result || data.windows[i].dialog == me
             }
@@ -5146,6 +5149,9 @@ struct WindowData {
     f32 dragY
     u64 dragTime
     u64 lastFrame
+    u64 wake              // when it is drawn again by itself, as for the caret that blinks, or 0 (D522)
+    list<i64> firstChild  // made by each layout: see findChildren
+    list<i64> nextChild
     f32 pointerX = -1  // the mouse, -1 when it is out of the window
     f32 pointerY = -1
     u64 caretStart
@@ -5338,6 +5344,7 @@ struct Shared {
     i64 next
     bool running        // the thread of the GUI
     list<Call> pending  // handlers to call on the thread of the GUI, as onClose of a dialog
+    bool changed        // by the program: the windows are drawn again at the next frame (D522)
 }
 
 u64 lock          // of the data of all the windows
@@ -5351,8 +5358,25 @@ addr resizeAcross  // the arrows, on the line of a split (D511)
 addr resizeDown
 i32[4] clip  // the SDL_Rect of SDL_SetRenderClipRect
 
-// The data under the lock, as a Mutex (D216).
+// The data under the lock, as a Mutex (D216), for the program that changes them: the
+// windows are drawn again at the next frame (D522).
 void withData(func(ref Shared) body) {
+    access(body, true)
+}
+
+// The data under the lock for the program that only reads them: the windows are not
+// drawn again for it.
+void readData(func(ref Shared) body) {
+    access(body, false)
+}
+
+// The data under the lock for the thread of the GUI, which draws again by itself what
+// it changes.
+void loopData(func(ref Shared) body) {
+    access(body, false)
+}
+
+void access(func(ref Shared) body, bool changes) {
     mutexLock(variableAddress(lock))
     addr none
     if (shared == none) {
@@ -5364,6 +5388,9 @@ void withData(func(ref Shared) body) {
     try {
         body(ref data)
     } finally {
+        if (changes) {
+            data.changed = true
+        }
         put<Shared>(shared, move data)
         mutexUnlock(variableAddress(lock))
     }
@@ -5379,12 +5406,11 @@ i64 indexOf(ref Shared data, i64 id) {
 }
 
 i64 partIndexOf(ref Shared data, i64 id) {
-    for (i64 i = 0; i < data.parts.len(); i++) {
-        if (data.parts[i].id == id) {
-            ret i
-        }
+    i64 p = partNumber(ref data.parts, id)
+    if (p < 0) {
+        panic("the component does not exist")
     }
-    panic("the component does not exist")
+    ret p
 }
 
 i64 newPart(i32 kind, string text, i32 x, i32 y, i32 w, i32 h) {
@@ -5427,7 +5453,7 @@ void setPartText(i64 id, string value) {
 
 string partText(i64 id, bool placeholder) {
     string result
-    withData([id, placeholder, ref result](ref Shared data) {
+    readData([id, placeholder, ref result](ref Shared data) {
         i64 p = partIndexOf(ref data, id)
         result = placeholder ? data.parts[p].placeholder : data.parts[p].text
     })
@@ -5454,7 +5480,7 @@ void setPartBounds(i64 id, i32 x, i32 y, i32 w, i32 h) {
 // 0 x, 1 y, 2 width, 3 height, 4 and 5 the width and the height of an image.
 i32 partBound(i64 id, i32 which) {
     i32 result = 0
-    withData([id, which, ref result](ref Shared data) {
+    readData([id, which, ref result](ref Shared data) {
         i64 p = partIndexOf(ref data, id)
         arrangeNow(ref data, p)
         if (which == 0) {
@@ -5490,7 +5516,7 @@ void setPartFlag(i64 id, i32 which, bool value) {
 
 bool partFlag(i64 id, i32 which) {
     bool result = false
-    withData([id, which, ref result](ref Shared data) {
+    readData([id, which, ref result](ref Shared data) {
         i64 p = partIndexOf(ref data, id)
         result = which == 0 ? data.parts[p].visible : which == 1 ? data.parts[p].enabled : data.parts[p].checked
     })
@@ -5693,7 +5719,7 @@ i64 listIndex(ref Shared data, i64 id, i64 index) {
 
 f32 partScroll(i64 id) {
     f32 result = 0
-    withData([id, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, id)].offsetY })
+    readData([id, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, id)].offsetY })
     ret result
 }
 
@@ -5721,19 +5747,19 @@ void setPartIcon(i64 id, Icon value) {
 
 Icon partIcon(i64 id) {
     Icon result = Icon.None
-    withData([id, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, id)].icon })
+    readData([id, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, id)].icon })
     ret result
 }
 
 Horizontal partHorizontal(i64 id) {
     Horizontal result = Horizontal.Left
-    withData([id, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, id)].horizontal })
+    readData([id, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, id)].horizontal })
     ret result
 }
 
 Vertical partVertical(i64 id) {
     Vertical result = Vertical.Top
-    withData([id, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, id)].vertical })
+    readData([id, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, id)].vertical })
     ret result
 }
 
@@ -5952,7 +5978,7 @@ public struct Window {
     public string title() const {
         i64 me = id
         string result
-        withData([me, ref result](ref Shared data) { result = data.windows[indexOf(ref data, me)].title })
+        readData([me, ref result](ref Shared data) { result = data.windows[indexOf(ref data, me)].title })
         ret result
     }
 
@@ -5974,7 +6000,7 @@ public struct Window {
     public i32 width() const {
         i64 me = id
         i32 result = 0
-        withData([me, ref result](ref Shared data) { result = data.windows[indexOf(ref data, me)].width })
+        readData([me, ref result](ref Shared data) { result = data.windows[indexOf(ref data, me)].width })
         ret result
     }
 
@@ -5984,7 +6010,7 @@ public struct Window {
     public i32 height() const {
         i64 me = id
         i32 result = 0
-        withData([me, ref result](ref Shared data) { result = data.windows[indexOf(ref data, me)].height })
+        readData([me, ref result](ref Shared data) { result = data.windows[indexOf(ref data, me)].height })
         ret result
     }
 
@@ -6003,7 +6029,7 @@ public struct Window {
     public bool resizable() const {
         i64 me = id
         bool result = false
-        withData([me, ref result](ref Shared data) { result = data.windows[indexOf(ref data, me)].resizable })
+        readData([me, ref result](ref Shared data) { result = data.windows[indexOf(ref data, me)].resizable })
         ret result
     }
 
@@ -6029,7 +6055,7 @@ public struct Window {
     public bool minimized() const {
         i64 me = id
         bool result = false
-        withData([me, ref result](ref Shared data) {
+        readData([me, ref result](ref Shared data) {
             i64 i = indexOf(ref data, me)
             result = data.windows[i].window == addr(0) ? data.windows[i].show == 1 : data.windows[i].minimized
         })
@@ -6040,7 +6066,7 @@ public struct Window {
     public bool maximized() const {
         i64 me = id
         bool result = false
-        withData([me, ref result](ref Shared data) {
+        readData([me, ref result](ref Shared data) {
             i64 i = indexOf(ref data, me)
             result = data.windows[i].window == addr(0) ? data.windows[i].show == 2 : data.windows[i].maximized
         })
@@ -6058,13 +6084,13 @@ public struct Window {
     public Theme theme() const {
         i64 me = id
         Theme result = Theme.System
-        withData([me, ref result](ref Shared data) { result = data.windows[indexOf(ref data, me)].theme })
+        readData([me, ref result](ref Shared data) { result = data.windows[indexOf(ref data, me)].theme })
         ret result
     }
 
-    // Sets how many frames are drawn each second, from 1 to 240: 60 by default. The
-    // windows are drawn together, at the most frames among those open. A value out of
-    // the range is a panic.
+    // Sets the most frames drawn each second, from 1 to 240: 60 by default. A window is
+    // drawn only when something in it changes, at the most frames among the windows open.
+    // A value out of the range is a panic.
     public void setFps(i32 value) const {
         if (value < 1 || value > 240) {
             panic(format("the frames per second are from 1 to 240, found {}", value))
@@ -6073,11 +6099,11 @@ public struct Window {
         withData([me, value](ref Shared data) { data.windows[indexOf(ref data, me)].fps = value })
     }
 
-    // How many frames of the window are drawn each second: 60 by default.
+    // The most frames of the window drawn each second: 60 by default.
     public i32 fps() const {
         i64 me = id
         i32 result = 0
-        withData([me, ref result](ref Shared data) { result = data.windows[indexOf(ref data, me)].fps })
+        readData([me, ref result](ref Shared data) { result = data.windows[indexOf(ref data, me)].fps })
         ret result
     }
 
@@ -6121,7 +6147,7 @@ public struct Window {
     public bool closed() const {
         i64 me = id
         bool result = false
-        withData([me, ref result](ref Shared data) { result = isClosed(ref data.windows[indexOf(ref data, me)]) })
+        readData([me, ref result](ref Shared data) { result = isClosed(ref data.windows[indexOf(ref data, me)]) })
         ret result
     }
 
@@ -6386,7 +6412,7 @@ void finish() {
 
 i64 openWindows() {
     i64 count = 0
-    withData([ref count](ref Shared data) {
+    readData([ref count](ref Shared data) {
         for (ref WindowData window in data.windows) {
             if (window.started && !isClosed(ref window)) {
                 count++
@@ -6670,10 +6696,12 @@ void run() {
     for (true) {
         u64 start = SDL_GetTicksNS()
         i32 fps = prepare()
+        bool events = false
         for (SDL_PollEvent(event)) {
             handle(event)
+            events = true
         }
-        draw()
+        draw(events)
         u64 frame = 20000000  // without windows, 50 times a second
         if (fps > 0) {
             frame = 1000000000 / u64(fps)
@@ -6695,7 +6723,7 @@ i32 prepare() {
     list<i64> ended
     list<Call> pending
     list<addr> dropped
-    withData([ref fps, ref handlers, ref ended, ref pending, ref dropped](ref Shared data) {
+    loopData([ref fps, ref handlers, ref ended, ref pending, ref dropped](ref Shared data) {
         for (data.pending.len() > 0) {
             pending.add(data.pending.remove(0))
         }
@@ -6706,6 +6734,7 @@ i32 prepare() {
             addr none
             if (window.started && window.window == none && !window.closing) {
                 open(ref window)
+                data.changed = true  // its first frame
             }
             if (window.closing && window.started && !window.notified) {
                 if (window.window != none) {
@@ -7449,14 +7478,24 @@ void press(ref WindowData window, i32 button) {
 
 // ---- The components on the thread of the GUI ----
 
-// The index of a component in the list, or -1.
+// The index of a component in the list, or -1. The components are only added, with ids
+// that grow, so the list is in the order of the ids and the search halves it.
 i64 partNumber(ref list<PartData> parts, i64 id) {
     if (id == 0) {
         ret -1
     }
-    for (i64 i = 0; i < parts.len(); i++) {
-        if (parts[i].id == id) {
-            ret i
+    i64 low = 0
+    i64 high = parts.len() - 1
+    for (low <= high) {
+        i64 middle = low + (high - low) / 2
+        i64 found = parts[middle].id
+        if (found == id) {
+            ret middle
+        }
+        if (found < id) {
+            low = middle + 1
+        } else {
+            high = middle - 1
         }
     }
     ret -1
@@ -7689,7 +7728,11 @@ bool snackVisible(ref WindowData window) {
         window.snackFresh = false
         window.snackShown = SDL_GetTicksNS()
     }
-    ret window.snackText.len() > 0 && SDL_GetTicksNS() - window.snackShown < snackTime
+    bool shown = window.snackText.len() > 0 && SDL_GetTicksNS() - window.snackShown < snackTime
+    if (shown) {
+        wakeAt(ref window, window.snackShown + snackTime)  // to hide it
+    }
+    ret shown
 }
 
 Rect snackBox(ref WindowData window) {
@@ -7806,6 +7849,8 @@ void glide(ref WindowData window, ref list<PartData> parts) {
             part.velocity = part.velocity * (1 - least(1, seconds * 3))
             if (part.velocity < 20 && part.velocity > -20) {
                 part.velocity = 0
+            } else {
+                wakeAt(ref window, now)
             }
         }
     }
@@ -8312,6 +8357,7 @@ struct Frame {
 // disabled closes.
 void layout(ref WindowData window, ref list<PartData> parts) {
     window.order.clear()
+    findChildren(ref window, ref parts)
     Frame content
     content.left = window.originX
     content.top = window.originY
@@ -8472,8 +8518,49 @@ i64 firstReached(ref WindowData window) {
     ret window.dialog != 0 ? window.dialogStart : 0
 }
 
-void layoutIn(ref WindowData window, ref list<PartData> parts, i64 group, Frame frame) {
+// The components of the window by their parent, in the order of the list, so that the
+// layout visits each one once: firstChild[0] is the first component put in the window,
+// firstChild[p + 1] the first one put in the component p, and nextChild[p] the one after
+// p with the same parent, or -1 for each of them.
+void findChildren(ref WindowData window, ref list<PartData> parts) {
+    window.firstChild.clear()
+    window.nextChild.clear()
+    window.firstChild.add(-1)
     for (i64 i = 0; i < parts.len(); i++) {
+        window.firstChild.add(-1)
+        window.nextChild.add(-1)
+    }
+    for (i64 i = parts.len() - 1; i >= 0; i--) {
+        if (parts[i].window != window.id) {
+            continue
+        }
+        i64 slot = 0
+        if (parts[i].parent != 0) {
+            slot = partNumber(ref parts, parts[i].parent) + 1
+            if (slot == 0) {
+                continue
+            }
+        }
+        window.nextChild[i] = window.firstChild[slot]
+        window.firstChild[slot] = i
+    }
+}
+
+// The place in firstChild of the children of a group, or -1 when there is no such group.
+i64 childSlot(ref list<PartData> parts, i64 group) {
+    if (group == 0) {
+        ret 0
+    }
+    i64 p = partNumber(ref parts, group)
+    ret p < 0 ? -1 : p + 1
+}
+
+void layoutIn(ref WindowData window, ref list<PartData> parts, i64 group, Frame frame) {
+    i64 slot = childSlot(ref parts, group)
+    if (slot < 0) {
+        ret
+    }
+    for (i64 i = window.firstChild[slot]; i >= 0; i = window.nextChild[i]) {
         if (parts[i].window != window.id || parts[i].parent != group || parts[i].kind == kindDialog) {
             continue  // a dialog comes after the rest
         }
@@ -8542,7 +8629,7 @@ void layoutIn(ref WindowData window, ref list<PartData> parts, i64 group, Frame 
             inner.left = parts[i].left
             inner.top = parts[i].top
             if (parts[i].kind == kindPanel) {  // D460
-                parts[i].content = contentOf(ref parts, window.id, parts[i].id, parts[i].width, parts[i].height)
+                parts[i].content = contentOf(ref window, ref parts, i, parts[i].width, parts[i].height)
                 clampScroll(ref parts[i])
                 inner.top = parts[i].top - parts[i].offsetY
                 inner.scrolled = parts[i].offsetY
@@ -8572,7 +8659,7 @@ void layoutIn(ref WindowData window, ref list<PartData> parts, i64 group, Frame 
 // A panel of a split, 0 the first and 1 the second.
 i64 splitPane(i64 id, i64 k) {
     i64 result = 0
-    withData([id, k, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, id)].pages[k] })
+    readData([id, k, ref result](ref Shared data) { result = data.parts[partIndexOf(ref data, id)].pages[k] })
     ret result
 }
 
@@ -8766,10 +8853,11 @@ void drawSash(ref WindowData window, ref PartData split, ref Colors c) {
 // The height of what a panel has: its components visible anchored at the top,
 // arranged for its size, and 16 pixels under the lowest when it ends below the
 // panel (P46). The others follow the height seen.
-f32 contentOf(ref list<PartData> parts, i64 window, i64 panel, i32 width, i32 height) {
+f32 contentOf(ref WindowData window, ref list<PartData> parts, i64 panel, i32 width, i32 height) {
     f32 bottom = 0
-    for (i64 i = 0; i < parts.len(); i++) {
-        if (parts[i].window == window && parts[i].parent == panel && parts[i].visible && parts[i].vertical == Vertical.Top) {
+    for (i64 i = window.firstChild[panel + 1]; i >= 0; i = window.nextChild[i]) {
+        if (parts[i].window == window.id && parts[i].parent == parts[panel].id && parts[i].visible &&
+            parts[i].vertical == Vertical.Top) {
             arrange(ref parts[i], width, height)
             bottom = most(bottom, f32(parts[i].y + parts[i].height))
         }
@@ -8831,11 +8919,18 @@ void arrange(ref PartData part, i32 width, i32 height) {
 
 // ---- The drawing ----
 
-void draw() {
-    withData([](ref Shared data) {
+// Draws the windows when something changed: an event came, the program changed their
+// data, or a window waits for a moment of its own, as the caret that blinks (D522). The
+// others keep their last frame.
+void draw(bool events) {
+    loopData([events](ref Shared data) {
+        bool all = events || data.changed
+        data.changed = false
+        u64 now = SDL_GetTicksNS()
         for (ref WindowData window in data.windows) {
             addr none
-            if (window.window != none && !window.closing) {
+            bool due = all || (window.wake != 0 && now >= window.wake)
+            if (window.window != none && !window.closing && due) {
                 drawWindow(ref window, ref data.parts, ref data.images)
                 for (ref Call call in window.requests) {  // D486: called before the next frame
                     data.pending.add(move call)
@@ -8846,9 +8941,26 @@ void draw() {
     })
 }
 
+// Whether the caret is drawn now: it blinks, on for half a second and off for the next
+// half, and its window is drawn again when it turns (D522).
+bool caretOn(ref WindowData window) {
+    u64 since = SDL_GetTicksNS() - window.caretStart
+    wakeAt(ref window, window.caretStart + (since / 500000000 + 1) * 500000000)
+    ret (since / 500000000) % 2 == 0
+}
+
+// The window is drawn again by itself at 'at', or earlier: what moves with the time
+// asks for it while it is drawn, at 'now' for the next frame (D522).
+void wakeAt(ref WindowData window, u64 at) {
+    if (window.wake == 0 || at < window.wake) {
+        window.wake = at
+    }
+}
+
 // The content with its components, the title bar with its title and its buttons,
 // and a line at the edges when the window is not maximized (D431).
 void drawWindow(ref WindowData window, ref list<PartData> parts, ref list<ImageData> images) {
+    window.wake = 0
     i32 w = 0
     i32 h = 0
     SDL_GetWindowSize(window.window, ref w, ref h)
@@ -8924,11 +9036,14 @@ void drawParts(ref WindowData window, ref list<PartData> parts, ref Colors c, i6
     u64 now = SDL_GetTicksNS()
     for (i64 k = first; k < end; k++) {
         i64 i = window.order[k]
-        bool seen = now - parts[i].scrollShown < 1000000000 || window.scrolling == parts[i].id ||
-            !window.phone && inside(ref parts[i], window.pointerX, window.pointerY)
+        bool recent = now - parts[i].scrollShown < 1000000000
+        bool seen = recent || window.scrolling == parts[i].id || !window.phone && inside(ref parts[i], window.pointerX, window.pointerY)
         if (parts[i].shown && !parts[i].inTitle && scrolls(ref parts[i]) && seen) {
             clipPart(r, ref parts[i])
             drawScrollBar(ref window, ref parts[i], ref c)
+            if (recent) {
+                wakeAt(ref window, parts[i].scrollShown + 1000000000)  // to hide the bar
+            }
         }
         if (parts[i].id == window.sash && parts[i].kind == kindSplit && parts[i].shown && !parts[i].inTitle) {  // D511
             clipPart(r, ref parts[i])
@@ -9190,8 +9305,7 @@ void drawPart(ref WindowData window, ref PartData part, ref Colors c, ref list<I
         } else {
             text(window.body, part.text, left, baseline, c.ink, on)
         }
-        bool blink = ((SDL_GetTicksNS() - window.caretStart) / 500000000) % 2 == 0
-        if (focused && blink) {
+        if (focused && caretOn(ref window)) {
             fill(r, c.ink, left + caretX, baseline - ascent, 1, ascent + descent)
         }
         clipPart(r, ref part)
@@ -9265,7 +9379,11 @@ void drawSwitch(ref WindowData window, ref PartData part, ref Colors c, bool foc
     bool on = part.active
     f32 x = part.left + f32(part.width) - switchWidth
     f32 y = part.top + (f32(part.height) - switchHeight) / 2
-    f32 moved = f32(SDL_GetTicksNS() - part.flipped) / 150000000
+    u64 now = SDL_GetTicksNS()
+    f32 moved = f32(now - part.flipped) / 150000000
+    if (moved < 1 && part.flipped != 0) {
+        wakeAt(ref window, now)  // the knob is moving
+    }
     moved = moved > 1 ? 1 : moved
     f32 at = part.checked ? moved : 1 - moved
     if (part.flipped == 0) {
@@ -10137,7 +10255,7 @@ void setPartTooltip(i64 id, string text) {
 
 string partTooltip(i64 id) {
     string text
-    withData([id, ref text](ref Shared data) { text = data.parts[partIndexOf(ref data, id)].tooltip })
+    readData([id, ref text](ref Shared data) { text = data.parts[partIndexOf(ref data, id)].tooltip })
     ret text
 }
 
@@ -10556,8 +10674,11 @@ string tipText(ref WindowData window, ref list<PartData> parts) {
         i64 p = partNumber(ref parts, window.tipPart)
         ret p >= 0 && parts[p].shown ? parts[p].tooltip : ""
     }
-    if (window.hot == 0 || window.tipBlocked || window.held != 0 || window.canvasHeld != 0 || window.scrolling != 0 ||
-        SDL_GetTicksNS() - window.hotSince < tipDelay) {
+    if (window.hot == 0 || window.tipBlocked || window.held != 0 || window.canvasHeld != 0 || window.scrolling != 0) {
+        ret ""
+    }
+    if (SDL_GetTicksNS() - window.hotSince < tipDelay) {
+        wakeAt(ref window, window.hotSince + tipDelay)  // to show the tooltip
         ret ""
     }
     i64 p = partNumber(ref parts, window.hot)
@@ -10625,6 +10746,7 @@ void checkLongPress(ref WindowData window, ref list<PartData> parts) {
         ret
     }
     if (SDL_GetTicksNS() - window.longStart < longPress) {
+        wakeAt(ref window, window.longStart + longPress)
         ret
     }
     i64 p = partNumber(ref parts, window.longPart)
@@ -10934,7 +11056,7 @@ void drawTextArea(ref WindowData window, ref PartData area, ref Colors c, bool f
     i64 low = area.caret < area.anchor ? area.caret : area.anchor
     i64 high = area.caret < area.anchor ? area.anchor : area.caret
     i64 caretAt = caretLine(ref area, area.caret)
-    bool blink = ((SDL_GetTicksNS() - window.caretStart) / 500000000) % 2 == 0
+    bool blink = focused && caretOn(ref window)
     for (i64 k = i64(area.offsetY / line); k < area.wrapStarts.len(); k++) {
         f32 top = y + areaPad + f32(k) * line - area.offsetY
         if (top >= y + h) {
@@ -10953,7 +11075,7 @@ void drawTextArea(ref WindowData window, ref PartData area, ref Colors c, bool f
             fill(r, c.selectionSoft, left + sx, top + 1, ex - sx + (more ? 5 : 0), line - 2)
         }
         text(window.body, value, left, baseline, c.ink, on)
-        if (focused && blink && k == caretAt) {
+        if (blink && k == caretAt) {
             f32 cx = textWidth(window.body, value, area.caret - from)
             fill(r, c.ink, left + cx, baseline - ascent, 1, ascent + descent)
         }
@@ -11018,7 +11140,9 @@ void drawProgressBar(ref WindowData window, ref PartData part, ref Colors c) {
     f32 top = part.top + (f32(part.height) - bar) / 2
     cromo_gui_box(r, x, top, w, bar, bar / 2, 0, d, solid(c.rule, on), 0)
     if (part.checked) {
-        f32 phase = f32((SDL_GetTicksNS() / 1000000) % 1200) / 1200
+        u64 now = SDL_GetTicksNS()
+        wakeAt(ref window, now)  // busy: it runs at each frame
+        f32 phase = f32((now / 1000000) % 1200) / 1200
         f32 span = w / 3
         clipInside(r, ref part, x, top, w, bar)
         cromo_gui_box(r, x - span + (w + span) * phase, top, span, bar, bar / 2, 0, d, solid(c.accent, on), 0)

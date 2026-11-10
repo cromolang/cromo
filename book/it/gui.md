@@ -41,7 +41,7 @@ i32 main() {
 Cinque regole spiegano l'intero modulo.
 
 - **Finestre e componenti sono handle.** Un `gui.Window`, un `gui.Button` o un `gui.Table` è un piccolo valore che indica una finestra o un componente tenuto dalla libreria. Le sue copie indicano lo stesso oggetto, e una lambda lo cattura per copia. Una finestra non ha distruttore: resta aperta quando la sua variabile finisce, finché l'utente o il programma non la chiude.
-- **Un solo thread disegna tutte le finestre.** Il primo `start()` avvia il *thread delle finestre*: disegna ogni finestra del programma, a 60 fotogrammi al secondo di default, ed esegue gli handler degli eventi, uno alla volta, nell'ordine degli eventi. Un handler può cambiare qualunque componente di qualunque finestra.
+- **Un solo thread disegna tutte le finestre.** Il primo `start()` avvia il *thread delle finestre*: disegna le finestre del programma quando qualcosa cambia in esse, al massimo a 60 fotogrammi al secondo di default, ed esegue gli handler degli eventi, uno alla volta, nell'ordine degli eventi. Un handler può cambiare qualunque componente di qualunque finestra.
 - **Un handler deve ritornare presto.** Mentre un handler è in esecuzione, nessuna finestra viene disegnata e nessun altro handler viene eseguito: un handler che impiega molto blocca tutte le finestre. Il lavoro lungo va a un altro thread, che cambia i componenti quando ha il risultato.
 - **I metodi si possono chiamare da qualunque thread.** I metodi delle finestre e dei componenti prendono un lock, perciò `main`, un thread o un task possono cambiare un'etichetta o una barra di avanzamento mentre l'utente lavora: il cambiamento si vede al fotogramma successivo. Quando è il programma a cambiare un componente, come con `setText` o `setChecked`, gli handler non vengono chiamati: sono per ciò che fa l'utente.
 - **La fine di `main` aspetta le finestre.** Quando `main` ritorna, il programma aspetta che tutte le sue finestre siano chiuse, e poi termina con il codice di uscita di `main`. `os.exit` lo termina subito.
@@ -177,7 +177,7 @@ i32 main() {
 - `setSize(width, height)`, `width()` e `height()`: la dimensione dell'intera finestra, che segue l'utente quando la ridimensiona. Prima di `start`, `setSize` dà la dimensione con cui la finestra parte.
 - `setResizable(false)` impedisce all'utente di ridimensionare la finestra dai suoi bordi e di massimizzarla; `resizable()` lo legge, vero di default.
 - `minimize()`, `maximize()` e `restore()` cambiano lo stato della finestra, e `minimized()` e `maximized()` lo leggono. Chiamati prima di `start`, scelgono come parte la finestra.
-- `setFps(n)` imposta quanti fotogrammi vengono disegnati ogni secondo, da 1 a 240, e `fps()` lo legge: 60 di default. Tutte le finestre sono disegnate insieme, al numero più alto di fotogrammi fra quelle aperte. Un valore fuori dall'intervallo è un panic.
+- `setFps(n)` imposta il numero massimo di fotogrammi disegnati ogni secondo, da 1 a 240, e `fps()` lo legge: 60 di default. Una finestra viene disegnata solo quando qualcosa cambia in essa: un evento, una modifica del programma, o ciò che si muove da solo, come il cursore che lampeggia; una finestra ferma non usa il processore. Un valore fuori dall'intervallo è un panic.
 
 ### Eventi del mouse e dei tasti
 

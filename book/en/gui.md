@@ -41,7 +41,7 @@ i32 main() {
 Five rules explain the whole module.
 
 - **Windows and components are handles.** A `gui.Window`, a `gui.Button` or a `gui.Table` is a small value that names a window or a component kept by the library. Its copies name the same one, and a lambda captures it by copy. A window has no destructor: it stays open when its variable ends, until the user or the program closes it.
-- **One thread draws all the windows.** The first `start()` starts the *thread of the windows*: it draws every window of the program, at 60 frames a second by default, and runs the handlers of the events, one at a time, in the order of the events. A handler can change any component of any window.
+- **One thread draws all the windows.** The first `start()` starts the *thread of the windows*: it draws the windows of the program when something in them changes, at most 60 frames a second by default, and runs the handlers of the events, one at a time, in the order of the events. A handler can change any component of any window.
 - **A handler must return soon.** While a handler runs, no window is drawn and no other handler runs: a handler that takes long freezes all the windows. Long work goes to another thread, which changes the components when it has the result.
 - **The methods can be called from any thread.** The methods of the windows and of the components take a lock, so `main`, a thread or a task can change a label or a progress bar while the user works: the change shows at the next frame. When the program changes a component, as with `setText` or `setChecked`, the handlers are not called: they are for what the user does.
 - **The end of `main` waits for the windows.** When `main` returns, the program waits until all its windows are closed, and then ends with the exit code of `main`. `os.exit` ends it at once.
@@ -177,7 +177,7 @@ i32 main() {
 - `setSize(width, height)`, `width()` and `height()`: the size of the whole window, which follows the user who resizes it. Before `start`, `setSize` gives the size the window starts with.
 - `setResizable(false)` stops the user from resizing the window with its edges and from maximizing it; `resizable()` reads it, true by default.
 - `minimize()`, `maximize()` and `restore()` change the state of the window, and `minimized()` and `maximized()` read it. Called before `start`, they choose how the window starts.
-- `setFps(n)` sets how many frames are drawn each second, from 1 to 240, and `fps()` reads it: 60 by default. All the windows are drawn together, at the most frames among those open. A value out of the range is a panic.
+- `setFps(n)` sets the most frames drawn each second, from 1 to 240, and `fps()` reads it: 60 by default. A window is drawn only when something in it changes: an event, a change of the program, or what moves by itself, as the caret that blinks; a still window does not use the processor. A value out of the range is a panic.
 
 ### Events of the mouse and of the keys
 

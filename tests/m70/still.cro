@@ -1,0 +1,35 @@
+// A still window is drawn again when the program changes it (D522): a text view marked
+// while nothing happens scrolls to the mark at the next frame, which only the drawing
+// does; what the program reads, as 'closed()' and 'scrollY()', does not draw it.
+// target: windows linux-x86_64
+// program-env: SDL_VIDEO_DRIVER=offscreen
+// expect-output: still at 0
+// expect-output: scrolled at the next frame
+// expect-output: closed true
+import std.gui
+import std.time
+
+i32 main() {
+    gui.Window w = gui.Window("still", 400, 300)
+    gui.TextView view = w.add(gui.TextView(0, 100, 400, 60))
+    gui.RichText t
+    for (i64 i = 0; i < 20; i++) {
+        t.link(i, format("line {}\n", i), gui.TextStyle(gui.Ink.Normal))
+    }
+    view.setText(move t)
+    w.start()
+    for (i32 i = 0; i < 50 && !w.closed(); i++) {  // still: read 50 times
+        time.msleep(10)
+    }
+    println("still at {}", view.scrollY())
+    // The last line: only the drawing scrolls to it.
+    view.setMarked(19)
+    for (i32 i = 0; i < 300 && view.scrollY() == 0; i++) {  // at most 3 seconds
+        time.msleep(10)
+    }
+    println("{}", view.scrollY() > 0 ? "scrolled at the next frame" : "not drawn again")
+    w.close()
+    w.wait()
+    println("closed {}", w.closed())
+    ret 0
+}
