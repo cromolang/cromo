@@ -256,6 +256,7 @@ foreach ($test in Get-ChildItem $PSScriptRoot -Recurse -Filter *.cro | Sort-Obje
     $name = $test.FullName.Substring($PSScriptRoot.Length + 1)
     $folders = $name -split '\\'
     if ($folders -contains 'modules' -or $folders -contains 'formatting' -or $folders -contains 'lsp') { continue }
+    if ($folders[0] -eq 'out') { continue }  # what the tests write, as the module of a form
     if ($test.BaseName.EndsWith('_test')) { continue }
     if ($Filter -and -not $name.Contains($Filter)) { continue }
 

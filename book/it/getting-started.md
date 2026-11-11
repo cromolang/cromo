@@ -23,7 +23,7 @@ cromo version
 ```
 
 ```output
-cromo 0.69.0 (LLVM 23.1.4)
+cromo 0.72.0 (LLVM 23.1.4)
 ```
 
 Tutto qui. `cromo` contiene il compilatore e il linker: non ha bisogno di un compilatore C, di Visual Studio né del Windows SDK. Su Linux, `cromo` richiede glibc 2.29 o successiva, come in Ubuntu 20.04, Debian 11 e nelle loro versioni successive; le distribuzioni basate su musl, come Alpine, non sono supportate.

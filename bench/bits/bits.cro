@@ -30,7 +30,7 @@ u64 reverse(u64 value) {
     ret (x >> 32) | (x << 32)
 }
 
-u64 rotateLeft(u64 x, u64 count) {
+u64 rotated(u64 x, u64 count) {
     ret (x << count) | (x >> (64 - count))
 }
 
@@ -52,7 +52,7 @@ i32 main() {
             u64 lowest = x & (!x + 1)
             zeros += u64(table[i64((lowest * deBruijn) >> 58)])
         }
-        mixed ^= rotateLeft(reverse(x), 1 + x % 63)
+        mixed ^= rotated(reverse(x), 1 + x % 63)
         mixed += x ^ (x >> 1)
     }
     println("ones {} zeros {} mixed {:x}", ones, zeros, mixed)

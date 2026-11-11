@@ -126,7 +126,7 @@ sum: 120 µs</pre></div>
       <div class="stat"><b>0</b><span>dependencies: no libc, no Windows SDK</span></div>
       <div class="stat"><b>32 KB</b><span>for a hello world, statically linked</span></div>
       <div class="stat"><b>4</b><span>targets: Windows x64, Linux x64, Linux ARM64 and Android</span></div>
-      <div class="stat"><b>516</b><span>design decisions, all written down</span></div>
+      <div class="stat"><b>522</b><span>design decisions, all written down</span></div>
     </div></div>
   </div>
 
@@ -427,46 +427,48 @@ cromo @VERSION@ (LLVM 23.1.4)</pre>
     <div class="wrap">
       <div class="kicker">Benchmarks</div>
       <h2>As fast as C++, <span class="chrome">measured</span></h2>
-      <p class="section-lead">Eleven small programs — allocation, recursion, floating point, strings, hash maps, threads — written in Cromo, C++, Go and Rust, compiled with the usual optimizations and run on the same machine. Every version of <code>cromo</code> is measured against the previous ones and against the references.</p>
+      <p class="section-lead">Thirteen small programs — allocation, recursion, floating point, strings, hash maps, threads, tasks, a server of HTTP — written in Cromo, C++, Go and Rust, compiled with the usual optimizations and run on the same machine. Every version of <code>cromo</code> is measured against the previous ones and against the references.</p>
       <div class="bench">
         <div class="card">
           <h3>Run time</h3>
           <p class="note">Geometric mean, relative to g++ -O2. Lower is faster.</p>
           <div class="bars">
-            <div class="bar"><span>clang++ 18</span><i style="width:81%"></i><b>0.95</b></div>
-            <div class="bar cromo"><span>cromo 0.16</span><i style="width:84%"></i><b>0.98</b></div>
-            <div class="bar"><span>g++ 14</span><i style="width:85%"></i><b>1.00</b></div>
-            <div class="bar"><span>rustc 1.96</span><i style="width:87%"></i><b>1.02</b></div>
-            <div class="bar"><span>go 1.22</span><i style="width:100%"></i><b>1.17</b></div>
+            <div class="bar cromo"><span>cromo 0.72</span><i style="width:78%"></i><b>0.88</b></div>
+            <div class="bar"><span>clang++ 18</span><i style="width:85%"></i><b>0.95</b></div>
+            <div class="bar"><span>g++ 14</span><i style="width:89%"></i><b>1.00</b></div>
+            <div class="bar"><span>rustc 1.96</span><i style="width:89%"></i><b>1.00</b></div>
+            <div class="bar"><span>go 1.22</span><i style="width:100%"></i><b>1.12</b></div>
           </div>
           <h3>Compile time</h3>
           <p class="note">Geometric mean, relative to g++ -O2.</p>
           <div class="bars">
-            <div class="bar"><span>go 1.22</span><i style="width:36%"></i><b>0.36</b></div>
-            <div class="bar"><span>rustc 1.96</span><i style="width:42%"></i><b>0.42</b></div>
-            <div class="bar cromo"><span>cromo 0.16</span><i style="width:63%"></i><b>0.63</b></div>
-            <div class="bar"><span>clang++ 18</span><i style="width:89%"></i><b>0.89</b></div>
+            <div class="bar"><span>go 1.22</span><i style="width:37%"></i><b>0.37</b></div>
+            <div class="bar cromo"><span>cromo 0.72</span><i style="width:44%"></i><b>0.44</b></div>
+            <div class="bar"><span>rustc 1.96</span><i style="width:47%"></i><b>0.47</b></div>
+            <div class="bar"><span>clang++ 18</span><i style="width:87%"></i><b>0.87</b></div>
             <div class="bar"><span>g++ 14</span><i style="width:100%"></i><b>1.00</b></div>
           </div>
         </div>
         <div class="card">
           <h3>Run time of each program, in milliseconds</h3>
-          <p class="note">The median of 5 runs; the fastest of each row is green.</p>
+          <p class="note">The median of 5 runs; the fastest of each row is green. The means are of the eleven programs that every language has: <code>http</code> and <code>tasks</code> are against Go alone.</p>
           <div class="table-wrap">
             <table class="times">
-              <thead><tr><th>benchmark</th><th class="cromo">cromo 0.16</th><th>g++ 14</th><th>clang++ 18</th><th>go 1.22</th><th>rustc 1.96</th></tr></thead>
+              <thead><tr><th>benchmark</th><th class="cromo">cromo 0.72</th><th>g++ 14</th><th>clang++ 18</th><th>go 1.22</th><th>rustc 1.96</th></tr></thead>
               <tbody>
-                <tr><td>binarytrees</td><td class="cromo">999</td><td class="best">956</td><td>968</td><td>1434</td><td>1713</td></tr>
-                <tr><td>bits</td><td class="cromo best">435</td><td>520</td><td>500</td><td>715</td><td>502</td></tr>
-                <tr><td>collatz</td><td class="cromo">529</td><td>746</td><td class="best">522</td><td>844</td><td>524</td></tr>
-                <tr><td>fib</td><td class="cromo">561</td><td class="best">360</td><td>503</td><td>1116</td><td>608</td></tr>
-                <tr><td>mandelbrot</td><td class="cromo">832</td><td>820</td><td class="best">812</td><td>831</td><td>843</td></tr>
-                <tr><td>shapes</td><td class="cromo">481</td><td class="best">470</td><td>489</td><td>753</td><td>491</td></tr>
-                <tr><td>sort</td><td class="cromo">540</td><td>582</td><td>592</td><td>611</td><td class="best">486</td></tr>
-                <tr><td>spectralnorm</td><td class="cromo">513</td><td class="best">503</td><td>515</td><td>515</td><td>521</td></tr>
-                <tr><td>strings</td><td class="cromo">757</td><td>452</td><td class="best">440</td><td>691</td><td>475</td></tr>
-                <tr><td>threads</td><td class="cromo best">111</td><td>112</td><td class="best">111</td><td>113</td><td>112</td></tr>
-                <tr><td>wordcount</td><td class="cromo">599</td><td>1181</td><td>685</td><td class="best">346</td><td>705</td></tr>
+                <tr><td>binarytrees</td><td class="cromo">1113</td><td class="best">1067</td><td>1179</td><td>1518</td><td>1822</td></tr>
+                <tr><td>bits</td><td class="cromo best">460</td><td>549</td><td>519</td><td>757</td><td>527</td></tr>
+                <tr><td>collatz</td><td class="cromo best">542</td><td>771</td><td>544</td><td>886</td><td>543</td></tr>
+                <tr><td>fib</td><td class="cromo">532</td><td class="best">389</td><td>568</td><td>1154</td><td>648</td></tr>
+                <tr><td>http</td><td class="cromo best">1554</td><td>–</td><td>–</td><td>2286</td><td>–</td></tr>
+                <tr><td>mandelbrot</td><td class="cromo">876</td><td>851</td><td class="best">846</td><td>865</td><td>879</td></tr>
+                <tr><td>shapes</td><td class="cromo">517</td><td class="best">504</td><td>515</td><td>794</td><td>508</td></tr>
+                <tr><td>sort</td><td class="cromo">545</td><td>617</td><td>634</td><td>652</td><td class="best">543</td></tr>
+                <tr><td>spectralnorm</td><td class="cromo">544</td><td class="best">521</td><td>531</td><td>549</td><td>540</td></tr>
+                <tr><td>strings</td><td class="cromo best">355</td><td>481</td><td>469</td><td>712</td><td>505</td></tr>
+                <tr><td>tasks</td><td class="cromo">476</td><td>–</td><td>–</td><td class="best">328</td><td>–</td></tr>
+                <tr><td>threads</td><td class="cromo">116</td><td>119</td><td class="best">114</td><td>119</td><td>121</td></tr>
+                <tr><td>wordcount</td><td class="cromo">736</td><td>1723</td><td>921</td><td class="best">354</td><td>900</td></tr>
               </tbody>
             </table>
           </div>
@@ -480,12 +482,12 @@ cromo @VERSION@ (LLVM 23.1.4)</pre>
     <div class="wrap">
       <div class="kicker">Roadmap</div>
       <h2>Built in the open, <span class="chrome">one milestone at a time</span></h2>
-      <p class="section-lead">Every choice is decided first and written down with its reasons, then implemented with tests on Windows and Linux. Forty-nine milestones, from M0 to M49, are done; M34 is next.</p>
-      <div class="progress-label"><span>M0 – M49 done, but M34</span><span>49 of 50 numbered milestones</span></div>
-      <div class="progress" aria-hidden="true"><div style="width:98%"></div></div>
+      <p class="section-lead">Every choice is decided first and written down with its reasons, then implemented with tests on Windows and Linux. Seventy-two milestones, from M0 to M72, are done; M34 is next.</p>
+      <div class="progress-label"><span>M0 – M72 done, but M34</span><span>72 of 73 numbered milestones</span></div>
+      <div class="progress" aria-hidden="true"><div style="width:99%"></div></div>
       <div class="roadmap">
         <div class="phase">
-          <h3>Done <span class="badge done">M0 – M49</span></h3>
+          <h3>Done <span class="badge done">M0 – M72</span></h3>
           <ul class="steps">
             <li><b>M0–2</b><span>LLVM backend, numbers, control flow, structs, RAII</span></li>
             <li><b>M3–6</b><span>Ownership, generics, interfaces, lists, strings, enums, exceptions</span></li>
@@ -526,6 +528,10 @@ cromo @VERSION@ (LLVM 23.1.4)</pre>
             <li><b>M66</b><span><code>--cpu x86-64-v3</code>: AVX2 in the whole program, checked at the start</span></li>
             <li><b>M68</b><span>Projects: <code>cromo.mod</code>, modules of folders, several executables in one build</span></li>
             <li><b>M69</b><span>The guide as the manual of the language, the reference of the library, <code>detach()</code></span></li>
+            <li><b>M70</b><span>Windows drawn only when something changes: a program that waits uses no processor</span></li>
+            <li><b>M71</b><span><code>cromo design</code>: the windows composed with the mouse, saved as a form and as a module</span></li>
+            <li><b>M72</b><span>Windows drawn while they are resized, their title bar, its icon and rounded corners</span></li>
+            <li><b>0.72</b><span>What Cromo checks and what it does not, in the guide; how to contribute</span></li>
           </ul>
         </div>
         <div class="phase">
@@ -533,6 +539,8 @@ cromo @VERSION@ (LLVM 23.1.4)</pre>
           <ul class="steps">
             <li><b>M34</b><span>Sema in Cromo: the types of the declarations and of the expressions</span></li>
             <li><b>packages</b><span><code>cromo get</code>, <code>cromo.mod</code> and versions from Git tags</span></li>
+            <li><b>macOS</b><span>Programs for macOS, on Apple Silicon and Intel</span></li>
+            <li><b>library</b><span>Regular expressions, a database with SQLite, dates and time zones, logs</span></li>
           </ul>
         </div>
         <div class="phase">
@@ -571,7 +579,9 @@ cromo @VERSION@ (LLVM 23.1.4)</pre>
         <a class="download" href="package/linux_x86_64-@VERSION@.tar.gz"><span><b>Linux x64</b> · <code>linux_x86_64-@VERSION@.tar.gz</code></span><span class="soon">download</span></a>
         <a class="download" href="download/"><span><b>All downloads</b> · checksums, signatures, installing by hand</span><span class="soon">open</span></a>
         <a class="download" href="book/"><span><b>The Cromo Guide</b> · also as PDF, in English and Italian</span><span class="soon">read</span></a>
+        <a class="download" href="book/en/appendix-safety.html"><span><b>What is safe, and what is not</b> · the guarantees, their limits and their price</span><span class="soon">read</span></a>
         <a class="download" href="https://github.com/cromolang/cromo"><span><b>Source</b> · compiler, library, specification and decisions</span><span class="soon">GitHub</span></a>
+        <a class="download" href="https://github.com/cromolang/cromo/blob/main/CONTRIBUTING.md"><span><b>Contributing</b> · criticism, reports and code are welcome</span><span class="soon">GitHub</span></a>
       </div>
     </div>
   </div>
