@@ -1,0 +1,75 @@
+// The notes and where the service keeps them: a list in memory, written to a file of
+// JSON at each change. The three programs share the types; only the service has a Store.
+import std.fs
+import std.json
+
+public struct Note {
+    public i64 id
+    public string title
+    public string text
+}
+
+// What a client sends to write a note.
+public struct NewNote {
+    public string title
+    public string text
+}
+
+public struct Store {
+    public list<Note> notes
+    i64 next = 1
+    string file  // "" keeps the notes only in memory
+
+    // Reads the notes of the file, if there is one, and keeps them there from now on.
+    public void open(string path) {
+        file = path.copy()
+        if (fs.exists(path)) {
+            notes = json.decode<list<Note>>(fs.readText(path))
+            for (Note note in notes) {
+                if (note.id >= next) {
+                    next = note.id + 1
+                }
+            }
+        }
+    }
+
+    public Note add(string title, string text) {
+        Note note
+        note.id = next
+        note.title = title.copy()
+        note.text = text.copy()
+        next++
+        notes.add(note.copy())
+        save()
+        ret note
+    }
+
+    // Removes the note with this id: false when there is none.
+    public bool remove(i64 id) {
+        for (i64 i = 0; i < notes.len(); i++) {
+            if (notes[i].id == id) {
+                notes.remove(i)
+                save()
+                ret true
+            }
+        }
+        ret false
+    }
+
+    void save() {
+        if (file.len() > 0) {
+            fs.writeText(file, json.pretty(notes))
+        }
+    }
+}
+
+[[test]]
+void addGivesNewIds() {
+    Store store
+    Note first = store.add("a", "one")
+    Note second = store.add("b", "two")
+    assert(second.id == first.id + 1)
+    assert(store.remove(first.id))
+    assert(!store.remove(first.id))
+    assert(store.notes.len() == 1)
+}

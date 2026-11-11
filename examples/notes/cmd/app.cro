@@ -1,0 +1,119 @@
+// The notes in a window, on Windows and Linux, and with --target android on a phone.
+//
+//     cromo run notes-app
+//
+// A handler of the window never waits for the network: it starts a task that asks
+// the service and then changes the components, which any thread can do.
+//
+// Draft: the names of the components and of their methods
+import api
+import std.gui
+import std.thread
+import store
+
+struct Ui {
+    gui.Window w
+    gui.TextBox server
+    gui.ListView notes
+    gui.TextBox title
+    gui.TextArea text
+    gui.Button add
+    gui.Button remove
+    gui.Label status
+}
+
+// Asks the service for the notes and shows them: 'shown' keeps them, in the order of
+// the list, for the handlers.
+void reload(Ui ui, thread.Shared<list<Note>> shown, string server) {
+    try {
+        list<Note> all = allNotes(server)
+        ui.notes.clear()
+        for (Note note in all) {
+            ui.notes.addItem(gui.Icon.FileText, note.title, note.text, format("#{}", note.id))
+        }
+        ui.status.setText(format("{} {} on {}", all.len(), all.len() == 1 ? "note" : "notes", server))
+        shown.lock([all](ref list<Note> v) { v = all })
+    } catch (Exception e) {
+        ui.status.setText(e.message())
+    }
+}
+
+// Starts 'work' on a task of its own, and lets it go.
+void later(move func() work) {
+    thread.Task task = thread.Task(move work)
+    task.start()
+    task.detach()
+}
+
+[[window]]
+i32 main() {
+    Ui ui
+    ui.w = gui.Window("Notes", 640, 440)
+    ui.server = ui.w.add(gui.TextBox("http://127.0.0.1:8080", 16, 16, 500, 28))
+    ui.server.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Top)
+    gui.Button refresh = ui.w.add(gui.Button("Refresh", 528, 16, 96, 28))
+    refresh.setAnchor(gui.Horizontal.Right, gui.Vertical.Top)
+    ui.notes = ui.w.add(gui.ListView(16, 56, 300, 300))
+    ui.notes.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Stretch)
+    ui.title = ui.w.add(gui.TextBox("", 328, 56, 296, 28))
+    ui.title.setPlaceholder("Title")
+    ui.title.setAnchor(gui.Horizontal.Right, gui.Vertical.Top)
+    ui.text = ui.w.add(gui.TextArea("", 328, 92, 296, 228))
+    ui.text.setPlaceholder("Write the note")
+    ui.text.setAnchor(gui.Horizontal.Right, gui.Vertical.Stretch)
+    ui.add = ui.w.add(gui.Button("Add", 328, 328, 96, 28))
+    ui.add.setAnchor(gui.Horizontal.Right, gui.Vertical.Bottom)
+    ui.remove = ui.w.add(gui.Button("Remove", 432, 328, 96, 28))
+    ui.remove.setAnchor(gui.Horizontal.Right, gui.Vertical.Bottom)
+    ui.status = ui.w.add(gui.Label("", 16, 368, 608, 20))
+    ui.status.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Bottom)
+    thread.Shared<list<Note>> shown = thread.Shared<list<Note>>(list<Note>())
+
+    refresh.onClick([ui, shown]() {
+        string server = ui.server.text()
+        later([ui, shown, move server]() { reload(ui, shown, server) })
+    })
+    ui.add.onClick([ui, shown]() {
+        string server = ui.server.text()
+        string title = ui.title.text()
+        string text = ui.text.text()
+        later([ui, shown, move server, move title, move text]() {
+            try {
+                addNote(server, title, text)
+                ui.title.setText("")
+                ui.text.setText("")
+                reload(ui, shown, server)
+            } catch (Exception e) {
+                ui.status.setText(e.message())
+            }
+        })
+    })
+    ui.remove.onClick([ui, shown]() {
+        i64 index = ui.notes.selected()
+        i64 id = 0
+        shown.lock([ref id, index](ref list<Note> v) { id = index >= 0 && index < v.len() ? v[index].id : 0 })
+        if (id == 0) {
+            ui.w.showSnackbar("Choose a note first")
+            ret
+        }
+        string server = ui.server.text()
+        later([ui, shown, id, move server]() {
+            try {
+                removeNote(server, id)
+                reload(ui, shown, server)
+            } catch (Exception e) {
+                ui.status.setText(e.message())
+            }
+        })
+    })
+    ui.notes.onChoose([ui, shown](i64 index) {
+        shown.lock([ui, index](ref list<Note> v) {
+            ui.title.setText(v[index].title)
+            ui.text.setText(v[index].text)
+        })
+    })
+
+    ui.w.start()
+    later([ui, shown]() { reload(ui, shown, "http://127.0.0.1:8080") })
+    ret 0
+}

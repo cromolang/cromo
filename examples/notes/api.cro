@@ -1,0 +1,32 @@
+// The service as its clients see it: a function for each request. The tool and the app
+// call these, and know nothing of HTTP. An answer that is not the one expected, and a
+// service that cannot be reached, are exceptions.
+import std.http
+import std.json
+import store
+
+void expect(http.Response res, i32 status) {
+    if (res.status != status) {
+        throw Error(format("the service answered {}: {}", res.status, res.text().trim()))
+    }
+}
+
+public list<Note> allNotes(string server) {
+    http.Response res = http.get(server + "/notes")
+    expect(res, 200)
+    ret json.decode<list<Note>>(res.text())
+}
+
+public Note addNote(string server, string title, string text) {
+    NewNote input
+    input.title = title.copy()
+    input.text = text.copy()
+    http.Response res = http.post(server + "/notes", json.encode(input), "application/json")
+    expect(res, 201)
+    ret json.decode<Note>(res.text())
+}
+
+public void removeNote(string server, i64 id) {
+    http.Response res = http.send(http.Request("DELETE", format("{}/notes/{}", server, id)))
+    expect(res, 204)
+}

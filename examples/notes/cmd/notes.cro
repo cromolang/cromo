@@ -1,0 +1,44 @@
+// The notes from the terminal.
+//
+//     notes list
+//     notes add "Buy the bread" "Before seven"
+//     notes remove 3
+//     notes --server http://192.168.1.20:8080 list
+import api
+import std.cmdline
+import store
+
+i32 main(list<string> args) {
+    cmdline.CmdLine cmd
+    cmd.addString("server", 's', "the address of the service", false, "http://127.0.0.1:8080")
+    cmd.footer("list | add <title> [text] | remove <id>")
+    cmd.parse(args)
+    string server = cmd.getString("server")
+    list<string> words = cmd.rest()
+    string command = words.len() > 0 ? words[0] : "list"
+    try {
+        if (command == "list" && words.len() <= 1) {
+            list<Note> notes = allNotes(server)
+            for (Note note in notes) {
+                println("{:>4}  {}", note.id, note.title)
+                if (note.text.len() > 0) {
+                    println("      {}", note.text)
+                }
+            }
+            println("{} {}", notes.len(), notes.len() == 1 ? "note" : "notes")
+        } else if (command == "add" && (words.len() == 2 || words.len() == 3)) {
+            Note note = addNote(server, words[1], words.len() == 3 ? words[2] : "")
+            println("added the note {}", note.id)
+        } else if (command == "remove" && words.len() == 2) {
+            removeNote(server, i64(words[1]))
+            println("removed the note {}", words[1])
+        } else {
+            eprintln("{}", cmd.help())
+            ret 2
+        }
+    } catch (Exception e) {
+        eprintln("notes: {}", e.message())
+        ret 1
+    }
+    ret 0
+}

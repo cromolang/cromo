@@ -1,0 +1,61 @@
+// The service of the notes: GET /notes, POST /notes, DELETE /notes/{id}.
+//
+//     cromo run notes-server -- --port 8080 --file notes.json
+//
+// Every request runs on a task of its own, so the store is in a Mutex: the compiler
+// does not let a request reach it without the lock.
+import std.cmdline
+import std.http
+import std.json
+import std.thread
+import store
+
+void handle(thread.Mutex<Store> notes, ref http.Request req, ref http.Response res) {
+    if (req.matches("GET /notes")) {
+        notes.lock([ref res](ref Store s) { res.writeJson(json.encode(s.notes)) })
+    } else if (req.matches("POST /notes")) {
+        NewNote input = json.decode<NewNote>(req.text())
+        if (input.title.trim().len() == 0) {
+            res.status = 400
+            res.write("a note needs a title")
+            ret
+        }
+        notes.lock([ref res, input](ref Store s) {
+            res.status = 201
+            res.writeJson(json.encode(s.add(input.title.trim(), input.text)))
+        })
+    } else if (req.matches("DELETE /notes/{id}")) {
+        i64 id = i64(req.param("id"))
+        bool found = false
+        notes.lock([ref found, id](ref Store s) { found = s.remove(id) })
+        res.status = found ? 204 : 404
+        if (!found) {
+            res.write(format("there is no note {}", id))
+        }
+    } else {
+        res.status = 404
+        res.write("not found")
+    }
+}
+
+i32 main(list<string> args) {
+    cmdline.CmdLine cmd
+    cmd.addInt("port", 'p', "the port to listen on", false, 8080)
+    cmd.addString("host", ' ', "the address to listen on: 0.0.0.0 for every network", false, "127.0.0.1")
+    cmd.addString("file", 'f', "the file that keeps the notes", false, "notes.json")
+    cmd.parse(args)
+
+    thread.Mutex<Store> notes
+    try {
+        string file = cmd.getString("file")
+        notes.lock([file](ref Store s) { s.open(file) })
+    } catch (Exception e) {
+        eprintln("notes-server: {}", e.message())
+        ret 1
+    }
+    println("the notes are served on http://{}:{}", cmd.getString("host"), cmd.getInt("port"))
+    http.serve(cmd.getString("host"), i32(cmd.getInt("port")), [notes](ref http.Request req, ref http.Response res) {
+        handle(notes, ref req, ref res)
+    })
+    ret 0
+}
