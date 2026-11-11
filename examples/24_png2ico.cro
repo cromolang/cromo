@@ -1,0 +1,358 @@
+// Example 24: an icon of Windows from a PNG, with an image for each size asked.
+//
+//     cromo build examples\24_png2ico.cro -o png2ico.exe
+//     png2ico logo.png logo.ico 128 64 32
+//
+// Without sizes the icon has those of 256, 48, 32 and 16 pixels. An image that is not
+// square is put at the middle of the square, with nothing around it.
+//
+// Decided: the numbers from text (D199), the modules of the library (D201), deflate
+//          in Cromo (D367)
+// Draft:   gzip.inflate (P20)
+import std.fs
+import std.gzip
+
+struct Picture {
+    i64 width
+    i64 height
+    list<u8> pixels  // red, green, blue and alpha of each pixel, a row after the other from the top
+}
+
+// The four bytes at 'at', the first one the highest, as a PNG writes its numbers.
+i64 word(list<u8> data, i64 at) {
+    ret i64(data[at]) << 24 | i64(data[at + 1]) << 16 | i64(data[at + 2]) << 8 | i64(data[at + 3])
+}
+
+i64 distance(i64 a, i64 b) {
+    ret a > b ? a - b : b - a
+}
+
+// The filter of Paeth: of the bytes at the left, above and above at the left, the
+// nearest to left + above - above at the left.
+i64 paeth(i64 left, i64 above, i64 corner) {
+    i64 guess = left + above - corner
+    i64 byLeft = distance(guess, left)
+    i64 byAbove = distance(guess, above)
+    i64 byCorner = distance(guess, corner)
+    if (byLeft <= byAbove && byLeft <= byCorner) {
+        ret left
+    }
+    ret byAbove <= byCorner ? above : corner
+}
+
+// The sample 'index' of the row that starts at 'row', of 'depth' bits, as a byte: the
+// high byte of the samples of 16 bits, and the smaller ones as they are.
+i64 sample(list<u8> rows, i64 row, i64 index, i64 depth) {
+    if (depth == 8) {
+        ret i64(rows[row + index])
+    }
+    if (depth == 16) {
+        ret i64(rows[row + index * 2])
+    }
+    i64 bit = index * depth
+    i64 shift = 8 - depth - bit % 8
+    ret i64(rows[row + bit / 8]) >> shift & ((1 << depth) - 1)
+}
+
+// Reads a PNG: every kind of color and of depth, without the interlaced ones.
+Picture readPng(list<u8> data) {
+    list<u8> signature = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]
+    if (data.len() < 8) {
+        throw Error("the file is not a PNG")
+    }
+    for (i64 i = 0; i < 8; i++) {
+        if (data[i] != signature[i]) {
+            throw Error("the file is not a PNG")
+        }
+    }
+    i64 width = 0
+    i64 height = 0
+    i64 depth = 0
+    i64 kind = 0
+    list<u8> palette
+    list<u8> opacity
+    list<u8> packed
+    i64 at = 8
+    for (at + 12 <= data.len()) {
+        i64 size = word(data, at)
+        i64 name = word(data, at + 4)
+        i64 start = at + 8
+        if (start + size + 4 > data.len()) {
+            throw Error("the PNG is cut")
+        }
+        if (name == 0x49484452) {  // IHDR
+            width = word(data, start)
+            height = word(data, start + 4)
+            depth = i64(data[start + 8])
+            kind = i64(data[start + 9])
+            if (data[start + 12] != 0) {
+                throw Error("interlaced PNGs are not read")
+            }
+        } else if (name == 0x504C5445) {  // PLTE
+            for (i64 i = 0; i < size; i++) {
+                palette.add(data[start + i])
+            }
+        } else if (name == 0x74524E53) {  // tRNS: the alpha of the colors of the palette
+            for (i64 i = 0; i < size; i++) {
+                opacity.add(data[start + i])
+            }
+        } else if (name == 0x49444154) {  // IDAT
+            for (i64 i = 0; i < size; i++) {
+                packed.add(data[start + i])
+            }
+        } else if (name == 0x49454E44) {  // IEND
+            break
+        }
+        at = start + size + 4
+    }
+    i64 channels = kind == 0 || kind == 3 ? 1 : kind == 2 ? 3 : kind == 4 ? 2 : kind == 6 ? 4 : 0
+    if (width < 1 || height < 1 || width > 16384 || height > 16384 || channels == 0 || packed.len() < 6) {
+        throw Error("the PNG is damaged")
+    }
+
+    // The data are a stream of zlib: two bytes, deflate, and a check of four bytes.
+    list<u8> stream
+    stream.reserve(packed.len())
+    for (i64 i = 2; i < packed.len(); i++) {
+        stream.add(packed[i])
+    }
+    i64 line = (width * channels * depth + 7) / 8
+    list<u8> rows = gzip.inflate(stream, (line + 1) * height)
+    if (rows.len() < (line + 1) * height) {
+        throw Error("the PNG is cut")
+    }
+
+    // Each row has its filter in front, which says what was taken from its bytes.
+    i64 step = channels * depth / 8 > 0 ? channels * depth / 8 : 1
+    for (i64 y = 0; y < height; y++) {
+        i64 row = y * (line + 1) + 1
+        i64 filter = i64(rows[row - 1])
+        for (i64 x = 0; x < line; x++) {
+            i64 left = x >= step ? i64(rows[row + x - step]) : 0
+            i64 above = y > 0 ? i64(rows[row + x - line - 1]) : 0
+            i64 corner = x >= step && y > 0 ? i64(rows[row + x - line - 1 - step]) : 0
+            i64 more = 0
+            if (filter == 1) {
+                more = left
+            } else if (filter == 2) {
+                more = above
+            } else if (filter == 3) {
+                more = (left + above) / 2
+            } else if (filter == 4) {
+                more = paeth(left, above, corner)
+            }
+            rows[row + x] = u8((i64(rows[row + x]) + more) & 255)
+        }
+    }
+
+    Picture picture
+    picture.width = width
+    picture.height = height
+    picture.pixels.reserve(width * height * 4)
+    i64 full = depth < 8 ? (1 << depth) - 1 : 255  // the white of a gray
+    for (i64 y = 0; y < height; y++) {
+        i64 row = y * (line + 1) + 1
+        for (i64 x = 0; x < width; x++) {
+            i64 first = sample(rows, row, x * channels, depth)
+            i64 red = first
+            i64 green = first
+            i64 blue = first
+            i64 alpha = 255
+            if (kind == 0) {
+                red = first * 255 / full
+                green = red
+                blue = red
+            } else if (kind == 3) {
+                if (first * 3 + 2 >= palette.len()) {
+                    throw Error("the PNG is damaged")
+                }
+                red = i64(palette[first * 3])
+                green = i64(palette[first * 3 + 1])
+                blue = i64(palette[first * 3 + 2])
+                alpha = first < opacity.len() ? i64(opacity[first]) : 255
+            } else if (kind == 4) {
+                alpha = sample(rows, row, x * 2 + 1, depth)
+            } else {
+                green = sample(rows, row, x * channels + 1, depth)
+                blue = sample(rows, row, x * channels + 2, depth)
+                if (kind == 6) {
+                    alpha = sample(rows, row, x * 4 + 3, depth)
+                }
+            }
+            picture.pixels.add(u8(red))
+            picture.pixels.add(u8(green))
+            picture.pixels.add(u8(blue))
+            picture.pixels.add(u8(alpha))
+        }
+    }
+    ret picture
+}
+
+// The picture in a square of 'side' pixels, at its middle: each pixel is the mean of
+// the ones of the picture that it covers, by how much of each one it covers, and the
+// colors count by their alpha, so that the transparent pixels give no color.
+Picture scaled(Picture source, i64 side) {
+    f64 w = f64(source.width)
+    f64 h = f64(source.height)
+    f64 scale = w > h ? f64(side) / w : f64(side) / h
+    i64 wide = i64(w * scale + 0.5)
+    i64 high = i64(h * scale + 0.5)
+    wide = wide < 1 ? 1 : wide > side ? side : wide
+    high = high < 1 ? 1 : high > side ? side : high
+    i64 left = (side - wide) / 2
+    i64 top = (side - high) / 2
+    Picture result
+    result.width = side
+    result.height = side
+    result.pixels.reserve(side * side * 4)
+    for (i64 i = 0; i < side * side * 4; i++) {
+        result.pixels.add(0)
+    }
+    for (i64 y = 0; y < high; y++) {
+        f64 y0 = f64(y) * h / f64(high)
+        f64 y1 = f64(y + 1) * h / f64(high)
+        for (i64 x = 0; x < wide; x++) {
+            f64 x0 = f64(x) * w / f64(wide)
+            f64 x1 = f64(x + 1) * w / f64(wide)
+            f64 red = 0
+            f64 green = 0
+            f64 blue = 0
+            f64 alpha = 0
+            f64 area = 0
+            for (i64 sy = i64(y0); sy < source.height && f64(sy) < y1; sy++) {
+                f64 below = f64(sy + 1) < y1 ? f64(sy + 1) : y1
+                f64 down = below - (f64(sy) > y0 ? f64(sy) : y0)
+                for (i64 sx = i64(x0); sx < source.width && f64(sx) < x1; sx++) {
+                    f64 after = f64(sx + 1) < x1 ? f64(sx + 1) : x1
+                    f64 part = down * (after - (f64(sx) > x0 ? f64(sx) : x0))
+                    i64 p = (sy * source.width + sx) * 4
+                    f64 weight = f64(source.pixels[p + 3]) * part
+                    red += f64(source.pixels[p]) * weight
+                    green += f64(source.pixels[p + 1]) * weight
+                    blue += f64(source.pixels[p + 2]) * weight
+                    alpha += weight
+                    area += part
+                }
+            }
+            if (alpha > 0 && area > 0) {
+                i64 q = ((top + y) * side + left + x) * 4
+                result.pixels[q] = u8(i64(red / alpha + 0.5))
+                result.pixels[q + 1] = u8(i64(green / alpha + 0.5))
+                result.pixels[q + 2] = u8(i64(blue / alpha + 0.5))
+                result.pixels[q + 3] = u8(i64(alpha / area + 0.5))
+            }
+        }
+    }
+    ret result
+}
+
+// Adds a number of 'bytes' bytes, the first one the lowest, as an icon writes them.
+void addNumber(ref list<u8> out, i64 value, i64 bytes) {
+    for (i64 i = 0; i < bytes; i++) {
+        out.add(u8(value >> (i * 8) & 255))
+    }
+}
+
+// An image of an icon: a bitmap of 32 bits without the header of its file, its rows
+// from the bottom, and after it a mask of one bit for each pixel, set where the pixel
+// is transparent, with the rows of a multiple of four bytes.
+list<u8> bitmap(Picture picture) {
+    i64 side = picture.width
+    i64 maskLine = (side + 31) / 32 * 4
+    list<u8> out
+    out.reserve(40 + side * side * 4 + maskLine * side)
+    addNumber(ref out, 40, 4)  // the size of this header
+    addNumber(ref out, side, 4)
+    addNumber(ref out, side * 2, 4)  // the height counts the mask too
+    addNumber(ref out, 1, 2)         // planes
+    addNumber(ref out, 32, 2)        // bits for each pixel
+    addNumber(ref out, 0, 4)         // not compressed
+    addNumber(ref out, side * side * 4 + maskLine * side, 4)
+    addNumber(ref out, 0, 8)  // the pixels for each meter
+    addNumber(ref out, 0, 8)  // the colors of a palette
+    for (i64 y = side - 1; y >= 0; y--) {
+        for (i64 x = 0; x < side; x++) {
+            i64 p = (y * side + x) * 4
+            out.add(picture.pixels[p + 2])
+            out.add(picture.pixels[p + 1])
+            out.add(picture.pixels[p])
+            out.add(picture.pixels[p + 3])
+        }
+    }
+    for (i64 y = side - 1; y >= 0; y--) {
+        for (i64 b = 0; b < maskLine; b++) {
+            i64 bits = 0
+            for (i64 k = 0; k < 8; k++) {
+                i64 x = b * 8 + k
+                if (x < side && picture.pixels[(y * side + x) * 4 + 3] == 0) {
+                    bits |= 0x80 >> k
+                }
+            }
+            out.add(u8(bits))
+        }
+    }
+    ret out
+}
+
+// The file of the icon: its header, an entry of 16 bytes for each image, the images.
+list<u8> icon(Picture source, list<i64> sizes) {
+    list<list<u8>> images
+    for (i64 side in sizes) {
+        images.add(bitmap(scaled(source, side)))
+    }
+    list<u8> out
+    addNumber(ref out, 0, 2)
+    addNumber(ref out, 1, 2)  // an icon
+    addNumber(ref out, sizes.len(), 2)
+    i64 offset = 6 + 16 * sizes.len()
+    for (i64 i = 0; i < sizes.len(); i++) {
+        addNumber(ref out, sizes[i] & 255, 1)  // 256 is written 0
+        addNumber(ref out, sizes[i] & 255, 1)
+        addNumber(ref out, 0, 2)
+        addNumber(ref out, 1, 2)   // planes
+        addNumber(ref out, 32, 2)  // bits for each pixel
+        addNumber(ref out, images[i].len(), 4)
+        addNumber(ref out, offset, 4)
+        offset += images[i].len()
+    }
+    for (i64 i = 0; i < images.len(); i++) {
+        for (u8 b in images[i]) {
+            out.add(b)
+        }
+    }
+    ret out
+}
+
+i32 main(list<string> args) {
+    if (args.len() < 3) {
+        eprintln("usage: png2ico <image.png> <icon.ico> [size...]")
+        eprintln("the sizes are from 1 to 256 pixels: 256 48 32 16 without them")
+        ret 2
+    }
+    try {
+        list<i64> sizes
+        for (i64 i = 3; i < args.len(); i++) {
+            i64 side = 0
+            try {
+                side = i64(args[i])
+            } catch (Exception e) {
+                throw Error(format("'{}' is not a size", args[i]))
+            }
+            if (side < 1 || side > 256) {
+                throw Error(format("the size {} is not from 1 to 256", side))
+            }
+            sizes.add(side)
+        }
+        if (sizes.len() == 0) {
+            sizes = [256, 48, 32, 16]
+        }
+        Picture source = readPng(fs.readBytes(args[1]))
+        list<u8> file = icon(source, sizes)
+        fs.writeBytes(args[2], file)
+        println("{}: {} images from {} of {}x{}, {} bytes", args[2], sizes.len(), args[1], source.width, source.height, file.len())
+    } catch (Exception e) {
+        eprintln("png2ico: {}", e.message())
+        ret 1
+    }
+    ret 0
+}
