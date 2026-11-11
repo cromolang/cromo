@@ -223,6 +223,31 @@ i32 main() {
 - Il pannello occupa la barra dal suo bordo sinistro fino ai pulsanti della finestra, ed è alto quanto la barra, 35 pixel. I suoi componenti sono disegnati sopra la barra; dove non ce n'è nessuno, la barra sposta ancora la finestra, e il titolo resta al suo centro, sotto di essi.
 - Ogni chiamata dà lo stesso pannello, creato la prima volta. Su un telefono, dove una finestra non ha barra del titolo, il pannello non è mostrato.
 
+Anche la barra e la forma della finestra si possono cambiare:
+
+```cromo norun
+import std.gui
+
+[[window]]
+i32 main() {
+    gui.Window w = gui.Window("About", 360, 220)
+    w.setResizable(false)
+    w.setTitleBarHeight(44)
+    w.setButtons(false, false, true)  // only the button to close
+    w.setCornerRadius(12)
+    w.add(gui.Label("Cromo Notes 1.0", 24, 24, 300, 20))
+    w.start()
+    ret 0
+}
+```
+
+- `setTitleBarVisible(false)` nasconde la barra: il contenuto occupa tutta la finestra, dall'alto. Una finestra così non ha un punto da cui trascinarla, e la chiude il programma, con `close()`.
+- `setTitleBarHeight(pixel)` imposta l'altezza della barra, da 24 a 96: 35 di default.
+- `setButtons(minimize, maximize, close)` sceglie i pulsanti della barra: tutti e tre di default.
+- `setIcon(gui.Icon.Mail)` mette un'icona a sinistra della barra, nel colore del titolo, e `setIconImage(gui.Image(embed("logo.png")))` un'immagine del programma, come il suo logo; `setIcon(gui.Icon.None)` toglie l'una o l'altra. Il pannello di `titleBar()` allora comincia dopo l'icona.
+- `setCornerRadius(pixel)` arrotonda gli angoli della finestra, da 0, il default, a 64, e si chiama prima di `start()`. Fuori dagli angoli si vede ciò che sta dietro la finestra; una finestra ingrandita ha gli angoli vivi.
+- Una finestra viene disegnata mentre l'utente la ridimensiona: i componenti seguono il bordo con le loro ancore mentre il mouse si muove.
+
 ### Temi
 
 `w.setTheme(theme)` imposta i colori della finestra e dei suoi componenti, tutti insieme: `gui.Theme.Light`, testo scuro su grigi chiari; `gui.Theme.Dark`, testo chiaro su grigi scuri; e `gui.Theme.System`, il predefinito, che segue il tema di Windows, del desktop di Linux o del telefono, e cambia con esso mentre il programma gira. `w.theme()` lo legge. Su un telefono anche le barre del sistema prendono i colori del tema.
@@ -1211,6 +1236,71 @@ Su un telefono lo stesso programma si comporta come un'app:
 - La tastiera sullo schermo accorcia il contenuto, e una pagina scorre per mostrare la casella di testo in cui si sta scrivendo. La barra di navigazione resta sotto la tastiera.
 - Il tasto indietro, o il suo gesto, chiude un dialogo aperto, altrimenti la finestra, e quindi l'app, a meno che `w.onBack(handler)` non decida altrimenti, per esempio tornando alla prima pagina. Sul desktop gli handler di `onBack` non vengono mai chiamati.
 - Una pressione lunga vale come tasto destro su un pezzo di testo ricco, e mostra il tooltip sugli altri componenti.
+
+## Disegnare una finestra: cromo design
+
+> `cromo design` è una prima versione: disegna una finestra, con sedici tipi di componenti. Il formato del form e i nomi del modulo possono ancora cambiare.
+
+Una finestra si può anche comporre con il mouse. `cromo design` apre il designer, che è a sua volta un programma di `std.gui`:
+
+```sh
+cromo design               # una nuova finestra
+cromo design notes.form    # apre un form
+```
+
+- **Components**, a sinistra, aggiunge un componente alla finestra: etichette, bottoni, caselle e aree di testo, caselle di spunta, interruttori, gruppi di scelte, controlli segmentati, caselle combinate, cursori, barre di avanzamento, liste, tabelle, canvas, gruppi e pannelli.
+- Un clic seleziona un componente; Maiusc e un clic ne aggiungono uno alla selezione, e un rettangolo tracciato sulla finestra seleziona ciò che tocca. La selezione si sposta insieme con il mouse o con le frecce, di 4 pixel, e Canc la elimina. Un componente si ridimensiona con le otto maniglie che ha intorno, e la finestra con le maniglie sul bordo destro, sul bordo inferiore e sul loro angolo.
+- **Center horizontally** e **Center vertically** mettono la selezione, come un blocco unico, al centro della finestra.
+- Un componente spostato sopra un gruppo o un pannello ci entra, e spostato fuori torna alla finestra.
+- **Properties**, a destra, mostra nome, testo, posizione, dimensioni e ancore del componente selezionato, oppure titolo e dimensioni della finestra. Le ancore sono quelle di [Posizioni e ancore](#posizioni-e-ancore): quando la finestra viene ridimensionata nel designer, i componenti la seguono con le ancore, come nel programma.
+- **Grid** mostra o nasconde i punti della griglia sulla finestra.
+- **Phone** mostra la finestra come su un telefono, larga 360 pixel, con le ancore al lavoro; i componenti mantengono l'aspetto del desktop.
+- **Run** costruisce la finestra con il codice generato dal form e la mostra come sarà, in un programma a sé: i suoi componenti non fanno nulla.
+- **Undo** e **Redo**, Ctrl+Z e Ctrl+Y, vanno avanti e indietro tra le modifiche. Un nuovo form e l'apertura di un altro chiedono prima conferma, se ci sono modifiche non salvate.
+- **Code**, sotto la finestra, mostra le istruzioni che costruiscono la finestra, da incollare in una funzione: **Copy all** le copia tutte, e una parte si seleziona e si copia con Ctrl+C.
+- **Save** scrive due file: il form, `notes.form`, che il designer sa riaprire, e accanto il modulo `notes_form.cro`, rifatto a ogni salvataggio.
+
+Il modulo ha una struct, `Form`, con la finestra e un campo per ogni componente, con il suo nome:
+
+```cromo file=notes_form.cro
+// Made by cromo design from notes.form: change the form with cromo design, not this file.
+import std.gui
+
+// The window of notes.form and its components.
+public struct Form {
+    public gui.Window window
+    public gui.Label title
+    public gui.TextBox who
+    public gui.Button greet
+
+    public Form() {
+        window = gui.Window("Notes", 400, 300)
+        title = window.add(gui.Label("Your name", 16, 16, 120, 20))
+        who = window.add(gui.TextBox("", 16, 44, 200, 28))
+        greet = window.add(gui.Button("Greet", 16, 84, 96, 28))
+    }
+}
+```
+
+Il programma importa il modulo, crea il form, aggiunge i suoi handler e avvia la finestra. Il suo codice sta nei suoi file, che il designer non tocca mai:
+
+```cromo norun
+import notes_form
+import std.gui
+
+[[window]]
+i32 main() {
+    notes_form.Form f = notes_form.Form()
+    f.greet.onClick([f]() { f.title.setText(format("Hello, {}", f.who.text())) })
+    f.window.start()
+    ret 0
+}
+```
+
+- `Form` è fatta solo di handle, quindi è un valore semplice: un handler la cattura intera, per copia, come `[f]` qui sopra, e raggiunge ogni componente.
+- Il nome di un componente è il nome del suo campo: lettere, cifre e `_`, non una parola di Cromo, e diverso dagli altri. Un form con un nome sbagliato non viene salvato, e il designer dice perché.
+- `cromo design --generate notes.form` riscrive il modulo senza aprire una finestra, per uno script che costruisce il programma.
+- Lo stesso form è la finestra su Windows e su Linux, e l'app su Android.
 
 ## Riepilogo
 

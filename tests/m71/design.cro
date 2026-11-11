@@ -1,0 +1,73 @@
+// cromo design --generate (D523, D524): the module of a form, with the window and its
+// components as the fields of a struct, the form that cannot become a module, and the
+// errors of the command line.
+// target: windows
+// program-env: CROMO={cromo}
+// program-env: OUT={dir}/../out/design
+// expect-output: made 0 notes_form.cro
+// expect-output: // Made by cromo design from notes.form: change the form with cromo design, not this file.
+// expect-output: import std.gui
+// expect-output:
+// expect-output: // The window of notes.form and its components.
+// expect-output: public struct Form {
+// expect-output:     public gui.Window window
+// expect-output:     public gui.Label title
+// expect-output:     public gui.TextBox who
+// expect-output:     public gui.Button greet
+// expect-output:     public gui.CheckBox news
+// expect-output:
+// expect-output:     public Form() {
+// expect-output:         window = gui.Window("My \"notes\"", 400, 300)
+// expect-output:         title = window.add(gui.Label("Your name", 16, 16, 120, 20))
+// expect-output:         who = window.add(gui.TextBox("", 16, 44, 200, 28))
+// expect-output:         greet = window.add(gui.Button("Greet", 16, 84, 96, 28))
+// expect-output:         news = window.add(gui.CheckBox("News", 16, 124, 140, 24))
+// expect-output:     }
+// expect-output: }
+// expect-output: twice: 1 two components are named 'title'
+// expect-output: word: 1 'move' cannot be the name of a component: a name has letters, digits and _, and is not a word of Cromo
+// expect-output: kind: 1 'Rocket' is not a component of the designer
+// expect-output: version: 1 old.form is a form of version 9: this cromo design reads version 1
+// expect-output: not a form: 1 notes.txt is not a form: the name of a form ends with .form
+// expect-output: arguments: 2 cromo design takes at most a form, as cromo design notes.form, or --generate and a form
+import std.fs
+import std.os
+import std.process
+
+string item(string kind, string name, string text, i32 x, i32 y, i32 width, i32 height) {
+    ret format("{{\"kind\":\"{}\",\"name\":\"{}\",\"text\":\"{}\",\"x\":{},\"y\":{},\"width\":{},\"height\":{}}}", kind, name, text, x, y,
+        width, height)
+}
+
+string form(i32 version, list<string> items) {
+    ret format("{{\"version\":{},\"title\":\"My \\\"notes\\\"\",\"width\":400,\"height\":300,\"items\":[{}]}}", version, join(items, ","))
+}
+
+// Runs cromo design --generate on a form written in the folder, and says how it ended.
+void refused(string what, string folder, string file, string text) {
+    fs.writeText(folder + "/" + file, text)
+    process.Output r = process.run(os.env("CROMO"), ["design", "--generate", folder + "/" + file])
+    string said = r.err.trim().replace("cromo design: ", "").replace(folder + "/", "")
+    println("{}: {} {}", what, r.code, said)
+}
+
+i32 main() {
+    string folder = os.env("OUT")
+    fs.removeAll(folder)
+    fs.createFolders(folder)
+    string path = folder + "/notes.form"
+    fs.writeText(path, form(1, [item("Label", "title", "Your name", 16, 16, 120, 20), item("TextBox", "who", "", 16, 44, 200, 28),
+        item("Button", "greet", "Greet", 16, 84, 96, 28), item("CheckBox", "news", "News", 16, 124, 140, 24)]))
+    process.Output made = process.run(os.env("CROMO"), ["design", "--generate", path])
+    println("made {} {}", made.code, fs.fileName(made.out.trim()))
+    print("{}", fs.readText(folder + "/notes_form.cro"))
+
+    refused("twice", folder, "twice.form", form(1, [item("Label", "title", "", 0, 0, 8, 8), item("Button", "title", "", 0, 0, 8, 8)]))
+    refused("word", folder, "word.form", form(1, [item("Label", "move", "", 0, 0, 8, 8)]))
+    refused("kind", folder, "kind.form", form(1, [item("Rocket", "r", "", 0, 0, 8, 8)]))
+    refused("version", folder, "old.form", form(9, []))
+    refused("not a form", folder, "notes.txt", form(1, []))
+    process.Output r = process.run(os.env("CROMO"), ["design", "one.form", "two.form"])
+    println("arguments: {} {}", r.code, r.err.trim().replace("cromo design: ", ""))
+    ret 0
+}

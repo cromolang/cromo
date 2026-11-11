@@ -459,8 +459,8 @@ else()
 endif()
 
 file(GLOB CROMO_STD_MODULES CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/library/std/*.cro")
-# The programs of cromo written in Cromo, as cromo update (D403).
-file(GLOB CROMO_TOOLS CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/library/tools/*.cro")
+# The programs of cromo written in Cromo, as cromo update (D403), and their icons (D425).
+file(GLOB CROMO_TOOLS CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/library/tools/*.cro" "${CMAKE_SOURCE_DIR}/library/tools/*.ico")
 add_custom_command(
   OUTPUT "${CROMO_RT_DIR}/library.stamp"
   COMMAND "${CMAKE_COMMAND}" -E rm -rf "${CROMO_LIB_DIR}/std" "${CROMO_LIB_DIR}/tools"

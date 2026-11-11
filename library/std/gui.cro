@@ -134,6 +134,8 @@ extern "cromo" {
     void cromo_gui_boxes_free(addr renderer)
     void cromo_gui_shadow(addr renderer, f32 x, f32 y, f32 w, f32 h, f32 radius, f32 density, u32 color, f32 blur, f32 dy)
     void cromo_gui_wait_at_end()
+    void cromo_gui_watch()
+    void cromo_gui_round(addr renderer, f32 w, f32 h, f32 radius, f32 density)
     addr cromo_gui_image_decode(addr bytes, i64 size, ref i32 width, ref i32 height, addr reason, i64 room)
     void cromo_gui_image_free(addr pixels)
     addr cromo_gui_image_round(addr pixels, i32 width, i32 height, i32 size)
@@ -5092,7 +5094,18 @@ struct WindowData {
     addr band     // of the titles of the bands of the groups and of the dialogs, semibold
     u32 sdlId
     f32 density = 1
-    i32 hovered = -1  // the button of the title bar under the mouse
+    i32 hovered = -1            // the button of the title bar under the mouse
+    bool bar = true             // the title bar is shown (D525)
+    Icon icon                   // at the left of the title bar (D527), or its image, or none
+    i64 iconImage               // the number of that image, or 0
+    addr iconTexture            // of the image, of the size it is shown at
+    i32 iconPixels              // that size
+    bool iconChanged            // the texture is of another image
+    i32 barSize = 35            // its height
+    bool minimizeButton = true  // the buttons that the title bar has
+    bool maximizeButton = true
+    bool closeButton = true
+    i32 corner  // the radius of the corners, or 0 for sharp ones (D526)
     i32 pressed = -1
     bool focused = true
     bool maximized
@@ -5348,6 +5361,8 @@ struct Shared {
 }
 
 u64 lock          // of the data of all the windows
+bool polling      // the thread of the GUI is inside SDL_PollEvent
+u64 liveStamp     // the time of the last event that live handled: the loop skips those up to it
 addr shared       // Shared, from the first window
 addr guiThread    // the thread of the GUI, in the runtime
 addr guardThread  // the thread that waits for it (D437)
@@ -6025,6 +6040,148 @@ public struct Window {
         })
     }
 
+    // Puts an icon of Lucide at the left of the title bar, in the color of the title, in
+    // place of the icon or the image there was; 'Icon.None', the default, removes it. The
+    // panel of 'titleBar' starts after the icon.
+    //
+    // '''
+    // w.setIcon(gui.Icon.Mail)
+    // w.setIcon(gui.Icon.None)  // no icon
+    // '''
+    public void setIcon(Icon value) const {
+        i64 me = id
+        withData([me, value](ref Shared data) {
+            i64 i = indexOf(ref data, me)
+            data.windows[i].icon = value
+            data.windows[i].iconImage = 0
+            data.windows[i].iconChanged = true
+        })
+    }
+
+    // The icon of Lucide at the left of the title bar: 'Icon.None' without one, and with
+    // an image.
+    public Icon icon() const {
+        i64 me = id
+        Icon result = Icon.None
+        readData([me, ref result](ref Shared data) { result = data.windows[indexOf(ref data, me)].icon })
+        ret result
+    }
+
+    // Puts an image at the left of the title bar, as the logo of the program, in its own
+    // colors and as large as an icon, in place of the icon or the image there was;
+    // 'setIcon(Icon.None)' removes it.
+    //
+    // '''
+    // w.setIconImage(gui.Image(embed("logo.svg")))
+    // '''
+    public void setIconImage(Image picture) const {
+        i64 me = id
+        i64 number = picture.id
+        withData([me, number](ref Shared data) {
+            i64 i = indexOf(ref data, me)
+            data.windows[i].icon = Icon.None
+            data.windows[i].iconImage = number
+            data.windows[i].iconChanged = true
+        })
+    }
+
+    // Shows or hides the title bar of the window, with its title, its buttons and the
+    // panel of 'titleBar': shown by default. Without it the content takes the whole
+    // window, whose edges still resize it, and the program gives its own way to close
+    // it, with 'close'. On Android, where a window has no title bar, it does nothing.
+    //
+    // '''
+    // gui.Window w = gui.Window("Splash", 420, 260)
+    // w.setTitleBarVisible(false)
+    // w.setCornerRadius(12)
+    // '''
+    public void setTitleBarVisible(bool value) const {
+        i64 me = id
+        withData([me, value](ref Shared data) {
+            i64 i = indexOf(ref data, me)
+            data.windows[i].bar = value
+            if (!data.windows[i].phone) {
+                data.windows[i].originY = value ? f32(data.windows[i].barSize) : 0
+            }
+        })
+    }
+
+    // Sets the height of the title bar in logical pixels, from 24 to 96: 35 by default.
+    // The panel of 'titleBar' is as high, and the content starts under it. A height out of
+    // the range is a panic.
+    public void setTitleBarHeight(i32 height) const {
+        if (height < 24 || height > 96) {
+            panic(format("the height of the title bar is from 24 to 96, found {}", height))
+        }
+        i64 me = id
+        withData([me, height](ref Shared data) {
+            i64 i = indexOf(ref data, me)
+            data.windows[i].barSize = height
+            if (!data.windows[i].phone && data.windows[i].bar) {
+                data.windows[i].originY = f32(height)
+            }
+        })
+    }
+
+    // The height of the title bar: 35 by default.
+    public i32 titleBarHeight() const {
+        i64 me = id
+        i32 result = 0
+        readData([me, ref result](ref Shared data) { result = data.windows[indexOf(ref data, me)].barSize })
+        ret result
+    }
+
+    // Whether the title bar is shown: true by default.
+    public bool titleBarVisible() const {
+        i64 me = id
+        bool result = false
+        readData([me, ref result](ref Shared data) { result = data.windows[indexOf(ref data, me)].bar })
+        ret result
+    }
+
+    // Chooses the buttons of the title bar: to minimize, to maximize or restore, and to
+    // close; all three by default. A window without the button to close is closed by the
+    // program, with 'close'.
+    //
+    // '''
+    // w.setButtons(false, false, true)  // only the button to close, as a dialog
+    // '''
+    public void setButtons(bool minimize, bool maximize, bool close) const {
+        i64 me = id
+        withData([me, minimize, maximize, close](ref Shared data) {
+            i64 i = indexOf(ref data, me)
+            data.windows[i].minimizeButton = minimize
+            data.windows[i].maximizeButton = maximize
+            data.windows[i].closeButton = close
+        })
+    }
+
+    // Rounds the corners of the window by a radius in logical pixels, from 0, the sharp
+    // corners of the default, to 64: what is outside them shows what is behind the
+    // window. It is set before 'start': after it, and out of the range, it is a panic. A
+    // maximized window has sharp corners, and on Android it does nothing.
+    public void setCornerRadius(i32 radius) const {
+        if (radius < 0 || radius > 64) {
+            panic(format("the radius of the corners is from 0 to 64, found {}", radius))
+        }
+        i64 me = id
+        withData([me, radius](ref Shared data) {
+            i64 i = indexOf(ref data, me)
+            if (data.windows[i].started) {
+                panic("the corners of a window are rounded before start()")
+            }
+            data.windows[i].corner = radius
+        })
+    }
+
+    // The radius of the corners of the window: 0 by default.
+    public i32 cornerRadius() const {
+        i64 me = id
+        i32 result = 0
+        readData([me, ref result](ref Shared data) { result = data.windows[indexOf(ref data, me)].corner })
+        ret result
+    }
+
     // Whether the user can resize the window: true by default.
     public bool resizable() const {
         i64 me = id
@@ -6692,13 +6849,16 @@ void run() {
     pointer = SDL_CreateSystemCursor(11)      // SDL_SYSTEM_CURSOR_POINTER
     resizeAcross = SDL_CreateSystemCursor(7)  // SDL_SYSTEM_CURSOR_EW_RESIZE
     resizeDown = SDL_CreateSystemCursor(8)    // SDL_SYSTEM_CURSOR_NS_RESIZE
+    cromo_gui_watch()                         // a window is drawn while it is resized
     addr event = alloc(128)                   // SDL_Event, a union of 128 bytes
     for (true) {
         u64 start = SDL_GetTicksNS()
         i32 fps = prepare()
         bool events = false
-        for (SDL_PollEvent(event)) {
-            handle(event)
+        for (nextEvent(event)) {
+            if (take<u64>(offset(event, 8)) > liveStamp || !isLive(take<u32>(event))) {  // not handled by live already
+                handle(event)
+            }
             events = true
         }
         draw(events)
@@ -6803,6 +6963,9 @@ void open(ref WindowData window) {
         flags = 0x20 | 0x2000  // the whole screen, which turns
     } else if (window.resizable) {
         flags = flags | 0x20
+    }
+    if (window.corner > 0 && !window.phone) {
+        flags = flags | 0x40000000  // SDL_WINDOW_TRANSPARENT: outside its rounded corners (D526)
     }
     if (window.show == 1) {
         flags = flags | 0x40
@@ -6981,6 +7144,10 @@ void freeTextures(ref WindowData window, ref list<PartData> parts) {
 
 void shut(ref WindowData window) {
     addr none
+    if (window.iconTexture != none) {
+        SDL_DestroyTexture(window.iconTexture)
+        window.iconTexture = none
+    }
     cromo_gui_font_free(window.font)
     cromo_gui_font_free(window.body)
     cromo_gui_font_free(window.strong)
@@ -7004,13 +7171,30 @@ void shut(ref WindowData window) {
     window.renderer = none
 }
 
+// The buttons that the title bar of a window has, from the left: 0 minimize, 1 maximize,
+// 2 close (D525).
+list<i32> buttonsOf(ref WindowData window) {
+    list<i32> kinds
+    if (window.bar && window.minimizeButton) {
+        kinds.add(0)
+    }
+    if (window.bar && window.maximizeButton) {
+        kinds.add(1)
+    }
+    if (window.bar && window.closeButton) {
+        kinds.add(2)
+    }
+    ret kinds
+}
+
 // The button of the title bar at a point: 0 minimize, 1 maximize, 2 close, or -1.
-i32 buttonAt(f32 x, f32 y, f32 width) {
-    f32 start = width - 3 * buttonWidth
-    if (y < 0 || y >= barHeight || x < start || x >= width) {
+i32 buttonAt(ref WindowData window, f32 x, f32 y, f32 width) {
+    list<i32> kinds = buttonsOf(ref window)
+    f32 start = width - f32(kinds.len()) * buttonWidth
+    if (y < 0 || y >= f32(window.barSize) || x < start || x >= width) {
         ret -1
     }
-    ret i32((x - start) / buttonWidth)
+    ret kinds[i64((x - start) / buttonWidth)]
 }
 
 // A call of handlers, made under the lock and run after it.
@@ -7030,6 +7214,40 @@ struct Call {
     list<string> texts  // of a func(list<string>)
     f32 amount          // of a func(Mouse, f32): the steps of the wheel; of a func(f32), the value
     bool once           // the handler is called once, and freed after (D500)
+}
+
+// An event from SDL, or false without one. While SDL looks for the events it can call
+// live, on Windows for as long as the user drags an edge of a window.
+bool nextEvent(addr event) {
+    polling = true
+    bool found = SDL_PollEvent(event)
+    polling = false
+    ret found
+}
+
+// The events that live handles: SDL_EVENT_WINDOW_EXPOSED, _RESIZED, _PIXEL_SIZE_CHANGED.
+bool isLive(u32 kind) {
+    ret kind == 0x204 || kind == 0x206 || kind == 0x207
+}
+
+// A window that changes its size, or must be drawn again, while SDL looks for the
+// events: it is handled and drawn at once, so that a window follows the mouse that
+// resizes it. The runtime calls it on the thread of the windows; outside nextEvent the
+// thread may hold the lock of the data, and the event waits for the loop.
+[[export("cromo_gui_live")]]
+void live(addr event) {
+    if (!polling) {
+        ret
+    }
+    polling = false  // what the handlers do must not come back here
+    try {
+        handle(event)
+        liveStamp = take<u64>(offset(event, 8))
+        draw(true)
+    } catch (Exception e) {
+        panic(e.message())
+    }
+    polling = true
 }
 
 void handle(addr event) {
@@ -7183,7 +7401,7 @@ void route(ref WindowData window, ref list<PartData> parts, addr event, u32 kind
     if (kind == 0x400) {  // SDL_EVENT_MOUSE_MOTION
         f32 x = take<f32>(offset(event, 28))
         f32 y = take<f32>(offset(event, 32))
-        window.hovered = window.phone ? -1 : buttonAt(x, y, width)
+        window.hovered = window.phone ? -1 : buttonAt(ref window, x, y, width)
         window.pointerX = x
         window.pointerY = y
         dragScroll(ref window, ref parts, y)
@@ -7260,7 +7478,7 @@ void route(ref WindowData window, ref list<PartData> parts, addr event, u32 kind
             window.longPart = 0
             window.tipPart = 0
         }
-        i32 on = window.phone ? -1 : buttonAt(x, y, width)
+        i32 on = window.phone ? -1 : buttonAt(ref window, x, y, width)
         i64 canvas = -1
         if (kind == 0x402) {
             canvas = partNumber(ref parts, window.canvasHeld)
@@ -8599,18 +8817,20 @@ void layoutIn(ref WindowData window, ref list<PartData> parts, i64 group, Frame 
         parts[i].clipRight = frame.clipRight
         parts[i].clipBottom = frame.clipBottom
         parts[i].inTitle = frame.inTitle || parts[i].titleBar
-        if (parts[i].titleBar) {  // D509: the bar, from its left edge to the buttons
-            parts[i].x = 0
+        if (parts[i].titleBar) {  // D509: the bar, from its left edge, or its icon, to the buttons
+            i32 start = i32(iconRoom(ref window))
+            parts[i].x = start
             parts[i].y = 0
-            parts[i].width = window.width > i32(3 * buttonWidth) ? window.width - i32(3 * buttonWidth) : 0
-            parts[i].height = i32(barHeight)
-            parts[i].left = 0
+            i32 taken = start + i32(f32(buttonsOf(ref window).len()) * buttonWidth)
+            parts[i].width = window.width > taken ? window.width - taken : 0
+            parts[i].height = i32(f32(window.barSize))
+            parts[i].left = f32(start)
             parts[i].top = 0
-            parts[i].shown = parts[i].visible && !window.phone
-            parts[i].clipLeft = 0
+            parts[i].shown = parts[i].visible && !window.phone && window.bar
+            parts[i].clipLeft = f32(start)
             parts[i].clipTop = 0
-            parts[i].clipRight = f32(parts[i].width)
-            parts[i].clipBottom = barHeight
+            parts[i].clipRight = f32(start + parts[i].width)
+            parts[i].clipBottom = f32(window.barSize)
         }
         window.order.add(i)
         if (parts[i].kind == kindListView) {
@@ -8970,7 +9190,8 @@ void drawWindow(ref WindowData window, ref list<PartData> parts, ref list<ImageD
     if (window.phone) {
         readSafeArea(ref window)
     } else {
-        cromo_gui_chrome_size(window.chrome, barHeight * scale, 3 * buttonWidth * scale, edgeWidth * scale, window.resizable)
+        cromo_gui_chrome_size(window.chrome, (window.bar ? f32(window.barSize) : 0) * scale, f32(buttonsOf(ref window).len()) * buttonWidth * scale,
+            edgeWidth * scale, window.resizable)
     }
     window.maximized = (SDL_GetWindowFlags(window.window) & 0x80) != 0
     bool dark = window.theme == Theme.Dark || (window.theme == Theme.System && SDL_GetSystemTheme() == 2)
@@ -9016,8 +9237,13 @@ void drawWindow(ref WindowData window, ref list<PartData> parts, ref list<ImageD
     addr none
     SDL_SetRenderClipRect(r, none)
     if (!window.phone) {
-        drawTitleBar(ref window, ref c, width, height)
-        drawTitleParts(ref window, ref parts, ref c, ref images, scale)
+        if (window.bar) {
+            drawTitleBar(ref window, ref c, ref images, width)
+            drawTitleParts(ref window, ref parts, ref c, ref images, scale)
+        } else {
+            cromo_gui_chrome_holes(window.chrome, 0)
+        }
+        drawEdge(ref window, ref c, width, height)
     }
     SDL_RenderPresent(r)
 }
@@ -9137,40 +9363,107 @@ void drawSnackbar(ref WindowData window, ref Colors c, bool dark) {
     text(window.body, window.snackText, box.x + 16, baseline, c.surface, true)
 }
 
-// The title bar, its title and its buttons, and a line at the edges when the
-// window is not maximized (D431).
-void drawTitleBar(ref WindowData window, ref Colors c, f32 width, f32 height) {
+// A line at the edges of a window that is not maximized (D431), and its corners
+// rounded, with what is outside them transparent (D526).
+void drawEdge(ref WindowData window, ref Colors c, f32 width, f32 height) {
+    if (window.maximized) {
+        ret
+    }
     addr r = window.renderer
-    fill(r, c.surface, 0, 0, width, barHeight)
+    if (window.corner > 0) {
+        cromo_gui_box(r, 0, 0, width, height, f32(window.corner), 1, window.density, 0, solid(c.rule2, true))
+        cromo_gui_round(r, width, height, f32(window.corner), window.density)
+    } else {
+        SDL_SetRenderDrawColor(r, red(c.rule2), green(c.rule2), blue(c.rule2), 255)
+        Rect edge = Rect(0, 0, width, height)
+        SDL_RenderRect(r, ref edge)
+    }
+}
+
+// The side of the icon of a window, and the room that it takes at the left of the title
+// bar, or 0 without one (D527).
+f32 iconSide(ref WindowData window) {
+    ret least(16, f32(window.barSize) - 8)
+}
+
+f32 iconRoom(ref WindowData window) {
+    ret window.icon != Icon.None || window.iconImage != 0 ? 10 + iconSide(ref window) + 6 : 0
+}
+
+// The icon of the window at the left of its title bar: one of Lucide in the color of
+// the title, or an image in its own colors, as large as the icon and with its shape.
+void drawWindowIcon(ref WindowData window, ref list<ImageData> images, u32 rgb) {
+    addr none
+    f32 side = iconSide(ref window)
+    f32 middle = f32(window.barSize) / 2
+    if (window.iconChanged && window.iconTexture != none) {
+        SDL_DestroyTexture(window.iconTexture)
+        window.iconTexture = none
+    }
+    window.iconChanged = false
+    i64 id = window.iconImage
+    if (id < 1 || id > images.len()) {
+        drawIcon(window.renderer, window.icon, 10 + side / 2, middle, side, window.density, rgb, true)
+        ret
+    }
+    f32 k = least(side / images[id - 1].width, side / images[id - 1].height)
+    f32 w = images[id - 1].width * k
+    f32 h = images[id - 1].height * k
+    i32 pixels = i32(side * window.density + 0.5)
+    if (window.iconTexture == none || window.iconPixels != pixels) {
+        if (window.iconTexture != none) {
+            SDL_DestroyTexture(window.iconTexture)
+        }
+        window.iconPixels = pixels
+        if (images[id - 1].svg != none) {
+            i32 pw = i32(w * window.density + 0.5)
+            i32 ph = i32(h * window.density + 0.5)
+            window.iconTexture = textureOf(window.renderer, cromo_gui_svg_draw(images[id - 1].svg, images[id - 1].svgSize, pw, ph), pw, ph)
+        } else {
+            window.iconTexture = SDL_CreateTexture(window.renderer, 0x16762004, 0, i32(images[id - 1].width), i32(images[id - 1].height))
+            if (window.iconTexture != none) {
+                SDL_SetTextureBlendMode(window.iconTexture, 1)
+                SDL_UpdateTexture(window.iconTexture, none, images[id - 1].pixels, i32(images[id - 1].width) * 4)
+            }
+        }
+    }
+    if (window.iconTexture != none) {
+        Rect place = Rect(10 + (side - w) / 2, middle - h / 2, w, h)
+        SDL_RenderTexture(window.renderer, window.iconTexture, none, ref place)
+    }
+}
+
+// The title bar, its title and its buttons (D431, D525).
+void drawTitleBar(ref WindowData window, ref Colors c, ref list<ImageData> images, f32 width) {
+    addr r = window.renderer
+    fill(r, c.surface, 0, 0, width, f32(window.barSize))
     u32 title = window.focused ? c.ink2 : c.ink3
+    drawWindowIcon(ref window, ref images, title)
     f32 ascent = 0
     f32 descent = 0
     f32 gap = 0
     cromo_gui_font_metrics(window.font, ref ascent, ref descent, ref gap)
     f32 titleWidth = textWidth(window.font, window.title, window.title.len())
-    text(window.font, window.title, (width - titleWidth) / 2, barHeight / 2 + (ascent - descent) / 2, title, true)
-    for (i32 b = 0; b < 3; b++) {
-        f32 x = width - f32(3 - b) * buttonWidth
+    text(window.font, window.title, (width - titleWidth) / 2, f32(window.barSize) / 2 + (ascent - descent) / 2, title, true)
+    list<i32> kinds = buttonsOf(ref window)
+    for (i64 k = 0; k < kinds.len(); k++) {
+        i32 b = kinds[k]
+        f32 x = width - f32(kinds.len() - k) * buttonWidth
         u32 symbol = title
         bool disabled = b == 1 && !window.resizable
         if (b == 2 && window.hovered == 2) {
-            fill(r, window.pressed == 2 ? closePressed : closeHover, x, 0, buttonWidth, barHeight)
+            fill(r, window.pressed == 2 ? closePressed : closeHover, x, 0, buttonWidth, f32(window.barSize))
             symbol = 0xFFFFFF
         } else if (b == window.hovered && !disabled) {
-            fill(r, window.pressed == b ? c.surface3 : c.surface2, x, 0, buttonWidth, barHeight)
+            fill(r, window.pressed == b ? c.surface3 : c.surface2, x, 0, buttonWidth, f32(window.barSize))
         }
         if (disabled) {
             symbol = c.rule2
         }
         i32 kind = b == 2 ? 3 : b == 1 && window.maximized ? 2 : b
-        cromo_gui_symbol(r, kind, x + buttonWidth / 2, barHeight / 2, window.density, red(symbol), green(symbol), blue(symbol))
+        cromo_gui_symbol(r, kind, x + buttonWidth / 2, f32(window.barSize) / 2, window.density, red(symbol), green(symbol), blue(symbol))
     }
-    fill(r, c.rule, 0, barHeight - 1, width, 1)
-    if (!window.maximized) {
-        SDL_SetRenderDrawColor(r, red(c.rule2), green(c.rule2), blue(c.rule2), 255)
-        Rect edge = Rect(0, 0, width, height)
-        SDL_RenderRect(r, ref edge)
-    }
+    fill(r, c.rule, 0, f32(window.barSize) - 1, width, 1)
 }
 
 // The components in the title bar, over it (D509), and where they are for the hit test,

@@ -1012,3 +1012,72 @@ extern void (*cromo_at_main_end)(void);
 void cromo_gui_finish(void);  // [[export]] of std.gui
 
 void cromo_gui_wait_at_end(void) { cromo_at_main_end = cromo_gui_finish; }
+
+// ---- The rounded corners of a window (D526) ----
+//
+// The window is transparent, and what std.gui drew outside its rounded shape is made
+// transparent again, row by row of pixels at each corner: the whole pixels outside
+// are cleared, and the one on the edge keeps the part of it that is inside, where the
+// renderer can multiply what is there by an alpha.
+
+_Bool SDL_SetRenderDrawBlendMode(void* renderer, u32 mode);
+u32 SDL_ComposeCustomBlendMode(u32 srcColor, u32 dstColor, u32 colorOperation, u32 srcAlpha, u32 dstAlpha, u32 alphaOperation);
+
+void cromo_gui_round(void* renderer, f32 w, f32 h, f32 radius, f32 density) {
+    if (radius <= 0 || density <= 0) return;
+    if (radius * 2 > w) radius = w / 2;
+    if (radius * 2 > h) radius = h / 2;
+    f32 step = 1 / density;
+    i32 rows = (i32)SDL_ceil(radius * density);
+    // What is there times the alpha drawn: SDL_BLENDFACTOR_ZERO, _SRC_ALPHA, SDL_BLENDOPERATION_ADD.
+    u32 keep = SDL_ComposeCustomBlendMode(1, 5, 1, 1, 5, 1);
+    for (i32 k = 0; k < rows; ++k) {
+        f32 dy = radius - (k + 0.5f) * step;
+        f32 out = radius - (f32)SDL_sqrt(radius * radius - dy * dy);  // outside the shape, on this row
+        f32 whole = (f32)SDL_floor(out * density) * step;
+        f32 inside = 1 - (out - whole) * density;  // of the pixel on the edge
+        f32 top = k * step;
+        f32 bottom = h - (k + 1) * step;
+        SDL_SetRenderDrawBlendMode(renderer, 0);  // SDL_BLENDMODE_NONE
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
+        FRect clear[4] = {{0, top, whole, step}, {w - whole, top, whole, step}, {0, bottom, whole, step}, {w - whole, bottom, whole, step}};
+        for (i32 i = 0; i < 4; ++i) {
+            if (whole > 0) SDL_RenderFillRect(renderer, &clear[i]);
+        }
+        if (inside < 1 && SDL_SetRenderDrawBlendMode(renderer, keep)) {
+            SDL_SetRenderDrawColor(renderer, 0, 0, 0, (u8)(255 * inside));
+            FRect edge[4] = {{whole, top, step, step}, {w - whole - step, top, step, step}, {whole, bottom, step, step},
+                             {w - whole - step, bottom, step, step}};
+            for (i32 i = 0; i < 4; ++i) SDL_RenderFillRect(renderer, &edge[i]);
+        }
+    }
+    SDL_SetRenderDrawBlendMode(renderer, 1);  // SDL_BLENDMODE_BLEND
+}
+
+// ---- A window drawn while it is resized ----
+//
+// On Windows the loop of the events stops inside SDL_PollEvent while the user drags an
+// edge of a window, and the window would show black where it grew until the mouse is
+// released. SDL still gives each event to the functions that watch them: this one gives
+// to std.gui, at once, the events of a window that changes its size or must be drawn
+// again. Only on the thread of the windows: another thread that pushes an event calls
+// the watchers too, and std.gui draws on its own thread.
+
+u64 SDL_GetCurrentThreadID(void);
+_Bool SDL_AddEventWatch(_Bool (*filter)(void* data, void* event), void* data);
+void cromo_gui_live(void* event);  // [[export]] of std.gui
+
+static u64 watchThread;
+
+static _Bool watchEvent(void* data, void* event) {
+    u32 kind = *(u32*)event;
+    // SDL_EVENT_WINDOW_EXPOSED, _RESIZED, _PIXEL_SIZE_CHANGED
+    if ((kind == 0x204 || kind == 0x206 || kind == 0x207) && SDL_GetCurrentThreadID() == watchThread) cromo_gui_live(event);
+    return 1;
+}
+
+// Called by the thread of the windows, once SDL is started.
+void cromo_gui_watch(void) {
+    watchThread = SDL_GetCurrentThreadID();
+    SDL_AddEventWatch(watchEvent, 0);
+}

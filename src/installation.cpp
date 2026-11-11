@@ -39,6 +39,8 @@ std::string comparable(const fs::path& path) {
 
 }  // namespace
 
+fs::path cromoPath() { return executablePath(); }
+
 const fs::path& libraryFolder() {
     static const fs::path folder = [] {
         fs::path bin = executablePath().parent_path();

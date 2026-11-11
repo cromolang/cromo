@@ -18,6 +18,7 @@ Il comando viene sempre per primo: `cromo hello.cro` è un errore che mostra la 
 | `cromo test [file.cro] [names]` | esegue le funzioni `[[test]]` del programma e dei suoi moduli; i nomi scelgono i test che li contengono ([Test](tests.md)) |
 | `cromo fmt [--check] [files and folders \| -]` | formatta il codice, di default quello della cartella corrente e delle sue sottocartelle ([Strumenti: formattazione, editor e debugger](tools.md)) |
 | `cromo lsp` | il language server, per gli editor, su standard input e standard output ([Strumenti: formattazione, editor e debugger](tools.md)) |
+| `cromo design [file.form]` | il designer delle finestre: una finestra composta con il mouse, salvata come form e come modulo di Cromo ([Finestre e app](gui.md#disegnare-una-finestra-cromo-design)) |
 | `cromo update [version]` | installa l'ultima versione di Cromo, o quella indicata, e la rende attiva |
 | `cromo version` | stampa la versione di `cromo` e di LLVM, come `cromo 0.69.0 (LLVM 23.1.4)` |
 | `cromo help` | stampa i comandi e le opzioni |
@@ -175,3 +176,4 @@ Su Windows, `~` è `%USERPROFILE%`.
 - `--target` è `windows`, `linux`, `linux-arm64`, `android`, `android-arm64` o `android-x86_64`; `--cpu` sceglie il processore x86-64, controllato all'avvio del programma.
 - Un programma termina con 0, con 1 per un'eccezione, con 101 per un panic, o con il proprio codice; `cromo` termina con 1 per gli errori del programma e con 2 per quelli della riga di comando.
 - `cromo update` installa l'ultima versione o una versione indicata, controllata con la sua firma, e la rende attiva.
+- `cromo design` compone una finestra con il mouse, e la scrive come modulo di Cromo.

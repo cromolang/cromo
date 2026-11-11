@@ -1,0 +1,71 @@
+// The title bar of a window hidden, its height, its buttons and its icon chosen, and its
+// corners rounded (D525-D527): without the bar the content starts at the top of the window, so a click there
+// reaches a button; with only the button to close, that one is the last on the right.
+// target: windows linux-x86_64
+// program-env: SDL_VIDEO_DRIVER=offscreen
+// expect-output: bar true false, corners 0 12
+// expect-output: clicked at the top
+// expect-output: a bar of 48
+// expect-output: icons Mail None None
+// expect-output: closed by its only button true
+import std.gui
+import std.time
+import unsafe
+
+extern "SDL3" {
+    bool SDL_PushEvent(addr event)
+}
+
+// A click of the mouse at a point of the windows, whatever their numbers among the first.
+void click(f32 x, f32 y) {
+    addr event = alloc(128)
+    for (u32 kind = 0x401; kind <= 0x402; kind++) {
+        for (i64 window = 1; window < 8; window++) {
+            for (i64 i = 0; i < 128; i++) {
+                put<u8>(offset(event, i), 0)
+            }
+            put<u32>(event, kind)
+            put<u32>(offset(event, 16), u32(window))
+            put<u8>(offset(event, 24), 1)
+            put<u8>(offset(event, 25), kind == 0x401 ? 1 : 0)
+            put<u8>(offset(event, 26), 1)
+            put<f32>(offset(event, 28), x)
+            put<f32>(offset(event, 32), y)
+            SDL_PushEvent(event)
+        }
+    }
+    free(event)
+    time.msleep(200)
+}
+
+i32 main() {
+    gui.Window plain = gui.Window("plain", 300, 160)
+    gui.Window bare = gui.Window("bare", 300, 160)
+    bare.setTitleBarVisible(false)
+    bare.setCornerRadius(12)
+    println("bar {} {}, corners {} {}", plain.titleBarVisible(), bare.titleBarVisible(), plain.cornerRadius(), bare.cornerRadius())
+    gui.Button top = bare.add(gui.Button("Top", 100, 4, 80, 28))
+    top.onClick([]() { println("clicked at the top") })
+    bare.start()
+    time.msleep(300)
+    click(140, 18)  // where the title bar would be
+    bare.close()
+    bare.wait()
+
+    plain.setButtons(false, false, true)
+    plain.setTitleBarHeight(48)
+    println("a bar of {}", plain.titleBarHeight())
+    plain.setIcon(gui.Icon.Mail)
+    gui.Icon first = plain.icon()
+    plain.setIcon(gui.Icon.None)
+    println("icons {:?} {:?} {:?}", first, plain.icon(), bare.icon())
+    plain.setIcon(gui.Icon.Mail)
+    plain.start()
+    time.msleep(300)
+    click(300 - 23, 40)  // the last button on the right, in its taller bar: to close
+    for (i32 i = 0; i < 200 && !plain.closed(); i++) {
+        time.msleep(10)
+    }
+    println("closed by its only button {}", plain.closed())
+    ret 0
+}

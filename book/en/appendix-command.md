@@ -18,6 +18,7 @@ The command always comes first: `cromo hello.cro` is an error that shows the rig
 | `cromo test [file.cro] [names]` | runs the `[[test]]` functions of the program and of its modules; the names choose the tests that contain them ([Tests](tests.md)) |
 | `cromo fmt [--check] [files and folders \| -]` | formats the code, by default of the current folder and its subfolders ([Tools](tools.md)) |
 | `cromo lsp` | the language server, for editors, on the standard input and output ([Tools](tools.md)) |
+| `cromo design [file.form]` | the designer of the windows: a window composed with the mouse, saved as a form and as a module of Cromo ([Windows and apps](gui.md#designing-a-window-cromo-design)) |
 | `cromo update [version]` | installs the latest version of Cromo, or the one named, and makes it the active one |
 | `cromo version` | prints the version of `cromo` and of LLVM, as `cromo 0.69.0 (LLVM 23.1.4)` |
 | `cromo help` | prints the commands and the options |
@@ -175,3 +176,4 @@ On Windows, `~` is `%USERPROFILE%`.
 - `--target` is `windows`, `linux`, `linux-arm64`, `android`, `android-arm64` or `android-x86_64`; `--cpu` chooses the x86-64 processor, checked when the program starts.
 - A program ends with 0, 1 for an exception, 101 for a panic, or its own code; `cromo` ends with 1 for the errors of the program and 2 for those of the command line.
 - `cromo update` installs the latest or a named version, checked with its signature, and makes it the active one.
+- `cromo design` composes a window with the mouse, and writes it as a module of Cromo.

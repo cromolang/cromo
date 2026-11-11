@@ -223,6 +223,31 @@ i32 main() {
 - The panel takes the bar from its left edge to the buttons of the window, and is as high as the bar, 35 pixels. Its components are drawn over the bar; where there is none, the bar still moves the window, and the title stays at its center, under them.
 - Each call gives the same panel, made the first time. On a phone, where a window has no title bar, the panel is not shown.
 
+The bar itself and the shape of the window can be changed:
+
+```cromo norun
+import std.gui
+
+[[window]]
+i32 main() {
+    gui.Window w = gui.Window("About", 360, 220)
+    w.setResizable(false)
+    w.setTitleBarHeight(44)
+    w.setButtons(false, false, true)  // only the button to close
+    w.setCornerRadius(12)
+    w.add(gui.Label("Cromo Notes 1.0", 24, 24, 300, 20))
+    w.start()
+    ret 0
+}
+```
+
+- `setTitleBarVisible(false)` hides the bar: the content takes the whole window, from its top. Such a window has no place to drag it by, and the program closes it, with `close()`.
+- `setTitleBarHeight(pixels)` sets the height of the bar, from 24 to 96: 35 by default.
+- `setButtons(minimize, maximize, close)` chooses the buttons of the bar: all three by default.
+- `setIcon(gui.Icon.Mail)` puts an icon at the left of the bar, in the color of the title, and `setIconImage(gui.Image(embed("logo.png")))` an image of the program, as its logo; `setIcon(gui.Icon.None)` removes either. The panel of `titleBar()` then starts after the icon.
+- `setCornerRadius(pixels)` rounds the corners of the window, from 0, the default, to 64, and is called before `start()`. What is outside the corners shows what is behind the window; a maximized window has sharp corners.
+- A window is drawn while the user resizes it: its components follow the edge with their anchors as the mouse moves.
+
 ### Themes
 
 `w.setTheme(theme)` sets the colors of the window and of its components, at once: `gui.Theme.Light`, dark text on light grays; `gui.Theme.Dark`, light text on dark grays; and `gui.Theme.System`, the default, which follows the theme of Windows, of the desktop of Linux or of the phone, and changes with it while the program runs. `w.theme()` reads it. On a phone the bars of the system take the colors of the theme too.
@@ -1211,6 +1236,71 @@ On a phone the same program behaves as an app:
 - The keyboard on the screen makes the content shorter, and a page scrolls to show the text box being written in. The navigation bar stays under the keyboard.
 - The back key, or its gesture, closes a dialog that is open, else the window, and so the app, unless `w.onBack(handler)` decides otherwise, as going back to the first page. On the desktop the handlers of `onBack` are never called.
 - A long press is the right button on a piece of rich text, and shows the tooltip on the other components.
+
+## Designing a window: cromo design
+
+> `cromo design` is a first version: it designs one window, with sixteen kinds of components. The format of the form and the names of the module can still change.
+
+A window can also be composed with the mouse. `cromo design` opens the designer, itself a program of `std.gui`:
+
+```sh
+cromo design               # a new window
+cromo design notes.form    # opens a form
+```
+
+- **Components**, on the left, adds a component to the window: labels, buttons, text boxes and areas, check boxes, switches, radio groups, segmented controls, combo boxes, sliders, progress bars, lists, tables, canvases, groups and panels.
+- A click selects a component; Shift and a click add one to the selection, and a rectangle drawn on the window selects what it touches. The selection moves together with the mouse or with the arrows, by 4 pixels, and Delete removes it. One component is resized by the eight handles around it, and the window by the handles on its right edge, on its bottom edge and on their corner.
+- **Center horizontally** and **Center vertically** put the selection, as one block, in the middle of the window.
+- A component moved over a group or a panel goes inside it, and moved out of it comes back to the window.
+- **Properties**, on the right, shows the name, the text, the position, the size and the anchors of the component selected, or the title and the size of the window. The anchors are those of [Positions and anchors](#positions-and-anchors): when the window is resized in the designer, the components follow with them, as in the program.
+- **Grid** shows or hides the dots of the grid on the window.
+- **Phone** shows the window as on a phone, 360 pixels wide, with the anchors at work; the components keep the look of the desktop.
+- **Run** builds the window with the code made from the form and shows it as it will be, in a program of its own: its components do nothing.
+- **Undo** and **Redo**, Ctrl+Z and Ctrl+Y, go back and forth through the changes. A new form and the opening of another ask first, when there are changes not saved.
+- **Code**, under the window, shows the statements that make the window, to paste in a function: **Copy all** copies them, and a part is selected and copied with Ctrl+C.
+- **Save** writes two files: the form, `notes.form`, which the designer opens again, and next to it the module `notes_form.cro`, made again at each save.
+
+The module has a struct, `Form`, with the window and a field for each component, by its name:
+
+```cromo file=notes_form.cro
+// Made by cromo design from notes.form: change the form with cromo design, not this file.
+import std.gui
+
+// The window of notes.form and its components.
+public struct Form {
+    public gui.Window window
+    public gui.Label title
+    public gui.TextBox who
+    public gui.Button greet
+
+    public Form() {
+        window = gui.Window("Notes", 400, 300)
+        title = window.add(gui.Label("Your name", 16, 16, 120, 20))
+        who = window.add(gui.TextBox("", 16, 44, 200, 28))
+        greet = window.add(gui.Button("Greet", 16, 84, 96, 28))
+    }
+}
+```
+
+The program imports the module, makes the form, adds its handlers and starts the window. Its code is in its own files, which the designer never touches:
+
+```cromo norun
+import notes_form
+import std.gui
+
+[[window]]
+i32 main() {
+    notes_form.Form f = notes_form.Form()
+    f.greet.onClick([f]() { f.title.setText(format("Hello, {}", f.who.text())) })
+    f.window.start()
+    ret 0
+}
+```
+
+- `Form` is made only of handles, so it is a simple value: a handler captures it whole, by copy, as `[f]` above, and reaches every component.
+- The name of a component is the name of its field: letters, digits and `_`, not a word of Cromo, and different from the others. A form with a wrong name is not saved, and the designer says why.
+- `cromo design --generate notes.form` writes the module again without opening a window, for a script that builds the program.
+- The same form is the window on Windows and on Linux, and the app on Android.
 
 ## Summary
 

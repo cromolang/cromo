@@ -12,6 +12,9 @@ namespace cromo {
 // the folder of cromo in a build. Empty if there is none.
 const std::filesystem::path& libraryFolder();
 
+// The file of this cromo, for a tool of the library that runs it again (D523).
+std::filesystem::path cromoPath();
+
 // A file of the library: "core.cro" (D97), or a module as "std/fs.cro" (D201).
 std::filesystem::path libraryFile(const std::string& name);
 

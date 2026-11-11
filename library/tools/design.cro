@@ -1,0 +1,2110 @@
+// cromo design and cromo design <file.form> (D523, D524): cromo compiles this program
+// with the library of the version in use, and runs it. It is the designer of the
+// windows: the components are put on a window with the mouse, moved and resized, alone
+// or several together, put in groups and panels, and their properties and their anchors
+// written in a panel. Saving writes the form, a file of JSON that the designer opens
+// again, and next to it a module of Cromo with the window and its components, made
+// again at each save: notes.form gives notes_form.cro. The code of the program, with
+// the handlers, is in other files, and is never touched.
+//
+// The components on the window are the real ones of std.gui, in a panel; a canvas
+// over them takes the mouse and draws the selection, and one under them draws the
+// window. cromo design --generate <file.form> only writes the module again, without
+// a window.
+import std.fs
+import std.gui
+import std.json
+import std.os
+import std.process
+import std.thread
+import unsafe
+
+extern "SDL3" {
+    bool SDL_SetClipboardText(addr text)
+    addr SDL_CreateSystemCursor(u32 kind)
+    bool SDL_SetCursor(addr cursor)
+}
+
+// A component of a form: its kind is the name of its type in std.gui. Its position is
+// from the top left corner of its parent, a group or a panel of the form by its name,
+// or the content of the window.
+struct Item {
+    string kind
+    string name
+    string text  // or the choices of a combo box, a radio group or a segmented control, with commas
+    i32 x
+    i32 y
+    i32 width
+    i32 height
+    string horizontal = "Left"  // the anchors: a case of gui.Horizontal and one of gui.Vertical
+    string vertical = "Top"
+    string parent
+}
+
+// A form, as it is in its file: a window, with its size with the title bar, and
+// its components in the order they are made.
+struct Form {
+    i32 version = 1
+    string title = "Window"
+    i32 width = 480
+    i32 height = 360
+    bool resizable = true  // the user can resize the window
+    bool titleBar = true   // the window has its title bar, with this height and these buttons
+    i32 titleBarHeight = 35
+    bool minimize = true
+    bool maximize = true
+    bool close = true
+    i32 corner       // the radius of its corners
+    string icon      // of Lucide, at the left of the title bar, by its name
+    string iconFile  // or an image there: its file, from the folder of the form
+    list<Item> items
+}
+
+// The component of std.gui that shows an item on the window of the designer.
+enum Widget {
+    Label(gui.Label made)
+    Button(gui.Button made)
+    TextBox(gui.TextBox made)
+    TextArea(gui.TextArea made)
+    CheckBox(gui.CheckBox made)
+    Switch(gui.Switch made)
+    RadioGroup(gui.RadioGroup made)
+    Segmented(gui.Segmented made)
+    ComboBox(gui.ComboBox made)
+    Slider(gui.Slider made)
+    ProgressBar(gui.ProgressBar made)
+    ListView(gui.ListView made)
+    Table(gui.Table made)
+    Canvas(gui.Canvas made)
+    GroupBox(gui.GroupBox made)
+    Panel(gui.Panel made)
+}
+
+// Where a component goes: a panel, as the content of the window, or a group.
+enum Holder {
+    Pane(gui.Panel pane)
+    Group(gui.GroupBox group)
+}
+
+// What the handlers of the designer share.
+struct Design {
+    Form form
+    Form view             // what the components show: the form, or the form on a phone
+    list<Widget> widgets  // of the items of the view, in their order
+    string built          // the kinds and the parents of the items that the widgets were made for
+    list<bool> picked     // the items selected
+    string path           // of the form, empty until it is saved
+    bool dirty            // changed since it was saved
+    bool phone            // the preview on a phone: nothing is changed there
+    list<Form> undo
+    list<Form> redo
+    string editing  // the property being written, which is one step to undo
+    string code     // shown under the window
+    i32 mode        // of the mouse held: 0 nothing, 1 moves the selection, 2-9 resize an item, 20-22 the window, 30 selects in a rectangle
+    bool moved      // the mouse held changed the form
+    f32 downX
+    f32 downY
+    f32 nowX
+    f32 nowY
+    Form before         // the form when the mouse was pressed
+    i32 pending         // what waits for the answer on the changes not saved: 1 a new form, 2 opening one
+    bool grid = true    // the dots of the grid are shown
+    string dotted       // the size of the window that the dots were drawn for, or nothing without them
+    list<addr> cursors  // of the system, made by the thread of the windows at the first use
+    bool running        // the window made by Run is open
+    string pictured     // the file of the image of the icon that was read, as it was asked
+    gui.Image picture   // that image
+    bool hasPicture
+}
+
+// The handles of the window of the designer.
+struct Ui {
+    gui.Window w
+    gui.Canvas back
+    gui.Canvas dots
+    gui.IconBox badge
+    gui.Panel content
+    gui.Canvas over
+    gui.Label kind
+    gui.TextBox name
+    gui.TextBox text
+    gui.TextBox x
+    gui.TextBox y
+    gui.TextBox width
+    gui.TextBox height
+    gui.ComboBox horizontal
+    gui.ComboBox vertical
+    gui.CheckBox bar
+    gui.CheckBox minimize
+    gui.CheckBox maximize
+    gui.CheckBox close
+    gui.CheckBox resizable
+    gui.TextBox barSize
+    gui.TextBox corner
+    gui.ComboBox icon
+    gui.TextBox iconFile
+    gui.TextArea code
+    gui.Label status
+    gui.Dialog ask
+}
+
+const i32 barHeight = 35    // of the title bar of a window of std.gui
+const i32 margin = 28       // around the window, on the canvas
+const i32 grid = 4          // the positions and the sizes are multiples of it
+const f32 grip = 7          // the side of a handle
+const i32 phoneWidth = 360  // the content of the window on a phone, in the preview
+const i32 phoneHeight = 740
+const i32 areaLeft = 220  // the area of the window, in the designer
+const i32 areaTop = 61
+
+list<string> kinds() {
+    ret ["Label", "Button", "TextBox", "TextArea", "CheckBox", "Switch", "RadioGroup", "Segmented", "ComboBox", "Slider",
+        "ProgressBar", "ListView", "Table", "Canvas", "GroupBox", "Panel"]
+}
+
+// The icons of Lucide that std.gui has, by their names, from 'None': written by the
+// script that adds an icon to std.gui.
+list<string> iconNames() {
+    ret ["None", "Activity", "AlarmClock", "Archive", "ArrowDown", "ArrowLeft", "ArrowRight", "ArrowUp", "AtSign", "Award",
+        "Ban", "Battery", "Bell", "BellOff", "Bike", "Bluetooth", "Book", "BookOpen", "Bookmark", "Briefcase", "Building2",
+        "Calendar", "Camera", "Car", "ChartColumn", "ChartLine", "ChartPie", "Check", "ChevronDown", "ChevronLeft",
+        "ChevronRight", "ChevronUp", "CircleAlert", "CircleCheck", "CircleQuestionMark", "CircleX", "Clipboard", "Clock",
+        "Cloud", "Code", "Coffee", "Contact", "Copy", "Cpu", "CreditCard", "Database", "Download", "Droplet", "Ellipsis",
+        "EllipsisVertical", "ExternalLink", "Eye", "EyeOff", "File", "FileText", "Flag", "Flame", "Folder", "FolderOpen",
+        "Funnel", "Gift", "Globe", "GraduationCap", "Heart", "History", "House", "Image", "Inbox", "Info", "Key", "Laptop",
+        "Layers", "LayoutGrid", "Lightbulb", "Link", "List", "Loader", "Lock", "LockOpen", "LogIn", "LogOut", "Mail", "Map",
+        "MapPin", "Menu", "MessageCircle", "MessageSquare", "Mic", "Minus", "Monitor", "Moon", "Music", "Package", "Paperclip",
+        "Pause", "Pencil", "Phone", "Plane", "Play", "Plus", "Power", "Printer", "QrCode", "RefreshCw", "RotateCcw", "Save",
+        "Scan", "Search", "Send", "Server", "Settings", "Share2", "Shield", "ShoppingBag", "ShoppingCart", "SkipBack",
+        "SkipForward", "SlidersHorizontal", "Smartphone", "Smile", "Square", "Star", "Sun", "Table", "Tag", "Terminal",
+        "Thermometer", "ThumbsDown", "ThumbsUp", "Trash2", "TriangleAlert", "Trophy", "Truck", "Umbrella", "Upload", "User",
+        "UserCheck", "UserPlus", "Users", "Utensils", "Video", "Volume2", "VolumeX", "Wallet", "Wifi", "WifiOff", "X", "Zap"]
+}
+
+list<gui.Icon> iconValues() {
+    ret [gui.Icon.None, gui.Icon.Activity, gui.Icon.AlarmClock, gui.Icon.Archive, gui.Icon.ArrowDown, gui.Icon.ArrowLeft,
+        gui.Icon.ArrowRight, gui.Icon.ArrowUp, gui.Icon.AtSign, gui.Icon.Award, gui.Icon.Ban, gui.Icon.Battery, gui.Icon.Bell,
+        gui.Icon.BellOff, gui.Icon.Bike, gui.Icon.Bluetooth, gui.Icon.Book, gui.Icon.BookOpen, gui.Icon.Bookmark,
+        gui.Icon.Briefcase, gui.Icon.Building2, gui.Icon.Calendar, gui.Icon.Camera, gui.Icon.Car, gui.Icon.ChartColumn,
+        gui.Icon.ChartLine, gui.Icon.ChartPie, gui.Icon.Check, gui.Icon.ChevronDown, gui.Icon.ChevronLeft,
+        gui.Icon.ChevronRight, gui.Icon.ChevronUp, gui.Icon.CircleAlert, gui.Icon.CircleCheck, gui.Icon.CircleQuestionMark,
+        gui.Icon.CircleX, gui.Icon.Clipboard, gui.Icon.Clock, gui.Icon.Cloud, gui.Icon.Code, gui.Icon.Coffee, gui.Icon.Contact,
+        gui.Icon.Copy, gui.Icon.Cpu, gui.Icon.CreditCard, gui.Icon.Database, gui.Icon.Download, gui.Icon.Droplet,
+        gui.Icon.Ellipsis, gui.Icon.EllipsisVertical, gui.Icon.ExternalLink, gui.Icon.Eye, gui.Icon.EyeOff, gui.Icon.File,
+        gui.Icon.FileText, gui.Icon.Flag, gui.Icon.Flame, gui.Icon.Folder, gui.Icon.FolderOpen, gui.Icon.Funnel, gui.Icon.Gift,
+        gui.Icon.Globe, gui.Icon.GraduationCap, gui.Icon.Heart, gui.Icon.History, gui.Icon.House, gui.Icon.Image,
+        gui.Icon.Inbox, gui.Icon.Info, gui.Icon.Key, gui.Icon.Laptop, gui.Icon.Layers, gui.Icon.LayoutGrid, gui.Icon.Lightbulb,
+        gui.Icon.Link, gui.Icon.List, gui.Icon.Loader, gui.Icon.Lock, gui.Icon.LockOpen, gui.Icon.LogIn, gui.Icon.LogOut,
+        gui.Icon.Mail, gui.Icon.Map, gui.Icon.MapPin, gui.Icon.Menu, gui.Icon.MessageCircle, gui.Icon.MessageSquare,
+        gui.Icon.Mic, gui.Icon.Minus, gui.Icon.Monitor, gui.Icon.Moon, gui.Icon.Music, gui.Icon.Package, gui.Icon.Paperclip,
+        gui.Icon.Pause, gui.Icon.Pencil, gui.Icon.Phone, gui.Icon.Plane, gui.Icon.Play, gui.Icon.Plus, gui.Icon.Power,
+        gui.Icon.Printer, gui.Icon.QrCode, gui.Icon.RefreshCw, gui.Icon.RotateCcw, gui.Icon.Save, gui.Icon.Scan,
+        gui.Icon.Search, gui.Icon.Send, gui.Icon.Server, gui.Icon.Settings, gui.Icon.Share2, gui.Icon.Shield,
+        gui.Icon.ShoppingBag, gui.Icon.ShoppingCart, gui.Icon.SkipBack, gui.Icon.SkipForward, gui.Icon.SlidersHorizontal,
+        gui.Icon.Smartphone, gui.Icon.Smile, gui.Icon.Square, gui.Icon.Star, gui.Icon.Sun, gui.Icon.Table, gui.Icon.Tag,
+        gui.Icon.Terminal, gui.Icon.Thermometer, gui.Icon.ThumbsDown, gui.Icon.ThumbsUp, gui.Icon.Trash2,
+        gui.Icon.TriangleAlert, gui.Icon.Trophy, gui.Icon.Truck, gui.Icon.Umbrella, gui.Icon.Upload, gui.Icon.User,
+        gui.Icon.UserCheck, gui.Icon.UserPlus, gui.Icon.Users, gui.Icon.Utensils, gui.Icon.Video, gui.Icon.Volume2,
+        gui.Icon.VolumeX, gui.Icon.Wallet, gui.Icon.Wifi, gui.Icon.WifiOff, gui.Icon.X, gui.Icon.Zap]
+}
+
+list<string> acrossNames() {
+    ret ["Left", "Right", "Stretch", "Center"]
+}
+
+list<string> downNames() {
+    ret ["Top", "Bottom", "Stretch", "Center"]
+}
+
+// What the text of an item is for its kind: 1 its text, 2 its choices, 0 nothing.
+i32 textOf(string kind) {
+    if (kind == "Label" || kind == "Button" || kind == "TextBox" || kind == "TextArea" || kind == "CheckBox" || kind == "Switch" ||
+        kind == "GroupBox") {
+        ret 1
+    }
+    ret kind == "RadioGroup" || kind == "Segmented" || kind == "ComboBox" ? 2 : 0
+}
+
+// A group and a panel hold other components.
+bool holds(string kind) {
+    ret kind == "GroupBox" || kind == "Panel"
+}
+
+bool has(ref list<string> names, string name) {
+    for (string other in names) {
+        if (other == name) {
+            ret true
+        }
+    }
+    ret false
+}
+
+i64 placeOf(ref list<string> names, string name) {
+    for (i64 i = 0; i < names.len(); i++) {
+        if (names[i] == name) {
+            ret i
+        }
+    }
+    ret 0
+}
+
+// The choices written with commas.
+list<string> choices(string text) {
+    list<string> out
+    for (string piece in text.split(",")) {
+        if (piece.trim().len() > 0) {
+            out.add(piece.trim())
+        }
+    }
+    ret out
+}
+
+// ---- The tree of a form ----
+
+// The height of the title bar of the window of a form, or 0 without it.
+i32 barOf(Form form) {
+    ret form.titleBar ? form.titleBarHeight : 0
+}
+
+// The item with a name, or -1.
+i64 find(Form form, string name) {
+    for (i64 i = 0; i < form.items.len(); i++) {
+        if (form.items[i].name == name) {
+            ret i
+        }
+    }
+    ret -1
+}
+
+// The item that holds another, or -1 for the window.
+i64 parentOf(Form form, i64 i) {
+    ret form.items[i].parent.len() == 0 ? -1 : find(form, form.items[i].parent)
+}
+
+// The left and the top of an item from the content of the window.
+i32 leftOf(Form form, i64 i) {
+    i64 p = parentOf(form, i)
+    ret form.items[i].x + (p >= 0 ? form.items[p].x : 0)
+}
+
+i32 topOf(Form form, i64 i) {
+    i64 p = parentOf(form, i)
+    ret form.items[i].y + (p >= 0 ? form.items[p].y : 0)
+}
+
+// The items in the order they are drawn: each one of the window, then what it holds.
+list<i64> drawn(Form form) {
+    list<i64> order
+    for (i64 i = 0; i < form.items.len(); i++) {
+        if (parentOf(form, i) < 0) {
+            order.add(i)
+            for (i64 k = 0; k < form.items.len(); k++) {
+                if (parentOf(form, k) == i) {
+                    order.add(k)
+                }
+            }
+        }
+    }
+    ret order
+}
+
+// Moves an item with its anchors, for a parent that grew by dw and dh, as std.gui does.
+void follow(ref Item item, i32 dw, i32 dh) {
+    if (item.horizontal == "Right") {
+        item.x += dw
+    } else if (item.horizontal == "Stretch") {
+        item.width = item.width + dw > 2 * grid ? item.width + dw : 2 * grid
+    } else if (item.horizontal == "Center") {
+        item.x += dw / 2
+    }
+    if (item.vertical == "Bottom") {
+        item.y += dh
+    } else if (item.vertical == "Stretch") {
+        item.height = item.height + dh > 2 * grid ? item.height + dh : 2 * grid
+    } else if (item.vertical == "Center") {
+        item.y += dh / 2
+    }
+}
+
+// Gives an item of a form its new place and size, from the form before; what it
+// holds follows with its anchors.
+void reshape(ref Form form, Form from, i64 i, Item changed) {
+    i32 dw = changed.width - from.items[i].width
+    i32 dh = changed.height - from.items[i].height
+    form.items[i] = changed
+    for (i64 k = 0; k < from.items.len(); k++) {
+        if (parentOf(from, k) == i) {
+            Item inner = from.items[k]
+            follow(ref inner, dw, dh)
+            form.items[k] = inner
+        }
+    }
+}
+
+// A form with another size of its window: its items follow with their anchors.
+Form resized(Form from, i32 width, i32 height) {
+    Form form = from
+    form.width = width
+    form.height = height
+    for (i64 i = 0; i < from.items.len(); i++) {
+        if (parentOf(from, i) < 0) {
+            Item item = from.items[i]
+            follow(ref item, width - from.width, height - from.height)
+            reshape(ref form, from, i, item)
+        }
+    }
+    ret form
+}
+
+// ---- The code made from a form ----
+
+bool isLetter(u8 c) {
+    ret c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c == '_'
+}
+
+// Whether a name can be a field of the struct of the module.
+bool isName(string name) {
+    if (name.len() == 0 || !isLetter(name[0])) {
+        ret false
+    }
+    for (i64 i = 1; i < name.len(); i++) {
+        if (!isLetter(name[i]) && !(name[i] >= '0' && name[i] <= '9')) {
+            ret false
+        }
+    }
+    list<string> taken = ["window", "move", "ref", "ret", "for", "if", "else", "switch", "case", "struct", "enum", "import",
+        "public", "const", "list", "map", "string", "bool", "true", "false", "try", "catch", "throw", "func", "break", "continue"]
+    ret !has(ref taken, name)
+}
+
+// What does not let a form become a module, or an empty string.
+string problem(Form form) {
+    list<string> names
+    list<string> known = kinds()
+    list<string> across = acrossNames()
+    list<string> down = downNames()
+    for (Item item in form.items) {
+        if (!has(ref known, item.kind)) {
+            ret format("'{}' is not a component of the designer", item.kind)
+        }
+        if (!isName(item.name)) {
+            ret format("'{}' cannot be the name of a component: a name has letters, digits and _, and is not a word of Cromo", item.name)
+        }
+        if (has(ref names, item.name)) {
+            ret format("two components are named '{}'", item.name)
+        }
+        if (!has(ref across, item.horizontal) || !has(ref down, item.vertical)) {
+            ret format("'{}' has anchors that std.gui does not have", item.name)
+        }
+        names.add(item.name)
+    }
+    if (form.titleBarHeight < 24 || form.titleBarHeight > 96) {
+        ret format("the height of the title bar is from 24 to 96, found {}", form.titleBarHeight)
+    }
+    list<string> icons = iconNames()
+    if (form.icon.len() > 0 && !has(ref icons, form.icon)) {
+        ret format("'{}' is not an icon of std.gui", form.icon)
+    }
+    if (form.corner < 0 || form.corner > 64) {
+        ret format("the radius of the corners is from 0 to 64, found {}", form.corner)
+    }
+    for (i64 i = 0; i < form.items.len(); i++) {
+        if (form.items[i].parent.len() > 0) {
+            i64 p = parentOf(form, i)
+            if (p < 0 || !holds(form.items[p].kind) || form.items[p].parent.len() > 0) {
+                ret format("'{}' is in '{}', which is not a group or a panel of the window", form.items[i].name, form.items[i].parent)
+            }
+        }
+    }
+    ret ""
+}
+
+// A text as a literal of Cromo.
+string quoted(string text) {
+    string out = "\""
+    for (i64 i = 0; i < text.len(); i++) {
+        u8 c = text[i]
+        if (c == '"' || c == '\\') {
+            out = out + "\\"
+        }
+        if (c == 10) {
+            out = out + "\\n"
+        } else {
+            out = out + text.slice(i, i + 1)
+        }
+    }
+    ret out + "\""
+}
+
+// The expression that makes the component of an item.
+string maker(Item item) {
+    string place = format("{}, {}, {}, {}", item.x, item.y, item.width, item.height)
+    if (textOf(item.kind) == 1) {
+        ret format("gui.{}({}, {})", item.kind, quoted(item.text), place)
+    }
+    if (textOf(item.kind) == 2) {
+        list<string> parts
+        for (string choice in choices(item.text)) {
+            parts.add(quoted(choice))
+        }
+        ret format("gui.{}([{}], {})", item.kind, join(parts, ", "), place)
+    }
+    if (item.kind == "Slider") {
+        ret format("gui.Slider(0, 100, {})", place)
+    }
+    ret format("gui.{}({})", item.kind, place)
+}
+
+// The statements that make the components of a form, after its window: with their
+// types as variables, or without them as the fields of the module.
+void statements(Form form, ref list<string> lines, string indent, bool typed) {
+    for (i64 i in drawn(form)) {
+        Item item = form.items[i]
+        string owner = item.parent.len() > 0 ? item.parent : "window"
+        string type = typed ? format("gui.{} ", item.kind) : ""
+        lines.add(format("{}{}{} = {}.add({})", indent, type, item.name, owner, maker(item)))
+        if (item.horizontal != "Left" || item.vertical != "Top") {
+            lines.add(format("{}{}.setAnchor(gui.Horizontal.{}, gui.Vertical.{})", indent, item.name, item.horizontal, item.vertical))
+        }
+    }
+}
+
+// The statements for the title bar and the corners of the window of a form, where they
+// are not those of every window.
+void frame(Form form, ref list<string> lines, string indent) {
+    if (!form.resizable) {
+        lines.add(format("{}window.setResizable(false)", indent))
+    }
+    if (!form.titleBar) {
+        lines.add(format("{}window.setTitleBarVisible(false)", indent))
+    } else {
+        if (form.titleBarHeight != barHeight) {
+            lines.add(format("{}window.setTitleBarHeight({})", indent, form.titleBarHeight))
+        }
+        if (!form.minimize || !form.maximize || !form.close) {
+            lines.add(format("{}window.setButtons({}, {}, {})", indent, form.minimize, form.maximize, form.close))
+        }
+        if (form.iconFile.len() > 0) {
+            lines.add(format("{}window.setIconImage(gui.Image(embed({})))", indent, quoted(form.iconFile)))
+        } else if (form.icon.len() > 0) {
+            lines.add(format("{}window.setIcon(gui.Icon.{})", indent, form.icon))
+        }
+    }
+    if (form.corner > 0) {
+        lines.add(format("{}window.setCornerRadius({})", indent, form.corner))
+    }
+}
+
+// The module of a form: a struct with the window and its components, made by its
+// constructor.
+string moduleOf(Form form, string source) {
+    list<string> lines
+    lines.add(format("// Made by cromo design from {}: change the form with cromo design, not this file.", source))
+    lines.add("import std.gui")
+    lines.add("")
+    lines.add(format("// The window of {} and its components.", source))
+    lines.add("public struct Form {")
+    lines.add("    public gui.Window window")
+    for (i64 i in drawn(form)) {
+        lines.add(format("    public gui.{} {}", form.items[i].kind, form.items[i].name))
+    }
+    lines.add("")
+    lines.add("    public Form() {")
+    lines.add(format("        window = gui.Window({}, {}, {})", quoted(form.title), form.width, form.height))
+    frame(form, ref lines, "        ")
+    statements(form, ref lines, "        ", false)
+    lines.add("    }")
+    lines.add("}")
+    lines.add("")
+    ret join(lines, "\n")
+}
+
+// The same window as statements, to paste in a function.
+string codeOf(Form form) {
+    list<string> lines
+    lines.add(format("gui.Window window = gui.Window({}, {}, {})", quoted(form.title), form.width, form.height))
+    frame(form, ref lines, "")
+    statements(form, ref lines, "", true)
+    ret join(lines, "\n")
+}
+
+// The file of the module of a form: notes.form gives notes_form.cro, next to it.
+string modulePath(string path) {
+    if (!path.endsWith(".form")) {
+        throw Error(format("{} is not a form: the name of a form ends with .form", path))
+    }
+    string file = fs.fileName(path)
+    string stem = file.slice(0, file.len() - 5)
+    if (!isName(stem + "_form")) {
+        throw Error(format("{}_form cannot be the name of a module: name the form with letters, digits and _", stem))
+    }
+    ret path.slice(0, path.len() - 5) + "_form.cro"
+}
+
+Form readForm(string path) {
+    Form form = json.decode<Form>(fs.readText(path))
+    if (form.version != 1) {
+        throw Error(format("{} is a form of version {}: this cromo design reads version 1", path, form.version))
+    }
+    ret form
+}
+
+// Writes the form and its module.
+void writeForm(Form form, string path) {
+    string wrong = problem(form)
+    if (wrong.len() > 0) {
+        throw Error(wrong)
+    }
+    string target = modulePath(path)
+    fs.writeText(path, json.pretty(form) + "\n")
+    fs.writeText(target, moduleOf(form, fs.fileName(path)))
+}
+
+// ---- The components on the window of the designer ----
+
+Widget widgetOf(Item item) {
+    string k = item.kind
+    if (k == "Button") {
+        ret Widget.Button(gui.Button(item.text, item.x, item.y, item.width, item.height))
+    }
+    if (k == "TextBox") {
+        ret Widget.TextBox(gui.TextBox(item.text, item.x, item.y, item.width, item.height))
+    }
+    if (k == "TextArea") {
+        ret Widget.TextArea(gui.TextArea(item.text, item.x, item.y, item.width, item.height))
+    }
+    if (k == "CheckBox") {
+        ret Widget.CheckBox(gui.CheckBox(item.text, item.x, item.y, item.width, item.height))
+    }
+    if (k == "Switch") {
+        ret Widget.Switch(gui.Switch(item.text, item.x, item.y, item.width, item.height))
+    }
+    if (k == "RadioGroup") {
+        ret Widget.RadioGroup(gui.RadioGroup(choices(item.text), item.x, item.y, item.width, item.height))
+    }
+    if (k == "Segmented") {
+        ret Widget.Segmented(gui.Segmented(choices(item.text), item.x, item.y, item.width, item.height))
+    }
+    if (k == "ComboBox") {
+        ret Widget.ComboBox(gui.ComboBox(choices(item.text), item.x, item.y, item.width, item.height))
+    }
+    if (k == "Slider") {
+        ret Widget.Slider(gui.Slider(0, 100, item.x, item.y, item.width, item.height))
+    }
+    if (k == "ProgressBar") {
+        gui.ProgressBar bar = gui.ProgressBar(item.x, item.y, item.width, item.height)
+        bar.setValue(0.4)
+        ret Widget.ProgressBar(bar)
+    }
+    if (k == "ListView") {
+        ret Widget.ListView(gui.ListView(item.x, item.y, item.width, item.height))
+    }
+    if (k == "Table") {
+        ret Widget.Table(gui.Table(item.x, item.y, item.width, item.height))
+    }
+    if (k == "Canvas") {
+        ret Widget.Canvas(gui.Canvas(item.x, item.y, item.width, item.height))
+    }
+    if (k == "GroupBox") {
+        ret Widget.GroupBox(gui.GroupBox(item.text, item.x, item.y, item.width, item.height))
+    }
+    if (k == "Panel") {
+        ret Widget.Panel(gui.Panel(item.x, item.y, item.width, item.height))
+    }
+    ret Widget.Label(gui.Label(item.text, item.x, item.y, item.width, item.height))
+}
+
+void putIn<T : gui.Component>(Holder holder, T made) {
+    switch (holder) {
+        case Pane(gui.Panel pane) {
+            pane.add(made)
+        }
+        case Group(gui.GroupBox group) {
+            group.add(made)
+        }
+    }
+}
+
+// Puts a component just made in its holder.
+void attach(Holder holder, Widget widget) {
+    switch (widget) {
+        case Label(gui.Label made) {
+            putIn(holder, made)
+        }
+        case Button(gui.Button made) {
+            putIn(holder, made)
+        }
+        case TextBox(gui.TextBox made) {
+            putIn(holder, made)
+        }
+        case TextArea(gui.TextArea made) {
+            putIn(holder, made)
+        }
+        case CheckBox(gui.CheckBox made) {
+            putIn(holder, made)
+        }
+        case Switch(gui.Switch made) {
+            putIn(holder, made)
+        }
+        case RadioGroup(gui.RadioGroup made) {
+            putIn(holder, made)
+        }
+        case Segmented(gui.Segmented made) {
+            putIn(holder, made)
+        }
+        case ComboBox(gui.ComboBox made) {
+            putIn(holder, made)
+        }
+        case Slider(gui.Slider made) {
+            putIn(holder, made)
+        }
+        case ProgressBar(gui.ProgressBar made) {
+            putIn(holder, made)
+        }
+        case ListView(gui.ListView made) {
+            putIn(holder, made)
+        }
+        case Table(gui.Table made) {
+            putIn(holder, made)
+        }
+        case Canvas(gui.Canvas made) {
+            putIn(holder, made)
+        }
+        case GroupBox(gui.GroupBox made) {
+            putIn(holder, made)
+        }
+        case Panel(gui.Panel made) {
+            putIn(holder, made)
+        }
+    }
+}
+
+// Gives to a component the text, the position and the size of its item.
+void place(Widget widget, Item item) {
+    switch (widget) {
+        case Label(gui.Label made) {
+            made.setText(item.text)
+            made.setPosition(item.x, item.y)
+            made.setSize(item.width, item.height)
+        }
+        case Button(gui.Button made) {
+            made.setText(item.text)
+            made.setPosition(item.x, item.y)
+            made.setSize(item.width, item.height)
+        }
+        case TextBox(gui.TextBox made) {
+            made.setText(item.text)
+            made.setPosition(item.x, item.y)
+            made.setSize(item.width, item.height)
+        }
+        case TextArea(gui.TextArea made) {
+            made.setText(item.text)
+            made.setPosition(item.x, item.y)
+            made.setSize(item.width, item.height)
+        }
+        case CheckBox(gui.CheckBox made) {
+            made.setText(item.text)
+            made.setPosition(item.x, item.y)
+            made.setSize(item.width, item.height)
+        }
+        case Switch(gui.Switch made) {
+            made.setText(item.text)
+            made.setPosition(item.x, item.y)
+            made.setSize(item.width, item.height)
+        }
+        case RadioGroup(gui.RadioGroup made) {
+            made.setItems(choices(item.text))
+            made.setPosition(item.x, item.y)
+            made.setSize(item.width, item.height)
+        }
+        case Segmented(gui.Segmented made) {
+            made.setItems(choices(item.text))
+            made.setPosition(item.x, item.y)
+            made.setSize(item.width, item.height)
+        }
+        case ComboBox(gui.ComboBox made) {
+            made.setItems(choices(item.text))
+            made.setPosition(item.x, item.y)
+            made.setSize(item.width, item.height)
+        }
+        case Slider(gui.Slider made) {
+            made.setPosition(item.x, item.y)
+            made.setSize(item.width, item.height)
+        }
+        case ProgressBar(gui.ProgressBar made) {
+            made.setPosition(item.x, item.y)
+            made.setSize(item.width, item.height)
+        }
+        case ListView(gui.ListView made) {
+            made.setPosition(item.x, item.y)
+            made.setSize(item.width, item.height)
+        }
+        case Table(gui.Table made) {
+            made.setPosition(item.x, item.y)
+            made.setSize(item.width, item.height)
+        }
+        case Canvas(gui.Canvas made) {
+            made.setPosition(item.x, item.y)
+            made.setSize(item.width, item.height)
+        }
+        case GroupBox(gui.GroupBox made) {
+            made.setText(item.text)
+            made.setPosition(item.x, item.y)
+            made.setSize(item.width, item.height)
+        }
+        case Panel(gui.Panel made) {
+            made.setPosition(item.x, item.y)
+            made.setSize(item.width, item.height)
+        }
+    }
+}
+
+// A component that is no longer of the form is hidden: std.gui keeps its components
+// until the program ends.
+void hide(Widget widget) {
+    switch (widget) {
+        case Label(gui.Label made) {
+            made.setVisible(false)
+        }
+        case Button(gui.Button made) {
+            made.setVisible(false)
+        }
+        case TextBox(gui.TextBox made) {
+            made.setVisible(false)
+        }
+        case TextArea(gui.TextArea made) {
+            made.setVisible(false)
+        }
+        case CheckBox(gui.CheckBox made) {
+            made.setVisible(false)
+        }
+        case Switch(gui.Switch made) {
+            made.setVisible(false)
+        }
+        case RadioGroup(gui.RadioGroup made) {
+            made.setVisible(false)
+        }
+        case Segmented(gui.Segmented made) {
+            made.setVisible(false)
+        }
+        case ComboBox(gui.ComboBox made) {
+            made.setVisible(false)
+        }
+        case Slider(gui.Slider made) {
+            made.setVisible(false)
+        }
+        case ProgressBar(gui.ProgressBar made) {
+            made.setVisible(false)
+        }
+        case ListView(gui.ListView made) {
+            made.setVisible(false)
+        }
+        case Table(gui.Table made) {
+            made.setVisible(false)
+        }
+        case Canvas(gui.Canvas made) {
+            made.setVisible(false)
+        }
+        case GroupBox(gui.GroupBox made) {
+            made.setVisible(false)
+        }
+        case Panel(gui.Panel made) {
+            made.setVisible(false)
+        }
+    }
+}
+
+// The holder that a widget is, for what it holds.
+Holder holderOf(Widget widget, gui.Panel content) {
+    switch (widget) {
+        case GroupBox(gui.GroupBox made) {
+            ret Holder.Group(made)
+        }
+        case Panel(gui.Panel made) {
+            ret Holder.Pane(made)
+        }
+        default {
+            ret Holder.Pane(content)
+        }
+    }
+}
+
+// The kinds and the parents of the items: while they stay, the widgets stay too.
+string shapeOf(Form form) {
+    string out = ""
+    for (i64 i = 0; i < form.items.len(); i++) {
+        out = out + format("{}<{};", form.items[i].kind, parentOf(form, i))
+    }
+    ret out
+}
+
+// Shows the form as it is now: the widgets, the drawings, the properties and the code.
+void sync(Ui ui, ref Design d) {
+    // A phone as tall as the room there is, up to its height: no title bar there.
+    i32 tall = within(ui.back.height() - 2 * margin, 240, phoneHeight)
+    d.view = d.phone ? resized(d.form, phoneWidth, tall + barOf(d.form)) : d.form
+    string shape = shapeOf(d.view)
+    if (shape != d.built) {
+        for (Widget widget in d.widgets) {
+            hide(widget)
+        }
+        d.widgets.clear()
+        for (ref Item item in d.view.items) {
+            d.widgets.add(widgetOf(item))
+        }
+        for (i64 i = 0; i < d.view.items.len(); i++) {
+            i64 p = parentOf(d.view, i)
+            Holder holder = Holder.Pane(ui.content)
+            if (p >= 0) {
+                holder = holderOf(d.widgets[p], ui.content)
+            }
+            attach(holder, d.widgets[i])
+        }
+        d.built = shape
+    } else {
+        for (i64 i = 0; i < d.view.items.len(); i++) {
+            place(d.widgets[i], d.view.items[i])
+        }
+    }
+    for (d.picked.len() < d.form.items.len()) {
+        d.picked.add(false)
+    }
+    for (d.picked.len() > d.form.items.len()) {
+        d.picked.remove(d.picked.len() - 1)
+    }
+    string code = codeOf(d.form)
+    if (code != d.code) {
+        d.code = code
+        ui.code.setText(code)
+    }
+    showPath(ui, ref d)
+    refresh(ui, ref d)
+}
+
+// ---- The selection ----
+
+i64 pickedCount(Design d) {
+    i64 n = 0
+    for (bool one in d.picked) {
+        if (one) {
+            n++
+        }
+    }
+    ret n
+}
+
+// The only item selected, or -1.
+i64 single(Design d) {
+    if (pickedCount(d) != 1) {
+        ret -1
+    }
+    for (i64 i = 0; i < d.picked.len(); i++) {
+        if (d.picked[i]) {
+            ret i
+        }
+    }
+    ret -1
+}
+
+void pickNone(ref Design d) {
+    for (i64 i = 0; i < d.picked.len(); i++) {
+        d.picked[i] = false
+    }
+}
+
+// Whether an item moves by itself: it is selected, and what holds it is not.
+bool leads(Design d, Form form, i64 i) {
+    i64 p = parentOf(form, i)
+    ret d.picked[i] && (p < 0 || !d.picked[p])
+}
+
+// ---- The drawing ----
+
+// The centers of the eight handles of a rectangle, from the top left corner clockwise.
+list<f32> handles(f32 l, f32 t, f32 w, f32 h) {
+    f32 r = l + w
+    f32 b = t + h
+    ret [l, t, (l + r) / 2, t, r, t, r, (t + b) / 2, r, b, (l + r) / 2, b, l, b, l, (t + b) / 2]
+}
+
+void square(ref gui.Drawing marks, f32 x, f32 y, gui.Color color) {
+    marks.rect(x - grip / 2, y - grip / 2, grip, grip, gui.rgb(0xFFFFFF))
+    marks.frame(x - grip / 2, y - grip / 2, grip, grip, 1, color)
+}
+
+// The file of the image of the icon, from the folder of the form when it is not whole.
+string pictureFile(Design d) {
+    string file = d.form.iconFile
+    bool whole = file.startsWith("/") || file.len() > 1 && file[1] == ':'
+    string folder = d.path.len() > 0 ? fs.parent(d.path) : ""
+    ret whole || folder.len() == 0 || file.len() == 0 ? file : folder + "/" + file
+}
+
+// Reads the image of the icon when its file is another one: an image that cannot be
+// read is said, and not shown.
+void readPicture(Ui ui, ref Design d) {
+    string file = d.form.titleBar ? pictureFile(d) : ""
+    if (file == d.pictured) {
+        ret
+    }
+    d.pictured = file
+    d.hasPicture = false
+    if (file.len() > 0) {
+        try {
+            d.picture = gui.Image(fs.readBytes(file))
+            d.hasPicture = true
+        } catch (Exception e) {
+            ui.status.setText(format("The image of the icon: {}", e.message()))
+        }
+    }
+}
+
+// The window under the components, and the selection over them.
+void refresh(Ui ui, ref Design d) {
+    i32 wide = d.view.width
+    i32 high = d.view.height - barOf(d.view)
+    i32 gap = d.phone ? 0 : barOf(d.view)
+    readPicture(ui, ref d)
+    list<string> icons = iconNames()
+    bool badge = !d.phone && d.view.titleBar && !d.hasPicture && d.view.icon.len() > 0
+    ui.badge.setVisible(badge)
+    if (badge) {
+        ui.badge.setIcon(iconValues()[placeOf(ref icons, d.view.icon)])
+        ui.badge.setPosition(areaLeft + margin + 10, areaTop + margin + d.view.titleBarHeight / 2 - 8)
+    }
+    ui.content.setPosition(areaLeft + margin, areaTop + margin + gap)
+    ui.content.setSize(wide, high)
+    gui.Drawing window
+    f32 left = f32(margin)
+    f32 top = f32(margin)
+    window.rect(0, 0, 4000, 4000, gui.rgb(0xDCE2E7))
+    if (d.phone) {
+        window.roundRect(left - 10, top - 10, f32(wide) + 20, f32(high) + 20, 26, gui.rgb(0x1B2229))
+        window.rect(left, top, f32(wide), f32(high), gui.rgb(0xEDF1F4))
+    } else {
+        f32 round = f32(d.view.corner)
+        f32 all = f32(d.view.height)
+        for (i32 k = 0; k < 6; k++) {  // a soft shadow
+            window.roundRect(left - f32(k), top - f32(k) + 3, f32(wide) + 2 * f32(k), all + 2 * f32(k), round + 6, gui.rgba(0x1B2229, 8))
+        }
+        window.roundRect(left - 1, top - 1, f32(wide) + 2, all + 2, round + 1, gui.rgb(0xAEB9C2))
+        window.roundRect(left, top, f32(wide), all, round, gui.rgb(0xEDF1F4))
+        if (d.view.titleBar) {
+            gui.Color ink = gui.rgb(0x4A5761)
+            f32 bar = f32(d.view.titleBarHeight)
+            window.roundRect(left, top, f32(wide), bar, round, gui.rgb(0xFFFFFF))
+            if (round < bar) {  // square where it meets the content
+                window.rect(left, top + round, f32(wide), bar - round, gui.rgb(0xFFFFFF))
+            }
+            window.rect(left, top + bar - 1, f32(wide), 1, gui.rgb(0xD5DDE3))
+            window.text(d.view.title, left + f32(wide) / 2, top + bar / 2, 12, ink, gui.Horizontal.Center)
+            if (d.hasPicture) {
+                window.image(d.picture, left + 10, top + bar / 2 - 8, 16, 16)
+            }
+            f32 x = left + f32(wide) - 23  // the buttons, from the right: each is 46 wide
+            f32 y = top + bar / 2
+            if (d.view.close) {
+                window.line(x - 5, y - 5, x + 5, y + 5, 1, ink)
+                window.line(x - 5, y + 5, x + 5, y - 5, 1, ink)
+                x = x - 46
+            }
+            if (d.view.maximize) {
+                window.frame(x - 5, y - 5, 10, 10, 1, ink)
+                x = x - 46
+            }
+            if (d.view.minimize) {
+                window.line(x - 5, y, x + 5, y, 1, ink)
+            }
+        }
+    }
+    ui.back.setDrawing(move window)
+    string dotted = d.grid && !d.phone ? format("{}x{}", wide, high) : ""
+    if (dotted != d.dotted) {  // a dot every two steps of the grid, as in the designers of forms
+        d.dotted = dotted
+        gui.Drawing points
+        if (dotted.len() > 0) {
+            gui.Color dot = gui.rgb(0xBAC4CC)
+            for (i32 y = 2 * grid; y < high; y += 2 * grid) {
+                for (i32 x = 2 * grid; x < wide; x += 2 * grid) {
+                    points.rect(left + f32(x), top + f32(gap + y), 1, 1, dot)
+                }
+            }
+        }
+        ui.dots.setDrawing(move points)
+    }
+
+    gui.Drawing marks
+    gui.Color accent = gui.rgb(0x2F6E8F)
+    gui.Color faint = gui.rgb(0x9AA7B1)
+    f32 ox = f32(margin)
+    f32 oy = f32(margin + gap)
+    for (i64 i = 0; i < d.view.items.len(); i++) {  // what has nothing to show by itself
+        string k = d.view.items[i].kind
+        if (k == "Canvas" || k == "Panel" || k == "ListView" || k == "Table") {
+            f32 x = ox + f32(leftOf(d.view, i))
+            f32 y = oy + f32(topOf(d.view, i))
+            marks.frame(x, y, f32(d.view.items[i].width), f32(d.view.items[i].height), 1, faint)
+            marks.text(format("{} {}", k, d.view.items[i].name), x + 6, y + 12, 11, faint, gui.Horizontal.Left)
+        }
+    }
+    if (!d.phone) {
+        i64 one = single(d)
+        for (i64 i = 0; i < d.form.items.len(); i++) {
+            if (d.picked[i]) {
+                f32 x = ox + f32(leftOf(d.form, i))
+                f32 y = oy + f32(topOf(d.form, i))
+                f32 w = f32(d.form.items[i].width)
+                f32 h = f32(d.form.items[i].height)
+                marks.frame(x - 1, y - 1, w + 2, h + 2, 1, accent)
+                if (i == one) {
+                    list<f32> at = handles(x, y, w, h)
+                    for (i64 k = 0; k < 8; k++) {
+                        square(ref marks, at[2 * k], at[2 * k + 1], accent)
+                    }
+                }
+            }
+        }
+        // The handles of the window: its right edge, its bottom edge and their corner.
+        square(ref marks, ox + f32(wide), oy + f32(high) / 2, faint)
+        square(ref marks, ox + f32(wide) / 2, oy + f32(high), faint)
+        square(ref marks, ox + f32(wide), oy + f32(high), faint)
+        if (d.mode == 30) {
+            f32 x = d.downX < d.nowX ? d.downX : d.nowX
+            f32 y = d.downY < d.nowY ? d.downY : d.nowY
+            f32 w = d.downX < d.nowX ? d.nowX - d.downX : d.downX - d.nowX
+            f32 h = d.downY < d.nowY ? d.nowY - d.downY : d.downY - d.nowY
+            marks.rect(x, y, w, h, gui.rgba(0x2F6E8F, 28))
+            marks.frame(x, y, w, h, 1, accent)
+        }
+    }
+    ui.over.setDrawing(move marks)
+}
+
+// The properties of the item selected, of the window without one, or of none with several.
+void showProperties(Ui ui, ref Design d) {
+    i64 one = single(d)
+    i64 many = pickedCount(d)
+    bool free = !d.phone
+    ui.name.setEnabled(free && one >= 0)
+    ui.x.setEnabled(free && one >= 0)
+    ui.y.setEnabled(free && one >= 0)
+    ui.horizontal.setEnabled(free && one >= 0)
+    ui.vertical.setEnabled(free && one >= 0)
+    ui.text.setEnabled(free && (many == 0 || one >= 0 && textOf(d.form.items[one].kind) != 0))
+    ui.width.setEnabled(free && many <= 1)
+    ui.height.setEnabled(free && many <= 1)
+    bool whole = free && many == 0  // the window
+    ui.bar.setEnabled(whole)
+    ui.minimize.setEnabled(whole && d.form.titleBar)
+    ui.maximize.setEnabled(whole && d.form.titleBar)
+    ui.close.setEnabled(whole && d.form.titleBar)
+    ui.corner.setEnabled(whole)
+    ui.icon.setEnabled(whole && d.form.titleBar)
+    ui.iconFile.setEnabled(whole && d.form.titleBar)
+    list<string> icons = iconNames()
+    ui.icon.setSelected(placeOf(ref icons, d.form.icon))
+    ui.iconFile.setText(d.form.iconFile)
+    ui.resizable.setEnabled(whole)
+    ui.barSize.setEnabled(whole && d.form.titleBar)
+    ui.resizable.setChecked(d.form.resizable)
+    ui.barSize.setText(format("{}", d.form.titleBarHeight))
+    ui.bar.setChecked(d.form.titleBar)
+    ui.minimize.setChecked(d.form.minimize)
+    ui.maximize.setChecked(d.form.maximize)
+    ui.close.setChecked(d.form.close)
+    ui.corner.setText(format("{}", d.form.corner))
+    list<string> across = acrossNames()
+    list<string> down = downNames()
+    if (one >= 0) {
+        Item item = d.form.items[one]
+        ui.kind.setText(item.parent.len() > 0 ? format("{} in {}", item.kind, item.parent) : item.kind)
+        ui.name.setText(item.name)
+        ui.text.setText(item.text)
+        ui.x.setText(format("{}", item.x))
+        ui.y.setText(format("{}", item.y))
+        ui.width.setText(format("{}", item.width))
+        ui.height.setText(format("{}", item.height))
+        ui.horizontal.setSelected(placeOf(ref across, item.horizontal))
+        ui.vertical.setSelected(placeOf(ref down, item.vertical))
+    } else {
+        ui.kind.setText(many > 1 ? format("{} components", many) : "Window")
+        ui.name.setText("")
+        ui.text.setText(many > 1 ? "" : d.form.title)
+        ui.x.setText("")
+        ui.y.setText("")
+        ui.width.setText(many > 1 ? "" : format("{}", d.form.width))
+        ui.height.setText(many > 1 ? "" : format("{}", d.form.height))
+        ui.horizontal.setSelected(0)
+        ui.vertical.setSelected(0)
+    }
+}
+
+void showPath(Ui ui, ref Design d) {
+    string name = d.path.len() > 0 ? fs.fileName(d.path) : "new form"
+    ui.w.setTitle(format("{}{} - Cromo Design", name, d.dirty ? " *" : ""))
+}
+
+// ---- Undo ----
+
+// Keeps a form as it was before a change, to undo it.
+void keep(ref Design d, move Form form) {
+    d.undo.add(move form)
+    if (d.undo.len() > 200) {
+        d.undo.remove(0)
+    }
+    d.redo.clear()
+    d.dirty = true
+}
+
+// Before a change of the form: the changes with the same key, as the letters written
+// in one box, are one step to undo.
+void change(ref Design d, string key) {
+    if (key.len() == 0 || key != d.editing) {
+        Form now = d.form
+        keep(ref d, move now)
+    }
+    d.editing = key
+}
+
+void undo(Ui ui, ref Design d, bool again) {
+    if (d.phone || (again ? d.redo.len() : d.undo.len()) == 0) {
+        ret
+    }
+    Form now = d.form
+    if (again) {
+        d.undo.add(move now)
+        d.form = d.redo.remove(d.redo.len() - 1)
+    } else {
+        d.redo.add(move now)
+        d.form = d.undo.remove(d.undo.len() - 1)
+    }
+    d.dirty = true
+    d.editing = ""
+    d.mode = 0
+    d.picked.clear()
+    sync(ui, ref d)
+    showProperties(ui, ref d)
+    ui.status.setText(again ? "Done again" : "Undone")
+}
+
+// ---- The mouse ----
+
+i32 snap(f32 value) {
+    i32 whole = i32(value + (value < 0 ? -0.5 : 0.5))
+    ret whole / grid * grid
+}
+
+i32 within(i32 value, i32 low, i32 high) {
+    ret value < low ? low : value > high ? high : value
+}
+
+// The item at a point of the content of the window, the last drawn first, or -1.
+i64 itemAt(Form form, f32 x, f32 y) {
+    list<i64> order = drawn(form)
+    for (i64 k = order.len() - 1; k >= 0; k--) {
+        i64 i = order[k]
+        f32 l = f32(leftOf(form, i))
+        f32 t = f32(topOf(form, i))
+        if (x >= l && x < l + f32(form.items[i].width) && y >= t && y < t + f32(form.items[i].height)) {
+            ret i
+        }
+    }
+    ret -1
+}
+
+// The handle at a point among those of a list of centers, from 0, or -1.
+i64 handleAt(list<f32> at, f32 x, f32 y) {
+    for (i64 k = 0; k < at.len() / 2; k++) {
+        if (x >= at[2 * k] - grip && x <= at[2 * k] + grip && y >= at[2 * k + 1] - grip && y <= at[2 * k + 1] + grip) {
+            ret k
+        }
+    }
+    ret -1
+}
+
+// The cursor of the system for a handle of the eight of a rectangle: the arrows of the
+// direction it resizes in.
+i32 cursorOf(i64 handle) {
+    list<i32> ids = [5, 8, 6, 7, 5, 8, 6, 7]  // SDL_SYSTEM_CURSOR_NWSE_RESIZE, NS, NESW, EW
+    ret ids[handle]
+}
+
+// Shows what the mouse would do at a point of the canvas: the arrows over a handle of
+// the item selected or of the window, the four arrows over an item, which moves.
+void hover(ref Design d, gui.Mouse m) {
+    f32 x = m.x - f32(margin)
+    f32 y = m.y - f32(margin + barOf(d.form))
+    f32 wide = f32(d.form.width)
+    f32 high = f32(d.form.height - barOf(d.form))
+    i32 id = 0  // SDL_SYSTEM_CURSOR_DEFAULT
+    if (!d.phone) {
+        i64 one = single(d)
+        i64 handle = -1
+        if (one >= 0) {
+            handle = handleAt(handles(f32(leftOf(d.form, one)), f32(topOf(d.form, one)), f32(d.form.items[one].width),
+                f32(d.form.items[one].height)), x, y)
+        }
+        i64 edge = handleAt([wide, high / 2, wide / 2, high, wide, high], x, y)
+        if (handle >= 0) {
+            id = cursorOf(handle)
+        } else if (edge >= 0) {
+            id = edge == 0 ? 7 : edge == 1 ? 8 : 5
+        } else if (itemAt(d.form, x, y) >= 0) {
+            id = 9  // SDL_SYSTEM_CURSOR_MOVE
+        }
+    }
+    if (d.cursors.len() == 0) {
+        for (u32 k = 0; k < 12; k++) {
+            d.cursors.add(SDL_CreateSystemCursor(k))
+        }
+    }
+    SDL_SetCursor(d.cursors[id])
+}
+
+void pressed(Ui ui, ref Design d, gui.Mouse m) {
+    if (m.button != 1) {
+        ret
+    }
+    if (d.phone) {
+        ui.status.setText("This is the preview on a phone: turn Phone off to change the form")
+        ret
+    }
+    f32 x = m.x - f32(margin)
+    f32 y = m.y - f32(margin + barOf(d.form))
+    f32 wide = f32(d.form.width)
+    f32 high = f32(d.form.height - barOf(d.form))
+    d.mode = 0
+    d.moved = false
+    d.editing = ""
+    i64 one = single(d)
+    i64 handle = -1
+    if (one >= 0) {
+        handle = handleAt(handles(f32(leftOf(d.form, one)), f32(topOf(d.form, one)), f32(d.form.items[one].width),
+            f32(d.form.items[one].height)), x, y)
+    }
+    i64 edge = handleAt([wide, high / 2, wide / 2, high, wide, high], x, y)
+    if (handle >= 0) {
+        d.mode = 2 + i32(handle)
+    } else if (edge >= 0) {
+        d.mode = 20 + i32(edge)
+        pickNone(ref d)
+    } else {
+        i64 hit = itemAt(d.form, x, y)
+        if (hit >= 0 && (m.shift || m.control)) {
+            d.picked[hit] = !d.picked[hit]
+        } else if (hit >= 0) {
+            if (!d.picked[hit]) {
+                pickNone(ref d)
+                d.picked[hit] = true
+            }
+            d.mode = 1
+        } else {
+            if (!m.shift && !m.control) {
+                pickNone(ref d)
+            }
+            d.mode = 30
+        }
+    }
+    d.downX = m.x
+    d.downY = m.y
+    d.nowX = m.x
+    d.nowY = m.y
+    d.before = d.form
+    showProperties(ui, ref d)
+    refresh(ui, ref d)
+}
+
+void dragged(Ui ui, ref Design d, gui.Mouse m) {
+    if (d.mode == 0) {
+        hover(ref d, m)
+        ret
+    }
+    d.nowX = m.x
+    d.nowY = m.y
+    i32 dx = snap(m.x - d.downX)
+    i32 dy = snap(m.y - d.downY)
+    i32 wide = d.before.width
+    i32 high = d.before.height - barOf(d.before)
+    if (d.mode == 30) {  // the items that the rectangle touches
+        f32 l = (d.downX < d.nowX ? d.downX : d.nowX) - f32(margin)
+        f32 t = (d.downY < d.nowY ? d.downY : d.nowY) - f32(margin + barOf(d.form))
+        f32 r = (d.downX < d.nowX ? d.nowX : d.downX) - f32(margin)
+        f32 b = (d.downY < d.nowY ? d.nowY : d.downY) - f32(margin + barOf(d.form))
+        for (i64 i = 0; i < d.form.items.len(); i++) {
+            f32 x = f32(leftOf(d.form, i))
+            f32 y = f32(topOf(d.form, i))
+            d.picked[i] = x < r && x + f32(d.form.items[i].width) > l && y < b && y + f32(d.form.items[i].height) > t
+        }
+        showProperties(ui, ref d)
+        refresh(ui, ref d)
+        ret
+    }
+    if (dx == 0 && dy == 0 && !d.moved) {
+        ret
+    }
+    if (!d.moved) {
+        Form was = d.before
+        keep(ref d, move was)
+        d.moved = true
+    }
+    if (d.mode == 1) {  // the selection moves together, inside the window
+        i32 least = -100000
+        i32 most = 100000
+        i32 up = -100000
+        i32 down = 100000
+        for (i64 i = 0; i < d.before.items.len(); i++) {
+            if (leads(d, d.before, i)) {
+                i32 l = leftOf(d.before, i)
+                i32 t = topOf(d.before, i)
+                least = -l > least ? -l : least
+                most = wide - d.before.items[i].width - l < most ? wide - d.before.items[i].width - l : most
+                up = -t > up ? -t : up
+                down = high - d.before.items[i].height - t < down ? high - d.before.items[i].height - t : down
+            }
+        }
+        dx = most < least ? 0 : within(dx, least, most)
+        dy = down < up ? 0 : within(dy, up, down)
+        for (i64 i = 0; i < d.before.items.len(); i++) {
+            if (leads(d, d.before, i)) {
+                d.form.items[i].x = d.before.items[i].x + dx
+                d.form.items[i].y = d.before.items[i].y + dy
+            }
+        }
+    } else if (d.mode >= 20) {  // the window
+        i32 width = d.mode == 21 ? d.before.width : within(d.before.width + dx, 120, 4000)
+        i32 height = d.mode == 20 ? d.before.height : within(d.before.height + dy, 80, 4000)
+        d.form = resized(d.before, width, height)
+    } else {  // an item, by one of its handles
+        i64 one = single(d)
+        i64 p = parentOf(d.before, one)
+        i32 roomWide = p >= 0 ? d.before.items[p].width : wide
+        i32 roomHigh = p >= 0 ? d.before.items[p].height : high
+        Item item = d.before.items[one]
+        i32 handle = d.mode - 2
+        i32 left = item.x
+        i32 top = item.y
+        i32 right = item.x + item.width
+        i32 bottom = item.y + item.height
+        if (handle == 0 || handle == 6 || handle == 7) {
+            left = within(left + dx, 0, right - 2 * grid)
+        }
+        if (handle == 2 || handle == 3 || handle == 4) {
+            right = within(right + dx, left + 2 * grid, roomWide > left + 2 * grid ? roomWide : left + 2 * grid)
+        }
+        if (handle == 0 || handle == 1 || handle == 2) {
+            top = within(top + dy, 0, bottom - 2 * grid)
+        }
+        if (handle == 4 || handle == 5 || handle == 6) {
+            bottom = within(bottom + dy, top + 2 * grid, roomHigh > top + 2 * grid ? roomHigh : top + 2 * grid)
+        }
+        item.x = left
+        item.y = top
+        item.width = right - left
+        item.height = bottom - top
+        reshape(ref d.form, d.before, one, item)
+    }
+    sync(ui, ref d)
+    showProperties(ui, ref d)
+}
+
+// The group or the panel of the window under a point, but one item, or -1.
+i64 holderAt(Form form, i32 x, i32 y, i64 but) {
+    for (i64 i = form.items.len() - 1; i >= 0; i--) {
+        Item item = form.items[i]
+        if (i != but && holds(item.kind) && item.parent.len() == 0 && x >= item.x && x < item.x + item.width && y >= item.y &&
+            y < item.y + item.height) {
+            ret i
+        }
+    }
+    ret -1
+}
+
+// What was moved goes in the group or the panel under its center, or out of the one
+// it was in.
+void drop(ref Design d) {
+    for (i64 i = 0; i < d.form.items.len(); i++) {
+        if (!leads(d, d.form, i) || holds(d.form.items[i].kind)) {
+            continue
+        }
+        i32 l = leftOf(d.form, i)
+        i32 t = topOf(d.form, i)
+        i64 into = holderAt(d.form, l + d.form.items[i].width / 2, t + d.form.items[i].height / 2, i)
+        if (into != parentOf(d.form, i)) {
+            d.form.items[i].x = l - (into >= 0 ? d.form.items[into].x : 0)
+            d.form.items[i].y = t - (into >= 0 ? d.form.items[into].y : 0)
+            d.form.items[i].parent = into >= 0 ? d.form.items[into].name : ""
+        }
+    }
+}
+
+void released(Ui ui, ref Design d) {
+    if (d.mode == 1 && d.moved) {
+        drop(ref d)
+    }
+    d.mode = 0
+    sync(ui, ref d)
+    showProperties(ui, ref d)
+}
+
+// ---- The changes ----
+
+// A new component of a kind, with a name that no other has, selected.
+void addItem(Ui ui, ref Design d, string kind) {
+    if (d.phone) {
+        ui.status.setText("This is the preview on a phone: turn Phone off to change the form")
+        ret
+    }
+    change(ref d, "")
+    Item item
+    item.kind = kind
+    string base = kind.slice(0, 1).lower() + kind.slice(1, kind.len())
+    for (i64 n = 1; item.name.len() == 0; n++) {
+        string name = format("{}{}", base, n)
+        if (find(d.form, name) < 0) {
+            item.name = name
+        }
+    }
+    item.text = textOf(kind) == 2 ? "One, Two, Three" : textOf(kind) == 1 && kind != "TextBox" && kind != "TextArea" ? kind : ""
+    item.x = 16
+    item.y = 16
+    item.width = 96
+    item.height = 28
+    if (kind == "Label") {
+        item.height = 20
+    } else if (kind == "TextBox" || kind == "ComboBox" || kind == "Slider") {
+        item.width = 160
+    } else if (kind == "CheckBox" || kind == "Switch") {
+        item.width = 140
+        item.height = 24
+    } else if (kind == "Segmented") {
+        item.width = 220
+    } else if (kind == "RadioGroup") {
+        item.width = 160
+        item.height = 84
+    } else if (kind == "ProgressBar") {
+        item.width = 200
+        item.height = 8
+    } else if (kind != "Button") {  // the large ones
+        item.width = 240
+        item.height = 140
+    }
+    for (i64 i = 0; i < d.form.items.len(); i++) {  // not over another one just added
+        if (d.form.items[i].parent.len() == 0 && d.form.items[i].x == item.x && d.form.items[i].y == item.y) {
+            item.x += 16
+            item.y += 16
+            i = -1
+        }
+    }
+    pickNone(ref d)
+    if (holds(kind)) {  // under the components there are, which can then go in it
+        d.form.items.insert(0, move item)
+        d.picked.insert(0, true)
+    } else {
+        d.form.items.add(move item)
+        d.picked.add(true)
+    }
+    sync(ui, ref d)
+    showProperties(ui, ref d)
+    ui.status.setText(format("Added a gui.{}", kind))
+}
+
+// Removes the items selected, and what they hold.
+void removePicked(Ui ui, ref Design d) {
+    if (d.phone || pickedCount(d) == 0) {
+        ret
+    }
+    change(ref d, "")
+    list<Item> kept
+    for (i64 i = 0; i < d.form.items.len(); i++) {
+        i64 p = parentOf(d.form, i)
+        if (!d.picked[i] && (p < 0 || !d.picked[p])) {
+            kept.add(d.form.items[i])
+        }
+    }
+    d.form.items = move kept
+    d.picked.clear()
+    d.mode = 0
+    sync(ui, ref d)
+    showProperties(ui, ref d)
+}
+
+// Moves the selection, with the arrows by a step of the grid.
+void nudge(Ui ui, ref Design d, i32 dx, i32 dy) {
+    if (d.phone || pickedCount(d) == 0) {
+        ret
+    }
+    change(ref d, "nudge")
+    for (i64 i = 0; i < d.form.items.len(); i++) {
+        if (leads(d, d.form, i)) {
+            d.form.items[i].x = d.form.items[i].x + dx > 0 ? d.form.items[i].x + dx : 0
+            d.form.items[i].y = d.form.items[i].y + dy > 0 ? d.form.items[i].y + dy : 0
+        }
+    }
+    sync(ui, ref d)
+    showProperties(ui, ref d)
+}
+
+// Puts the selection, as one block, in the middle of the window: across it, or down it.
+void center(Ui ui, ref Design d, bool across) {
+    if (d.phone || pickedCount(d) == 0) {
+        ui.status.setText("Select the components to center: a click, Shift and a click for more, or a rectangle with the mouse")
+        ret
+    }
+    change(ref d, "")
+    i32 low = 100000
+    i32 high = -100000
+    for (i64 i = 0; i < d.form.items.len(); i++) {
+        if (leads(d, d.form, i)) {
+            i32 start = across ? leftOf(d.form, i) : topOf(d.form, i)
+            i32 size = across ? d.form.items[i].width : d.form.items[i].height
+            low = start < low ? start : low
+            high = start + size > high ? start + size : high
+        }
+    }
+    i32 room = across ? d.form.width : d.form.height - barOf(d.form)
+    i32 by = (room - (high - low)) / 2 - low
+    for (i64 i = 0; i < d.form.items.len(); i++) {
+        if (leads(d, d.form, i)) {
+            if (across) {
+                d.form.items[i].x += by
+            } else {
+                d.form.items[i].y += by
+            }
+        }
+    }
+    sync(ui, ref d)
+    showProperties(ui, ref d)
+    ui.status.setText(across ? "Centered across the window" : "Centered down the window")
+}
+
+void pickAll(Ui ui, ref Design d) {
+    for (i64 i = 0; i < d.picked.len(); i++) {
+        d.picked[i] = !d.phone
+    }
+    showProperties(ui, ref d)
+    refresh(ui, ref d)
+}
+
+// A number written in a box of the properties, or -1 when it is not one.
+i32 numberOf(string text) {
+    string digits = text.trim()
+    if (digits.len() == 0 || digits.len() > 5) {
+        ret -1
+    }
+    for (i64 i = 0; i < digits.len(); i++) {
+        if (digits[i] < '0' || digits[i] > '9') {
+            ret -1
+        }
+    }
+    ret i32(digits)
+}
+
+// A property written in its box: 0 the name, 1 the text, 2 x, 3 y, 4 the width, 5 the
+// height. What is not a number changes nothing.
+void edited(Ui ui, ref Design d, i32 which, string value) {
+    i64 one = single(d)
+    if (d.phone || one < 0 && pickedCount(d) > 0) {
+        ret
+    }
+    i32 number = numberOf(value)
+    change(ref d, format("{}:{}", one, which))
+    if (one < 0) {
+        if (which == 1) {
+            d.form.title = value
+        } else if (which == 4 && number >= 120) {
+            d.form = resized(d.form, number, d.form.height)
+        } else if (which == 5 && number >= 80) {
+            d.form = resized(d.form, d.form.width, number)
+        }
+        sync(ui, ref d)
+        ret
+    }
+    Item item = d.form.items[one]
+    if (which == 0) {
+        string name = value.trim()
+        if (name.len() > 0) {
+            for (i64 i = 0; i < d.form.items.len(); i++) {  // what it holds follows its name
+                if (d.form.items[i].parent == item.name) {
+                    d.form.items[i].parent = name
+                }
+            }
+            item.name = name
+        }
+    } else if (which == 1) {
+        item.text = value
+    } else if (which == 2 && number >= 0) {
+        item.x = number
+    } else if (which == 3 && number >= 0) {
+        item.y = number
+    } else if (which == 4 && number >= 2 * grid) {
+        item.width = number
+    } else if (which == 5 && number >= 2 * grid) {
+        item.height = number
+    }
+    Form from = d.form
+    reshape(ref d.form, from, one, item)
+    sync(ui, ref d)
+}
+
+// A property of the window: 0 its title bar, 1 to 3 its buttons to minimize, to maximize
+// and to close, 4 the radius of its corners, 5 whether it is resized, 6 the height of its
+// title bar, 7 its icon of Lucide by its number. The content keeps its height when the
+// bar changes.
+void framed(Ui ui, ref Design d, i32 which, bool on, i32 radius) {
+    if (d.phone || pickedCount(d) > 0) {
+        ret
+    }
+    change(ref d, which == 4 ? "corner" : which == 6 ? "bar" : "")
+    i32 content = d.form.height - barOf(d.form)
+    if (which == 7) {
+        d.form.icon = radius > 0 ? iconNames()[radius] : ""
+        if (radius > 0) {
+            d.form.iconFile = ""  // one or the other
+        }
+    } else if (which == 5) {
+        d.form.resizable = on
+    } else if (which == 6) {
+        if (radius >= 24 && radius <= 96) {
+            d.form.titleBarHeight = radius
+        }
+    } else if (which == 0) {
+        d.form.titleBar = on
+    } else if (which == 1) {
+        d.form.minimize = on
+    } else if (which == 2) {
+        d.form.maximize = on
+    } else if (which == 3) {
+        d.form.close = on
+    } else if (radius >= 0 && radius <= 64) {
+        d.form.corner = radius
+    }
+    d.form.height = content + barOf(d.form)
+    sync(ui, ref d)
+    if (which != 4 && which != 6) {
+        showProperties(ui, ref d)
+    }
+}
+
+// The file of the image of the icon of the window, written in its box.
+void pictured(Ui ui, ref Design d, string file) {
+    if (d.phone || pickedCount(d) > 0) {
+        ret
+    }
+    change(ref d, "icon")
+    d.form.iconFile = file.trim()
+    if (d.form.iconFile.len() > 0) {
+        d.form.icon = ""  // one or the other
+    }
+    sync(ui, ref d)
+}
+
+// An anchor chosen for the item selected: across the window, or down it.
+void anchored(Ui ui, ref Design d, bool across, i64 index) {
+    i64 one = single(d)
+    if (d.phone || one < 0 || index < 0 || index > 3) {
+        ret
+    }
+    change(ref d, "")
+    if (across) {
+        d.form.items[one].horizontal = acrossNames()[index]
+    } else {
+        d.form.items[one].vertical = downNames()[index]
+    }
+    sync(ui, ref d)
+}
+
+// ---- The files ----
+
+list<gui.FileType> forms() {
+    ret [gui.FileType("Forms of Cromo", "form")]
+}
+
+// Shows a form in place of the one shown, with nothing to undo.
+void show(Ui ui, ref Design d, move Form form, string path) {
+    d.form = move form
+    d.path = path
+    d.dirty = false
+    d.undo.clear()
+    d.redo.clear()
+    d.editing = ""
+    d.mode = 0
+    d.picked.clear()
+    sync(ui, ref d)
+    showProperties(ui, ref d)
+}
+
+void open(Ui ui, ref Design d, string path) {
+    try {
+        Form form = readForm(path)
+        string wrong = problem(form)
+        if (wrong.len() > 0) {
+            throw Error(wrong)
+        }
+        show(ui, ref d, move form, path)
+        ui.status.setText(format("Opened {}", fs.fileName(path)))
+    } catch (Exception e) {
+        ui.status.setText(e.message())
+    }
+}
+
+void save(Ui ui, ref Design d, string path) {
+    try {
+        writeForm(d.form, path)
+        d.path = path
+        d.dirty = false
+        showPath(ui, ref d)
+        ui.status.setText(format("Saved {} and {}", fs.fileName(path), fs.fileName(modulePath(path))))
+    } catch (Exception e) {
+        ui.status.setText(e.message())
+    }
+}
+
+// Asks where to save the form, and saves it there.
+void saveAs(Ui ui, thread.Shared<Design> state) {
+    ui.w.saveFile(forms(), "window.form", [ui, state](string chosen) {
+        if (chosen.len() > 0) {
+            string path = chosen.endsWith(".form") ? chosen : chosen + ".form"
+            state.lock([ui, path](ref Design d) { save(ui, ref d, path) })
+        }
+    })
+}
+
+// A new form, or the one that the user chooses to open.
+void leave(Ui ui, thread.Shared<Design> state, i32 what) {
+    if (what == 1) {
+        state.lock([ui](ref Design d) {
+            show(ui, ref d, Form(), "")
+            ui.status.setText("A new window")
+        })
+    } else if (what == 2) {
+        ui.w.openFile(forms(), [ui, state](list<string> chosen) {
+            if (chosen.len() > 0) {
+                state.lock([ui, chosen](ref Design d) { open(ui, ref d, chosen[0]) })
+            }
+        })
+    }
+}
+
+// Leaves the form for another one: at once, or after the question on its changes.
+void leaving(Ui ui, thread.Shared<Design> state, i32 what) {
+    bool dirty = false
+    state.lock([ref dirty, what](ref Design d) {
+        dirty = d.dirty
+        d.pending = what
+    })
+    if (dirty) {
+        ui.w.showDialog(ui.ask)
+    } else {
+        leave(ui, state, what)
+    }
+}
+
+// ---- Run ----
+
+// Builds the window of the form as a program, with the module made from it and nothing
+// else, and runs it with the cromo that runs the designer: the window as it will be,
+// with no handlers. A thread waits for it, so that the designer goes on.
+void preview(Ui ui, thread.Shared<Design> state) {
+    string module = ""
+    string wrong = ""
+    bool busy = false
+    state.lock([ref module, ref wrong, ref busy](ref Design d) {
+        busy = d.running
+        wrong = problem(d.form)
+        if (!busy && wrong.len() == 0) {
+            Form shown = d.form
+            shown.iconFile = pictureFile(d)
+            module = moduleOf(shown, "the designer")
+            d.running = true
+        }
+    })
+    if (busy) {
+        ui.status.setText("The window is already open: close it to run it again")
+        ret
+    }
+    if (wrong.len() > 0) {
+        ui.status.setText(wrong)
+        ret
+    }
+    string folder = (os.env("TEMP").len() > 0 ? os.env("TEMP") : "/tmp") + "/cromo-design-preview"
+    string program = "import preview_form\nimport std.gui\n\n[[window]]\ni32 main() {\n    preview_form.Form f = preview_form.Form()\n" +
+        "    f.window.start()\n    ret 0\n}\n"
+    try {
+        fs.createFolders(folder)
+        fs.writeText(folder + "/preview_form.cro", module)
+        fs.writeText(folder + "/main.cro", program)
+    } catch (Exception e) {
+        state.lock([](ref Design d) { d.running = false })
+        ui.status.setText(e.message())
+        ret
+    }
+    string tool = os.env("CROMO").len() > 0 ? os.env("CROMO") : "cromo"
+    ui.status.setText("Building the window...")
+    thread.Thread waiter = thread.Thread([ui, state, move folder, move tool]() {
+        string said = "The window is closed"
+        try {
+            process.Output r = process.run(tool, ["run", folder + "/main.cro"])
+            if (r.code != 0) {
+                list<string> lines = r.err.trim().split("\n")
+                said = lines.len() > 0 && lines[0].len() > 0 ? lines[0] : format("The window ended with {}", r.code)
+            }
+        } catch (Exception e) {
+            said = e.message()
+        }
+        state.lock([](ref Design d) { d.running = false })
+        ui.status.setText(said)
+    })
+    waiter.start()
+    waiter.detach()
+}
+
+// ---- The window of the designer ----
+
+gui.TextBox property(gui.GroupBox card, string title, i32 y) {
+    card.add(gui.Label(title, 14, y + 4, 72, 20))
+    gui.TextBox box = card.add(gui.TextBox("", 88, y, 162, 28))
+    ret box
+}
+
+void design(string path) {
+    Ui ui
+    ui.w = gui.Window("Cromo Design", 1280, 820)
+    ui.w.setTheme(gui.Theme.Light)
+    thread.Shared<Design> state = thread.Shared<Design>(Design())
+
+    // The bar of the commands, a white band over the rest.
+    gui.Canvas band = ui.w.add(gui.Canvas(0, 0, 1280, 49))
+    band.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Top)
+    gui.Drawing strip
+    strip.rect(0, 0, 8000, 48, gui.rgb(0xFFFFFF))
+    strip.rect(0, 48, 8000, 1, gui.rgb(0xD5DDE3))
+    list<f32> rules = [334.0, 485.0, 590.0, 906.0, 1118.0]  // between the groups of commands
+    for (f32 x in rules) {
+        strip.rect(x, 12, 1, 24, gui.rgb(0xD5DDE3))
+    }
+    band.setDrawing(move strip)
+
+    // The window drawn, its components over it, and the selection over them.
+    ui.back = ui.w.add(gui.Canvas(areaLeft, areaTop, 772, 484))
+    ui.back.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Stretch)
+    ui.dots = ui.w.add(gui.Canvas(areaLeft, areaTop, 772, 484))
+    ui.dots.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Stretch)
+    ui.badge = ui.w.add(gui.IconBox(gui.Icon.None, areaLeft + margin + 10, areaTop + margin + 9, 16, 16))
+    ui.badge.setVisible(false)
+    ui.content = ui.w.add(gui.Panel(areaLeft + margin, areaTop + margin + barHeight, 480, 325))
+    ui.over = ui.w.add(gui.Canvas(areaLeft, areaTop, 772, 484))
+    ui.over.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Stretch)
+
+    gui.Button fresh = ui.w.add(gui.Button("New", 12, 10, 64, 28))
+    gui.Button load = ui.w.add(gui.Button("Open", 84, 10, 80, 28))
+    load.setIcon(gui.Icon.FolderOpen)
+    gui.Button store = ui.w.add(gui.Button("Save", 172, 10, 76, 28))
+    store.setIcon(gui.Icon.Save)
+    store.setStyle(gui.ButtonStyle.Primary)
+    gui.Button storeAs = ui.w.add(gui.Button("Save as", 256, 10, 68, 28))
+    gui.Button back = ui.w.add(gui.Button("Undo", 344, 10, 62, 28))
+    back.setTooltip("Undoes the last change: Ctrl+Z")
+    gui.Button again = ui.w.add(gui.Button("Redo", 412, 10, 62, 28))
+    again.setTooltip("Does again the change undone: Ctrl+Y")
+    gui.Button erase = ui.w.add(gui.Button("Delete", 496, 10, 84, 28))
+    erase.setIcon(gui.Icon.Trash2)
+    erase.setTooltip("Removes the components selected: the Delete key too")
+    gui.Button middle = ui.w.add(gui.Button("Center horizontally", 600, 10, 150, 28))
+    middle.setTooltip("Puts the selection, as one block, in the middle of the width of the window")
+    gui.Button level = ui.w.add(gui.Button("Center vertically", 756, 10, 140, 28))
+    level.setTooltip("Puts the selection, as one block, in the middle of the height of the window")
+    gui.Switch dotsOn = ui.w.add(gui.Switch("Grid", 918, 12, 88, 24))
+    dotsOn.setChecked(true)
+    dotsOn.setTooltip("Shows the dots of the grid on the window: the components move and grow by half a step of it, 4 pixels")
+    gui.Switch phone = ui.w.add(gui.Switch("Phone", 1014, 12, 96, 24))
+    gui.Button run = ui.w.add(gui.Button("Run", 1130, 10, 72, 28))
+    run.setIcon(gui.Icon.Play)
+    run.setTooltip("Builds the window with the code made from the form, and shows it as it will be: its components do nothing")
+    phone.setTooltip("Shows the window as on a phone, 360 wide and as tall as the room here, with its anchors at work")
+
+    gui.GroupBox tools = ui.w.add(gui.GroupBox("Components", 12, 61, 196, 324))
+    gui.GroupBox properties = ui.w.add(gui.GroupBox("Properties", 1004, 61, 264, 610))
+    properties.setAnchor(gui.Horizontal.Right, gui.Vertical.Top)
+    ui.kind = properties.add(gui.Label("Window", 14, 42, 236, 20))
+    ui.name = property(properties, "Name", 70)
+    ui.text = property(properties, "Text", 106)
+    ui.x = property(properties, "X", 142)
+    ui.y = property(properties, "Y", 178)
+    ui.width = property(properties, "Width", 214)
+    ui.height = property(properties, "Height", 250)
+    properties.add(gui.Label("Anchor", 14, 290, 72, 20))
+    ui.horizontal = properties.add(gui.ComboBox(acrossNames(), 88, 286, 162, 28))
+    ui.horizontal.setTooltip("When the window gets wider: the component stays at the left, follows the right edge, stretches, or stays in the middle")
+    ui.vertical = properties.add(gui.ComboBox(downNames(), 88, 322, 162, 28))
+    ui.vertical.setTooltip("When the window gets taller: the component stays at the top, follows the bottom edge, stretches, or stays in the middle")
+
+    ui.bar = properties.add(gui.CheckBox("Title bar", 14, 366, 236, 24))
+    ui.bar.setTooltip("The window has its title bar: without it the content takes the whole window")
+    ui.minimize = properties.add(gui.CheckBox("Minimize", 14, 396, 112, 24))
+    ui.maximize = properties.add(gui.CheckBox("Maximize", 130, 396, 120, 24))
+    ui.close = properties.add(gui.CheckBox("Close", 14, 426, 112, 24))
+    ui.resizable = properties.add(gui.CheckBox("Resizable", 130, 426, 120, 24))
+    ui.resizable.setTooltip("The user can resize the window with its edges, and maximize it")
+    ui.barSize = property(properties, "Bar height", 460)
+    ui.barSize.setTooltip("The height of the title bar, from 24 to 96: 35 for the one of every window")
+    ui.corner = property(properties, "Corners", 496)
+    properties.add(gui.Label("Icon", 14, 536, 72, 20))
+    ui.icon = properties.add(gui.ComboBox(iconNames(), 88, 532, 162, 28))
+    ui.icon.setTooltip("An icon of Lucide at the left of the title bar, in the color of the title; None for no icon")
+    ui.iconFile = property(properties, "Image", 568)
+    ui.iconFile.setPlaceholder("logo.png")
+    ui.iconFile.setTooltip("Or an image there, as the logo of the program: a file PNG, JPEG or SVG, from the folder of the form")
+    ui.corner.setTooltip("The radius of the corners of the window, from 0 for sharp ones to 64")
+
+    gui.GroupBox source = ui.w.add(gui.GroupBox("Code", 220, 557, 772, 196))
+    source.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Bottom)
+    ui.code = source.add(gui.TextArea("", 12, 40, 748, 144))
+    ui.code.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Stretch)
+    gui.Button copy = source.add(gui.Button("Copy all", 664, 4, 96, 26))
+    copy.setIcon(gui.Icon.Copy)
+    copy.setAnchor(gui.Horizontal.Right, gui.Vertical.Top)
+    copy.setTooltip("Copies all the code; to copy a part, select it and press Ctrl+C")
+    ui.status = ui.w.add(gui.Label("Choose a component on the left, then move it with the mouse", 14, 761, 1252, 18))
+    ui.status.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Bottom)
+
+    ui.ask = gui.Dialog("Changes not saved", 380, 150)
+    ui.ask.add(gui.Label("The form has changes that are not saved.", 0, 4, 340, 20))
+
+    // The handlers capture the handles by copy: all of them are made by now.
+    i32 at = 0
+    for (string kind in kinds()) {
+        gui.Button add = tools.add(gui.Button(kind, 12 + at % 2 * 88, 42 + at / 2 * 34, 84, 28))
+        add.setTooltip(format("Adds a gui.{} to the window", kind))
+        string made = kind
+        add.onClick([ui, state, move made]() { state.lock([ui, made](ref Design d) { addItem(ui, ref d, made) }) })
+        at++
+    }
+    list<gui.TextBox> boxes = [ui.name, ui.text, ui.x, ui.y, ui.width, ui.height]
+    for (i32 which = 0; which < 6; which++) {
+        boxes[which].onChange([ui, state, which](string value) {
+            state.lock([ui, which, value](ref Design d) { edited(ui, ref d, which, value) })
+        })
+    }
+    ui.horizontal.onChange([ui, state](i64 index) { state.lock([ui, index](ref Design d) { anchored(ui, ref d, true, index) }) })
+    ui.vertical.onChange([ui, state](i64 index) { state.lock([ui, index](ref Design d) { anchored(ui, ref d, false, index) }) })
+
+    ui.bar.onChange([ui, state](bool on) { state.lock([ui, on](ref Design d) { framed(ui, ref d, 0, on, 0) }) })
+    ui.minimize.onChange([ui, state](bool on) { state.lock([ui, on](ref Design d) { framed(ui, ref d, 1, on, 0) }) })
+    ui.maximize.onChange([ui, state](bool on) { state.lock([ui, on](ref Design d) { framed(ui, ref d, 2, on, 0) }) })
+    ui.close.onChange([ui, state](bool on) { state.lock([ui, on](ref Design d) { framed(ui, ref d, 3, on, 0) }) })
+    ui.resizable.onChange([ui, state](bool on) { state.lock([ui, on](ref Design d) { framed(ui, ref d, 5, on, 0) }) })
+    ui.barSize.onChange([ui, state](string value) {
+        state.lock([ui, value](ref Design d) { framed(ui, ref d, 6, false, numberOf(value)) })
+    })
+    ui.icon.onChange([ui, state](i64 index) { state.lock([ui, index](ref Design d) { framed(ui, ref d, 7, false, i32(index)) }) })
+    ui.iconFile.onChange([ui, state](string value) { state.lock([ui, value](ref Design d) { pictured(ui, ref d, value) }) })
+    ui.corner.onChange([ui, state](string value) {
+        state.lock([ui, value](ref Design d) { framed(ui, ref d, 4, false, numberOf(value)) })
+    })
+
+    ui.over.onMouseDown([ui, state](gui.Mouse m) { state.lock([ui, m](ref Design d) { pressed(ui, ref d, m) }) })
+    ui.over.onMouseMove([ui, state](gui.Mouse m) { state.lock([ui, m](ref Design d) { dragged(ui, ref d, m) }) })
+    ui.over.onMouseUp([ui, state](gui.Mouse m) { state.lock([ui](ref Design d) { released(ui, ref d) }) })
+    ui.w.onKeyDown([ui, state](gui.Key key) {
+        state.lock([ui, key](ref Design d) {
+            if (key.code == 127 || key.code == 8) {
+                removePicked(ui, ref d)
+            } else if (key.code == 0x40000050) {
+                nudge(ui, ref d, -grid, 0)
+            } else if (key.code == 0x4000004F) {
+                nudge(ui, ref d, grid, 0)
+            } else if (key.code == 0x40000052) {
+                nudge(ui, ref d, 0, -grid)
+            } else if (key.code == 0x40000051) {
+                nudge(ui, ref d, 0, grid)
+            } else if (key.control && key.code == 122) {  // Ctrl+Z
+                undo(ui, ref d, false)
+            } else if (key.control && key.code == 121) {  // Ctrl+Y
+                undo(ui, ref d, true)
+            } else if (key.control && key.code == 97) {  // Ctrl+A
+                pickAll(ui, ref d)
+            } else if (key.code == 27) {  // Esc
+                pickNone(ref d)
+                showProperties(ui, ref d)
+                refresh(ui, ref d)
+            }
+        })
+    })
+    erase.onClick([ui, state]() { state.lock([ui](ref Design d) { removePicked(ui, ref d) }) })
+    back.onClick([ui, state]() { state.lock([ui](ref Design d) { undo(ui, ref d, false) }) })
+    again.onClick([ui, state]() { state.lock([ui](ref Design d) { undo(ui, ref d, true) }) })
+    middle.onClick([ui, state]() { state.lock([ui](ref Design d) { center(ui, ref d, true) }) })
+    level.onClick([ui, state]() { state.lock([ui](ref Design d) { center(ui, ref d, false) }) })
+    phone.onChange([ui, state](bool on) {
+        state.lock([ui, on](ref Design d) {
+            d.phone = on
+            d.mode = 0
+            pickNone(ref d)
+            sync(ui, ref d)
+            showProperties(ui, ref d)
+            ui.status.setText(on ? format("The window on a phone, {} by {}: the anchors move and stretch its components", d.view.width,
+                d.view.height - barOf(d.view)) : "The window as it is designed")
+        })
+    })
+    dotsOn.onChange([ui, state](bool on) {
+        state.lock([ui, on](ref Design d) {
+            d.grid = on
+            refresh(ui, ref d)
+        })
+    })
+    run.onClick([ui, state]() { preview(ui, state) })
+    copy.onClick([ui, state]() {
+        string code = ""
+        state.lock([ref code](ref Design d) { code = d.code })
+        SDL_SetClipboardText(code.cstring())
+        ui.status.setText("The code is copied: paste it in a function of the program")
+    })
+
+    fresh.onClick([ui, state]() { leaving(ui, state, 1) })
+    load.onClick([ui, state]() { leaving(ui, state, 2) })
+    ui.ask.addButton("Go back", [ui]() { ui.ask.close() })
+    ui.ask.addButton("Discard them", [ui, state]() {
+        ui.ask.close()
+        i32 what = 0
+        state.lock([ref what](ref Design d) { what = d.pending })
+        leave(ui, state, what)
+    })
+    storeAs.onClick([ui, state]() { saveAs(ui, state) })
+    store.onClick([ui, state]() {
+        string target = ""
+        state.lock([ref target](ref Design d) { target = d.path })
+        if (target.len() == 0) {
+            saveAs(ui, state)
+        } else {
+            state.lock([ui, target](ref Design d) { save(ui, ref d, target) })
+        }
+    })
+
+    state.lock([ui, path](ref Design d) {
+        show(ui, ref d, Form(), "")
+        if (path.len() > 0) {
+            open(ui, ref d, path)
+        }
+    })
+    ui.w.start()
+}
+
+i32 main(list<string> args) {
+    if (args.len() == 3 && args[1] == "--generate") {
+        try {
+            Form form = readForm(args[2])
+            writeForm(form, args[2])
+            println("{}", modulePath(args[2]))
+        } catch (Exception e) {
+            eprintln("cromo design: {}", e.message())
+            ret 1
+        }
+        ret 0
+    }
+    if (args.len() > 2 || args.len() == 2 && args[1].startsWith("-")) {
+        eprintln("cromo design: cromo design takes at most a form, as cromo design notes.form, or --generate and a form")
+        ret 2
+    }
+    design(args.len() == 2 ? args[1] : "")
+    ret 0
+}

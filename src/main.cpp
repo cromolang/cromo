@@ -64,6 +64,8 @@ void printUsage(FILE* out) {
         "  lsp        the language server for editors, on the standard input and output\n"
         "  update     installs the latest version of cromo and makes it the active one; with a\n"
         "             version, as cromo update 0.28.0, that one, also an older one\n"
+        "  design     the designer of the windows: the components of a window put with the\n"
+        "             mouse, saved as a form, as cromo design notes.form, and as a module\n"
         "  version    prints the version of cromo and of LLVM\n"
         "  help       prints this text\n"
         "\n"
@@ -1168,6 +1170,22 @@ int main(int argc, char** argv) {
 #ifdef _WIN32
         std::vector<std::wstring> programArgs(wide.begin() + 2, wide.end());
 #else
+        std::vector<std::string> programArgs(args.begin() + 2, args.end());
+#endif
+        return run(compilation, programArgs);
+    }
+    if (command == "design") {
+        // D523: the designer of the windows, a program written in Cromo in the library
+        // of this cromo, compiled and run as cromo update (D403), with the form asked.
+        Compilation compilation;
+        // The designer runs this cromo for its preview: CROMO names it.
+        compilation.inputPath = cromo::libraryFile("tools/design.cro").string();
+        compilation.options.outputPath = "design";
+#ifdef _WIN32
+        _wputenv_s(L"CROMO", cromo::cromoPath().wstring().c_str());
+        std::vector<std::wstring> programArgs(wide.begin() + 2, wide.end());
+#else
+        setenv("CROMO", cromo::cromoPath().string().c_str(), 1);
         std::vector<std::string> programArgs(args.begin() + 2, args.end());
 #endif
         return run(compilation, programArgs);
