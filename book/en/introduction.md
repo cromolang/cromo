@@ -58,9 +58,11 @@ The guide is also available as a PDF, in English and in Italian: use the **PDF**
 
 ## The state of Cromo
 
-Cromo is young. The current version is 0.49, and the language can still change before version 1.0. Every design decision is recorded, with its reasons, in the file `docs/decisions.md` of the [repository](https://github.com/cromolang/cromo), next to the draft specification `docs/language.md`.
+Cromo is young. Its versions are 0.x: the language can still change before version 1.0, and many names of the standard library are drafts. Every design decision is recorded, with its reasons, in the file `docs/decisions.md` of the [repository](https://github.com/cromolang/cromo), next to the draft specification `docs/language.md`. [Appendix D](appendix-safety.md) says what the language checks and what it does not.
 
-Cromo runs on Windows x64 and Linux x64, and each version compiles programs for both systems, and for Linux on ARM64.
+Cromo runs on Windows x64 and Linux x64, and each version compiles programs for both systems, for Linux on ARM64 and for Android. It does not run on macOS yet.
+
+Cromo is designed by its author and written with an AI assistant, which writes most of the code of the compiler and of the library under his direction; the tests, and the examples of this guide, which are all compiled and run, check the result. Who wants to help is welcome: `CONTRIBUTING.md` in the repository says how.
 
 ## The name
 

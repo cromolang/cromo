@@ -28,3 +28,4 @@
 - [Appendice A: Parole chiave, operatori e attributi](appendix-syntax.md)
 - [Appendice B: Il comando cromo](appendix-command.md)
 - [Appendice C: Cromo per programmatori C++, Go e Rust](appendix-coming-from.md)
+- [Appendice D: Cosa controlla Cromo, e cosa no](appendix-safety.md)

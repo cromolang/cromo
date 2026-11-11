@@ -58,9 +58,11 @@ La guida è disponibile anche in PDF, in inglese e in italiano: usa il pulsante 
 
 ## Lo stato di Cromo
 
-Cromo è giovane. La versione attuale è la 0.49, e il linguaggio può ancora cambiare prima della versione 1.0. Ogni decisione di progetto è registrata, con le sue motivazioni, nel file `docs/decisions.md` del [repository](https://github.com/cromolang/cromo), accanto alla bozza di specifica `docs/language.md`.
+Cromo è giovane. Le sue versioni sono 0.x: il linguaggio può ancora cambiare prima della versione 1.0, e molti nomi della libreria standard sono bozze. Ogni decisione di progetto è registrata, con le sue motivazioni, nel file `docs/decisions.md` del [repository](https://github.com/cromolang/cromo), accanto alla bozza di specifica `docs/language.md`. L'[Appendice D](appendix-safety.md) dice cosa controlla il linguaggio e cosa no.
 
-Cromo funziona su Windows x64 e Linux x64, e ogni versione compila programmi per entrambi i sistemi, e per Linux su ARM64.
+Cromo funziona su Windows x64 e Linux x64, e ogni versione compila programmi per entrambi i sistemi, per Linux su ARM64 e per Android. Non funziona ancora su macOS.
+
+Cromo è progettato dal suo autore e scritto con un assistente AI, che scrive la maggior parte del codice del compilatore e della libreria sotto la sua direzione; i test, e gli esempi di questa guida, che sono tutti compilati ed eseguiti, controllano il risultato. Chi vuole aiutare è benvenuto: `CONTRIBUTING.md` nel repository dice come.
 
 ## Il nome
 

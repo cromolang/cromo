@@ -28,3 +28,4 @@
 - [Appendix A: Keywords, operators and attributes](appendix-syntax.md)
 - [Appendix B: The cromo command](appendix-command.md)
 - [Appendix C: Cromo for C++, Go and Rust programmers](appendix-coming-from.md)
+- [Appendix D: What Cromo checks, and what it does not](appendix-safety.md)

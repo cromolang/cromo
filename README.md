@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  A compiled language with the syntax of C and C++, RAII and no garbage collector.
+  A simple, safe enough language with the syntax of C and C++, and a library with the wheels already on: backends, apps and tools.
 </p>
 
 <p align="center">
@@ -20,6 +20,8 @@
 ---
 
 Cromo is a general-purpose, compiled programming language. It has the syntax of C and C++, no pointers and no garbage collector: every value has one owner, and resources are released by destructors when their owner goes out of scope, as with RAII in C++. The compiler checks ownership with a few rules that fit in a page, and LLVM optimizes the code.
+
+The aim is a language that is **simple**, **safe enough**, and that comes with what a program needs, for three kinds of programs: **backends**, with tasks, HTTP, TLS and JSON; **apps** with windows, for the desktop and for Android from the same code; and **tools** for the command line, in one executable without dependencies.
 
 Cromo brings together ideas that have proven themselves in other languages:
 
@@ -121,9 +123,19 @@ The [Cromo Guide](https://cromolang.org/book/) teaches the language step by step
 
 ## Status
 
-Cromo is in development, at version 0.49. The language and the compiler can still change before 1.0: every design choice is recorded, with its reasons, in [docs/decisions.md](docs/decisions.md).
+Cromo is young: its versions are 0.x, the language can still change before 1.0, and many names of the standard library are drafts. It is ready to be tried and criticized, not yet to be relied on. Every design choice is recorded, with its reasons, in [docs/decisions.md](docs/decisions.md).
 
-The current compiler is written in C++ and uses LLVM 23. A compiler written in Cromo will follow, once the language is mature.
+- **What is safe and what is not.** [What Cromo checks, and what it does not](https://cromolang.org/book/en/appendix-safety.html) lists the guarantees, their limits and their price. The rules are not formally proven, and the compiler is young: a program without `import unsafe` that corrupts memory is a bug to report.
+- **Systems.** Windows x64 and Linux x64, and from either one programs for Linux ARM64 and Android. Not yet macOS and iOS.
+- **The compiler** is written in C++ and uses LLVM 23. A compiler written in Cromo will follow, once the language is mature; its first part, the formatter, is in [compiler/](compiler/).
+
+## How Cromo is made
+
+Cromo is designed by one person, Andrea Masullo, and written with an AI assistant: vibe coding, with rules. The author takes every design decision, and each one is written in [docs/decisions.md](docs/decisions.md) with its reasons before the code that needs it; the assistant writes most of the code of the compiler, of the library and of the guide. What keeps the result honest is that it is checked by programs and not by trust: more than 450 tests, run for each system, and every example of the guide compiled and run when the guide is built.
+
+## Contributing
+
+Help is welcome, and the most useful kind now is criticism: of the rules of ownership, of the names of the library, of what does not work when you try a real program. [CONTRIBUTING.md](CONTRIBUTING.md) says how to report, how to propose a change to the language and how to send code.
 
 ## Documentation
 
@@ -134,7 +146,9 @@ The current compiler is written in C++ and uses LLVM 23. A compiler written in C
 | [docs/decisions.md](docs/decisions.md) | The design decisions and their reasons |
 | [docs/compiler.md](docs/compiler.md) | The architecture of the compiler and of the runtime, and the milestones |
 | [BUILD.md](BUILD.md) | Building the compiler, running the tests, making a release |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | How to report, propose and send code |
 | [examples/](examples/) | Example programs |
+| [examples/notes/](examples/notes/) | A service, its tool for the terminal and its app, in one project |
 | [bench/](bench/) | Benchmarks against C++, Go and Rust |
 | [tools/vscode-cromo/](tools/vscode-cromo/) | The extension for Visual Studio Code |
 | [site/](site/) | The website, [cromolang.org](https://cromolang.org) |
