@@ -738,6 +738,7 @@ struct Module {
     std::vector<FunctionDecl> functions;
     std::vector<GlobalDecl> globals;
     std::vector<ModuleFile> files;  // by SourceLocation::file
+    bool camera = false;            // set by sema: the program makes a gui.Camera, so its app asks for the camera (D537)
 
     // Instances of generic structs and functions, created by sema (D39).
     std::vector<std::unique_ptr<StructDecl>> structInstances;

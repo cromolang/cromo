@@ -1,0 +1,41 @@
+// The camera (D537), without opening one: a frame as a PNG that an image reads back,
+// a frame with no pixels, and a camera and its view before the windows run. The
+// frames of a real camera are tried on a phone, with an app.
+// target: windows linux-x86_64
+// program-env: SDL_VIDEO_DRIVER=offscreen
+// expect-output: a PNG: 137 80 78 71, read back 64 by 40
+// expect-output: without pixels 0 0
+// expect-output: opening true, photo 0 by 0 of 0 bytes
+import std.gui
+
+i32 main() {
+    gui.Frame f
+    f.width = 64
+    f.height = 40
+    for (i32 y = 0; y < 40; y++) {
+        for (i32 x = 0; x < 64; x++) {
+            f.pixels.add(u8(x * 4))
+            f.pixels.add(u8(y * 6))
+            f.pixels.add(u8((x + y) % 2 * 255))
+            f.pixels.add(255)
+        }
+    }
+    list<u8> png = f.png()
+    gui.Image back = gui.Image(png)
+    println("a PNG: {} {} {} {}, read back {} by {}", png[0], png[1], png[2], png[3], back.width(), back.height())
+    gui.Frame none
+    f.width = 65  // more than its pixels
+    println("without pixels {} {}", none.png().len(), f.png().len())
+
+    // No window starts: the camera is never opened.
+    gui.Window w = gui.Window("camera", 400, 300)
+    gui.Camera camera = gui.Camera(gui.CameraSide.Front)
+    gui.CameraView view = w.add(gui.CameraView(camera, 0, 0, 400, 300))
+    view.setScale(gui.Scale.Fit)
+    camera.onFrame([](gui.Frame frame) { println("a frame") })
+    gui.Frame photo = view.takePhoto()
+    println("opening {}, photo {} by {} of {} bytes", camera.state() == gui.CameraState.Opening, photo.width, photo.height,
+        photo.pixels.len())
+    camera.close()
+    ret 0
+}

@@ -581,6 +581,13 @@ Each milestone lists the decisions still open that are needed **before** writing
 | **M75** | The dates of `std.time`: the time zones with a name, from the system or carried by the library, a date in a zone, the formats of `strftime`, the dates read from a text | none: D532-D534, P73 |
 | **M76** | `std.log`: the levels, the lines of text and of JSON, the fields of a logger, the standard error or a file | none: D535, P74 |
 | **M77** | `std.regex`: the syntax of RE2 read into a program, the search in linear time, the groups, the replacements and the pieces | none: D536, P75 |
+| **M78** | The themes of a program: the palette by roles, for the light theme and the dark one | none: D539 |
+| **M79** | The look of one component: its background, the colors of its text and of its border, its corners, the size of its text | none: D540 |
+| **M80** | The camera: `gui.Camera` with its frames, `gui.CameraView` with its photo, the permission of Android | none: D537 |
+| **M81** | The sensors of motion: the acceleration and the rotation as events of the window | none: D538 |
+| **M82** | The designer, its area of work: the picker of the colors, the pages of the navigation bar, a window that scrolls, the clipboard, the commands that arrange, the guides, the keys | none: D541, P76 |
+| **M83** | The designer, the components that are missing, the groups inside the groups, the tree of the window | none: D541 |
+| **M84** | The designer, the properties of each kind of component, of several together, and the preview of the themes | none: D541 |
 | **Later** | Packages: `cromo.mod`, `cromo.sum`, `cromo get`, the archives of the tags over HTTPS, a reader of tar (D376–D391) | none: D376–D391 |
 | **Last** | Compiler written in Cromo that compiles itself and makes the same archives, when the language is mature (§2, D147, D290, D291) | |
 

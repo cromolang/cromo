@@ -1,0 +1,75 @@
+// cromo design --generate with the pages of a navigation bar: the bar and its pages as
+// fields of the module, the components made in their pages or in a group of a page,
+// and the forms whose pages or components cannot be.
+// target: windows
+// program-env: CROMO={cromo}
+// program-env: OUT={dir}/../out/design_pages
+// expect-output: made 0
+// expect-output:     public gui.Window window
+// expect-output:     public gui.NavigationBar bar
+// expect-output:     public gui.Panel home
+// expect-output:     public gui.Panel me
+// expect-output:     public gui.Label welcome
+// expect-output:     public gui.GroupBox account
+// expect-output:     public gui.TextBox email
+// expect-output:         window = gui.Window("Shop", 390, 400)
+// expect-output:         bar = window.navigationBar()
+// expect-output:         home = bar.addPage("Home", gui.Icon.House)
+// expect-output:         me = bar.addPage("My \"profile\"", gui.Icon.None)
+// expect-output:         welcome = home.add(gui.Label("Welcome", 16, 16, 200, 22))
+// expect-output:         account = me.add(gui.GroupBox("Account", 16, 16, 358, 160))
+// expect-output:         email = account.add(gui.TextBox("", 16, 52, 220, 28))
+// expect-output: the module compiles: true
+// expect-output: no page: 1 'welcome' is not on a page of the navigation bar, or is named bar as the bar
+// expect-output: twice: 1 two components or pages are named 'home'
+// expect-output: word: 1 'window' cannot be the name of a page: a name has letters, digits and _, and is not a word of Cromo, bar or window
+// expect-output: icon: 1 'Rocket9' is not an icon of std.gui
+import std.fs
+import std.os
+import std.process
+
+string form(string pages, string items) {
+    ret "{\"version\":1,\"title\":\"Shop\",\"width\":390,\"height\":400,\"pages\":[" + pages + "],\"items\":[" + items + "]}"
+}
+
+string label(string name, string page) {
+    ret format("{{\"kind\":\"Label\",\"name\":\"{}\",\"text\":\"Welcome\",\"x\":16,\"y\":16,\"width\":200,\"height\":22,\"page\":\"{}\"}}",
+        name, page)
+}
+
+void refused(string what, string folder, string text) {
+    fs.writeText(folder + "/bad.form", text)
+    process.Output r = process.run(os.env("CROMO"), ["design", "--generate", folder + "/bad.form"])
+    println("{}: {} {}", what, r.code, r.err.trim().replace("cromo design: ", ""))
+}
+
+i32 main() {
+    string folder = os.env("OUT")
+    fs.removeAll(folder)
+    fs.createFolders(folder)
+    string home = "{\"name\":\"home\",\"text\":\"Home\",\"icon\":\"House\"}"
+    string me = "{\"name\":\"me\",\"text\":\"My \\\"profile\\\"\",\"icon\":\"\"}"
+    string items = label("welcome", "home") + "," +
+        "{\"kind\":\"GroupBox\",\"name\":\"account\",\"text\":\"Account\",\"x\":16,\"y\":16,\"width\":358,\"height\":160," +
+        "\"page\":\"me\"}," +
+        "{\"kind\":\"TextBox\",\"name\":\"email\",\"text\":\"\",\"x\":16,\"y\":52,\"width\":220,\"height\":28,\"page\":\"me\"," +
+        "\"parent\":\"account\"}"
+    fs.writeText(folder + "/shop.form", form(home + "," + me, items))
+    process.Output made = process.run(os.env("CROMO"), ["design", "--generate", folder + "/shop.form"])
+    println("made {}", made.code)
+    string module = fs.readText(folder + "/shop_form.cro")
+    for (string line in module.split("\n")) {
+        if (line.startsWith("    public gui.") || line.startsWith("        ")) {
+            println("{}", line)
+        }
+    }
+    fs.writeText(folder + "/main.cro", "import shop_form\ni32 main() {\n    shop_form.Form f = shop_form.Form()\n    ret 0\n}\n")
+    process.Output built = process.run(os.env("CROMO"), ["build", folder + "/main.cro", "-o", folder + "/main.exe"])
+    println("the module compiles: {}", built.code == 0)
+
+    refused("no page", folder, form(home, label("welcome", "")))
+    refused("twice", folder, form(home + "," + home, label("welcome", "home")))
+    refused("word", folder, form("{\"name\":\"window\",\"text\":\"W\",\"icon\":\"\"}", ""))
+    refused("icon", folder, form("{\"name\":\"home\",\"text\":\"Home\",\"icon\":\"Rocket9\"}", ""))
+    ret 0
+}

@@ -1,0 +1,89 @@
+// The palette of a program (D539) and the look of one component (D540): the colors
+// of the library, a palette made from six colors, a window drawn with its own
+// palettes in both themes, and components with their own background, text and
+// border, as values and as roles of the theme, their own corners and size of the
+// text, drawn and given back to the theme.
+// target: windows linux-x86_64
+// program-env: SDL_VIDEO_DRIVER=offscreen
+// expect-output: light b4761c ffffff 18212a, dark e0a64a 171d22 e3e9ed
+// expect-output: made f3efe6 fffdf8 2b2118 2e7d5b, hover f5f3ee, pressed eae7e2
+// expect-output: faint 847d76, border c8c4be, strong 2d6348, soft e2ebe2, on accent ffffff
+// expect-output: on a light accent 1a1206
+// expect-output: drawn light, dark and with the colors of the library
+// expect-output: looks drawn, and given back
+import std.gui
+import std.time
+
+i32 main() {
+    gui.Palette light = gui.lightPalette()
+    gui.Palette dark = gui.darkPalette()
+    println("light {:x} {:x} {:x}, dark {:x} {:x} {:x}", light.accent, light.surface, light.text, dark.accent,
+        dark.surface, dark.text)
+    gui.Palette made = gui.palette(0xF3EFE6, 0xFFFDF8, 0x2B2118, 0x2E7D5B, 0x8A4FBF, 0xB0453C)
+    println("made {:x} {:x} {:x} {:x}, hover {:x}, pressed {:x}", made.background, made.surface, made.text,
+        made.accent, made.surfaceHover, made.surfacePressed)
+    println("faint {:x}, border {:x}, strong {:x}, soft {:x}, on accent {:x}", made.textFaint, made.border,
+        made.accentStrong, made.accentSoft, made.onAccent)
+    println("on a light accent {:x}", gui.palette(0, 0x101010, 0xFFFFFF, 0xF0C177, 0, 0).onAccent)
+
+    gui.Window w = gui.Window("palette", 420, 300)
+    gui.Label title = w.add(gui.Label("A label", 16, 12, 200, 20))
+    gui.TextBox name = w.add(gui.TextBox("text", 16, 40, 200, 28))
+    gui.Button save = w.add(gui.Button("Save", 16, 80, 90, 30))
+    save.setStyle(gui.ButtonStyle.Primary)
+    gui.Button quit = w.add(gui.Button("Quit", 116, 80, 90, 30))
+    gui.CheckBox box = w.add(gui.CheckBox("A check box", 16, 120, 200, 22))
+    gui.ComboBox choice = w.add(gui.ComboBox(["One", "Two"], 16, 150, 200, 28))
+    gui.Slider level = w.add(gui.Slider(0, 100, 16, 190, 200, 24))
+    gui.ProgressBar progress = w.add(gui.ProgressBar(16, 224, 200, 8))
+    gui.GroupBox group = w.add(gui.GroupBox("Group", 230, 12, 170, 120))
+    gui.Panel side = w.add(gui.Panel(230, 140, 170, 120))  // a panel with its own colors
+    side.setPalette(dark, made)
+    side.setBackground(gui.role(gui.Role.Background))
+    side.add(gui.Button("In the panel", 12, 12, 120, 28))
+    side.add(gui.CheckBox("Its colors", 12, 52, 120, 22))
+    w.setPalette(made, dark)
+    w.setTheme(gui.Theme.Light)
+    w.start()
+    time.msleep(300)
+    w.setTheme(gui.Theme.Dark)
+    time.msleep(200)
+    w.resetPalette()
+    time.msleep(200)
+    println("drawn light, dark and with the colors of the library")
+
+    title.setBackground(gui.rgb(0x2B2118))
+    title.setTextColor(gui.rgb(0xFFFDF8))
+    name.setBackground(gui.rgb(0xFFF6D6))
+    name.setBorderColor(gui.role(gui.Role.Danger))
+    name.setTextColor(gui.role(gui.Role.Danger))
+    save.setBackground(gui.rgb(0x8A4FBF))
+    quit.setTextColor(gui.role(gui.Role.Danger))
+    quit.setBorderColor(gui.role(gui.Role.Danger))
+    box.setBackground(gui.role(gui.Role.AccentSoft))
+    choice.setBackground(gui.role(gui.Role.SelectionSoft))
+    level.setBackground(gui.rgba(0x2F6E8F, 60))
+    progress.setBackground(gui.role(gui.Role.SurfacePressed))
+    group.setBackground(gui.rgb(0xF4FAF6))
+    group.setBorderColor(gui.role(gui.Role.Accent))
+    save.setCornerRadius(15)
+    quit.setCornerRadius(0)
+    name.setCornerRadius(40)  // more than half its height: half its height
+    name.setTextSize(16)
+    title.setTextSize(11)
+    box.setTextSize(15)
+    group.setCornerRadius(18)
+    choice.setTextSize(12)
+    time.msleep(200)
+    w.setTheme(gui.Theme.Light)
+    time.msleep(200)
+    name.setText("larger")
+    side.resetPalette()
+    title.resetLook()
+    name.resetLook()
+    save.resetLook()
+    time.msleep(200)
+    println("looks drawn, and given back")
+    w.close()
+    ret 0
+}

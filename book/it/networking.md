@@ -287,6 +287,7 @@ i32 main() {
 - La variabile d'ambiente `SSL_CERT_FILE`, quando è impostata, indica un file PEM i cui certificati sostituiscono quelli del sistema, come per OpenSSL, curl e Go: così un test può fidarsi di un'autorità tutta sua. Un file senza certificati non ne lascia nessuno, e le connessioni falliscono con `no certificates in ..., the file of SSL_CERT_FILE`. Le autorità vengono lette una volta sola, alla prima connessione.
 - I certificati revocati non vengono controllati, come in Go: OCSP e le liste dei certificati revocati richiedono altre connessioni, e i certificati del web durano pochi mesi.
 - `timeout()` vale anche per l'handshake. Come `connect`, `connectTls` non ha un timeout proprio: attende la connessione e l'handshake per tutto il tempo che impiega l'altro capo.
+- Alcuni protocolli cominciano in chiaro e poi chiedono TLS, come SMTP e PostgreSQL: `connection.startTls(host)` lo avvia su una connessione data da `net.connect`, con il certificato del server verificato allo stesso modo, e da quel momento `read` e `write` sono cifrati.
 
 Un server si mette in ascolto con `net.listenTls(host, port, certificate, key)`: il certificato in PEM, seguito da quelli della sua catena, e la sua chiave privata in PEM, entrambi come testi. Il suo `accept()` restituisce subito una connessione, e l'handshake avviene al primo `read` o `write` della connessione, nel task che la serve, così un client lento od ostile non fa attendere `accept()`. Un errore dell'handshake è l'eccezione di quel `read` o `write`.
 

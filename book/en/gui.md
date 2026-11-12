@@ -254,6 +254,36 @@ i32 main() {
 
 The rich text follows the theme by itself, since its colors are roles of the theme; a drawing on a canvas has the colors that the program gives it.
 
+### The colors of a program
+
+A program that wants its own colors gives the window a `gui.Palette` for the light theme and one for the dark theme, with `w.setPalette(light, dark)`; `setTheme` still says which of the two is shown. A palette has a color, as `0xRRGGBB`, for each role of the theme, and every component takes its colors from those roles, so the whole window changes together and stays coherent. The shapes, the borders and the shadows stay those of the library.
+
+```cromo ignore
+gui.Palette light = gui.lightPalette()   // the colors of the library, with some changed
+light.accent = 0x2E7D5B
+light.accentStrong = 0x2D6348
+light.accentSoft = 0xE2EBE2
+
+// or a whole palette from six colors: background, surface, text, accent, selection, errors
+gui.Palette dark = gui.palette(0x101418, 0x181E24, 0xE6EAEE, 0x4FC3A1, 0x6FB2D2, 0xE0786D)
+w.setPalette(light, dark)
+```
+
+| Role | Where |
+|---|---|
+| `background` | under the components |
+| `surface`, `surfaceHover`, `surfacePressed` | cards, dialogs, fields, buttons and bars; under the mouse and the bands; pressed, and the tracks |
+| `text`, `textSecondary`, `textFaint` | the text; the one that matters less, the labels and the icons; muted text and placeholders |
+| `line`, `border` | lines and the borders of the cards; the borders of the controls |
+| `accent`, `accentStrong`, `accentSoft` | main buttons, checked boxes, switches and sliders; the accent under the mouse; the item pointed at |
+| `selection`, `selectionSoft` | the focus, the links and the bar of the selected row; the selected row and the selected text |
+| `onAccent` | the text on the accent |
+| `danger` | errors, and the buttons that destroy |
+
+A panel can have its own colors too: `panel.setPalette(light, dark)` gives them to all that it holds, in place of those of the window, as for a side bar in dark colors; `panel.setBackground(gui.role(gui.Role.Background))` then fills it with the background of its palette, and `panel.resetPalette()` gives it the colors of the window again.
+
+`gui.lightPalette()` and `gui.darkPalette()` give the colors of the library, to change some of them. `gui.palette(background, surface, text, accent, selection, danger)` makes a whole palette from six colors: the others come from these, and the text on the accent is white or dark as the accent wants. `w.resetPalette()` gives the window the colors of the library again.
+
 ### Several windows, closing and waiting
 
 A program can have several windows: each is made and started as the first, and all share the thread of the windows, so a handler of one can change the components of another. A window can be made and started also inside a handler:
@@ -305,6 +335,31 @@ Every component has these methods:
 The app bar and the navigation bar take their place by themselves, so of these methods they have only `setVisible`, `setEnabled` and those that read the place; a split has no tooltip of its own, its panels can.
 
 The handlers take a `move func`: the component keeps the lambda, so the lambda must own what it captures. Handles and numbers are captured by copy, strings and lists with `move`, and a state that several handlers change goes in a `thread.Shared`, as in [Drawing on a canvas](#drawing-on-a-canvas). [Anonymous functions](lambdas.md) explains the rules.
+
+## The look of one component
+
+Every component follows the theme. One that must stand out has a few properties of its own, the same for all the components:
+
+```cromo ignore
+gui.Button save = w.add(gui.Button("Save", 16, 16, 90, 30))
+save.setBackground(gui.rgb(0x8A4FBF))               // a color that stays
+save.setCornerRadius(15)                            // a pill
+
+gui.Label warning = w.add(gui.Label("The disk is almost full", 16, 60, 300, 20))
+warning.setTextColor(gui.role(gui.Role.Danger))     // a color of the theme: it changes with it
+warning.setTextSize(15)
+
+gui.TextBox name = w.add(gui.TextBox("", 16, 90, 200, 28))
+name.setBorderColor(gui.role(gui.Role.Danger))
+name.resetLook()                                    // as the theme wants, again
+```
+
+- `setBackground(color)`, `setTextColor(color)` and `setBorderColor(color)` set the background of the component, the color of its text and the color of its border and of its lines. A color is one that stays, `gui.rgb(0x8A4FBF)`, or a role of the theme, `gui.role(gui.Role.Accent)`, which follows the theme of the window, light or dark, and its palette. The roles are those of the table of [the colors of a program](#the-colors-of-a-program), with a capital: `gui.Role.SurfaceHover`, `gui.Role.TextFaint`.
+- `setCornerRadius(radius)` sets the radius of its corners, in logical pixels, from 0 for sharp corners: at most half its shorter side, which makes a pill. It is for the buttons, the boxes of text, the combo boxes, the groups, the cards with tabs and the segmented controls, and for the background of the others.
+- `setTextSize(size)` sets the size of its text, in logical pixels, for the components that write a text of their own. The component keeps its size: the program gives it the room for a larger text. A text view has its own `setTextSize`, the size from which its pieces are scaled.
+- `resetLook()` gives the component the look of the theme again.
+
+A component with no body of its own, as a label or a check box, draws its background as a box behind it. What is under the mouse and what is pressed are made from the background, a little toward the color of the text.
 
 ## Positions and anchors
 
@@ -1237,9 +1292,75 @@ On a phone the same program behaves as an app:
 - The back key, or its gesture, closes a dialog that is open, else the window, and so the app, unless `w.onBack(handler)` decides otherwise, as going back to the first page. On the desktop the handlers of `onBack` are never called.
 - A long press is the right button on a piece of rich text, and shows the tooltip on the other components.
 
+## The camera
+
+`gui.Camera(side)` is a camera of the computer or of the phone, and a `gui.CameraView` shows what it sees:
+
+```cromo norun
+import std.fs
+import std.gui
+
+[[window]]
+[[android("org.example.photo", "Photo")]]
+i32 main() {
+    gui.Window w = gui.Window("Photo", 390, 760)
+    gui.Camera camera = gui.Camera(gui.CameraSide.Back)
+    gui.CameraView view = w.add(gui.CameraView(camera, 0, 0, 390, 520))
+    gui.Button shoot = w.add(gui.Button("Take a photo", 120, 560, 150, 36))
+    shoot.onClick([view]() {
+        gui.Frame photo = view.takePhoto()
+        if (photo.width > 0) {
+            fs.writeBytes("photo.png", photo.png())
+        }
+    })
+    w.start()
+    ret 0
+}
+```
+
+- `gui.CameraSide.Front` is the camera on the side of the screen, `Back` the one behind it, and `Any` the first one there is. A computer does not say where its cameras are: there every side is its first camera.
+- A `gui.CameraView` is a component as the others, which fills its box with the frame of the camera, cut at the edges to keep its proportions; `setScale(gui.Scale.Fit)` shows the whole frame.
+- `view.takePhoto()` gives the frame that the view shows, as a `gui.Frame`: its `width`, its `height`, and its `pixels`, four bytes for each, red, green, blue and 255, row after row from the top. `png()` gives it as the bytes of a PNG file. Before the first frame it has no pixels.
+- `camera.onFrame(handler)` calls a handler on the thread of the windows with each frame, some tens a second: to read a code with bars, to find a face, to send the video. A handler that takes long makes the window slow: give the frame to a task.
+- `camera.state()` says how the camera is: `gui.CameraState.Opening`, `Ready`, `Denied` when the user did not allow it, `Missing` when the device has none or it could not be opened, and `Closed`.
+- `camera.close()` closes it, which turns its light off; its views keep the last frame. A camera stays open until then, or the end of the program.
+
+The camera opens when the windows run. On a phone the system asks the user to allow it the first time, and the app made by `cromo` asks for that permission by itself, when the program makes a `gui.Camera`. The frames arrive upright however the phone is held.
+
+## The sensors of motion
+
+A phone knows how it is held and how it moves: `w.onMotion(handler)` gives the program what its accelerometer and its gyroscope measure, many times a second, as a `gui.Motion`.
+
+```cromo norun
+import std.gui
+
+[[window]]
+[[android("org.example.level", "Level")]]
+i32 main() {
+    gui.Window w = gui.Window("Level", 390, 760)
+    gui.Label level = w.add(gui.Label("", 16, 80, 350, 24))
+    if (!gui.hasMotion()) {
+        level.setText("This device has no sensors of motion")
+    }
+    w.onMotion([level](gui.Motion m) {
+        level.setText(format("tilted {:.1f} to the right, {:.1f} forward", m.accelerationX, m.accelerationY))
+    })
+    w.start()
+    ret 0
+}
+```
+
+- `accelerationX`, `accelerationY` and `accelerationZ` are the acceleration of the device in meters per second squared, with that of gravity: a phone at rest on a table has about 9.8 on z, and one held upright about 9.8 on y. So the three numbers say how the phone is tilted, and their changes that it is shaken.
+- `rotationX`, `rotationY` and `rotationZ` are how fast it turns around each axis, in radians per second.
+- `time` is when the sensor measured, in nanoseconds: the difference of two of them is the time between two events.
+
+With the device in front of the user as it is held by default, x goes to the right, y up, and z out of the screen toward the user. Each event has the last measures of both sensors; one that the device does not have leaves its numbers at 0.
+
+The sensors measure from the first handler on. A computer mostly has none: the handler is then never called, and `gui.hasMotion()`, once the first window has started, says whether there are any.
+
 ## Designing a window: cromo design
 
-> `cromo design` is a first version: it designs one window, with sixteen kinds of components. The format of the form and the names of the module can still change.
+> `cromo design` designs one window, with twenty-two kinds of components. The format of the form and the names of the module can still change.
 
 A window can also be composed with the mouse. `cromo design` opens the designer, itself a program of `std.gui`:
 
@@ -1248,14 +1369,25 @@ cromo design               # a new window
 cromo design notes.form    # opens a form
 ```
 
-- **Components**, on the left, adds a component to the window: labels, buttons, text boxes and areas, check boxes, switches, radio groups, segmented controls, combo boxes, sliders, progress bars, lists, tables, canvases, groups and panels.
+- **Components**, on the left, adds a component to the window: labels, buttons, text boxes and areas, check boxes, switches, radio groups, segmented controls, combo boxes, sliders, progress bars, lists, tables, canvases, icons, images, rich text, the view of a camera, groups, panels, tab views and splits. The text of an icon box is the name of its icon, as `Star`; that of an image box is the file of its image, from the folder of the form, which goes in the program with `embed`; a view of a camera has its camera, the field `camera` of the module.
+- **Outline**, under them, shows the components of the window by their pages and their groups: a click on one selects it, and shows its page.
 - A click selects a component; Shift and a click add one to the selection, and a rectangle drawn on the window selects what it touches. The selection moves together with the mouse or with the arrows, by 4 pixels, and Delete removes it. One component is resized by the eight handles around it, and the window by the handles on its right edge, on its bottom edge and on their corner.
-- **Center horizontally** and **Center vertically** put the selection, as one block, in the middle of the window.
-- A component moved over a group or a panel goes inside it, and moved out of it comes back to the window.
+- **Edit** has Cut, Copy, Paste, Duplicate, Delete and Select all, with Ctrl+X, Ctrl+C, Ctrl+V, Ctrl+D, Delete and Ctrl+A. What is pasted goes on the page shown, a little down and to the right, with names of its own, and a group or a panel is copied with what it holds.
+- **Arrange** aligns the components selected, by their left edges, their middles or their right edges, by their tops, their middles or their bottoms; gives them the same room between them, across or down; makes them as wide or as tall as the first of them; puts the selection, as one block, in the middle of the window; and brings it over the others or sends it under them.
+- The right button of the mouse on the window opens the same commands for the component there.
+- While the selection moves, it is pulled to be aligned with the edges and the middles of the other components and of the window, within 5 pixels, and a line shows what it is aligned with; Alt lets it move freely.
+- A window taller than the area scrolls with the wheel of the mouse, as an app for a phone, 760 pixels tall.
+- A component moved over a group or a panel goes inside it, and moved out of it comes back to the window; a group can be inside another, at any depth.
+- A **tab view** has a page for each title of its text, with commas: `General, Advanced`. A click on its band, once it is selected, shows its next page, and a component moved over it goes on the page shown; in the module its pages are the panels `tabsPage1`, `tabsPage2`. A **split** has two panels, side by side with the text `Across` or one over the other with `Down`, and a component goes in the one that it is moved over.
 - **Properties**, on the right, shows the name, the text, the position, the size and the anchors of the component selected, or the title and the size of the window. The anchors are those of [Positions and anchors](#positions-and-anchors): when the window is resized in the designer, the components follow with them, as in the program.
+- **Look**, the second page of the properties, has the look of the component selected, as in [The look of one component](#the-look-of-one-component): its background, the color of its text and of its border; the radius of its corners; and the size of its text. A color is written as `#RRGGBB` or as a role of the theme, as `Accent` or `Danger`, or chosen with the square next to its box, which opens the picker of the colors; an empty box is the look of the theme. With no component selected it has the colors of the window, as in [The colors of a program](#the-colors-of-a-program): six colors for the light theme and six for the dark one, from which the palette is made; a click on one opens the picker, and those not chosen are the ones of the library. The components and the window show their look and their colors at once, and the switch **Dark** shows the window in its dark theme.
+- The **picker of the colors** has the square of the saturation and of the value of a hue, the strip of the hues under it, the color as `#RRGGBB` and as its red, green and blue, and the colors of the theme of the form, to take one. For the look of a component, **Role** chooses a color of the theme, which follows the theme of the window. **OK** keeps the color, and **As the theme** gives the property the color of the theme again.
+- **Pages**, the third page of the properties, makes the navigation bar of an app, as in [An app: bars, pages and lists](#an-app-bars-pages-and-lists): **Add** adds a page, with its name in the code, its text and its icon on the bar; **Remove** removes the page shown with its components, and the arrows move it. The bar is drawn at the bottom of the window: a click on one of its items, or on a page of the list, shows that page, and the components added go on it. The first page takes the components that the window has. In the module the bar is the field `bar` and each page a `gui.Panel` with its name.
+- **App bar**, at the top of the same page, gives the window the bar at the top of an app, with its title and the icon at its left, as `Menu`; in the module it is the field `appBar`, to which the program gives its handlers. The pages of the navigation bar start under it.
 - **Grid** shows or hides the dots of the grid on the window.
 - **Phone** shows the window as on a phone, 360 pixels wide, with the anchors at work; the components keep the look of the desktop.
 - **Run** builds the window with the code made from the form and shows it as it will be, in a program of its own: its components do nothing.
+- **Save**, **New** and **Open** have Ctrl+S, Ctrl+N and Ctrl+O.
 - **Undo** and **Redo**, Ctrl+Z and Ctrl+Y, go back and forth through the changes. A new form and the opening of another ask first, when there are changes not saved.
 - **Code**, under the window, shows the statements that make the window, to paste in a function: **Copy all** copies them, and a part is selected and copied with Ctrl+C.
 - **Save** writes two files: the form, `notes.form`, which the designer opens again, and next to it the module `notes_form.cro`, made again at each save.
@@ -1309,4 +1441,7 @@ i32 main() {
 - The window has its title, size and state, its events of the mouse, of the keys, of the size and of the closing, a title bar drawn by `std.gui` where components can go, and the themes light, dark and of the system.
 - Every component has its place, anchors, visibility, state and tooltip. Labels, buttons, text boxes and areas, check boxes, switches, sliders, combo boxes, radio groups, progress bars, images and icons make the forms; groups, panels and splits hold them; lists, tables, tabs, segmented controls, rich text and canvases show the data; menus, dialogs, snackbars and the dialogs of the files talk with the user.
 - `embed` puts files in the executable; `[[window]]` makes a program without a console, whose fatal errors show in a message box, and an icon next to the file goes into it.
+- A program has its own colors with a `gui.Palette` for the window, or for a panel; one component has its own background, colors, corners and size of the text, as values or as roles of the theme.
+- `gui.Camera` gives the frames of a camera and `gui.CameraView` shows them; `w.onMotion` gives what the accelerometer and the gyroscope of a phone measure.
 - The same program is an app for Android with `--target android`: one window that fills the screen, with an app bar, a navigation bar and pages.
+- `cromo design` composes a window with the mouse, with its colors, its bars and its pages, and writes it as a module.

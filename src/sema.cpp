@@ -5733,6 +5733,9 @@ private:
         auto& call = static_cast<CallExpr&>(*expr);
         bool declared = std::exchange(threadInit_, nullptr) == expr.get();
         bool thread = isThreadStruct(*decl) && call.args.size() == 1 && call.args[0]->kind == ExprKind::Lambda;
+        if (decl->name == "Camera" && decl->loc.file < module_.files.size() && module_.files[decl->loc.file].name == "std.gui") {
+            module_.camera = true;  // the permission CAMERA of the app (D537)
+        }
         auto construct = std::make_unique<ConstructExpr>(call.loc, decl);
         construct->args = std::move(call.args);
         expr = std::move(construct);

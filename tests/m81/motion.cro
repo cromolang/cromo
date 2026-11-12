@@ -1,0 +1,26 @@
+// The sensors of motion (D538): a window with a handler of onMotion starts and runs
+// on a computer, with or without the sensors; with them the handler has the measures.
+// On a phone the acceleration of gravity is there: examples and the guide show it.
+// target: windows linux-x86_64
+// program-env: SDL_VIDEO_DRIVER=offscreen
+// expect-output: before the windows false
+// expect-output: the measures are as the sensors: true
+import std.gui
+import std.thread
+import std.time
+
+i32 main() {
+    println("before the windows {}", gui.hasMotion())
+    gui.Window w = gui.Window("motion", 300, 200)
+    thread.Shared<i64> events = thread.Shared<i64>(0)
+    w.onMotion([events](gui.Motion m) {
+        events.lock([](ref i64 n) { n++ })
+    })
+    w.start()
+    time.msleep(600)
+    i64 seen = 0
+    events.lock([ref seen](ref i64 n) { seen = n })
+    println("the measures are as the sensors: {}", gui.hasMotion() || seen == 0)
+    w.close()
+    ret 0
+}

@@ -254,6 +254,36 @@ i32 main() {
 
 Il testo ricco segue il tema da sé, poiché i suoi colori sono ruoli del tema; un disegno su un canvas ha i colori che il programma gli dà.
 
+### I colori di un programma
+
+Un programma che vuole i suoi colori dà alla finestra una `gui.Palette` per il tema chiaro e una per il tema scuro, con `w.setPalette(light, dark)`; `setTheme` continua a dire quale delle due è mostrata. Una palette ha un colore, come `0xRRGGBB`, per ogni ruolo del tema, e ogni componente prende i suoi colori da quei ruoli: così tutta la finestra cambia insieme e resta coerente. Le forme, i bordi e le ombre restano quelli della libreria.
+
+```cromo ignore
+gui.Palette light = gui.lightPalette()   // the colors of the library, with some changed
+light.accent = 0x2E7D5B
+light.accentStrong = 0x2D6348
+light.accentSoft = 0xE2EBE2
+
+// or a whole palette from six colors: background, surface, text, accent, selection, errors
+gui.Palette dark = gui.palette(0x101418, 0x181E24, 0xE6EAEE, 0x4FC3A1, 0x6FB2D2, 0xE0786D)
+w.setPalette(light, dark)
+```
+
+| Ruolo | Dove |
+|---|---|
+| `background` | sotto i componenti |
+| `surface`, `surfaceHover`, `surfacePressed` | card, dialoghi, campi, pulsanti e barre; sotto il mouse e le fasce; premuto, e le tracce |
+| `text`, `textSecondary`, `textFaint` | il testo; quello che conta meno, le etichette e le icone; testo attenuato e segnaposto |
+| `line`, `border` | linee e bordi delle card; bordi dei controlli |
+| `accent`, `accentStrong`, `accentSoft` | pulsanti principali, caselle spuntate, interruttori e cursori; l'accento sotto il mouse; la voce indicata |
+| `selection`, `selectionSoft` | il focus, i link e la barra della riga selezionata; la riga e il testo selezionati |
+| `onAccent` | il testo sull'accento |
+| `danger` | errori, e i pulsanti che distruggono |
+
+Anche un pannello può avere i suoi colori: `panel.setPalette(light, dark)` li dà a tutto ciò che contiene, al posto di quelli della finestra, come per una barra laterale in colori scuri; `panel.setBackground(gui.role(gui.Role.Background))` lo riempie poi con lo sfondo della sua palette, e `panel.resetPalette()` gli ridà i colori della finestra.
+
+`gui.lightPalette()` e `gui.darkPalette()` danno i colori della libreria, per cambiarne alcuni. `gui.palette(background, surface, text, accent, selection, danger)` crea un'intera palette da sei colori: gli altri derivano da questi, e il testo sull'accento è bianco o scuro secondo l'accento. `w.resetPalette()` ridà alla finestra i colori della libreria.
+
 ### Più finestre, chiusura e attesa
 
 Un programma può avere più finestre: ognuna si crea e si avvia come la prima, e tutte condividono il thread delle finestre, perciò un handler di una può cambiare i componenti di un'altra. Una finestra si può creare e avviare anche dentro un handler:
@@ -305,6 +335,31 @@ Ogni componente ha questi metodi:
 La barra dell'app e la barra di navigazione prendono il loro posto da sé, perciò di questi metodi hanno solo `setVisible`, `setEnabled` e quelli che leggono il posto; uno split non ha un tooltip proprio, i suoi pannelli sì.
 
 Gli handler prendono una `move func`: il componente tiene la lambda, perciò la lambda deve possedere ciò che cattura. Handle e numeri si catturano per copia, stringhe e liste con `move`, e uno stato che più handler cambiano va in un `thread.Shared`, come in [Disegnare su un canvas](#disegnare-su-un-canvas). [Funzioni anonime](lambdas.md) spiega le regole.
+
+## L'aspetto di un singolo componente
+
+Ogni componente segue il tema. Uno che deve distinguersi ha poche proprietà sue, le stesse per tutti i componenti:
+
+```cromo ignore
+gui.Button save = w.add(gui.Button("Save", 16, 16, 90, 30))
+save.setBackground(gui.rgb(0x8A4FBF))               // a color that stays
+save.setCornerRadius(15)                            // a pill
+
+gui.Label warning = w.add(gui.Label("The disk is almost full", 16, 60, 300, 20))
+warning.setTextColor(gui.role(gui.Role.Danger))     // a color of the theme: it changes with it
+warning.setTextSize(15)
+
+gui.TextBox name = w.add(gui.TextBox("", 16, 90, 200, 28))
+name.setBorderColor(gui.role(gui.Role.Danger))
+name.resetLook()                                    // as the theme wants, again
+```
+
+- `setBackground(color)`, `setTextColor(color)` e `setBorderColor(color)` impostano lo sfondo del componente, il colore del suo testo e il colore del suo bordo e delle sue linee. Un colore è uno fisso, `gui.rgb(0x8A4FBF)`, o un ruolo del tema, `gui.role(gui.Role.Accent)`, che segue il tema della finestra, chiaro o scuro, e la sua palette. I ruoli sono quelli della tabella de [i colori di un programma](#i-colori-di-un-programma), con la maiuscola: `gui.Role.SurfaceHover`, `gui.Role.TextFaint`.
+- `setCornerRadius(radius)` imposta il raggio dei suoi angoli, in pixel logici, da 0 per angoli vivi: al massimo metà del suo lato più corto, che dà una pillola. Vale per i pulsanti, le caselle di testo, le combo box, i gruppi, le card con schede e i controlli segmentati, e per lo sfondo degli altri.
+- `setTextSize(size)` imposta la dimensione del suo testo, in pixel logici, per i componenti che scrivono un testo proprio. Il componente mantiene la sua dimensione: è il programma a dargli lo spazio per un testo più grande. Una text view ha il suo `setTextSize`, la dimensione da cui sono scalati i suoi pezzi.
+- `resetLook()` ridà al componente l'aspetto del tema.
+
+Un componente senza un corpo proprio, come un'etichetta o una casella di spunta, disegna il suo sfondo come un riquadro dietro di sé. Ciò che è sotto il mouse e ciò che è premuto derivano dallo sfondo, un po' verso il colore del testo.
 
 ## Posizioni e ancore
 
@@ -1237,9 +1292,75 @@ Su un telefono lo stesso programma si comporta come un'app:
 - Il tasto indietro, o il suo gesto, chiude un dialogo aperto, altrimenti la finestra, e quindi l'app, a meno che `w.onBack(handler)` non decida altrimenti, per esempio tornando alla prima pagina. Sul desktop gli handler di `onBack` non vengono mai chiamati.
 - Una pressione lunga vale come tasto destro su un pezzo di testo ricco, e mostra il tooltip sugli altri componenti.
 
+## La telecamera
+
+`gui.Camera(side)` è una telecamera del computer o del telefono, e una `gui.CameraView` mostra ciò che vede:
+
+```cromo norun
+import std.fs
+import std.gui
+
+[[window]]
+[[android("org.example.photo", "Photo")]]
+i32 main() {
+    gui.Window w = gui.Window("Photo", 390, 760)
+    gui.Camera camera = gui.Camera(gui.CameraSide.Back)
+    gui.CameraView view = w.add(gui.CameraView(camera, 0, 0, 390, 520))
+    gui.Button shoot = w.add(gui.Button("Take a photo", 120, 560, 150, 36))
+    shoot.onClick([view]() {
+        gui.Frame photo = view.takePhoto()
+        if (photo.width > 0) {
+            fs.writeBytes("photo.png", photo.png())
+        }
+    })
+    w.start()
+    ret 0
+}
+```
+
+- `gui.CameraSide.Front` è la telecamera dal lato dello schermo, `Back` quella dietro, e `Any` la prima che c'è. Un computer non dice dove sono le sue telecamere: lì ogni lato è la sua prima telecamera.
+- Una `gui.CameraView` è un componente come gli altri, che riempie il suo riquadro con il fotogramma della telecamera, tagliato ai bordi per mantenere le proporzioni; `setScale(gui.Scale.Fit)` mostra il fotogramma intero.
+- `view.takePhoto()` dà il fotogramma che la vista mostra, come `gui.Frame`: la sua `width`, la sua `height`, e i suoi `pixels`, quattro byte ciascuno, rosso, verde, blu e 255, riga dopo riga dall'alto. `png()` lo dà come i byte di un file PNG. Prima del primo fotogramma non ha pixel.
+- `camera.onFrame(handler)` chiama un handler sul thread delle finestre a ogni fotogramma, qualche decina al secondo: per leggere un codice a barre, trovare un volto, inviare il video. Un handler lento rallenta la finestra: passa il fotogramma a un task.
+- `camera.state()` dice com'è la telecamera: `gui.CameraState.Opening`, `Ready`, `Denied` quando l'utente non l'ha permessa, `Missing` quando il dispositivo non ne ha o non si è potuta aprire, e `Closed`.
+- `camera.close()` la chiude, e la sua luce si spegne; le sue viste mantengono l'ultimo fotogramma. Una telecamera resta aperta fino ad allora, o fino alla fine del programma.
+
+La telecamera si apre quando le finestre sono in esecuzione. Su un telefono il sistema chiede all'utente di permetterla la prima volta, e l'app creata da `cromo` chiede da sé quel permesso, quando il programma crea una `gui.Camera`. I fotogrammi arrivano dritti comunque sia tenuto il telefono.
+
+## I sensori di movimento
+
+Un telefono sa come è tenuto e come si muove: `w.onMotion(handler)` dà al programma ciò che misurano il suo accelerometro e il suo giroscopio, molte volte al secondo, come un `gui.Motion`.
+
+```cromo norun
+import std.gui
+
+[[window]]
+[[android("org.example.level", "Level")]]
+i32 main() {
+    gui.Window w = gui.Window("Level", 390, 760)
+    gui.Label level = w.add(gui.Label("", 16, 80, 350, 24))
+    if (!gui.hasMotion()) {
+        level.setText("This device has no sensors of motion")
+    }
+    w.onMotion([level](gui.Motion m) {
+        level.setText(format("tilted {:.1f} to the right, {:.1f} forward", m.accelerationX, m.accelerationY))
+    })
+    w.start()
+    ret 0
+}
+```
+
+- `accelerationX`, `accelerationY` e `accelerationZ` sono l'accelerazione del dispositivo in metri al secondo quadrato, compresa quella di gravità: un telefono fermo su un tavolo ha circa 9,8 su z, e uno tenuto in verticale circa 9,8 su y. Così i tre numeri dicono come è inclinato il telefono, e le loro variazioni che viene scosso.
+- `rotationX`, `rotationY` e `rotationZ` sono la velocità con cui ruota attorno a ciascun asse, in radianti al secondo.
+- `time` è l'istante della misura, in nanosecondi: la differenza fra due è il tempo fra due eventi.
+
+Con il dispositivo davanti all'utente, tenuto come di default, x va verso destra, y verso l'alto e z esce dallo schermo verso l'utente. Ogni evento ha le ultime misure di entrambi i sensori; uno che il dispositivo non ha lascia i suoi numeri a 0.
+
+I sensori misurano dal primo handler in poi. Un computer per lo più non ne ha: l'handler allora non viene mai chiamato, e `gui.hasMotion()`, una volta partita la prima finestra, dice se ce ne sono.
+
 ## Disegnare una finestra: cromo design
 
-> `cromo design` è una prima versione: disegna una finestra, con sedici tipi di componenti. Il formato del form e i nomi del modulo possono ancora cambiare.
+> `cromo design` progetta una finestra, con ventidue tipi di componenti. Il formato del form e i nomi del modulo possono ancora cambiare.
 
 Una finestra si può anche comporre con il mouse. `cromo design` apre il designer, che è a sua volta un programma di `std.gui`:
 
@@ -1248,14 +1369,25 @@ cromo design               # una nuova finestra
 cromo design notes.form    # apre un form
 ```
 
-- **Components**, a sinistra, aggiunge un componente alla finestra: etichette, bottoni, caselle e aree di testo, caselle di spunta, interruttori, gruppi di scelte, controlli segmentati, caselle combinate, cursori, barre di avanzamento, liste, tabelle, canvas, gruppi e pannelli.
+- **Components**, a sinistra, aggiunge un componente alla finestra: etichette, pulsanti, caselle e aree di testo, caselle di spunta, interruttori, gruppi di opzioni, controlli segmentati, combo box, cursori, barre di avanzamento, liste, tabelle, canvas, icone, immagini, testo ricco, la vista di una telecamera, gruppi, pannelli, schede e divisori. Il testo di una icon box è il nome della sua icona, come `Star`; quello di una image box è il file della sua immagine, dalla cartella del form, che entra nel programma con `embed`; una vista di telecamera ha la sua telecamera, il campo `camera` del modulo.
+- **Outline**, sotto, mostra i componenti della finestra per pagine e per gruppi: un clic su uno lo seleziona, e mostra la sua pagina.
 - Un clic seleziona un componente; Maiusc e un clic ne aggiungono uno alla selezione, e un rettangolo tracciato sulla finestra seleziona ciò che tocca. La selezione si sposta insieme con il mouse o con le frecce, di 4 pixel, e Canc la elimina. Un componente si ridimensiona con le otto maniglie che ha intorno, e la finestra con le maniglie sul bordo destro, sul bordo inferiore e sul loro angolo.
-- **Center horizontally** e **Center vertically** mettono la selezione, come un blocco unico, al centro della finestra.
-- Un componente spostato sopra un gruppo o un pannello ci entra, e spostato fuori torna alla finestra.
+- **Edit** ha Cut, Copy, Paste, Duplicate, Delete e Select all, con Ctrl+X, Ctrl+C, Ctrl+V, Ctrl+D, Canc e Ctrl+A. Ciò che viene incollato va sulla pagina mostrata, un po' più in basso e a destra, con nomi propri, e un gruppo o un pannello viene copiato con ciò che contiene.
+- **Arrange** allinea i componenti selezionati, per i bordi sinistri, i centri o i bordi destri, per i bordi superiori, i centri o i bordi inferiori; dà loro lo stesso spazio fra l'uno e l'altro, in orizzontale o in verticale; li rende larghi o alti come il primo; mette la selezione, come un blocco, al centro della finestra; e la porta sopra gli altri o la manda sotto.
+- Il tasto destro del mouse sulla finestra apre gli stessi comandi per il componente che si trova lì.
+- Mentre la selezione si muove, viene attratta in modo da allinearsi ai bordi e ai centri degli altri componenti e della finestra, entro 5 pixel, e una linea mostra con che cosa è allineata; Alt la lascia muovere liberamente.
+- Una finestra più alta dell'area scorre con la rotella del mouse, come un'app per telefono, alta 760 pixel.
+- Un componente spostato sopra un gruppo o un pannello ci entra, e spostato fuori torna nella finestra; un gruppo può stare dentro un altro, a qualsiasi profondità.
+- Una **scheda** (tab view) ha una pagina per ogni titolo del suo testo, con le virgole: `General, Advanced`. Un clic sulla sua fascia, quando è selezionata, mostra la pagina successiva, e un componente spostato sopra va sulla pagina mostrata; nel modulo le sue pagine sono i pannelli `tabsPage1`, `tabsPage2`. Un **divisore** (split) ha due pannelli, affiancati con il testo `Across` o uno sopra l'altro con `Down`, e un componente va in quello sopra cui viene spostato.
 - **Properties**, a destra, mostra nome, testo, posizione, dimensioni e ancore del componente selezionato, oppure titolo e dimensioni della finestra. Le ancore sono quelle di [Posizioni e ancore](#posizioni-e-ancore): quando la finestra viene ridimensionata nel designer, i componenti la seguono con le ancore, come nel programma.
+- **Look**, la seconda pagina delle proprietà, ha l'aspetto del componente selezionato, come in [L'aspetto di un singolo componente](#laspetto-di-un-singolo-componente): il suo sfondo, il colore del suo testo e del suo bordo; il raggio dei suoi angoli; e la dimensione del suo testo. Un colore si scrive come `#RRGGBB` o come ruolo del tema, per esempio `Accent` o `Danger`, oppure si sceglie con il quadrato accanto alla casella, che apre il selettore dei colori; una casella vuota è l'aspetto del tema. Senza componenti selezionati ha i colori della finestra, come in [I colori di un programma](#i-colori-di-un-programma): sei colori per il tema chiaro e sei per quello scuro, da cui viene creata la palette; un clic su uno apre il selettore, e quelli non scelti sono quelli della libreria. I componenti e la finestra mostrano subito il loro aspetto e i loro colori, e l'interruttore **Dark** mostra la finestra nel suo tema scuro.
+- Il **selettore dei colori** ha il quadrato della saturazione e della luminosità di una tinta, la striscia delle tinte sotto, il colore come `#RRGGBB` e come rosso, verde e blu, e i colori del tema del form, per prenderne uno. Per l'aspetto di un componente, **Role** sceglie un colore del tema, che segue il tema della finestra. **OK** conserva il colore, e **As the theme** ridà alla proprietà il colore del tema.
+- **Pages**, la terza pagina delle proprietà, crea la barra di navigazione di un'app, come in [Un'app: barre, pagine e liste](#unapp-barre-pagine-e-liste): **Add** aggiunge una pagina, con il suo nome nel codice, il suo testo e la sua icona sulla barra; **Remove** toglie la pagina mostrata con i suoi componenti, e le frecce la spostano. La barra è disegnata in fondo alla finestra: un clic su una delle sue voci, o su una pagina dell'elenco, mostra quella pagina, e i componenti aggiunti vanno su di essa. La prima pagina prende i componenti che la finestra ha già. Nel modulo la barra è il campo `bar` e ogni pagina un `gui.Panel` con il suo nome.
+- **App bar**, in cima alla stessa pagina, dà alla finestra la barra superiore di un'app, con il suo titolo e l'icona alla sua sinistra, come `Menu`; nel modulo è il campo `appBar`, a cui il programma dà i suoi handler. Le pagine della barra di navigazione cominciano sotto di essa.
 - **Grid** mostra o nasconde i punti della griglia sulla finestra.
 - **Phone** mostra la finestra come su un telefono, larga 360 pixel, con le ancore al lavoro; i componenti mantengono l'aspetto del desktop.
 - **Run** costruisce la finestra con il codice generato dal form e la mostra come sarà, in un programma a sé: i suoi componenti non fanno nulla.
+- **Save**, **New** e **Open** hanno Ctrl+S, Ctrl+N e Ctrl+O.
 - **Undo** e **Redo**, Ctrl+Z e Ctrl+Y, vanno avanti e indietro tra le modifiche. Un nuovo form e l'apertura di un altro chiedono prima conferma, se ci sono modifiche non salvate.
 - **Code**, sotto la finestra, mostra le istruzioni che costruiscono la finestra, da incollare in una funzione: **Copy all** le copia tutte, e una parte si seleziona e si copia con Ctrl+C.
 - **Save** scrive due file: il form, `notes.form`, che il designer sa riaprire, e accanto il modulo `notes_form.cro`, rifatto a ogni salvataggio.
@@ -1309,4 +1441,7 @@ i32 main() {
 - La finestra ha il suo titolo, la sua dimensione e il suo stato, i suoi eventi del mouse, dei tasti, della dimensione e della chiusura, una barra del titolo disegnata da `std.gui` dove possono andare dei componenti, e i temi chiaro, scuro e del sistema.
 - Ogni componente ha il suo posto, le ancore, la visibilità, lo stato e il tooltip. Etichette, pulsanti, caselle e aree di testo, caselle di spunta, interruttori, slider, combo box, gruppi di scelte, barre di avanzamento, immagini e icone compongono i form; gruppi, pannelli e split li contengono; liste, tabelle, schede, controlli segmentati, testo ricco e canvas mostrano i dati; menu, dialoghi, snackbar e i dialoghi dei file parlano con l'utente.
 - `embed` mette i file nell'eseguibile; `[[window]]` produce un programma senza console, i cui errori fatali compaiono in una finestra di messaggio, e un'icona accanto al file entra nell'eseguibile.
+- Un programma ha i suoi colori con una `gui.Palette` per la finestra, o per un pannello; un singolo componente ha il suo sfondo, i suoi colori, i suoi angoli e la dimensione del suo testo, come valori o come ruoli del tema.
+- `gui.Camera` dà i fotogrammi di una telecamera e `gui.CameraView` li mostra; `w.onMotion` dà ciò che misurano l'accelerometro e il giroscopio di un telefono.
 - Lo stesso programma è un'app per Android con `--target android`: una sola finestra che riempie lo schermo, con una barra dell'app, una barra di navigazione e delle pagine.
+- `cromo design` compone una finestra con il mouse, con i suoi colori, le sue barre e le sue pagine, e la scrive come modulo.

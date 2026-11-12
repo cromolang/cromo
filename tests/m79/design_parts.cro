@@ -1,0 +1,86 @@
+// cromo design --generate with the components of an app: the app bar, an icon, an
+// image that goes in the program, a view of a camera with its camera, a group in a
+// group, the pages of a tab view and the panels of a split; and the forms that cannot be.
+// target: windows
+// program-env: CROMO={cromo}
+// program-env: OUT={dir}/../out/design_parts
+// expect-output: made 0
+// expect-output:     public gui.AppBar appBar
+// expect-output:     public gui.Camera camera
+// expect-output:     public gui.Panel tabsPage1
+// expect-output:     public gui.Panel tabsPage2
+// expect-output:         appBar = window.add(gui.AppBar("Shop"))
+// expect-output:         appBar.setNavigation(gui.Icon.Menu)
+// expect-output:         camera = gui.Camera(gui.CameraSide.Back)
+// expect-output:         star = window.add(gui.IconBox(gui.Icon.Star, 8, 60, 24, 24))
+// expect-output:         logo = window.add(gui.ImageBox("", 40, 60, 100, 80))
+// expect-output:         logo.setBytes(embed("logo.png"))
+// expect-output:         view = window.add(gui.CameraView(camera, 150, 60, 200, 120))
+// expect-output:         notes = window.add(gui.TextView(8, 190, 200, 60))
+// expect-output:         outer = window.add(gui.GroupBox("Outer", 8, 260, 400, 200))
+// expect-output:         inner = outer.add(gui.Panel(8, 40, 300, 150))
+// expect-output:         deep = inner.add(gui.Button("Deep", 8, 8, 96, 28))
+// expect-output:         tabs = window.add(gui.TabView(8, 470, 400, 160))
+// expect-output:         tabsPage1 = tabs.addPage("General")
+// expect-output:         tabsPage2 = tabs.addPage("Advanced")
+// expect-output:         expert = tabsPage2.add(gui.CheckBox("Expert", 8, 8, 140, 24))
+// expect-output:         halves = window.add(gui.Split(gui.Direction.Down, 8, 640, 400, 160))
+// expect-output:         first = halves.first().add(gui.Label("First", 8, 8, 100, 20))
+// expect-output:         second = halves.second().add(gui.Label("Second", 8, 8, 100, 20))
+// expect-output: the module compiles: true
+// expect-output: itself: 1 'outer' is inside itself, through 'inner'
+// expect-output: page: 1 'expert' is in the page or the panel 2 of 'tabs', which has 2
+// expect-output: split: 1 the split 'halves' is Across or Down, found 'Sideways'
+// expect-output: icon: 1 'Rocket9' is not an icon of std.gui
+import std.fs
+import std.os
+import std.process
+
+string item(string kind, string name, string text, i32 x, i32 y, i32 width, i32 height, string parent, i32 tab) {
+    ret format("{{\"kind\":\"{}\",\"name\":\"{}\",\"text\":\"{}\",\"x\":{},\"y\":{},\"width\":{},\"height\":{},\"parent\":\"{}\",\"tab\":{}}}",
+        kind, name, text, x, y, width, height, parent, tab)
+}
+
+string form(string items) {
+    ret "{\"version\":1,\"title\":\"Shop\",\"width\":420,\"height\":860,\"appBar\":true,\"appTitle\":\"Shop\"," +
+        "\"appIcon\":\"Menu\",\"items\":[" + items + "]}"
+}
+
+void refused(string what, string folder, string text) {
+    fs.writeText(folder + "/bad.form", text)
+    process.Output r = process.run(os.env("CROMO"), ["design", "--generate", folder + "/bad.form"])
+    println("{}: {} {}", what, r.code, r.err.trim().replace("cromo design: ", ""))
+}
+
+i32 main() {
+    string folder = os.env("OUT")
+    fs.removeAll(folder)
+    fs.createFolders(folder)
+    list<string> items = [item("IconBox", "star", "Star", 8, 60, 24, 24, "", 0), item("ImageBox", "logo", "logo.png", 40, 60, 100, 80, "", 0),
+        item("CameraView", "view", "", 150, 60, 200, 120, "", 0), item("TextView", "notes", "", 8, 190, 200, 60, "", 0),
+        item("GroupBox", "outer", "Outer", 8, 260, 400, 200, "", 0), item("Panel", "inner", "", 8, 40, 300, 150, "outer", 0),
+        item("Button", "deep", "Deep", 8, 8, 96, 28, "inner", 0), item("TabView", "tabs", "General, Advanced", 8, 470, 400, 160, "", 0),
+        item("CheckBox", "expert", "Expert", 8, 8, 140, 24, "tabs", 1), item("Split", "halves", "Down", 8, 640, 400, 160, "", 0),
+        item("Label", "first", "First", 8, 8, 100, 20, "halves", 0), item("Label", "second", "Second", 8, 8, 100, 20, "halves", 1)]
+    fs.writeText(folder + "/shop.form", form(join(items, ",")))
+    fs.writeBytes(folder + "/logo.png", [137, 80, 78, 71])  // only to be there for embed
+    process.Output made = process.run(os.env("CROMO"), ["design", "--generate", folder + "/shop.form"])
+    println("made {}", made.code)
+    for (string line in fs.readText(folder + "/shop_form.cro").split("\n")) {
+        bool field = line.contains("appBar") || line.contains("gui.Camera camera") || line.contains("gui.Panel tabsPage")
+        if (line.startsWith("    public gui.") && field || line.startsWith("        ") && !line.contains("gui.Window(")) {
+            println("{}", line)
+        }
+    }
+    fs.writeText(folder + "/main.cro", "import shop_form\ni32 main() {\n    shop_form.Form f = shop_form.Form()\n    ret 0\n}\n")
+    process.Output built = process.run(os.env("CROMO"), ["build", folder + "/main.cro", "-o", folder + "/main.exe"])
+    println("the module compiles: {}", built.code == 0)
+
+    refused("itself", folder, form(item("GroupBox", "outer", "O", 0, 0, 100, 100, "inner", 0) + "," +
+        item("Panel", "inner", "", 0, 0, 50, 50, "outer", 0)))
+    refused("page", folder, form(item("TabView", "tabs", "One, Two", 0, 0, 200, 100, "", 0) + "," +
+        item("CheckBox", "expert", "E", 0, 0, 50, 20, "tabs", 2)))
+    refused("split", folder, form(item("Split", "halves", "Sideways", 0, 0, 200, 100, "", 0)))
+    refused("icon", folder, form(item("IconBox", "star", "Rocket9", 0, 0, 24, 24, "", 0)))
+    ret 0
+}

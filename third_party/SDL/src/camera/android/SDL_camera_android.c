@@ -116,6 +116,7 @@ typedef void (*pfnAImage_delete)(AImage*);
 typedef media_status_t (*pfnAImage_getTimestamp)(const AImage*, int64_t*);
 typedef media_status_t (*pfnAImage_getNumberOfPlanes)(const AImage*, int32_t*);
 typedef media_status_t (*pfnAImage_getPlaneRowStride)(const AImage*, int, int32_t*);
+typedef media_status_t (*pfnAImage_getPlanePixelStride)(const AImage*, int, int32_t*);  // Cromo: see ANDROIDCAMERA_AcquireFrame
 typedef media_status_t (*pfnAImage_getPlaneData)(const AImage*, int, uint8_t**, int*);
 typedef media_status_t (*pfnAImageReader_acquireNextImage)(AImageReader*, AImage**);
 typedef void (*pfnAImageReader_delete)(AImageReader*);
@@ -126,6 +127,7 @@ static pfnAImage_delete pAImage_delete = NULL;
 static pfnAImage_getTimestamp pAImage_getTimestamp = NULL;
 static pfnAImage_getNumberOfPlanes pAImage_getNumberOfPlanes = NULL;
 static pfnAImage_getPlaneRowStride pAImage_getPlaneRowStride = NULL;
+static pfnAImage_getPlanePixelStride pAImage_getPlanePixelStride = NULL;
 static pfnAImage_getPlaneData pAImage_getPlaneData = NULL;
 static pfnAImageReader_acquireNextImage pAImageReader_acquireNextImage = NULL;
 static pfnAImageReader_delete pAImageReader_delete = NULL;
@@ -324,7 +326,14 @@ static SDL_CameraFrameResult ANDROIDCAMERA_AcquireFrame(SDL_Camera *device, SDL_
     int32_t num_planes = 0;
     pAImage_getNumberOfPlanes(image, &num_planes);
 
-    if ((num_planes == 3) && (device->spec.format == SDL_PIXELFORMAT_NV12)) {
+    // Cromo: YUV_420_888 has three planes, whose U and V have a pixel stride of 2 when
+    // they are interleaved, as on most phones, and of 1 when each is a plane of its
+    // own, as on the emulator, with a row stride that can be half the one of Y. The
+    // code below read the plane of U as the two interleaved, which is right only in
+    // the first case and when it holds every byte. Here the two are written
+    // interleaved, as NV12 wants them, from their own strides.
+    const bool interleave = (num_planes == 3) && (device->spec.format == SDL_PIXELFORMAT_NV12);
+    if (interleave) {
         num_planes--;   // treat the interleaved planes as one.
     }
 
@@ -359,8 +368,34 @@ static SDL_CameraFrameResult ANDROIDCAMERA_AcquireFrame(SDL_Camera *device, SDL_
 
             int32_t row_stride = 0;
             pAImage_getPlaneRowStride(image, i, &row_stride);
-            SDL_assert(row_stride == frame->pitch);
-            SDL_memcpy(dst, data, SDL_min(expected, datalen));
+            if ((i == 1) && interleave) {
+                uint8_t *v = NULL;
+                int32_t vlen = 0;
+                int32_t pixel_stride = 2;
+                int32_t v_row_stride = row_stride;
+                pAImage_getPlaneData(image, 2, &v, &vlen);
+                pAImage_getPlanePixelStride(image, 1, &pixel_stride);
+                pAImage_getPlaneRowStride(image, 2, &v_row_stride);
+                const int rows = (frame->h + 1) / 2;
+                const int columns = (frame->w + 1) / 2;
+                SDL_memset(dst, 128, expected);  // no color where the planes are short
+                for (int r = 0; r < rows; r++) {
+                    Uint8 *out = dst + (size_t)r * frame->pitch;
+                    for (int c = 0; c < columns; c++) {
+                        const int32_t at = r * row_stride + c * pixel_stride;
+                        const int32_t vat = r * v_row_stride + c * pixel_stride;
+                        if ((at < datalen) && data) {
+                            out[c * 2] = data[at];
+                        }
+                        if ((vat < vlen) && v) {
+                            out[c * 2 + 1] = v[vat];
+                        }
+                    }
+                }
+            } else {
+                SDL_assert(row_stride == frame->pitch);
+                SDL_memcpy(dst, data, SDL_min(expected, datalen));
+            }
             dst += expected;
         }
     }
@@ -832,6 +867,7 @@ static void ANDROIDCAMERA_Deinitialize(void)
     pAImage_getTimestamp = NULL;
     pAImage_getNumberOfPlanes = NULL;
     pAImage_getPlaneRowStride = NULL;
+    pAImage_getPlanePixelStride = NULL;
     pAImage_getPlaneData = NULL;
     pAImageReader_acquireNextImage = NULL;
     pAImageReader_delete = NULL;
@@ -888,6 +924,7 @@ static bool ANDROIDCAMERA_Init(SDL_CameraDriverImpl *impl)
     LOADSYM(libmedia, AImage_getTimestamp);
     LOADSYM(libmedia, AImage_getNumberOfPlanes);
     LOADSYM(libmedia, AImage_getPlaneRowStride);
+    LOADSYM(libmedia, AImage_getPlanePixelStride);
     LOADSYM(libmedia, AImage_getPlaneData);
     LOADSYM(libmedia, AImageReader_acquireNextImage);
     LOADSYM(libmedia, AImageReader_delete);

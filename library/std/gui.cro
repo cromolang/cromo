@@ -57,6 +57,7 @@
 // hit test, the text and the icons, the symbols, the boxes and the images, are in
 // runtime/gui (D441).
 import std.fs
+import std.gzip
 import std.time
 import unsafe
 
@@ -99,6 +100,22 @@ extern "SDL3" {
     bool SDL_SetClipboardText(addr text)
     addr SDL_GetClipboardText()
     void SDL_free(addr memory)
+    bool SDL_InitSubSystem(u32 flags)
+    addr SDL_malloc(i64 size)
+    addr SDL_GetCameras(ref i32 count)     // their numbers, of 4 bytes each, to give back with SDL_free
+    i32 SDL_GetCameraPosition(u32 camera)  // 0 not known, 1 in front, 2 behind
+    addr SDL_OpenCamera(u32 camera, addr spec)
+    i32 SDL_GetCameraPermissionState(addr camera)           // -1 denied, 0 not answered yet, 1 approved
+    addr SDL_AcquireCameraFrame(addr camera, ref u64 time)  // an SDL_Surface, or nothing when there is no new frame
+    void SDL_ReleaseCameraFrame(addr camera, addr frame)
+    void SDL_CloseCamera(addr camera)
+    addr SDL_ConvertSurface(addr surface, u32 format)
+    void SDL_DestroySurface(addr surface)
+    u32 SDL_GetSurfaceProperties(addr surface)
+    f32 SDL_GetFloatProperty(u32 properties, addr name, f32 fallback)
+    addr SDL_GetSensors(ref i32 count)  // their numbers, of 4 bytes each, to give back with SDL_free
+    i32 SDL_GetSensorTypeForID(u32 sensor)
+    addr SDL_OpenSensor(u32 sensor)
     addr SDL_GetPlatform()
     bool SDL_SetHint(addr name, addr value)
     u16 SDL_GetModState()
@@ -154,6 +171,81 @@ public enum Theme {
     System  // that of the system, the default, which changes when the user changes it
     Light   // dark text on light grays
     Dark    // light text on dark grays
+}
+
+// The colors of a theme, each for a role, as 0xRRGGBB (D539): a program that wants
+// its own colors takes those of the library, changes some, and gives them to its
+// window with 'Window.setPalette', for the light theme and for the dark one. The
+// shapes, the borders and the shadows stay those of the library.
+//
+// '''
+// gui.Palette light = gui.lightPalette()
+// light.accent = 0x2F6E8F          // the main buttons, the checked boxes, the sliders
+// light.accentStrong = 0x245873
+// gui.Palette dark = gui.palette(0x101418, 0x181E24, 0xE6EAEE, 0x6FB2D2, 0x6FB2D2, 0xE0786D)
+// w.setPalette(light, dark)
+// '''
+public struct Palette {
+    public u32 background      // under the components
+    public u32 surface         // cards, dialogs, fields, buttons and bars
+    public u32 surfaceHover    // the bands of the groups and of the dialogs, and under the mouse
+    public u32 surfacePressed  // pressed, and the tracks of the sliders and of the bars
+    public u32 text            // the text
+    public u32 textSecondary   // the text that matters less, the labels and the icons
+    public u32 textFaint       // muted text, the titles of the bands, the placeholders
+    public u32 line            // lines, and the borders of the cards
+    public u32 border          // the borders of the controls
+    public u32 accent          // main buttons, checked boxes, switches and sliders
+    public u32 accentStrong    // the accent under the mouse, and the text on the soft accent
+    public u32 accentSoft      // the item pointed at in a list, the item chosen of a bar
+    public u32 selection       // the focus, the links, and the bar of the selected row
+    public u32 selectionSoft   // the selected row and the selected text
+    public u32 onAccent        // the text on the accent
+    public u32 danger          // errors, and the buttons that destroy
+}
+
+// The colors of the light theme of the library, to change some of them.
+public Palette lightPalette() {
+    ret paletteOf(colorsOf(false))
+}
+
+// The colors of the dark theme of the library, to change some of them.
+public Palette darkPalette() {
+    ret paletteOf(colorsOf(true))
+}
+
+// A whole palette from six colors, as 0xRRGGBB: what is under the components, their
+// surface, the text, the accent, the selection and the color of the errors. The
+// others are made from these: the ones under the mouse and pressed, the lighter
+// texts, the lines, and the text on the accent, white or dark as the accent wants.
+public Palette palette(u32 background, u32 surface, u32 text, u32 accent, u32 selection, u32 danger) {
+    Palette made
+    made.background = background & 0xFFFFFF
+    made.surface = surface & 0xFFFFFF
+    made.surfaceHover = mixed(surface, text, 0.045)
+    made.surfacePressed = mixed(surface, text, 0.10)
+    made.text = text & 0xFFFFFF
+    made.textSecondary = mixed(text, surface, 0.22)
+    made.textFaint = mixed(text, surface, 0.42)
+    made.line = mixed(surface, text, 0.18)
+    made.border = mixed(surface, text, 0.26)
+    made.accent = accent & 0xFFFFFF
+    made.accentStrong = mixed(accent, text, 0.28)
+    made.accentSoft = mixed(surface, accent, 0.14)
+    made.selection = selection & 0xFFFFFF
+    made.selectionSoft = mixed(surface, selection, 0.16)
+    f32 light = 0.299 * f32(red(accent)) + 0.587 * f32(green(accent)) + 0.114 * f32(blue(accent))
+    made.onAccent = light > 150 ? 0x1A1206 : 0xFFFFFF
+    made.danger = danger & 0xFFFFFF
+    ret made
+}
+
+// The color at 'part' of the way from one to another, from 0 to 1.
+u32 mixed(u32 from, u32 to, f32 part) {
+    f32 r = f32(red(from)) + (f32(red(to)) - f32(red(from))) * part
+    f32 g = f32(green(from)) + (f32(green(to)) - f32(green(from))) * part
+    f32 b = f32(blue(from)) + (f32(blue(to)) - f32(blue(from))) * part
+    ret u32(r + 0.5) << 16 | u32(g + 0.5) << 8 | u32(b + 0.5)
 }
 
 // The style of a button, set with 'Button.setStyle'.
@@ -255,6 +347,90 @@ public struct Color {
     public u8 green  // from 0 to 255
     public u8 blue   // from 0 to 255
     public u8 alpha  // 255 opaque, 0 transparent
+    i32 role         // from 'role()': a color of the theme, by its number from 1, in place of the ones above
+}
+
+// A color of the theme by its role, the ones of a 'Palette' (D539): 'gui.role' gives
+// a 'Color' that follows the theme of the window, light or dark, and its palette.
+public enum Role {
+    Background      // under the components
+    Surface         // cards, dialogs, fields, buttons and bars
+    SurfaceHover    // under the mouse, and the bands
+    SurfacePressed  // pressed, and the tracks
+    Text            // the text
+    TextSecondary   // the text that matters less
+    TextFaint       // muted text
+    Line            // lines, and the borders of the cards
+    Border          // the borders of the controls
+    Accent          // the accent
+    AccentStrong    // the accent under the mouse
+    AccentSoft      // the soft accent
+    Selection       // the selection and the focus
+    SelectionSoft   // the selected row
+    OnAccent        // the text on the accent
+    Danger          // errors, and what destroys
+}
+
+// The color of a role of the theme, for the look of a component (D540): it changes
+// with the theme of the window, where 'rgb' gives a color that stays.
+//
+// '''
+// warning.setTextColor(gui.role(gui.Role.Danger))
+// '''
+public Color role(Role which) {
+    Color made
+    made.alpha = 255
+    switch (which) {
+        case Background {
+            made.role = 1
+        }
+        case Surface {
+            made.role = 2
+        }
+        case SurfaceHover {
+            made.role = 3
+        }
+        case SurfacePressed {
+            made.role = 4
+        }
+        case Text {
+            made.role = 5
+        }
+        case TextSecondary {
+            made.role = 6
+        }
+        case TextFaint {
+            made.role = 7
+        }
+        case Line {
+            made.role = 8
+        }
+        case Border {
+            made.role = 9
+        }
+        case Accent {
+            made.role = 10
+        }
+        case AccentStrong {
+            made.role = 11
+        }
+        case AccentSoft {
+            made.role = 12
+        }
+        case Selection {
+            made.role = 13
+        }
+        case SelectionSoft {
+            made.role = 14
+        }
+        case OnAccent {
+            made.role = 15
+        }
+        case Danger {
+            made.role = 16
+        }
+    }
+    ret made
 }
 
 // An opaque color from its value 0xRRGGBB, as in CSS: 'gui.rgb(0xB4761C)'.
@@ -501,6 +677,387 @@ public struct Mouse {
     public bool alt      // an Alt key is held
 }
 
+// Which camera of the device, for 'Camera' (D537).
+public enum CameraSide {
+    Any    // the first one that the system has
+    Front  // the one on the side of the screen, toward the user
+    Back   // the one behind the screen
+}
+
+// How a camera is, from 'Camera.state()'.
+public enum CameraState {
+    Opening  // not open yet, or waiting for the user to allow it
+    Ready    // it gives its frames
+    Denied   // the user did not allow it
+    Missing  // the device has no camera, or it could not be opened
+    Closed   // closed by 'close()'
+}
+
+// A frame of a camera (D537): its pixels, row after row from the top, each of four
+// bytes, red, green, blue and 255.
+public struct Frame {
+    public i32 width  // in pixels
+    public i32 height
+    public list<u8> pixels  // width * height * 4 bytes
+    public i64 time         // when it was taken, in nanoseconds: for the time between two frames
+
+    // The frame as the bytes of a PNG file, for 'fs.writeBytes' or to send: a photo.
+    // Without pixels, an empty list.
+    public list<u8> png() const {
+        list<u8> file
+        if (width <= 0 || height <= 0 || pixels.len() < i64(width) * i64(height) * 4) {
+            ret file
+        }
+        list<u8> signature = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]
+        for (u8 b in signature) {
+            file.add(b)
+        }
+        list<u8> header
+        number(ref header, u32(width))
+        number(ref header, u32(height))
+        header.add(8)  // bits for each of red, green, blue and alpha
+        header.add(6)
+        header.add(0)
+        header.add(0)
+        header.add(0)
+        chunk(ref file, "IHDR", header)
+        list<u8> rows  // each row after a 0, which says that it is as it is
+        rows.reserve(i64(height) * (i64(width) * 4 + 1))
+        u32 low = 1  // the sum of Adler of the rows
+        u32 high = 0
+        i64 at = 0
+        for (i32 y = 0; y < height; y++) {
+            rows.add(0)
+            high = (high + low) % 65521
+            for (i64 x = 0; x < i64(width) * 4; x++) {
+                u8 b = pixels[at]
+                at++
+                rows.add(b)
+                low = (low + u32(b)) % 65521
+                high = (high + low) % 65521
+            }
+        }
+        list<u8> packed = gzip.compress(rows)  // deflate inside a header of 10 bytes and an end of 8
+        list<u8> data = [0x78, 0x9C]
+        data.reserve(packed.len())
+        for (i64 i = 10; i < packed.len() - 8; i++) {
+            data.add(packed[i])
+        }
+        number(ref data, high << 16 | low)
+        chunk(ref file, "IDAT", data)
+        list<u8> nothing
+        chunk(ref file, "IEND", nothing)
+        ret file
+    }
+}
+
+// A number of 4 bytes, the first the highest, as PNG wants them.
+void number(ref list<u8> out, u32 value) {
+    out.add(u8(value >> 24 & 0xFF))
+    out.add(u8(value >> 16 & 0xFF))
+    out.add(u8(value >> 8 & 0xFF))
+    out.add(u8(value & 0xFF))
+}
+
+// A chunk of a PNG: its length, its name, its data and the CRC of the last two.
+void chunk(ref list<u8> out, string name, list<u8> data) {
+    number(ref out, u32(data.len()))
+    list<u8> checked
+    checked.reserve(data.len() + 4)
+    for (i64 i = 0; i < 4; i++) {
+        checked.add(name[i])
+    }
+    for (u8 b in data) {
+        checked.add(b)
+    }
+    for (u8 b in checked) {
+        out.add(b)
+    }
+    number(ref out, gzip.crc32(checked))
+}
+
+// A camera of the computer or of the phone (D537): it gives its frames to the
+// handlers of 'onFrame', and a 'CameraView' shows what it sees. It is a handle: its
+// copies are the same camera. The camera opens when the windows run; on a phone
+// the system asks the user to allow it, the first time. It stays open, with its
+// light on, until 'close()' or the end of the program.
+//
+// '''
+// gui.Camera camera = gui.Camera(gui.CameraSide.Back)
+// gui.CameraView view = w.add(gui.CameraView(camera, 0, 0, 390, 520))
+// shoot.onClick([view]() { fs.writeBytes("photo.png", view.takePhoto().png()) })
+// '''
+public struct Camera {
+    i64 id
+
+    // The camera on a side of the device, or the first one there is. A computer does
+    // not say where its cameras are: there every side is the first camera.
+    public Camera(CameraSide side) {
+        i32 where = 0
+        switch (side) {
+            case Any {
+                where = 0
+            }
+            case Front {
+                where = 1
+            }
+            case Back {
+                where = 2
+            }
+        }
+        i64 made = 0
+        withData([ref made, where](ref Shared data) {
+            CameraData camera
+            camera.id = data.next
+            data.next++
+            camera.side = where
+            made = camera.id
+            data.cameras.add(move camera)
+        })
+        id = made
+    }
+
+    // Adds a handler, called on the thread of the windows with each frame of the
+    // camera, some tens a second: to read a code, to find a face, to send the video.
+    public void onFrame(move func(Frame) handler) const {
+        addr box = alloc(sizeOf<func(Frame)>())
+        put<func(Frame)>(box, move handler)
+        i64 me = id
+        withData([me, box](ref Shared data) { data.cameras[cameraIndexOf(ref data, me)].handlers.add(box) })
+    }
+
+    // The last frame of the camera: without pixels, and 0 wide, before the first one.
+    public Frame frame() const {
+        i64 me = id
+        Frame last
+        readData([me, ref last](ref Shared data) {
+            i64 at = cameraIndexOf(ref data, me)
+            last = frameOf(data.cameras[at].pixels, data.cameras[at].width, data.cameras[at].height, data.cameras[at].time)
+        })
+        ret last
+    }
+
+    // How the camera is: opening, ready, denied by the user, missing, or closed.
+    public CameraState state() const {
+        i64 me = id
+        i32 now = 0
+        readData([me, ref now](ref Shared data) { now = data.cameras[cameraIndexOf(ref data, me)].state })
+        if (now == 2) {
+            ret CameraState.Ready
+        }
+        if (now == 3) {
+            ret CameraState.Denied
+        }
+        if (now == 4) {
+            ret CameraState.Missing
+        }
+        if (now == 5) {
+            ret CameraState.Closed
+        }
+        ret CameraState.Opening
+    }
+
+    // Closes the camera, which turns its light off: its views keep its last frame.
+    public void close() const {
+        i64 me = id
+        withData([me](ref Shared data) { data.cameras[cameraIndexOf(ref data, me)].closing = true })
+    }
+}
+
+// Shows what a camera sees (D537), filling its box as an image with 'Scale.Fill':
+// the frame keeps its proportions, and is cut at the edges of the box.
+//
+// '''
+// gui.CameraView view = w.add(gui.CameraView(camera, 0, 0, 390, 520))
+// '''
+public struct CameraView : Component {
+    i64 id
+
+    // A view of a camera. 'x' and 'y' are in logical pixels from the top left corner of
+    // its parent, the window, the group, the panel or the dialog whose 'add' puts it
+    // there, and 'width' and 'height' its size.
+    public CameraView(Camera camera, i32 x, i32 y, i32 width, i32 height) {
+        id = newPart(kindImageBox, "", x, y, width, height)
+        i64 me = id
+        i64 source = camera.id
+        withData([me, source](ref Shared data) {
+            i64 at = partIndexOf(ref data, me)
+            data.parts[at].camera = source
+            data.parts[at].scale = Scale.Fill
+        })
+    }
+
+    i64 componentId() const {
+        ret id
+    }
+
+    // The frame that the view shows, to keep: 'takePhoto().png()' is a photo as the
+    // bytes of a file. Without pixels before the first frame of the camera.
+    public Frame takePhoto() const {
+        i64 me = id
+        Frame last
+        readData([me, ref last](ref Shared data) {
+            i64 at = partIndexOf(ref data, me)
+            last = frameOf(data.parts[at].pixels, data.parts[at].imageWidth, data.parts[at].imageHeight, 0)
+            i64 from = cameraNumber(ref data, data.parts[at].camera)
+            if (from >= 0) {
+                last.time = data.cameras[from].time
+            }
+        })
+        ret last
+    }
+
+    // How the frame fits the box: 'Scale.Fill' by default.
+    public void setScale(Scale value) const {
+        i64 me = id
+        withData([me, value](ref Shared data) { data.parts[partIndexOf(ref data, me)].scale = value })
+    }
+
+    // Moves the camera view, in logical pixels from the top left corner of its parent: the
+    // content of the window, or the group, the panel or the dialog that holds it. Its anchors
+    // keep the distances from the edges that it has at the new place.
+    public void setPosition(i32 x, i32 y) const {
+        setPartBounds(id, x, y, -1, -1)
+    }
+
+    // Changes the width and the height of the camera view, in logical pixels. Its anchors keep
+    // the distances from the edges that it has with the new size.
+    public void setSize(i32 width, i32 height) const {
+        setPartBounds(id, -1, -1, width, height)
+    }
+
+    // The distance of the camera view from the left edge of its parent, in logical pixels, where
+    // its anchors have placed it now.
+    public i32 x() const {
+        ret partBound(id, 0)
+    }
+
+    // The distance of the camera view from the top edge of its parent, in logical pixels, where
+    // its anchors have placed it now.
+    public i32 y() const {
+        ret partBound(id, 1)
+    }
+
+    // The width of the camera view now, in logical pixels: a 'Stretch' anchor changes it with its
+    // parent.
+    public i32 width() const {
+        ret partBound(id, 2)
+    }
+
+    // The height of the camera view now, in logical pixels: a 'Stretch' anchor changes it with
+    // its parent.
+    public i32 height() const {
+        ret partBound(id, 3)
+    }
+
+    // Sets the text that a small card shows when the mouse stays on the camera view for a moment,
+    // or after a long press on a phone: "" for none, the default; "\n" starts a new line.
+    public void setTooltip(string text) const {
+        setPartTooltip(id, text)
+    }
+
+    // The text of the tooltip of the camera view, "" for none.
+    public string tooltip() const {
+        ret partTooltip(id)
+    }
+
+    // Shows or hides the camera view.
+    public void setVisible(bool value) const {
+        setPartFlag(id, 0, value)
+    }
+
+    // Whether the camera view is visible, as 'setVisible' set it: true by default.
+    public bool visible() const {
+        ret partFlag(id, 0)
+    }
+
+    // Enables or disables the camera view: disabled, it is drawn at half its opacity.
+    public void setEnabled(bool value) const {
+        setPartFlag(id, 1, value)
+    }
+
+    // Whether the camera view is enabled, as 'setEnabled' set it: true by default.
+    public bool enabled() const {
+        ret partFlag(id, 1)
+    }
+
+    // Sets which edges of its parent the camera view follows when the parent changes size: the
+    // window, or the group, the panel or the dialog that holds it. It keeps the distances from
+    // those edges that it has now, as 'setAnchor(gui.Horizontal.Right, gui.Vertical.Bottom)' in
+    // the bottom right corner. By default it is anchored to the left and to the top, and does
+    // not move.
+    public void setAnchor(Horizontal horizontal, Vertical vertical) const {
+        setPartAnchor(id, horizontal, vertical)
+    }
+
+    // How the camera view follows the left and the right edges of its parent: 'Horizontal.Left'
+    // by default.
+    public Horizontal horizontalAnchor() const {
+        ret partHorizontal(id)
+    }
+
+    // How the camera view follows the top and the bottom edges of its parent: 'Vertical.Top' by
+    // default.
+    public Vertical verticalAnchor() const {
+        ret partVertical(id)
+    }
+
+    // Sets the background of the component, in place of the one of the theme (D540):
+    // a color that stays, as 'gui.rgb(0xFBEFD9)', or one of the theme, as
+    // 'gui.role(gui.Role.AccentSoft)'.
+    public void setBackground(Color color) const {
+        setPartColor(id, 0, color)
+    }
+
+    // Sets the color of the text of the component, in place of the one of the theme.
+    public void setTextColor(Color color) const {
+        setPartColor(id, 1, color)
+    }
+
+    // Sets the color of the border and of the lines of the component, in place of
+    // the one of the theme.
+    public void setBorderColor(Color color) const {
+        setPartColor(id, 2, color)
+    }
+
+    // Sets the radius of the corners of the component, in logical pixels, from 0, sharp
+    // corners, to 64, and at most half its shorter side: for the buttons, the boxes
+    // of text, the groups, the cards with tabs, the segmented controls, and the
+    // background of the others. Out of the range it is a panic.
+    public void setCornerRadius(f32 radius) const {
+        setPartCorner(id, radius)
+    }
+
+    // Sets the size of the text of the component, in logical pixels, from 6 to 96, in
+    // place of the one of the window: for the labels, the buttons, the boxes of text
+    // and the others that write their own text. The component keeps its size: the
+    // program gives it the room for a larger text. Out of the range it is a panic.
+    public void setTextSize(f32 size) const {
+        setPartTextSize(id, size)
+    }
+
+    // Gives the component the look of the theme again: its colors, its corners and
+    // the size of its text.
+    public void resetLook() const {
+        resetPartLook(id)
+    }
+}
+
+// The motion of the device, for the handlers of 'onMotion' of a window (D538): what
+// its accelerometer and its gyroscope measure, along its axes. With the device in
+// front of the user as it is held by default, x goes to the right, y up and z out
+// of the screen toward the user. A sensor that the device does not have leaves its
+// three numbers at 0.
+public struct Motion {
+    public f32 accelerationX  // the acceleration, in meters per second squared, with the one of
+    public f32 accelerationY  // gravity: a phone at rest on a table has about 9.8 on z
+    public f32 accelerationZ
+    public f32 rotationX  // how fast the device turns around each axis, in radians per second
+    public f32 rotationY
+    public f32 rotationZ
+    public i64 time  // when the sensor measured, in nanoseconds: for the time between two events
+}
+
 // A key pressed, for the handlers of 'onKeyDown' of a window.
 public struct Key {
     // The keycode of SDL. For the letters, the digits and the signs it is the character
@@ -643,6 +1200,46 @@ public struct Label : Component {
     // default.
     public Vertical verticalAnchor() const {
         ret partVertical(id)
+    }
+
+    // Sets the background of the component, in place of the one of the theme (D540):
+    // a color that stays, as 'gui.rgb(0xFBEFD9)', or one of the theme, as
+    // 'gui.role(gui.Role.AccentSoft)'.
+    public void setBackground(Color color) const {
+        setPartColor(id, 0, color)
+    }
+
+    // Sets the color of the text of the component, in place of the one of the theme.
+    public void setTextColor(Color color) const {
+        setPartColor(id, 1, color)
+    }
+
+    // Sets the color of the border and of the lines of the component, in place of
+    // the one of the theme.
+    public void setBorderColor(Color color) const {
+        setPartColor(id, 2, color)
+    }
+
+    // Sets the radius of the corners of the component, in logical pixels, from 0, sharp
+    // corners, to 64, and at most half its shorter side: for the buttons, the boxes
+    // of text, the groups, the cards with tabs, the segmented controls, and the
+    // background of the others. Out of the range it is a panic.
+    public void setCornerRadius(f32 radius) const {
+        setPartCorner(id, radius)
+    }
+
+    // Sets the size of the text of the component, in logical pixels, from 6 to 96, in
+    // place of the one of the window: for the labels, the buttons, the boxes of text
+    // and the others that write their own text. The component keeps its size: the
+    // program gives it the room for a larger text. Out of the range it is a panic.
+    public void setTextSize(f32 size) const {
+        setPartTextSize(id, size)
+    }
+
+    // Gives the component the look of the theme again: its colors, its corners and
+    // the size of its text.
+    public void resetLook() const {
+        resetPartLook(id)
     }
 }
 
@@ -842,6 +1439,46 @@ public struct Button : Component {
     public Vertical verticalAnchor() const {
         ret partVertical(id)
     }
+
+    // Sets the background of the component, in place of the one of the theme (D540):
+    // a color that stays, as 'gui.rgb(0xFBEFD9)', or one of the theme, as
+    // 'gui.role(gui.Role.AccentSoft)'.
+    public void setBackground(Color color) const {
+        setPartColor(id, 0, color)
+    }
+
+    // Sets the color of the text of the component, in place of the one of the theme.
+    public void setTextColor(Color color) const {
+        setPartColor(id, 1, color)
+    }
+
+    // Sets the color of the border and of the lines of the component, in place of
+    // the one of the theme.
+    public void setBorderColor(Color color) const {
+        setPartColor(id, 2, color)
+    }
+
+    // Sets the radius of the corners of the component, in logical pixels, from 0, sharp
+    // corners, to 64, and at most half its shorter side: for the buttons, the boxes
+    // of text, the groups, the cards with tabs, the segmented controls, and the
+    // background of the others. Out of the range it is a panic.
+    public void setCornerRadius(f32 radius) const {
+        setPartCorner(id, radius)
+    }
+
+    // Sets the size of the text of the component, in logical pixels, from 6 to 96, in
+    // place of the one of the window: for the labels, the buttons, the boxes of text
+    // and the others that write their own text. The component keeps its size: the
+    // program gives it the room for a larger text. Out of the range it is a panic.
+    public void setTextSize(f32 size) const {
+        setPartTextSize(id, size)
+    }
+
+    // Gives the component the look of the theme again: its colors, its corners and
+    // the size of its text.
+    public void resetLook() const {
+        resetPartLook(id)
+    }
 }
 
 // A line of text that the user writes, with the input method of the system and, on a
@@ -999,6 +1636,46 @@ public struct TextBox : Component {
     public Vertical verticalAnchor() const {
         ret partVertical(id)
     }
+
+    // Sets the background of the component, in place of the one of the theme (D540):
+    // a color that stays, as 'gui.rgb(0xFBEFD9)', or one of the theme, as
+    // 'gui.role(gui.Role.AccentSoft)'.
+    public void setBackground(Color color) const {
+        setPartColor(id, 0, color)
+    }
+
+    // Sets the color of the text of the component, in place of the one of the theme.
+    public void setTextColor(Color color) const {
+        setPartColor(id, 1, color)
+    }
+
+    // Sets the color of the border and of the lines of the component, in place of
+    // the one of the theme.
+    public void setBorderColor(Color color) const {
+        setPartColor(id, 2, color)
+    }
+
+    // Sets the radius of the corners of the component, in logical pixels, from 0, sharp
+    // corners, to 64, and at most half its shorter side: for the buttons, the boxes
+    // of text, the groups, the cards with tabs, the segmented controls, and the
+    // background of the others. Out of the range it is a panic.
+    public void setCornerRadius(f32 radius) const {
+        setPartCorner(id, radius)
+    }
+
+    // Sets the size of the text of the component, in logical pixels, from 6 to 96, in
+    // place of the one of the window: for the labels, the buttons, the boxes of text
+    // and the others that write their own text. The component keeps its size: the
+    // program gives it the room for a larger text. Out of the range it is a panic.
+    public void setTextSize(f32 size) const {
+        setPartTextSize(id, size)
+    }
+
+    // Gives the component the look of the theme again: its colors, its corners and
+    // the size of its text.
+    public void resetLook() const {
+        resetPartLook(id)
+    }
 }
 
 // A box to check, with its text on its right. A click on the box or on its text, or
@@ -1140,6 +1817,46 @@ public struct CheckBox : Component {
     public Vertical verticalAnchor() const {
         ret partVertical(id)
     }
+
+    // Sets the background of the component, in place of the one of the theme (D540):
+    // a color that stays, as 'gui.rgb(0xFBEFD9)', or one of the theme, as
+    // 'gui.role(gui.Role.AccentSoft)'.
+    public void setBackground(Color color) const {
+        setPartColor(id, 0, color)
+    }
+
+    // Sets the color of the text of the component, in place of the one of the theme.
+    public void setTextColor(Color color) const {
+        setPartColor(id, 1, color)
+    }
+
+    // Sets the color of the border and of the lines of the component, in place of
+    // the one of the theme.
+    public void setBorderColor(Color color) const {
+        setPartColor(id, 2, color)
+    }
+
+    // Sets the radius of the corners of the component, in logical pixels, from 0, sharp
+    // corners, to 64, and at most half its shorter side: for the buttons, the boxes
+    // of text, the groups, the cards with tabs, the segmented controls, and the
+    // background of the others. Out of the range it is a panic.
+    public void setCornerRadius(f32 radius) const {
+        setPartCorner(id, radius)
+    }
+
+    // Sets the size of the text of the component, in logical pixels, from 6 to 96, in
+    // place of the one of the window: for the labels, the buttons, the boxes of text
+    // and the others that write their own text. The component keeps its size: the
+    // program gives it the room for a larger text. Out of the range it is a panic.
+    public void setTextSize(f32 size) const {
+        setPartTextSize(id, size)
+    }
+
+    // Gives the component the look of the theme again: its colors, its corners and
+    // the size of its text.
+    public void resetLook() const {
+        resetPartLook(id)
+    }
 }
 
 // A card with its title in a band at its top, 32 pixels high, 40 on a phone, which holds other
@@ -1275,6 +1992,46 @@ public struct GroupBox : Component {
     // default.
     public Vertical verticalAnchor() const {
         ret partVertical(id)
+    }
+
+    // Sets the background of the component, in place of the one of the theme (D540):
+    // a color that stays, as 'gui.rgb(0xFBEFD9)', or one of the theme, as
+    // 'gui.role(gui.Role.AccentSoft)'.
+    public void setBackground(Color color) const {
+        setPartColor(id, 0, color)
+    }
+
+    // Sets the color of the text of the component, in place of the one of the theme.
+    public void setTextColor(Color color) const {
+        setPartColor(id, 1, color)
+    }
+
+    // Sets the color of the border and of the lines of the component, in place of
+    // the one of the theme.
+    public void setBorderColor(Color color) const {
+        setPartColor(id, 2, color)
+    }
+
+    // Sets the radius of the corners of the component, in logical pixels, from 0, sharp
+    // corners, to 64, and at most half its shorter side: for the buttons, the boxes
+    // of text, the groups, the cards with tabs, the segmented controls, and the
+    // background of the others. Out of the range it is a panic.
+    public void setCornerRadius(f32 radius) const {
+        setPartCorner(id, radius)
+    }
+
+    // Sets the size of the text of the component, in logical pixels, from 6 to 96, in
+    // place of the one of the window: for the labels, the buttons, the boxes of text
+    // and the others that write their own text. The component keeps its size: the
+    // program gives it the room for a larger text. Out of the range it is a panic.
+    public void setTextSize(f32 size) const {
+        setPartTextSize(id, size)
+    }
+
+    // Gives the component the look of the theme again: its colors, its corners and
+    // the size of its text.
+    public void resetLook() const {
+        resetPartLook(id)
     }
 }
 
@@ -1424,6 +2181,46 @@ public struct TextArea : Component {
     // default.
     public Vertical verticalAnchor() const {
         ret partVertical(id)
+    }
+
+    // Sets the background of the component, in place of the one of the theme (D540):
+    // a color that stays, as 'gui.rgb(0xFBEFD9)', or one of the theme, as
+    // 'gui.role(gui.Role.AccentSoft)'.
+    public void setBackground(Color color) const {
+        setPartColor(id, 0, color)
+    }
+
+    // Sets the color of the text of the component, in place of the one of the theme.
+    public void setTextColor(Color color) const {
+        setPartColor(id, 1, color)
+    }
+
+    // Sets the color of the border and of the lines of the component, in place of
+    // the one of the theme.
+    public void setBorderColor(Color color) const {
+        setPartColor(id, 2, color)
+    }
+
+    // Sets the radius of the corners of the component, in logical pixels, from 0, sharp
+    // corners, to 64, and at most half its shorter side: for the buttons, the boxes
+    // of text, the groups, the cards with tabs, the segmented controls, and the
+    // background of the others. Out of the range it is a panic.
+    public void setCornerRadius(f32 radius) const {
+        setPartCorner(id, radius)
+    }
+
+    // Sets the size of the text of the component, in logical pixels, from 6 to 96, in
+    // place of the one of the window: for the labels, the buttons, the boxes of text
+    // and the others that write their own text. The component keeps its size: the
+    // program gives it the room for a larger text. Out of the range it is a panic.
+    public void setTextSize(f32 size) const {
+        setPartTextSize(id, size)
+    }
+
+    // Gives the component the look of the theme again: its colors, its corners and
+    // the size of its text.
+    public void resetLook() const {
+        resetPartLook(id)
     }
 }
 
@@ -1617,6 +2414,46 @@ public struct ComboBox : Component {
     public Vertical verticalAnchor() const {
         ret partVertical(id)
     }
+
+    // Sets the background of the component, in place of the one of the theme (D540):
+    // a color that stays, as 'gui.rgb(0xFBEFD9)', or one of the theme, as
+    // 'gui.role(gui.Role.AccentSoft)'.
+    public void setBackground(Color color) const {
+        setPartColor(id, 0, color)
+    }
+
+    // Sets the color of the text of the component, in place of the one of the theme.
+    public void setTextColor(Color color) const {
+        setPartColor(id, 1, color)
+    }
+
+    // Sets the color of the border and of the lines of the component, in place of
+    // the one of the theme.
+    public void setBorderColor(Color color) const {
+        setPartColor(id, 2, color)
+    }
+
+    // Sets the radius of the corners of the component, in logical pixels, from 0, sharp
+    // corners, to 64, and at most half its shorter side: for the buttons, the boxes
+    // of text, the groups, the cards with tabs, the segmented controls, and the
+    // background of the others. Out of the range it is a panic.
+    public void setCornerRadius(f32 radius) const {
+        setPartCorner(id, radius)
+    }
+
+    // Sets the size of the text of the component, in logical pixels, from 6 to 96, in
+    // place of the one of the window: for the labels, the buttons, the boxes of text
+    // and the others that write their own text. The component keeps its size: the
+    // program gives it the room for a larger text. Out of the range it is a panic.
+    public void setTextSize(f32 size) const {
+        setPartTextSize(id, size)
+    }
+
+    // Gives the component the look of the theme again: its colors, its corners and
+    // the size of its text.
+    public void resetLook() const {
+        resetPartLook(id)
+    }
 }
 
 // An image in PNG, JPEG, BMP, GIF or SVG, of which a GIF shows its first frame, from a
@@ -1777,6 +2614,46 @@ public struct ImageBox : Component {
     public Vertical verticalAnchor() const {
         ret partVertical(id)
     }
+
+    // Sets the background of the component, in place of the one of the theme (D540):
+    // a color that stays, as 'gui.rgb(0xFBEFD9)', or one of the theme, as
+    // 'gui.role(gui.Role.AccentSoft)'.
+    public void setBackground(Color color) const {
+        setPartColor(id, 0, color)
+    }
+
+    // Sets the color of the text of the component, in place of the one of the theme.
+    public void setTextColor(Color color) const {
+        setPartColor(id, 1, color)
+    }
+
+    // Sets the color of the border and of the lines of the component, in place of
+    // the one of the theme.
+    public void setBorderColor(Color color) const {
+        setPartColor(id, 2, color)
+    }
+
+    // Sets the radius of the corners of the component, in logical pixels, from 0, sharp
+    // corners, to 64, and at most half its shorter side: for the buttons, the boxes
+    // of text, the groups, the cards with tabs, the segmented controls, and the
+    // background of the others. Out of the range it is a panic.
+    public void setCornerRadius(f32 radius) const {
+        setPartCorner(id, radius)
+    }
+
+    // Sets the size of the text of the component, in logical pixels, from 6 to 96, in
+    // place of the one of the window: for the labels, the buttons, the boxes of text
+    // and the others that write their own text. The component keeps its size: the
+    // program gives it the room for a larger text. Out of the range it is a panic.
+    public void setTextSize(f32 size) const {
+        setPartTextSize(id, size)
+    }
+
+    // Gives the component the look of the theme again: its colors, its corners and
+    // the size of its text.
+    public void resetLook() const {
+        resetPartLook(id)
+    }
 }
 
 // An icon alone, at the center of its box, as large as the smaller side of the box, in
@@ -1898,6 +2775,46 @@ public struct IconBox : Component {
     public Vertical verticalAnchor() const {
         ret partVertical(id)
     }
+
+    // Sets the background of the component, in place of the one of the theme (D540):
+    // a color that stays, as 'gui.rgb(0xFBEFD9)', or one of the theme, as
+    // 'gui.role(gui.Role.AccentSoft)'.
+    public void setBackground(Color color) const {
+        setPartColor(id, 0, color)
+    }
+
+    // Sets the color of the text of the component, in place of the one of the theme.
+    public void setTextColor(Color color) const {
+        setPartColor(id, 1, color)
+    }
+
+    // Sets the color of the border and of the lines of the component, in place of
+    // the one of the theme.
+    public void setBorderColor(Color color) const {
+        setPartColor(id, 2, color)
+    }
+
+    // Sets the radius of the corners of the component, in logical pixels, from 0, sharp
+    // corners, to 64, and at most half its shorter side: for the buttons, the boxes
+    // of text, the groups, the cards with tabs, the segmented controls, and the
+    // background of the others. Out of the range it is a panic.
+    public void setCornerRadius(f32 radius) const {
+        setPartCorner(id, radius)
+    }
+
+    // Sets the size of the text of the component, in logical pixels, from 6 to 96, in
+    // place of the one of the window: for the labels, the buttons, the boxes of text
+    // and the others that write their own text. The component keeps its size: the
+    // program gives it the room for a larger text. Out of the range it is a panic.
+    public void setTextSize(f32 size) const {
+        setPartTextSize(id, size)
+    }
+
+    // Gives the component the look of the theme again: its colors, its corners and
+    // the size of its text.
+    public void resetLook() const {
+        resetPartLook(id)
+    }
 }
 
 // A container with no look of its own: its components take their positions from its
@@ -1948,6 +2865,27 @@ public struct Panel : Component {
     // between 0 and the most that the components of the panel allow.
     public void scrollTo(i32 y) const {
         setPartScroll(id, f32(y))
+    }
+
+    // Gives what the panel holds its own colors, for the light theme and for the dark
+    // one, in place of those of the window (D539): a side bar in dark colors, a card in
+    // those of a brand. The theme of the window says which of the two is shown. The
+    // panel draws no background by itself: 'setBackground(gui.role(gui.Role.Background))'
+    // gives it the one of its palette.
+    public void setPalette(Palette light, Palette dark) const {
+        i64 me = id
+        withData([me, light, dark](ref Shared data) {
+            i64 at = partIndexOf(ref data, me)
+            data.parts[at].ownColors = true
+            data.parts[at].lightColors = light
+            data.parts[at].darkColors = dark
+        })
+    }
+
+    // Gives what the panel holds the colors of the window again.
+    public void resetPalette() const {
+        i64 me = id
+        withData([me](ref Shared data) { data.parts[partIndexOf(ref data, me)].ownColors = false })
     }
 
     // Moves the panel, in logical pixels from the top left corner of its parent: the content of
@@ -2038,6 +2976,46 @@ public struct Panel : Component {
     // default.
     public Vertical verticalAnchor() const {
         ret partVertical(id)
+    }
+
+    // Sets the background of the component, in place of the one of the theme (D540):
+    // a color that stays, as 'gui.rgb(0xFBEFD9)', or one of the theme, as
+    // 'gui.role(gui.Role.AccentSoft)'.
+    public void setBackground(Color color) const {
+        setPartColor(id, 0, color)
+    }
+
+    // Sets the color of the text of the component, in place of the one of the theme.
+    public void setTextColor(Color color) const {
+        setPartColor(id, 1, color)
+    }
+
+    // Sets the color of the border and of the lines of the component, in place of
+    // the one of the theme.
+    public void setBorderColor(Color color) const {
+        setPartColor(id, 2, color)
+    }
+
+    // Sets the radius of the corners of the component, in logical pixels, from 0, sharp
+    // corners, to 64, and at most half its shorter side: for the buttons, the boxes
+    // of text, the groups, the cards with tabs, the segmented controls, and the
+    // background of the others. Out of the range it is a panic.
+    public void setCornerRadius(f32 radius) const {
+        setPartCorner(id, radius)
+    }
+
+    // Sets the size of the text of the component, in logical pixels, from 6 to 96, in
+    // place of the one of the window: for the labels, the buttons, the boxes of text
+    // and the others that write their own text. The component keeps its size: the
+    // program gives it the room for a larger text. Out of the range it is a panic.
+    public void setTextSize(f32 size) const {
+        setPartTextSize(id, size)
+    }
+
+    // Gives the component the look of the theme again: its colors, its corners and
+    // the size of its text.
+    public void resetLook() const {
+        resetPartLook(id)
     }
 }
 
@@ -2277,6 +3255,46 @@ public struct Split : Component {
     public Vertical verticalAnchor() const {
         ret partVertical(id)
     }
+
+    // Sets the background of the component, in place of the one of the theme (D540):
+    // a color that stays, as 'gui.rgb(0xFBEFD9)', or one of the theme, as
+    // 'gui.role(gui.Role.AccentSoft)'.
+    public void setBackground(Color color) const {
+        setPartColor(id, 0, color)
+    }
+
+    // Sets the color of the text of the component, in place of the one of the theme.
+    public void setTextColor(Color color) const {
+        setPartColor(id, 1, color)
+    }
+
+    // Sets the color of the border and of the lines of the component, in place of
+    // the one of the theme.
+    public void setBorderColor(Color color) const {
+        setPartColor(id, 2, color)
+    }
+
+    // Sets the radius of the corners of the component, in logical pixels, from 0, sharp
+    // corners, to 64, and at most half its shorter side: for the buttons, the boxes
+    // of text, the groups, the cards with tabs, the segmented controls, and the
+    // background of the others. Out of the range it is a panic.
+    public void setCornerRadius(f32 radius) const {
+        setPartCorner(id, radius)
+    }
+
+    // Sets the size of the text of the component, in logical pixels, from 6 to 96, in
+    // place of the one of the window: for the labels, the buttons, the boxes of text
+    // and the others that write their own text. The component keeps its size: the
+    // program gives it the room for a larger text. Out of the range it is a panic.
+    public void setTextSize(f32 size) const {
+        setPartTextSize(id, size)
+    }
+
+    // Gives the component the look of the theme again: its colors, its corners and
+    // the size of its text.
+    public void resetLook() const {
+        resetPartLook(id)
+    }
 }
 
 // The bar at the top of an app: its title, an icon on its left, as a menu or an arrow
@@ -2405,6 +3423,46 @@ public struct AppBar : Component {
     public bool enabled() const {
         ret partFlag(id, 1)
     }
+
+    // Sets the background of the component, in place of the one of the theme (D540):
+    // a color that stays, as 'gui.rgb(0xFBEFD9)', or one of the theme, as
+    // 'gui.role(gui.Role.AccentSoft)'.
+    public void setBackground(Color color) const {
+        setPartColor(id, 0, color)
+    }
+
+    // Sets the color of the text of the component, in place of the one of the theme.
+    public void setTextColor(Color color) const {
+        setPartColor(id, 1, color)
+    }
+
+    // Sets the color of the border and of the lines of the component, in place of
+    // the one of the theme.
+    public void setBorderColor(Color color) const {
+        setPartColor(id, 2, color)
+    }
+
+    // Sets the radius of the corners of the component, in logical pixels, from 0, sharp
+    // corners, to 64, and at most half its shorter side: for the buttons, the boxes
+    // of text, the groups, the cards with tabs, the segmented controls, and the
+    // background of the others. Out of the range it is a panic.
+    public void setCornerRadius(f32 radius) const {
+        setPartCorner(id, radius)
+    }
+
+    // Sets the size of the text of the component, in logical pixels, from 6 to 96, in
+    // place of the one of the window: for the labels, the buttons, the boxes of text
+    // and the others that write their own text. The component keeps its size: the
+    // program gives it the room for a larger text. Out of the range it is a panic.
+    public void setTextSize(f32 size) const {
+        setPartTextSize(id, size)
+    }
+
+    // Gives the component the look of the theme again: its colors, its corners and
+    // the size of its text.
+    public void resetLook() const {
+        resetPartLook(id)
+    }
 }
 
 // The bar at the bottom of an app, whose items, an icon and a text each, choose the
@@ -2526,6 +3584,46 @@ public struct NavigationBar : Component {
     // Whether the navigation bar is enabled, as 'setEnabled' set it: true by default.
     public bool enabled() const {
         ret partFlag(id, 1)
+    }
+
+    // Sets the background of the component, in place of the one of the theme (D540):
+    // a color that stays, as 'gui.rgb(0xFBEFD9)', or one of the theme, as
+    // 'gui.role(gui.Role.AccentSoft)'.
+    public void setBackground(Color color) const {
+        setPartColor(id, 0, color)
+    }
+
+    // Sets the color of the text of the component, in place of the one of the theme.
+    public void setTextColor(Color color) const {
+        setPartColor(id, 1, color)
+    }
+
+    // Sets the color of the border and of the lines of the component, in place of
+    // the one of the theme.
+    public void setBorderColor(Color color) const {
+        setPartColor(id, 2, color)
+    }
+
+    // Sets the radius of the corners of the component, in logical pixels, from 0, sharp
+    // corners, to 64, and at most half its shorter side: for the buttons, the boxes
+    // of text, the groups, the cards with tabs, the segmented controls, and the
+    // background of the others. Out of the range it is a panic.
+    public void setCornerRadius(f32 radius) const {
+        setPartCorner(id, radius)
+    }
+
+    // Sets the size of the text of the component, in logical pixels, from 6 to 96, in
+    // place of the one of the window: for the labels, the buttons, the boxes of text
+    // and the others that write their own text. The component keeps its size: the
+    // program gives it the room for a larger text. Out of the range it is a panic.
+    public void setTextSize(f32 size) const {
+        setPartTextSize(id, size)
+    }
+
+    // Gives the component the look of the theme again: its colors, its corners and
+    // the size of its text.
+    public void resetLook() const {
+        resetPartLook(id)
     }
 }
 
@@ -2847,6 +3945,46 @@ public struct ListView : Component {
     public Vertical verticalAnchor() const {
         ret partVertical(id)
     }
+
+    // Sets the background of the component, in place of the one of the theme (D540):
+    // a color that stays, as 'gui.rgb(0xFBEFD9)', or one of the theme, as
+    // 'gui.role(gui.Role.AccentSoft)'.
+    public void setBackground(Color color) const {
+        setPartColor(id, 0, color)
+    }
+
+    // Sets the color of the text of the component, in place of the one of the theme.
+    public void setTextColor(Color color) const {
+        setPartColor(id, 1, color)
+    }
+
+    // Sets the color of the border and of the lines of the component, in place of
+    // the one of the theme.
+    public void setBorderColor(Color color) const {
+        setPartColor(id, 2, color)
+    }
+
+    // Sets the radius of the corners of the component, in logical pixels, from 0, sharp
+    // corners, to 64, and at most half its shorter side: for the buttons, the boxes
+    // of text, the groups, the cards with tabs, the segmented controls, and the
+    // background of the others. Out of the range it is a panic.
+    public void setCornerRadius(f32 radius) const {
+        setPartCorner(id, radius)
+    }
+
+    // Sets the size of the text of the component, in logical pixels, from 6 to 96, in
+    // place of the one of the window: for the labels, the buttons, the boxes of text
+    // and the others that write their own text. The component keeps its size: the
+    // program gives it the room for a larger text. Out of the range it is a panic.
+    public void setTextSize(f32 size) const {
+        setPartTextSize(id, size)
+    }
+
+    // Gives the component the look of the theme again: its colors, its corners and
+    // the size of its text.
+    public void resetLook() const {
+        resetPartLook(id)
+    }
 }
 
 // A switch, on or off, as those in the settings of a phone: its text on the left and
@@ -2989,6 +4127,46 @@ public struct Switch : Component {
     // default.
     public Vertical verticalAnchor() const {
         ret partVertical(id)
+    }
+
+    // Sets the background of the component, in place of the one of the theme (D540):
+    // a color that stays, as 'gui.rgb(0xFBEFD9)', or one of the theme, as
+    // 'gui.role(gui.Role.AccentSoft)'.
+    public void setBackground(Color color) const {
+        setPartColor(id, 0, color)
+    }
+
+    // Sets the color of the text of the component, in place of the one of the theme.
+    public void setTextColor(Color color) const {
+        setPartColor(id, 1, color)
+    }
+
+    // Sets the color of the border and of the lines of the component, in place of
+    // the one of the theme.
+    public void setBorderColor(Color color) const {
+        setPartColor(id, 2, color)
+    }
+
+    // Sets the radius of the corners of the component, in logical pixels, from 0, sharp
+    // corners, to 64, and at most half its shorter side: for the buttons, the boxes
+    // of text, the groups, the cards with tabs, the segmented controls, and the
+    // background of the others. Out of the range it is a panic.
+    public void setCornerRadius(f32 radius) const {
+        setPartCorner(id, radius)
+    }
+
+    // Sets the size of the text of the component, in logical pixels, from 6 to 96, in
+    // place of the one of the window: for the labels, the buttons, the boxes of text
+    // and the others that write their own text. The component keeps its size: the
+    // program gives it the room for a larger text. Out of the range it is a panic.
+    public void setTextSize(f32 size) const {
+        setPartTextSize(id, size)
+    }
+
+    // Gives the component the look of the theme again: its colors, its corners and
+    // the size of its text.
+    public void resetLook() const {
+        resetPartLook(id)
     }
 }
 
@@ -3162,6 +4340,46 @@ public struct Slider : Component {
     // default.
     public Vertical verticalAnchor() const {
         ret partVertical(id)
+    }
+
+    // Sets the background of the component, in place of the one of the theme (D540):
+    // a color that stays, as 'gui.rgb(0xFBEFD9)', or one of the theme, as
+    // 'gui.role(gui.Role.AccentSoft)'.
+    public void setBackground(Color color) const {
+        setPartColor(id, 0, color)
+    }
+
+    // Sets the color of the text of the component, in place of the one of the theme.
+    public void setTextColor(Color color) const {
+        setPartColor(id, 1, color)
+    }
+
+    // Sets the color of the border and of the lines of the component, in place of
+    // the one of the theme.
+    public void setBorderColor(Color color) const {
+        setPartColor(id, 2, color)
+    }
+
+    // Sets the radius of the corners of the component, in logical pixels, from 0, sharp
+    // corners, to 64, and at most half its shorter side: for the buttons, the boxes
+    // of text, the groups, the cards with tabs, the segmented controls, and the
+    // background of the others. Out of the range it is a panic.
+    public void setCornerRadius(f32 radius) const {
+        setPartCorner(id, radius)
+    }
+
+    // Sets the size of the text of the component, in logical pixels, from 6 to 96, in
+    // place of the one of the window: for the labels, the buttons, the boxes of text
+    // and the others that write their own text. The component keeps its size: the
+    // program gives it the room for a larger text. Out of the range it is a panic.
+    public void setTextSize(f32 size) const {
+        setPartTextSize(id, size)
+    }
+
+    // Gives the component the look of the theme again: its colors, its corners and
+    // the size of its text.
+    public void resetLook() const {
+        resetPartLook(id)
     }
 }
 
@@ -3505,6 +4723,46 @@ public struct Table : Component {
     public Vertical verticalAnchor() const {
         ret partVertical(id)
     }
+
+    // Sets the background of the component, in place of the one of the theme (D540):
+    // a color that stays, as 'gui.rgb(0xFBEFD9)', or one of the theme, as
+    // 'gui.role(gui.Role.AccentSoft)'.
+    public void setBackground(Color color) const {
+        setPartColor(id, 0, color)
+    }
+
+    // Sets the color of the text of the component, in place of the one of the theme.
+    public void setTextColor(Color color) const {
+        setPartColor(id, 1, color)
+    }
+
+    // Sets the color of the border and of the lines of the component, in place of
+    // the one of the theme.
+    public void setBorderColor(Color color) const {
+        setPartColor(id, 2, color)
+    }
+
+    // Sets the radius of the corners of the component, in logical pixels, from 0, sharp
+    // corners, to 64, and at most half its shorter side: for the buttons, the boxes
+    // of text, the groups, the cards with tabs, the segmented controls, and the
+    // background of the others. Out of the range it is a panic.
+    public void setCornerRadius(f32 radius) const {
+        setPartCorner(id, radius)
+    }
+
+    // Sets the size of the text of the component, in logical pixels, from 6 to 96, in
+    // place of the one of the window: for the labels, the buttons, the boxes of text
+    // and the others that write their own text. The component keeps its size: the
+    // program gives it the room for a larger text. Out of the range it is a panic.
+    public void setTextSize(f32 size) const {
+        setPartTextSize(id, size)
+    }
+
+    // Gives the component the look of the theme again: its colors, its corners and
+    // the size of its text.
+    public void resetLook() const {
+        resetPartLook(id)
+    }
 }
 
 // Rich text, which a 'TextView' shows (D490): pieces of text in their styles, which go
@@ -3830,6 +5088,37 @@ public struct TextView : Component {
     public Vertical verticalAnchor() const {
         ret partVertical(id)
     }
+
+    // Sets the background of the component, in place of the one of the theme (D540):
+    // a color that stays, as 'gui.rgb(0xFBEFD9)', or one of the theme, as
+    // 'gui.role(gui.Role.AccentSoft)'.
+    public void setBackground(Color color) const {
+        setPartColor(id, 0, color)
+    }
+
+    // Sets the color of the text of the component, in place of the one of the theme.
+    public void setTextColor(Color color) const {
+        setPartColor(id, 1, color)
+    }
+
+    // Sets the color of the border and of the lines of the component, in place of
+    // the one of the theme.
+    public void setBorderColor(Color color) const {
+        setPartColor(id, 2, color)
+    }
+
+    // Sets the radius of the corners of the component, in logical pixels, from 0, sharp
+    // corners, to 64, and at most half its shorter side: for the buttons, the boxes
+    // of text, the groups, the cards with tabs, the segmented controls, and the
+    // background of the others. Out of the range it is a panic.
+    public void setCornerRadius(f32 radius) const {
+        setPartCorner(id, radius)
+    }
+
+    // Gives the component the look of the theme again: its colors and its corners.
+    public void resetLook() const {
+        resetPartLook(id)
+    }
 }
 
 // Pages one over the other in a card, with their tabs in the band at its top (D494): a
@@ -4036,6 +5325,46 @@ public struct TabView : Component {
     public Vertical verticalAnchor() const {
         ret partVertical(id)
     }
+
+    // Sets the background of the component, in place of the one of the theme (D540):
+    // a color that stays, as 'gui.rgb(0xFBEFD9)', or one of the theme, as
+    // 'gui.role(gui.Role.AccentSoft)'.
+    public void setBackground(Color color) const {
+        setPartColor(id, 0, color)
+    }
+
+    // Sets the color of the text of the component, in place of the one of the theme.
+    public void setTextColor(Color color) const {
+        setPartColor(id, 1, color)
+    }
+
+    // Sets the color of the border and of the lines of the component, in place of
+    // the one of the theme.
+    public void setBorderColor(Color color) const {
+        setPartColor(id, 2, color)
+    }
+
+    // Sets the radius of the corners of the component, in logical pixels, from 0, sharp
+    // corners, to 64, and at most half its shorter side: for the buttons, the boxes
+    // of text, the groups, the cards with tabs, the segmented controls, and the
+    // background of the others. Out of the range it is a panic.
+    public void setCornerRadius(f32 radius) const {
+        setPartCorner(id, radius)
+    }
+
+    // Sets the size of the text of the component, in logical pixels, from 6 to 96, in
+    // place of the one of the window: for the labels, the buttons, the boxes of text
+    // and the others that write their own text. The component keeps its size: the
+    // program gives it the room for a larger text. Out of the range it is a panic.
+    public void setTextSize(f32 size) const {
+        setPartTextSize(id, size)
+    }
+
+    // Gives the component the look of the theme again: its colors, its corners and
+    // the size of its text.
+    public void resetLook() const {
+        resetPartLook(id)
+    }
 }
 
 // A row of buttons joined together, one of them chosen and filled with the accent
@@ -4205,6 +5534,46 @@ public struct Segmented : Component {
     // default.
     public Vertical verticalAnchor() const {
         ret partVertical(id)
+    }
+
+    // Sets the background of the component, in place of the one of the theme (D540):
+    // a color that stays, as 'gui.rgb(0xFBEFD9)', or one of the theme, as
+    // 'gui.role(gui.Role.AccentSoft)'.
+    public void setBackground(Color color) const {
+        setPartColor(id, 0, color)
+    }
+
+    // Sets the color of the text of the component, in place of the one of the theme.
+    public void setTextColor(Color color) const {
+        setPartColor(id, 1, color)
+    }
+
+    // Sets the color of the border and of the lines of the component, in place of
+    // the one of the theme.
+    public void setBorderColor(Color color) const {
+        setPartColor(id, 2, color)
+    }
+
+    // Sets the radius of the corners of the component, in logical pixels, from 0, sharp
+    // corners, to 64, and at most half its shorter side: for the buttons, the boxes
+    // of text, the groups, the cards with tabs, the segmented controls, and the
+    // background of the others. Out of the range it is a panic.
+    public void setCornerRadius(f32 radius) const {
+        setPartCorner(id, radius)
+    }
+
+    // Sets the size of the text of the component, in logical pixels, from 6 to 96, in
+    // place of the one of the window: for the labels, the buttons, the boxes of text
+    // and the others that write their own text. The component keeps its size: the
+    // program gives it the room for a larger text. Out of the range it is a panic.
+    public void setTextSize(f32 size) const {
+        setPartTextSize(id, size)
+    }
+
+    // Gives the component the look of the theme again: its colors, its corners and
+    // the size of its text.
+    public void resetLook() const {
+        resetPartLook(id)
     }
 }
 
@@ -4480,6 +5849,46 @@ public struct RadioGroup : Component {
     public Vertical verticalAnchor() const {
         ret partVertical(id)
     }
+
+    // Sets the background of the component, in place of the one of the theme (D540):
+    // a color that stays, as 'gui.rgb(0xFBEFD9)', or one of the theme, as
+    // 'gui.role(gui.Role.AccentSoft)'.
+    public void setBackground(Color color) const {
+        setPartColor(id, 0, color)
+    }
+
+    // Sets the color of the text of the component, in place of the one of the theme.
+    public void setTextColor(Color color) const {
+        setPartColor(id, 1, color)
+    }
+
+    // Sets the color of the border and of the lines of the component, in place of
+    // the one of the theme.
+    public void setBorderColor(Color color) const {
+        setPartColor(id, 2, color)
+    }
+
+    // Sets the radius of the corners of the component, in logical pixels, from 0, sharp
+    // corners, to 64, and at most half its shorter side: for the buttons, the boxes
+    // of text, the groups, the cards with tabs, the segmented controls, and the
+    // background of the others. Out of the range it is a panic.
+    public void setCornerRadius(f32 radius) const {
+        setPartCorner(id, radius)
+    }
+
+    // Sets the size of the text of the component, in logical pixels, from 6 to 96, in
+    // place of the one of the window: for the labels, the buttons, the boxes of text
+    // and the others that write their own text. The component keeps its size: the
+    // program gives it the room for a larger text. Out of the range it is a panic.
+    public void setTextSize(f32 size) const {
+        setPartTextSize(id, size)
+    }
+
+    // Gives the component the look of the theme again: its colors, its corners and
+    // the size of its text.
+    public void resetLook() const {
+        resetPartLook(id)
+    }
 }
 
 // A bar that shows how much of a work is done (D508), from 0 to 1, or with 'setBusy' a
@@ -4617,6 +6026,46 @@ public struct ProgressBar : Component {
     // default.
     public Vertical verticalAnchor() const {
         ret partVertical(id)
+    }
+
+    // Sets the background of the component, in place of the one of the theme (D540):
+    // a color that stays, as 'gui.rgb(0xFBEFD9)', or one of the theme, as
+    // 'gui.role(gui.Role.AccentSoft)'.
+    public void setBackground(Color color) const {
+        setPartColor(id, 0, color)
+    }
+
+    // Sets the color of the text of the component, in place of the one of the theme.
+    public void setTextColor(Color color) const {
+        setPartColor(id, 1, color)
+    }
+
+    // Sets the color of the border and of the lines of the component, in place of
+    // the one of the theme.
+    public void setBorderColor(Color color) const {
+        setPartColor(id, 2, color)
+    }
+
+    // Sets the radius of the corners of the component, in logical pixels, from 0, sharp
+    // corners, to 64, and at most half its shorter side: for the buttons, the boxes
+    // of text, the groups, the cards with tabs, the segmented controls, and the
+    // background of the others. Out of the range it is a panic.
+    public void setCornerRadius(f32 radius) const {
+        setPartCorner(id, radius)
+    }
+
+    // Sets the size of the text of the component, in logical pixels, from 6 to 96, in
+    // place of the one of the window: for the labels, the buttons, the boxes of text
+    // and the others that write their own text. The component keeps its size: the
+    // program gives it the room for a larger text. Out of the range it is a panic.
+    public void setTextSize(f32 size) const {
+        setPartTextSize(id, size)
+    }
+
+    // Gives the component the look of the theme again: its colors, its corners and
+    // the size of its text.
+    public void resetLook() const {
+        resetPartLook(id)
     }
 }
 
@@ -4904,6 +6353,46 @@ public struct Canvas : Component {
     public Vertical verticalAnchor() const {
         ret partVertical(id)
     }
+
+    // Sets the background of the component, in place of the one of the theme (D540):
+    // a color that stays, as 'gui.rgb(0xFBEFD9)', or one of the theme, as
+    // 'gui.role(gui.Role.AccentSoft)'.
+    public void setBackground(Color color) const {
+        setPartColor(id, 0, color)
+    }
+
+    // Sets the color of the text of the component, in place of the one of the theme.
+    public void setTextColor(Color color) const {
+        setPartColor(id, 1, color)
+    }
+
+    // Sets the color of the border and of the lines of the component, in place of
+    // the one of the theme.
+    public void setBorderColor(Color color) const {
+        setPartColor(id, 2, color)
+    }
+
+    // Sets the radius of the corners of the component, in logical pixels, from 0, sharp
+    // corners, to 64, and at most half its shorter side: for the buttons, the boxes
+    // of text, the groups, the cards with tabs, the segmented controls, and the
+    // background of the others. Out of the range it is a panic.
+    public void setCornerRadius(f32 radius) const {
+        setPartCorner(id, radius)
+    }
+
+    // Sets the size of the text of the component, in logical pixels, from 6 to 96, in
+    // place of the one of the window: for the labels, the buttons, the boxes of text
+    // and the others that write their own text. The component keeps its size: the
+    // program gives it the room for a larger text. Out of the range it is a panic.
+    public void setTextSize(f32 size) const {
+        setPartTextSize(id, size)
+    }
+
+    // Gives the component the look of the theme again: its colors, its corners and
+    // the size of its text.
+    public void resetLook() const {
+        resetPartLook(id)
+    }
 }
 
 // A dialog: a card with a title, its components and its buttons at the bottom, which
@@ -5055,6 +6544,9 @@ struct WindowData {
     bool resizable = true
     i32 show  // what is asked: 0 normal, 1 minimized, 2 maximized
     Theme theme
+    bool ownColors  // the palettes below, in place of those of the library (D539)
+    Palette lightColors
+    Palette darkColors
     i32 fps = 60
     bool started
     bool closing
@@ -5068,6 +6560,7 @@ struct WindowData {
     list<addr> mouseDown
     list<addr> mouseUp
     list<addr> keyDown
+    list<addr> motion  // the handlers of onMotion (D538)
     list<addr> resize
     list<addr> close
     list<addr> back      // the back key of Android (D457)
@@ -5216,6 +6709,17 @@ const i32 kindSplit = 24
 // of bytes, and how much its text is scrolled, the items of a combo box and the
 // image of an image box.
 struct PartData {
+    bool ownColors  // of a panel: the palettes below, for what it holds, in place of those of the window (D539)
+    Palette lightColors
+    Palette darkColors
+    bool hasFill  // a look of its own (D540): its background,
+    Color ownFill
+    bool hasInk  // the color of its text,
+    Color ownInk
+    bool hasEdge  // and the color of its border
+    Color ownEdge
+    f32 ownCorner = -1  // the radius of its corners, or less than 0 for the one of its kind
+    f32 ownTextSize     // the size of its text, or 0 for the one of the window
     i64 id
     i64 window
     i64 parent  // its group, or 0
@@ -5248,6 +6752,7 @@ struct PartData {
     i32 imageWidth
     i32 imageHeight
     bool imageChanged
+    i64 camera  // of a camera view: the camera whose frames are its image (D537)
     Scale scale
     addr texture
     Icon icon               // of an icon box, of a button, or on the left of an app bar
@@ -5350,14 +6855,34 @@ struct PartData {
     f32 clipBottom
 }
 
+// A camera (D537), opened and read by the thread of the windows.
+struct CameraData {
+    i64 id
+    i32 side      // 0 any, 1 in front, 2 behind
+    addr device   // of SDL, once open
+    i32 state     // 0 to open, 1 open and waiting for its first frame, 2 it gives frames, 3 denied, 4 missing, 5 closed
+    bool closing  // asked by close()
+    list<addr> handlers
+    addr pixels  // its last frame, of SDL_malloc
+    i32 width
+    i32 height
+    i64 time
+}
+
 struct Shared {
     list<WindowData> windows
     list<PartData> parts
     list<ImageData> images  // of the drawings, by their number less 1 (D483)
     i64 next
-    bool running        // the thread of the GUI
-    list<Call> pending  // handlers to call on the thread of the GUI, as onClose of a dialog
-    bool changed        // by the program: the windows are drawn again at the next frame (D522)
+    bool running              // the thread of the GUI
+    list<Call> pending        // handlers to call on the thread of the GUI, as onClose of a dialog
+    bool changed              // by the program: the windows are drawn again at the next frame (D522)
+    list<CameraData> cameras  // D537
+    list<u32> sensors         // the accelerometers and the gyroscopes of the device, by their numbers of SDL (D538),
+    list<i32> sensorKinds     // 1 for an accelerometer, 2 for a gyroscope,
+    bool motionAsked          // wanted by a handler of onMotion,
+    bool motionOpen           // and opened, which makes them measure
+    Motion motion             // the last measures
 }
 
 u64 lock          // of the data of all the windows
@@ -6237,6 +7762,26 @@ public struct Window {
         withData([me, value](ref Shared data) { data.windows[indexOf(ref data, me)].theme = value })
     }
 
+    // Gives the window its own colors, for the light theme and for the dark one, in
+    // place of those of the library (D539): 'setTheme' still says which of the two
+    // is shown. From 'lightPalette()' and 'darkPalette()' with some colors changed,
+    // or from 'palette()'.
+    public void setPalette(Palette light, Palette dark) const {
+        i64 me = id
+        withData([me, light, dark](ref Shared data) {
+            i64 at = indexOf(ref data, me)
+            data.windows[at].ownColors = true
+            data.windows[at].lightColors = light
+            data.windows[at].darkColors = dark
+        })
+    }
+
+    // Gives the window the colors of the library again.
+    public void resetPalette() const {
+        i64 me = id
+        withData([me](ref Shared data) { data.windows[indexOf(ref data, me)].ownColors = false })
+    }
+
     // The theme of the window, 'Theme.System' by default.
     public Theme theme() const {
         i64 me = id
@@ -6359,6 +7904,27 @@ public struct Window {
         put<func(Key)>(box, move handler)
         i64 me = id
         withData([me, box](ref Shared data) { data.windows[indexOf(ref data, me)].keyDown.add(box) })
+    }
+
+    // Adds a handler, called on the thread of the windows each time the accelerometer
+    // or the gyroscope of the device measures, many times a second, with the last
+    // measures of both (D538): to follow how a phone is held, tilted and shaken. The
+    // sensors measure from the first handler on. On a device without them, as most
+    // computers, the handler is never called: 'gui.hasMotion()' tells.
+    //
+    // '''
+    // w.onMotion([level](gui.Motion m) {
+    //     level.setText(format("tilted {:.1f} to the right", m.accelerationX))
+    // })
+    // '''
+    public void onMotion(move func(Motion) handler) const {
+        addr box = alloc(sizeOf<func(Motion)>())
+        put<func(Motion)>(box, move handler)
+        i64 me = id
+        withData([me, box](ref Shared data) {
+            data.windows[indexOf(ref data, me)].motion.add(box)
+            data.motionAsked = true
+        })
     }
 
     // Adds a handler, called on the thread of the windows with the new width and height
@@ -6752,6 +8318,140 @@ Colors colorsOf(bool dark) {
     ret c
 }
 
+// The roles of a palette as the drawing wants them, and back.
+Colors colorsFrom(Palette from, bool dark) {
+    Colors c = colorsOf(dark)  // for the shadows
+    c.background = from.background & 0xFFFFFF
+    c.surface = from.surface & 0xFFFFFF
+    c.surface2 = from.surfaceHover & 0xFFFFFF
+    c.surface3 = from.surfacePressed & 0xFFFFFF
+    c.ink = from.text & 0xFFFFFF
+    c.ink2 = from.textSecondary & 0xFFFFFF
+    c.ink3 = from.textFaint & 0xFFFFFF
+    c.rule = from.line & 0xFFFFFF
+    c.rule2 = from.border & 0xFFFFFF
+    c.accent = from.accent & 0xFFFFFF
+    c.accent2 = from.accentStrong & 0xFFFFFF
+    c.accentSoft = from.accentSoft & 0xFFFFFF
+    c.selection = from.selection & 0xFFFFFF
+    c.selectionSoft = from.selectionSoft & 0xFFFFFF
+    c.onAccent = from.onAccent & 0xFFFFFF
+    c.danger = from.danger & 0xFFFFFF
+    ret c
+}
+
+Palette paletteOf(Colors c) {
+    Palette made
+    made.background = c.background
+    made.surface = c.surface
+    made.surfaceHover = c.surface2
+    made.surfacePressed = c.surface3
+    made.text = c.ink
+    made.textSecondary = c.ink2
+    made.textFaint = c.ink3
+    made.line = c.rule
+    made.border = c.rule2
+    made.accent = c.accent
+    made.accentStrong = c.accent2
+    made.accentSoft = c.accentSoft
+    made.selection = c.selection
+    made.selectionSoft = c.selectionSoft
+    made.onAccent = c.onAccent
+    made.danger = c.danger
+    ret made
+}
+
+// A color of the look of a component as 0xRRGGBB: its own, or the one of its role.
+u32 resolved(Color color, ref Colors c) {
+    if (color.role == 1) {
+        ret c.background
+    }
+    if (color.role == 2) {
+        ret c.surface
+    }
+    if (color.role == 3) {
+        ret c.surface2
+    }
+    if (color.role == 4) {
+        ret c.surface3
+    }
+    if (color.role == 5) {
+        ret c.ink
+    }
+    if (color.role == 6) {
+        ret c.ink2
+    }
+    if (color.role == 7) {
+        ret c.ink3
+    }
+    if (color.role == 8) {
+        ret c.rule
+    }
+    if (color.role == 9) {
+        ret c.rule2
+    }
+    if (color.role == 10) {
+        ret c.accent
+    }
+    if (color.role == 11) {
+        ret c.accent2
+    }
+    if (color.role == 12) {
+        ret c.accentSoft
+    }
+    if (color.role == 13) {
+        ret c.selection
+    }
+    if (color.role == 14) {
+        ret c.selectionSoft
+    }
+    if (color.role == 15) {
+        ret c.onAccent
+    }
+    if (color.role == 16) {
+        ret c.danger
+    }
+    ret u32(color.red) << 16 | u32(color.green) << 8 | u32(color.blue)
+}
+
+// The colors that a component with a look of its own is drawn with (D540): its
+// background in place of the surface, and of the accent for what is filled with it;
+// the color of its text for all its texts; the color of its border for its lines.
+Colors lookOf(ref PartData part, ref Colors c) {
+    Colors own = c
+    if (part.hasInk) {
+        own.ink = resolved(part.ownInk, ref c)
+        own.ink2 = own.ink
+        own.onAccent = own.ink
+    }
+    if (part.hasFill) {
+        u32 body = resolved(part.ownFill, ref c)
+        own.surface = body
+        own.surface2 = mixed(body, own.ink, 0.045)
+        own.surface3 = mixed(body, own.ink, 0.10)
+        if (part.kind == kindButton && (part.style == ButtonStyle.Primary || part.action == 1)) {
+            own.accent = body
+            own.accent2 = mixed(body, own.ink, 0.28)
+        }
+    }
+    if (part.hasInk) {
+        own.ink3 = mixed(own.ink, own.surface, 0.42)
+    }
+    if (part.hasEdge) {
+        own.rule = resolved(part.ownEdge, ref c)
+        own.rule2 = own.rule
+    }
+    ret own
+}
+
+// The components that draw no surface of their own: a background set for one of
+// them is a box behind it.
+bool bare(i32 kind) {
+    ret kind == kindLabel || kind == kindCheckBox || kind == kindImageBox || kind == kindIconBox ||
+        kind == kindSwitch || kind == kindSlider || kind == kindTextView || kind == kindRadioGroup ||
+        kind == kindProgressBar || kind == kindCanvas || kind == kindPanel
+}
+
 const u32 closeHover = 0xC42B1C
 const u32 closePressed = 0xA3241A
 const u32 scrim = 0x730A0F14  // over the content under a dialog
@@ -6836,6 +8536,266 @@ string cText(addr text) {
     ret string(text, n)
 }
 
+// Whether the device has an accelerometer or a gyroscope, for 'Window.onMotion'
+// (D538). The windows look for them when the first one starts: before that, false.
+public bool hasMotion() {
+    bool found = false
+    addr none
+    if (shared != none) {
+        readData([ref found](ref Shared data) { found = data.sensors.len() > 0 })
+    }
+    ret found
+}
+
+// The accelerometers and the gyroscopes of the device, found at the start; they are
+// opened, and measure, only for a handler of onMotion.
+void findSensors() {
+    if (!SDL_InitSubSystem(0x8000)) {  // SDL_INIT_SENSOR
+        ret
+    }
+    addr none
+    i32 count = 0
+    addr numbers = SDL_GetSensors(ref count)
+    if (numbers == none) {
+        ret
+    }
+    list<u32> found
+    list<i32> kinds
+    for (i32 i = 0; i < count; i++) {
+        u32 sensor = take<u32>(offset(numbers, i64(i) * 4))
+        i32 kind = SDL_GetSensorTypeForID(sensor)
+        if (kind == 1 || kind == 2) {  // SDL_SENSOR_ACCEL, SDL_SENSOR_GYRO
+            found.add(sensor)
+            kinds.add(kind)
+        }
+    }
+    SDL_free(numbers)
+    withData([found, kinds](ref Shared data) {
+        data.sensors = found
+        data.sensorKinds = kinds
+    })
+}
+
+i64 cameraNumber(ref Shared data, i64 id) {
+    for (i64 i = 0; i < data.cameras.len(); i++) {
+        if (data.cameras[i].id == id) {
+            ret i
+        }
+    }
+    ret -1
+}
+
+i64 cameraIndexOf(ref Shared data, i64 id) {
+    i64 at = cameraNumber(ref data, id)
+    if (at < 0) {
+        panic("the camera does not exist")
+    }
+    ret at
+}
+
+// A frame from pixels of SDL_malloc, copied.
+Frame frameOf(addr pixels, i32 width, i32 height, i64 taken) {
+    Frame made
+    addr none
+    if (pixels == none || width <= 0 || height <= 0) {
+        ret made
+    }
+    made.width = width
+    made.height = height
+    made.time = taken
+    i64 size = i64(width) * i64(height) * 4
+    made.pixels.reserve(size)
+    for (i64 i = 0; i < size; i++) {
+        made.pixels.add(take<u8>(offset(pixels, i)))
+    }
+    ret made
+}
+
+// The cameras, on the thread of the windows at each turn of its loop (D537): opens
+// those just made, closes those to close, and takes the new frame of each one for
+// its handlers and its views.
+void pumpCameras() {
+    addr none
+    list<i64> toOpen
+    list<i32> sides
+    list<i64> open
+    list<addr> devices
+    list<addr> toClose
+    withData([ref toOpen, ref sides, ref open, ref devices, ref toClose](ref Shared data) {
+        for (ref CameraData camera in data.cameras) {
+            if (camera.closing && camera.state != 5) {
+                addr gone
+                if (camera.device != gone) {
+                    toClose.add(camera.device)
+                    camera.device = gone
+                }
+                camera.state = 5
+            } else if (camera.state == 0) {
+                toOpen.add(camera.id)
+                sides.add(camera.side)
+            } else if (camera.state == 1 || camera.state == 2) {
+                open.add(camera.id)
+                devices.add(camera.device)
+            }
+        }
+    })
+    for (addr device in toClose) {
+        SDL_CloseCamera(device)
+    }
+    for (i64 i = 0; i < toOpen.len(); i++) {
+        addr device
+        if (SDL_InitSubSystem(0x10000)) {  // SDL_INIT_CAMERA
+            i32 count = 0
+            addr numbers = SDL_GetCameras(ref count)
+            u32 chosen = 0
+            for (i32 k = 0; k < count && numbers != none; k++) {
+                u32 camera = take<u32>(offset(numbers, i64(k) * 4))
+                if (chosen == 0) {
+                    chosen = camera  // the first one, when none is on the side asked
+                }
+                if (sides[i] != 0 && SDL_GetCameraPosition(camera) == sides[i]) {
+                    chosen = camera
+                    break
+                }
+            }
+            if (numbers != none) {
+                SDL_free(numbers)
+            }
+            if (chosen != 0) {
+                device = SDL_OpenCamera(chosen, none)
+            }
+        }
+        i64 id = toOpen[i]
+        withData([id, device](ref Shared data) {
+            i64 at = cameraNumber(ref data, id)
+            addr gone
+            if (at >= 0) {
+                data.cameras[at].device = device
+                data.cameras[at].state = device != gone ? 1 : 4
+            }
+        })
+    }
+    for (i64 i = 0; i < open.len(); i++) {
+        i64 id = open[i]
+        addr device = devices[i]
+        i32 allowed = SDL_GetCameraPermissionState(device)
+        if (allowed < 0) {
+            SDL_CloseCamera(device)
+            withData([id](ref Shared data) {
+                i64 at = cameraNumber(ref data, id)
+                addr gone
+                if (at >= 0) {
+                    data.cameras[at].device = gone
+                    data.cameras[at].state = 3
+                }
+            })
+            continue
+        }
+        if (allowed == 0) {
+            continue
+        }
+        u64 stamp = 0
+        addr taken = SDL_AcquireCameraFrame(device, ref stamp)
+        if (taken == none) {
+            continue
+        }
+        // How far the frame is turned, clockwise, to be upright: a phone gives the frames
+        // as its sensor has them, whatever way it is held.
+        f32 degrees = SDL_GetFloatProperty(SDL_GetSurfaceProperties(taken), "SDL.surface.rotation".cstring(), 0)
+        i64 turns = (i64(degrees + 360045) / 90) % 4          // quarters of a turn, to the nearest
+        addr surface = SDL_ConvertSurface(taken, 0x16762004)  // RGBA32: red, green, blue, alpha
+        SDL_ReleaseCameraFrame(device, taken)
+        if (surface == none) {
+            continue
+        }
+        i64 sw = i64(take<i32>(offset(surface, 8)))
+        i64 sh = i64(take<i32>(offset(surface, 12)))
+        i64 pitch = i64(take<i32>(offset(surface, 16)))
+        addr from = take<addr>(offset(surface, 24))
+        i32 w = i32(turns % 2 == 0 ? sw : sh)
+        i32 h = i32(turns % 2 == 0 ? sh : sw)
+        i64 row = i64(w) * 4
+        addr pixels = SDL_malloc(row * i64(h) + 1)
+        if (pixels != none && from != none) {
+            for (i64 y = 0; y < i64(h); y++) {
+                if (turns == 0) {
+                    copyMemory(offset(pixels, y * row), offset(from, y * pitch), row)
+                    continue
+                }
+                for (i64 x = 0; x < i64(w); x++) {
+                    i64 sx = turns == 1 ? y : turns == 2 ? sw - 1 - x : sw - 1 - y
+                    i64 sy = turns == 1 ? sh - 1 - x : turns == 2 ? sh - 1 - y : x
+                    put<u32>(offset(pixels, y * row + x * 4), take<u32>(offset(from, sy * pitch + sx * 4)))
+                }
+            }
+            for (i64 k = 3; k < row * i64(h); k += 4) {
+                put<u8>(offset(pixels, k), 255)  // opaque, whatever the camera says
+            }
+        }
+        SDL_DestroySurface(surface)
+        if (pixels == none) {
+            continue
+        }
+        list<Call> calls
+        i64 when = i64(stamp)
+        withData([id, pixels, w, h, row, when, ref calls](ref Shared data) {
+            addr gone
+            i64 at = cameraNumber(ref data, id)
+            if (at < 0) {
+                SDL_free(pixels)
+                ret
+            }
+            if (data.cameras[at].pixels != gone) {
+                SDL_free(data.cameras[at].pixels)
+            }
+            data.cameras[at].pixels = pixels
+            data.cameras[at].width = w
+            data.cameras[at].height = h
+            data.cameras[at].time = when
+            data.cameras[at].state = 2
+            for (ref PartData part in data.parts) {
+                if (part.camera != id || part.kind != kindImageBox) {
+                    continue
+                }
+                addr mine = SDL_malloc(row * i64(h) + 1)
+                if (mine == gone) {
+                    continue
+                }
+                copyMemory(mine, pixels, row * i64(h))
+                if (part.pixels != gone) {
+                    cromo_gui_image_free(part.pixels)
+                }
+                part.pixels = mine
+                part.imageWidth = w
+                part.imageHeight = h
+                part.imageChanged = true
+                data.changed = true
+            }
+            if (data.cameras[at].handlers.len() > 0) {
+                Call call = callOf(17, data.cameras[at].handlers)
+                call.frame = frameOf(pixels, w, h, when)
+                calls.add(move call)
+            }
+        })
+        for (ref Call call in calls) {
+            dispatch(ref call)
+        }
+    }
+}
+
+void openSensors() {
+    list<u32> wanted
+    withData([ref wanted](ref Shared data) {
+        if (data.motionAsked && !data.motionOpen) {
+            data.motionOpen = true
+            wanted = data.sensors
+        }
+    })
+    for (u32 sensor in wanted) {
+        SDL_OpenSensor(sensor)
+    }
+}
+
 void run() {
     // On Android the back key comes to std.gui (D457), and the app turns (D458).
     SDL_SetHint("SDL_ANDROID_TRAP_BACK_BUTTON".cstring(), "1".cstring())
@@ -6850,9 +8810,12 @@ void run() {
     resizeAcross = SDL_CreateSystemCursor(7)  // SDL_SYSTEM_CURSOR_EW_RESIZE
     resizeDown = SDL_CreateSystemCursor(8)    // SDL_SYSTEM_CURSOR_NS_RESIZE
     cromo_gui_watch()                         // a window is drawn while it is resized
-    addr event = alloc(128)                   // SDL_Event, a union of 128 bytes
+    findSensors()
+    addr event = alloc(128)  // SDL_Event, a union of 128 bytes
     for (true) {
         u64 start = SDL_GetTicksNS()
+        openSensors()
+        pumpCameras()
         i32 fps = prepare()
         bool events = false
         for (nextEvent(event)) {
@@ -7201,8 +9164,10 @@ i32 buttonAt(ref WindowData window, f32 x, f32 y, f32 width) {
 struct Call {
     i32 kind  // 1 mouse move, 2 mouse down, 3 mouse up, 4 key, 5 resize, 6 click, 7 text, 8 check, 9 choice,
     // 10 func(i64, i64), 11 func(i64, bool), 12 func(i64, Mouse), 13 func(list<string>),
-    // 14 func(Mouse, f32), 15 func(f32)
+    // 14 func(Mouse, f32), 15 func(f32), 16 func(Motion), 17 func(Frame)
     list<addr> boxes
+    Motion motion
+    Frame frame
     Mouse mouse
     Key key
     i32 w
@@ -7253,6 +9218,42 @@ void live(addr event) {
 void handle(addr event) {
     u32 kind = take<u32>(event)
     if (kind == 0x108) {  // SDL_EVENT_SYSTEM_THEME_CHANGED: drawn at the next frame
+        ret
+    }
+    if (kind == 0x1200) {  // SDL_EVENT_SENSOR_UPDATE: for every window that asks (D538)
+        u32 sensor = take<u32>(offset(event, 16))
+        list<Call> wanted
+        withData([event, sensor, ref wanted](ref Shared data) {
+            i32 sort = 0
+            for (i64 i = 0; i < data.sensors.len(); i++) {
+                if (data.sensors[i] == sensor) {
+                    sort = data.sensorKinds[i]
+                }
+            }
+            if (sort == 1) {
+                data.motion.accelerationX = take<f32>(offset(event, 20))
+                data.motion.accelerationY = take<f32>(offset(event, 24))
+                data.motion.accelerationZ = take<f32>(offset(event, 28))
+            } else if (sort == 2) {
+                data.motion.rotationX = take<f32>(offset(event, 20))
+                data.motion.rotationY = take<f32>(offset(event, 24))
+                data.motion.rotationZ = take<f32>(offset(event, 28))
+            } else {
+                ret
+            }
+            data.motion.time = i64(take<u64>(offset(event, 48)))
+            addr none
+            for (ref WindowData window in data.windows) {
+                if (window.window != none && window.motion.len() > 0) {
+                    Call call = callOf(16, window.motion)
+                    call.motion = data.motion
+                    wanted.add(move call)
+                }
+            }
+        })
+        for (ref Call call in wanted) {
+            dispatch(ref call)
+        }
         ret
     }
     u32 sdlId = take<u32>(offset(event, 16))
@@ -7366,6 +9367,20 @@ void dispatch(ref Call call) {
             } finally {
                 put<func(f32)>(box, move handler)
             }
+        } else if (call.kind == 16) {
+            func(Motion) handler = take<func(Motion)>(box)
+            try {
+                handler(call.motion)
+            } finally {
+                put<func(Motion)>(box, move handler)
+            }
+        } else if (call.kind == 17) {
+            func(Frame) handler = take<func(Frame)>(box)
+            try {
+                handler(call.frame)
+            } finally {
+                put<func(Frame)>(box, move handler)
+            }
         } else if (call.kind == 12) {
             func(i64, Mouse) handler = take<func(i64, Mouse)>(box)
             try {
@@ -7457,7 +9472,7 @@ void route(ref WindowData window, ref list<PartData> parts, addr event, u32 kind
                     parts[d].caret = areaIndexAt(ref window, ref parts[d], x, y)
                     parts[d].revealCaret = true
                 } else {
-                    parts[d].caret = indexAt(window.body, parts[d].text, x - parts[d].left - padding + parts[d].scroll)
+                    parts[d].caret = indexAt(bodyOf(ref window, ref parts[d]), parts[d].text, x - parts[d].left - padding + parts[d].scroll)
                 }
                 window.caretStart = SDL_GetTicksNS()
             }
@@ -7806,7 +9821,7 @@ void pressPart(ref WindowData window, ref list<PartData> parts, f32 x, f32 y, re
     }
     window.held = parts[p].id
     if (parts[p].kind == kindTextBox) {
-        parts[p].caret = indexAt(window.body, parts[p].text, x - parts[p].left - padding + parts[p].scroll)
+        parts[p].caret = indexAt(bodyOf(ref window, ref parts[p]), parts[p].text, x - parts[p].left - padding + parts[p].scroll)
         parts[p].anchor = parts[p].caret
         parts[p].lastEdit = 0
         window.dragging = parts[p].id
@@ -8555,7 +10570,7 @@ i64 indexAt(addr font, string s, f32 x) {
 
 // Where the components of a group go: its place in the content, its size, whether
 // it is shown and enabled, and the rectangle that clips them.
-struct Frame {
+struct Room {
     f32 left
     f32 top
     i32 width
@@ -8576,7 +10591,7 @@ struct Frame {
 void layout(ref WindowData window, ref list<PartData> parts) {
     window.order.clear()
     findChildren(ref window, ref parts)
-    Frame content
+    Room content
     content.left = window.originX
     content.top = window.originY
     content.width = contentWidth(window)
@@ -8677,7 +10692,7 @@ bool bringIntoView(ref list<PartData> parts, i64 id) {
 // A dialog at the center of the content, at most as large as the content less 32
 // pixels, its buttons in the band at the bottom right, each as wide as its text and 24
 // pixels, at least 64, 72 on a phone, the last the main one (P48, D479).
-void layoutDialog(ref WindowData window, ref list<PartData> parts, i64 card, Frame content) {
+void layoutDialog(ref WindowData window, ref list<PartData> parts, i64 card, Room content) {
     placeDialog(ref parts[card], content)
     window.order.add(card)
     list<i64> buttons
@@ -8699,7 +10714,7 @@ void layoutDialog(ref WindowData window, ref list<PartData> parts, i64 card, Fra
         parts[b].action = k == buttons.len() - 1 ? 1 : 2
         right = right - (comfortable() ? 8 : 7)
     }
-    Frame inner
+    Room inner
     inner.left = parts[card].left
     inner.top = parts[card].top
     inner.width = parts[card].width
@@ -8713,7 +10728,7 @@ void layoutDialog(ref WindowData window, ref list<PartData> parts, i64 card, Fra
     layoutIn(ref window, ref parts, parts[card].id, inner)
 }
 
-void placeDialog(ref PartData dialog, Frame content) {
+void placeDialog(ref PartData dialog, Room content) {
     i32 width = dialog.baseWidth < content.width - 32 ? dialog.baseWidth : content.width - 32
     i32 height = dialog.baseHeight < content.height - 32 ? dialog.baseHeight : content.height - 32
     dialog.width = width > 0 ? width : 0
@@ -8773,7 +10788,7 @@ i64 childSlot(ref list<PartData> parts, i64 group) {
     ret p < 0 ? -1 : p + 1
 }
 
-void layoutIn(ref WindowData window, ref list<PartData> parts, i64 group, Frame frame) {
+void layoutIn(ref WindowData window, ref list<PartData> parts, i64 group, Room frame) {
     i64 slot = childSlot(ref parts, group)
     if (slot < 0) {
         ret
@@ -8845,7 +10860,7 @@ void layoutIn(ref WindowData window, ref list<PartData> parts, i64 group, Frame 
             clampScroll(ref parts[i])
         }
         if (parts[i].kind == kindGroup || parts[i].kind == kindPanel || parts[i].kind == kindTabView || parts[i].kind == kindSplit) {
-            Frame inner
+            Room inner
             inner.left = parts[i].left
             inner.top = parts[i].top
             if (parts[i].kind == kindPanel) {  // D460
@@ -9196,6 +11211,9 @@ void drawWindow(ref WindowData window, ref list<PartData> parts, ref list<ImageD
     window.maximized = (SDL_GetWindowFlags(window.window) & 0x80) != 0
     bool dark = window.theme == Theme.Dark || (window.theme == Theme.System && SDL_GetSystemTheme() == 2)
     Colors c = colorsOf(dark)
+    if (window.ownColors) {
+        c = colorsFrom(dark ? window.darkColors : window.lightColors, dark)
+    }
     addr r = window.renderer
     fill(r, c.background, 0, 0, width, height)
     if (window.phone) {  // the bars of the system of the color of the bars of the app (D456)
@@ -9252,11 +11270,47 @@ void drawWindow(ref WindowData window, ref list<PartData> parts, ref list<ImageD
 // scroll, over them.
 void drawParts(ref WindowData window, ref list<PartData> parts, ref Colors c, i64 first, i64 end, ref list<ImageData> images) {
     addr r = window.renderer
+    bool scoped = false  // a panel has its own palette (D539)
+    for (i64 k = first; k < end; k++) {
+        scoped = scoped || parts[window.order[k]].ownColors
+    }
+    bool dark = window.theme == Theme.Dark || (window.theme == Theme.System && SDL_GetSystemTheme() == 2)
     for (i64 k = first; k < end; k++) {
         i64 i = window.order[k]
         if (parts[i].shown && !parts[i].inTitle && parts[i].clipRight > parts[i].clipLeft && parts[i].clipBottom > parts[i].clipTop) {
             clipPart(r, ref parts[i])
-            drawPart(ref window, ref parts[i], ref c, ref images)
+            if (scoped) {  // the colors of the nearest panel around it that has a palette
+                Colors near = c
+                i64 at = i
+                for (at >= 0) {
+                    if (parts[at].ownColors) {
+                        near = colorsFrom(dark ? parts[at].darkColors : parts[at].lightColors, dark)
+                        break
+                    }
+                    at = partNumber(ref parts, parts[at].parent)
+                }
+                if (parts[i].hasFill || parts[i].hasInk || parts[i].hasEdge) {
+                    Colors own = lookOf(ref parts[i], ref near)
+                    if (parts[i].hasFill && bare(parts[i].kind)) {
+                        u32 edge = parts[i].hasEdge ? solid(own.rule, true) : 0
+                        cromo_gui_box(r, parts[i].left, parts[i].top, f32(parts[i].width), f32(parts[i].height), rounded(ref parts[i], corner),
+                            parts[i].hasEdge ? 1 : 0, window.density, u32(parts[i].ownFill.alpha) << 24 | own.surface, edge)
+                    }
+                    drawPart(ref window, ref parts[i], ref own, ref images)
+                } else {
+                    drawPart(ref window, ref parts[i], ref near, ref images)
+                }
+            } else if (parts[i].hasFill || parts[i].hasInk || parts[i].hasEdge) {  // a look of its own (D540)
+                Colors own = lookOf(ref parts[i], ref c)
+                if (parts[i].hasFill && bare(parts[i].kind)) {
+                    u32 edge = parts[i].hasEdge ? solid(own.rule, true) : 0
+                    cromo_gui_box(r, parts[i].left, parts[i].top, f32(parts[i].width), f32(parts[i].height), rounded(ref parts[i], corner),
+                        parts[i].hasEdge ? 1 : 0, window.density, u32(parts[i].ownFill.alpha) << 24 | own.surface, edge)
+                }
+                drawPart(ref window, ref parts[i], ref own, ref images)
+            } else {
+                drawPart(ref window, ref parts[i], ref c, ref images)
+            }
         }
     }
     u64 now = SDL_GetTicksNS()
@@ -9513,10 +11567,10 @@ void drawPart(ref WindowData window, ref PartData part, ref Colors c, ref list<I
     f32 ascent = 0
     f32 descent = 0
     f32 gap = 0
-    cromo_gui_font_metrics(window.body, ref ascent, ref descent, ref gap)
+    cromo_gui_font_metrics(bodyOf(ref window, ref part), ref ascent, ref descent, ref gap)
     f32 baseline = y + h / 2 + (ascent - descent) / 2
     if (part.kind == kindLabel) {
-        text(window.body, part.text, x, baseline, c.ink2, on)
+        text(bodyOf(ref window, ref part), part.text, x, baseline, c.ink2, on)
     } else if (part.kind == kindSwitch) {
         drawSwitch(ref window, ref part, ref c, ring, baseline)
     } else if (part.kind == kindSlider) {
@@ -9541,12 +11595,12 @@ void drawPart(ref WindowData window, ref PartData part, ref Colors c, ref list<I
         u32 back = down ? c.surface3 : c.surface
         u32 line = hot ? c.ink3 : c.rule2
         u32 fore = hot ? c.ink : c.ink2
-        addr font = window.body
+        addr font = bodyOf(ref window, ref part)
         if (style == ButtonStyle.Primary) {
             back = hot ? c.accent2 : c.accent
             line = back
             fore = c.onAccent
-            font = window.strong
+            font = strongOf(ref window, ref part)
         } else if (style == ButtonStyle.Danger) {
             back = hot ? c.danger : c.surface
             line = hot ? c.danger : c.rule2
@@ -9556,7 +11610,7 @@ void drawPart(ref WindowData window, ref PartData part, ref Colors c, ref list<I
             line = hot ? c.accent2 : c.accent
             fore = c.accent2
         }
-        cromo_gui_box(r, x, y, w, h, corner, 1, d, solid(back, on), solid(line, on))
+        cromo_gui_box(r, x, y, w, h, rounded(ref part, corner), 1, d, solid(back, on), solid(line, on))
         f32 size = textWidth(font, part.text, part.text.len())
         if (part.icon != Icon.None) {
             f32 icon = buttonIcon()
@@ -9568,13 +11622,13 @@ void drawPart(ref WindowData window, ref PartData part, ref Colors c, ref list<I
             text(font, part.text, x + (w - size) / 2, baseline, fore, on)
         }
         if (ring) {
-            focusRing(r, x, y, w, h, corner, d, ref c)
+            focusRing(r, x, y, w, h, rounded(ref part, corner), d, ref c)
         }
     } else if (part.kind == kindTextBox) {
         drawField(ref window, ref part, ref c, focused)
         f32 inner = w - 2 * padding
-        f32 caretX = textWidth(window.body, part.text, part.caret)
-        f32 total = textWidth(window.body, part.text, part.text.len())
+        f32 caretX = textWidth(bodyOf(ref window, ref part), part.text, part.caret)
+        f32 total = textWidth(bodyOf(ref window, ref part), part.text, part.text.len())
         if (caretX - part.scroll > inner) {
             part.scroll = caretX - inner
         }
@@ -9589,14 +11643,14 @@ void drawPart(ref WindowData window, ref PartData part, ref Colors c, ref list<I
         if (part.caret != part.anchor) {
             i64 low = part.caret < part.anchor ? part.caret : part.anchor
             i64 high = part.caret < part.anchor ? part.anchor : part.caret
-            f32 from = textWidth(window.body, part.text, low)
-            f32 to = textWidth(window.body, part.text, high)
+            f32 from = textWidth(bodyOf(ref window, ref part), part.text, low)
+            f32 to = textWidth(bodyOf(ref window, ref part), part.text, high)
             fill(r, c.selectionSoft, left + from, baseline - ascent - 1, to - from, ascent + descent + 2)
         }
         if (part.text.len() == 0) {
-            text(window.body, part.placeholder, x + padding, baseline, c.ink3, on)
+            text(bodyOf(ref window, ref part), part.placeholder, x + padding, baseline, c.ink3, on)
         } else {
-            text(window.body, part.text, left, baseline, c.ink, on)
+            text(bodyOf(ref window, ref part), part.text, left, baseline, c.ink, on)
         }
         if (focused && caretOn(ref window)) {
             fill(r, c.ink, left + caretX, baseline - ascent, 1, ascent + descent)
@@ -9615,11 +11669,11 @@ void drawPart(ref WindowData window, ref PartData part, ref Colors c, ref list<I
         if (ring) {
             focusRing(r, x, top, checkSide, checkSide, checkCorner, d, ref c)
         }
-        text(window.body, part.text, x + checkSide + 8, baseline, c.ink, on)
+        text(bodyOf(ref window, ref part), part.text, x + checkSide + 8, baseline, c.ink, on)
     } else if (part.kind == kindGroup) {
         f32 band = part.text.len() > 0 ? bandHeight() : 0
-        cardShadow(r, x, y, w, h, groupCorner, d, ref c)
-        bandCard(r, ref part, band, groupCorner, d, ref c, c.rule)
+        cardShadow(r, x, y, w, h, rounded(ref part, groupCorner), d, ref c)
+        bandCard(r, ref part, band, rounded(ref part, groupCorner), d, ref c, c.rule)
         if (band > 0) {
             clipInside(r, ref part, x + 12, y, w - 24, band)
             bandTitle(ref window, part.text, x + 12, y, band, c.ink3, on)
@@ -9629,9 +11683,9 @@ void drawPart(ref WindowData window, ref PartData part, ref Colors c, ref list<I
         drawField(ref window, ref part, ref c, focused || window.popup == part.id)
         clipInside(r, ref part, x + 2, y + 2, w - 28, h - 4)
         if (part.selected >= 0 && part.selected < part.items.len()) {
-            text(window.body, part.items[part.selected], x + padding, baseline, c.ink, on)
+            text(bodyOf(ref window, ref part), part.items[part.selected], x + padding, baseline, c.ink, on)
         } else {
-            text(window.body, part.placeholder, x + padding, baseline, c.ink3, on)
+            text(bodyOf(ref window, ref part), part.placeholder, x + padding, baseline, c.ink3, on)
         }
         clipPart(r, ref part)
         cromo_gui_symbol(r, 5, x + w - 14, y + h / 2, d, red(c.ink3), green(c.ink3), blue(c.ink3))
@@ -9695,7 +11749,7 @@ void drawSwitch(ref WindowData window, ref PartData part, ref Colors c, bool foc
         focusRing(r, x, y, switchWidth, switchHeight, switchHeight / 2, d, ref c)
     }
     clipInside(r, ref part, part.left, part.top, most(f32(part.width) - switchWidth - 8, 0), f32(part.height))
-    text(window.body, part.text, part.left, baseline, c.ink, on)
+    text(bodyOf(ref window, ref part), part.text, part.left, baseline, c.ink, on)
     clipPart(r, ref part)
 }
 
@@ -9748,7 +11802,7 @@ void drawListView(ref WindowData window, ref PartData view, ref Colors c) {
     f32 ascent = 0
     f32 descent = 0
     f32 gap = 0
-    cromo_gui_font_metrics(window.body, ref ascent, ref descent, ref gap)
+    cromo_gui_font_metrics(bodyOf(ref window, ref view), ref ascent, ref descent, ref gap)
     f32 middle = (ascent - descent) / 2
     f32 bottom = view.top + f32(view.height)
     f32 row = rowHeight()
@@ -9794,15 +11848,15 @@ void drawListView(ref WindowData window, ref PartData view, ref Colors c) {
         bool two = view.subtitles[k].len() > 0
         f32 titleLine = two ? top + row * 0.36 + middle : top + row / 2 + middle
         if (view.details[k].len() > 0) {
-            f32 size = textWidth(window.body, view.details[k], view.details[k].len())
-            text(window.body, view.details[k], right - size, titleLine, c.ink3, on)
+            f32 size = textWidth(bodyOf(ref window, ref view), view.details[k], view.details[k].len())
+            text(bodyOf(ref window, ref view), view.details[k], right - size, titleLine, c.ink3, on)
             right = right - size - 12
         }
         f32 seen = most(top, view.top)
         clipInside(r, ref view, left, seen, right - left, least(top + row, bottom) - seen)
-        text(window.body, view.items[k], left, titleLine, c.ink, on)
+        text(bodyOf(ref window, ref view), view.items[k], left, titleLine, c.ink, on)
         if (two) {
-            text(window.body, view.subtitles[k], left, top + row * 0.71 + middle, c.ink3, on)
+            text(bodyOf(ref window, ref view), view.subtitles[k], left, top + row * 0.71 + middle, c.ink3, on)
         }
         clipInside(r, ref view, x, view.top, w, f32(view.height))
         if (k + 1 < view.items.len()) {
@@ -9902,9 +11956,9 @@ void drawField(ref WindowData window, ref PartData part, ref Colors c, bool lit)
     f32 h = f32(part.height)
     bool on = part.active
     bool hot = window.hot == part.id && on
-    cromo_gui_box(r, x, y, w, h, corner, 1, d, solid(c.surface, on), solid(hot && !lit ? c.ink3 : c.rule2, on))
+    cromo_gui_box(r, x, y, w, h, rounded(ref part, corner), 1, d, solid(c.surface, on), solid(hot && !lit ? c.ink3 : c.rule2, on))
     if (lit) {
-        focusRing(r, x, y, w, h, corner, d, ref c)
+        focusRing(r, x, y, w, h, rounded(ref part, corner), d, ref c)
     }
 }
 
@@ -9922,7 +11976,7 @@ void drawList(ref WindowData window, ref PartData box, ref Colors c) {
     f32 ascent = 0
     f32 descent = 0
     f32 gap = 0
-    cromo_gui_font_metrics(window.body, ref ascent, ref descent, ref gap)
+    cromo_gui_font_metrics(bodyOf(ref window, ref box), ref ascent, ref descent, ref gap)
     i64 rows = rowsOf(ref window, ref box)
     bool scrolls = box.items.len() > rows
     f32 item = itemHeight()
@@ -9936,7 +11990,7 @@ void drawList(ref WindowData window, ref PartData box, ref Colors c) {
         }
         bool chosen = at == box.selected
         clipTo(r, x + 1, y + 1, area.w - 30, area.h - 2)
-        text(chosen ? window.strong : window.body, box.items[at], x + padding + 4, top + item / 2 + (ascent - descent) / 2,
+        text(chosen ? strongOf(ref window, ref box) : bodyOf(ref window, ref box), box.items[at], x + padding + 4, top + item / 2 + (ascent - descent) / 2,
             lit ? c.accent2 : c.ink, true)
         if (chosen) {
             clipTo(r, x + 1, y + 1, area.w - 2, area.h - 2)
@@ -10331,7 +12385,7 @@ void drawTable(ref WindowData window, ref PartData table, ref Colors c) {
     f32 ascent = 0
     f32 descent = 0
     f32 gap = 0
-    cromo_gui_font_metrics(window.body, ref ascent, ref descent, ref gap)
+    cromo_gui_font_metrics(bodyOf(ref window, ref table), ref ascent, ref descent, ref gap)
     f32 middle = (ascent - descent) / 2
     clipInside(r, ref table, x, y, w, h)
     fill(r, c.surface, x, y, w, h)
@@ -10359,7 +12413,7 @@ void drawTable(ref WindowData window, ref PartData table, ref Colors c) {
             for (i64 col = 0; col < table.columns.len() && col < cells.len(); col++) {
                 if (widths[col] > 0) {
                     clipInside(r, ref table, x + lefts[col], most(top, y + header), widths[col], least(row, y + h - top))
-                    cellText(r, window.body, cells[col], x + lefts[col], widths[col], top + row / 2 + middle, c.ink, on,
+                    cellText(r, bodyOf(ref window, ref table), cells[col], x + lefts[col], widths[col], top + row / 2 + middle, c.ink, on,
                         table.columns[col].align)
                 }
             }
@@ -10541,6 +12595,48 @@ const f32 menuLine = 9           // the height of a separator
 const f32 menuWidth = 190        // at least
 const u64 tipDelay = 600000000   // the mouse stays on a component 0.6 s before its tooltip shows
 const u64 longPress = 500000000  // a finger held 0.5 s is a long press
+
+// A color of the look of a component (D540): 0 its background, 1 its text, 2 its border.
+void setPartColor(i64 id, i32 which, Color color) {
+    withData([id, which, color](ref Shared data) {
+        i64 at = partIndexOf(ref data, id)
+        if (which == 0) {
+            data.parts[at].hasFill = true
+            data.parts[at].ownFill = color
+        } else if (which == 1) {
+            data.parts[at].hasInk = true
+            data.parts[at].ownInk = color
+        } else {
+            data.parts[at].hasEdge = true
+            data.parts[at].ownEdge = color
+        }
+    })
+}
+
+void resetPartLook(i64 id) {
+    withData([id](ref Shared data) {
+        i64 at = partIndexOf(ref data, id)
+        data.parts[at].hasFill = false
+        data.parts[at].hasInk = false
+        data.parts[at].hasEdge = false
+        data.parts[at].ownCorner = -1
+        data.parts[at].ownTextSize = 0
+    })
+}
+
+void setPartCorner(i64 id, f32 radius) {
+    if (radius < 0 || radius > 64) {
+        panic(format("the radius of the corners is from 0 to 64, found {}", radius))
+    }
+    withData([id, radius](ref Shared data) { data.parts[partIndexOf(ref data, id)].ownCorner = radius })
+}
+
+void setPartTextSize(i64 id, f32 size) {
+    if (size < 6 || size > 96) {
+        panic(format("the size of the text is from 6 to 96, found {}", size))
+    }
+    withData([id, size](ref Shared data) { data.parts[partIndexOf(ref data, id)].ownTextSize = size })
+}
 
 void setPartTooltip(i64 id, string text) {
     withData([id, text](ref Shared data) { data.parts[partIndexOf(ref data, id)].tooltip = text })
@@ -11180,7 +13276,7 @@ void wrapParagraph(ref WindowData window, ref PartData area, string s, i64 start
     i64 next = start
     for (i64 i = start; i < end; i = next) {
         next = nextCharacter(s, i)
-        f32 w = textWidth(window.body, s.slice(i, next), next - i)
+        f32 w = textWidth(bodyOf(ref window, ref area), s.slice(i, next), next - i)
         bool space = s[i] == 32
         if (!space && x + w > width && i > line) {
             if (lastBreak > line) {
@@ -11222,14 +13318,14 @@ i64 caretLine(ref PartData area, i64 caret) {
 f32 caretLeft(ref WindowData window, ref PartData area, i64 caret) {
     i64 k = caretLine(ref area, caret)
     i64 from = area.wrapStarts[k]
-    ret textWidth(window.body, area.text.slice(from, caret), caret - from)
+    ret textWidth(bodyOf(ref window, ref area), area.text.slice(from, caret), caret - from)
 }
 
 // The byte of the text at x on a line, from the left of the text.
 i64 indexOnLine(ref WindowData window, ref PartData area, i64 k, f32 x) {
     i64 from = area.wrapStarts[k]
     i64 to = area.wrapEnds[k]
-    i64 at = from + indexAt(window.body, area.text.slice(from, to), x)
+    i64 at = from + indexAt(bodyOf(ref window, ref area), area.text.slice(from, to), x)
     if (at == to && k + 1 < area.wrapStarts.len() && area.wrapStarts[k + 1] == to && to > from) {
         at = previousCharacter(area.text, to)  // on a line that broke by itself, before its last space
     }
@@ -11340,11 +13436,11 @@ void drawTextArea(ref WindowData window, ref PartData area, ref Colors c, bool f
     f32 ascent = 0
     f32 descent = 0
     f32 gap = 0
-    cromo_gui_font_metrics(window.body, ref ascent, ref descent, ref gap)
+    cromo_gui_font_metrics(bodyOf(ref window, ref area), ref ascent, ref descent, ref gap)
     clipInside(r, ref area, x + 2, y + 2, w - 4, h - 4)
     f32 left = x + padding
     if (area.text.len() == 0) {
-        text(window.body, area.placeholder, left, y + areaPad + line / 2 + (ascent - descent) / 2, c.ink3, on)
+        text(bodyOf(ref window, ref area), area.placeholder, left, y + areaPad + line / 2 + (ascent - descent) / 2, c.ink3, on)
     }
     i64 low = area.caret < area.anchor ? area.caret : area.anchor
     i64 high = area.caret < area.anchor ? area.anchor : area.caret
@@ -11362,14 +13458,14 @@ void drawTextArea(ref WindowData window, ref PartData area, ref Colors c, bool f
         if (low < high && low <= to && high >= from) {
             i64 a = low > from ? low : from
             i64 b = high < to ? high : to
-            f32 sx = textWidth(window.body, value, a - from)
-            f32 ex = textWidth(window.body, value, b - from)
+            f32 sx = textWidth(bodyOf(ref window, ref area), value, a - from)
+            f32 ex = textWidth(bodyOf(ref window, ref area), value, b - from)
             bool more = high > to && (k + 1 >= area.wrapStarts.len() || area.wrapStarts[k + 1] > to)  // the "\n" too
             fill(r, c.selectionSoft, left + sx, top + 1, ex - sx + (more ? 5 : 0), line - 2)
         }
-        text(window.body, value, left, baseline, c.ink, on)
+        text(bodyOf(ref window, ref area), value, left, baseline, c.ink, on)
         if (blink && k == caretAt) {
-            f32 cx = textWidth(window.body, value, area.caret - from)
+            f32 cx = textWidth(bodyOf(ref window, ref area), value, area.caret - from)
             fill(r, c.ink, left + cx, baseline - ascent, 1, ascent + descent)
         }
     }
@@ -11399,7 +13495,7 @@ void drawRadioGroup(ref WindowData window, ref PartData part, ref Colors c, bool
     f32 ascent = 0
     f32 descent = 0
     f32 gap = 0
-    cromo_gui_font_metrics(window.body, ref ascent, ref descent, ref gap)
+    cromo_gui_font_metrics(bodyOf(ref window, ref part), ref ascent, ref descent, ref gap)
     clipInside(r, ref part, x, part.top, f32(part.width), f32(part.height))
     for (i64 k = 0; k < part.items.len(); k++) {
         f32 middle = part.top + f32(k) * radioRow() + radioRow() / 2
@@ -11416,7 +13512,7 @@ void drawRadioGroup(ref WindowData window, ref PartData part, ref Colors c, bool
         } else {
             cromo_gui_box(r, x, top, checkSide, checkSide, checkSide / 2, 1, d, solid(c.surface, on), solid(hot ? c.ink3 : c.rule2, on))
         }
-        text(window.body, part.items[k], x + checkSide + 8, middle + (ascent - descent) / 2, c.ink, on)
+        text(bodyOf(ref window, ref part), part.items[k], x + checkSide + 8, middle + (ascent - descent) / 2, c.ink, on)
     }
     clipPart(r, ref part)
 }
@@ -11566,8 +13662,8 @@ void drawTabView(ref WindowData window, ref PartData view, ref Colors c, bool ri
     f32 h = f32(view.height)
     bool on = view.active
     f32 band = bandHeight()
-    cardShadow(r, x, y, w, h, groupCorner, d, ref c)
-    bandCard(r, ref view, band, groupCorner, d, ref c, c.rule)
+    cardShadow(r, x, y, w, h, rounded(ref view, groupCorner), d, ref c)
+    bandCard(r, ref view, band, rounded(ref view, groupCorner), d, ref c, c.rule)
     clipInside(r, ref view, x + 1, y, w - 2, band)
     view.tabSpans.clear()
     f32 at = tabInset
@@ -11609,11 +13705,11 @@ void drawSegmented(ref WindowData window, ref PartData part, ref Colors c, bool 
     f32 h = f32(part.height)
     bool on = part.active
     i64 n = part.items.len()
-    cromo_gui_box(r, x, y, w, h, segmentCorner, 1, d, solid(c.surface, on), solid(c.rule2, on))
+    cromo_gui_box(r, x, y, w, h, rounded(ref part, segmentCorner), 1, d, solid(c.surface, on), solid(c.rule2, on))
     f32 ascent = 0
     f32 descent = 0
     f32 gap = 0
-    cromo_gui_font_metrics(window.body, ref ascent, ref descent, ref gap)
+    cromo_gui_font_metrics(bodyOf(ref window, ref part), ref ascent, ref descent, ref gap)
     f32 baseline = y + h / 2 + (ascent - descent) / 2
     for (i64 k = 0; k < n; k++) {
         f32 left = x + w * f32(k) / f32(n)
@@ -11630,14 +13726,14 @@ void drawSegmented(ref WindowData window, ref PartData part, ref Colors c, bool 
             clipPart(r, ref part)
             fill(r, c.rule2, left, y + 1, 1, h - 2)
         }
-        addr font = chosen ? window.strong : window.body
+        addr font = chosen ? strongOf(ref window, ref part) : bodyOf(ref window, ref part)
         f32 size = textWidth(font, part.items[k], part.items[k].len())
         clipInside(r, ref part, left + 4, y, right - left - 8, h)
         text(font, part.items[k], most(left + (right - left - size) / 2, left + 4), baseline, chosen ? c.onAccent : c.ink, on)
     }
     clipPart(r, ref part)
     if (ring) {
-        focusRing(r, x, y, w, h, segmentCorner, d, ref c)
+        focusRing(r, x, y, w, h, rounded(ref part, segmentCorner), d, ref c)
     }
 }
 
@@ -12386,6 +14482,31 @@ f32 imageSize(i64 id, bool wide) {
 }
 
 // The font of the texts of the drawings at a size, made the first time it is used.
+// The font of the text of a component: the one of the window, or the one of its own
+// size (D540); and its semibold.
+addr bodyOf(ref WindowData window, ref PartData part) {
+    if (part.ownTextSize > 0) {
+        ret faceFor(ref window, 0, part.ownTextSize)
+    }
+    ret window.body
+}
+
+addr strongOf(ref WindowData window, ref PartData part) {
+    if (part.ownTextSize > 0) {
+        ret faceFor(ref window, 1, part.ownTextSize)
+    }
+    ret window.strong
+}
+
+// The radius of the corners of a component: its own (D540), or the one of its kind.
+f32 rounded(ref PartData part, f32 normal) {
+    if (part.ownCorner >= 0) {
+        f32 most = f32(part.width < part.height ? part.width : part.height) / 2
+        ret part.ownCorner < most ? part.ownCorner : most
+    }
+    ret normal
+}
+
 addr fontFor(ref WindowData window, f32 size) {
     ret faceFor(ref window, 0, size)
 }

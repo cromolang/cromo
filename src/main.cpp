@@ -108,6 +108,7 @@ struct Compilation {
     std::string androidPackage;  // of [[android(...)]] on main (D455), then that of the APK
     std::string androidName;
     bool network = false;  // the program uses std.net: the permission INTERNET (D463)
+    bool camera = false;   // the program makes a gui.Camera: the permission CAMERA (D537)
     std::vector<Executable> executables;  // D517: those of cromo.mod, without a file
 };
 
@@ -247,6 +248,7 @@ int build(Compilation& compilation) {
     }
     bool requireMain = !tests && !compilation.runtime;
     if (diag.hasErrors() || !cromo::check(module, diag, requireMain) || !cromo::checkMoves(module, diag)) return 1;
+    compilation.camera = module.camera;
     if (tests) {  // in the order of the entry point of the tests (codegen.cpp)
         std::string program = module.files[0].name + ".";
         for (const cromo::FunctionDecl& function : module.functions) {
@@ -908,6 +910,7 @@ int buildApk(Compilation& compilation) {
         compilation.androidPackage = part.androidPackage;
         compilation.androidName = part.androidName;
         compilation.network = part.network;
+        compilation.camera = part.camera;
         entries.push_back(std::string("lib/") + abi + "/libSDL3.so=" + sdl.string());
         entries.push_back(std::string("lib/") + abi + "/libmain.so=" + part.options.outputPath);
     }
@@ -932,7 +935,9 @@ int buildApk(Compilation& compilation) {
     Compilation tool;
     tool.inputPath = cromo::libraryFile("tools/apk.cro").string();
     tool.options.outputPath = "apk";
-    std::vector<std::string> args = {output, package, name, icon, compilation.network ? "INTERNET" : "-"};
+    std::string permissions = compilation.network ? "INTERNET" : "";
+    if (compilation.camera) permissions += permissions.empty() ? "CAMERA" : ",CAMERA";
+    std::vector<std::string> args = {output, package, name, icon, permissions.empty() ? "-" : permissions};
     args.insert(args.end(), entries.begin(), entries.end());
 #ifdef _WIN32
     std::vector<std::wstring> programArgs;

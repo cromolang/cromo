@@ -1,0 +1,61 @@
+// cromo design --generate with the look of the components and the colors of the
+// window (D539, D540): a color as #RRGGBB or as a role of the theme, the corners, the
+// size of the text, a palette whose other colors are those of the library, and what
+// is not a color, left out.
+// target: windows
+// program-env: CROMO={cromo}
+// program-env: OUT={dir}/../out/design_look
+// expect-output: made 0
+// expect-output:         window = gui.Window("Look", 420, 300)
+// expect-output:         window.setPalette(gui.palette(0xF3EFE6, 0xFFFFFF, 0x18212A, 0x2E7D5B, 0x2F6E8F, 0xB0453C), gui.darkPalette())
+// expect-output:         title = window.add(gui.Label("Your name", 16, 16, 160, 22))
+// expect-output:         title.setTextColor(gui.role(gui.Role.Danger))
+// expect-output:         title.setTextSize(15)
+// expect-output:         who = window.add(gui.TextBox("", 16, 48, 200, 28))
+// expect-output:         who.setBackground(gui.rgb(0xFFF6D6))
+// expect-output:         who.setBorderColor(gui.role(gui.Role.Danger))
+// expect-output:         who.setCornerRadius(12)
+// expect-output:         greet = window.add(gui.Button("Greet", 16, 92, 96, 30))
+// expect-output:         greet.setCornerRadius(0)
+// expect-output:         news = window.add(gui.CheckBox("News", 16, 136, 140, 24))
+// expect-output:         news.setBackground(gui.role(gui.Role.AccentSoft))
+// expect-output: plain 0 false
+import std.fs
+import std.os
+import std.process
+
+i32 main() {
+    string folder = os.env("OUT")
+    fs.removeAll(folder)
+    fs.createFolders(folder)
+    string look = "{\"version\":1,\"title\":\"Look\",\"width\":420,\"height\":300," +
+        "\"light\":{\"accent\":\"#2E7D5B\",\"background\":\"f3efe6\",\"text\":\"black\"}," +
+        "\"items\":[" +
+        "{\"kind\":\"Label\",\"name\":\"title\",\"text\":\"Your name\",\"x\":16,\"y\":16,\"width\":160,\"height\":22," +
+        "\"textColor\":\"Danger\",\"textSize\":15}," +
+        "{\"kind\":\"TextBox\",\"name\":\"who\",\"text\":\"\",\"x\":16,\"y\":48,\"width\":200,\"height\":28," +
+        "\"background\":\"#FFF6D6\",\"borderColor\":\"danger\",\"corner\":12}," +
+        "{\"kind\":\"Button\",\"name\":\"greet\",\"text\":\"Greet\",\"x\":16,\"y\":92,\"width\":96,\"height\":30," +
+        "\"corner\":0,\"textSize\":3}," +
+        "{\"kind\":\"CheckBox\",\"name\":\"news\",\"text\":\"News\",\"x\":16,\"y\":136,\"width\":140,\"height\":24," +
+        "\"background\":\"AccentSoft\",\"textColor\":\"not a color\"}]}"
+    fs.writeText(folder + "/look.form", look)
+    process.Output made = process.run(os.env("CROMO"), ["design", "--generate", folder + "/look.form"])
+    println("made {}", made.code)
+    bool inside = false
+    for (string line in fs.readText(folder + "/look_form.cro").split("\n")) {
+        if (line.contains("gui.Window(")) {
+            inside = true
+        }
+        if (inside && line.startsWith("        ")) {
+            println("{}", line)
+        }
+    }
+    // A form without a look says nothing of it.
+    fs.writeText(folder + "/plain.form", "{\"version\":1,\"title\":\"Plain\",\"width\":300,\"height\":200,\"items\":[" +
+        "{\"kind\":\"Label\",\"name\":\"title\",\"text\":\"Hello\",\"x\":16,\"y\":16,\"width\":160,\"height\":22}]}")
+    process.Output plain = process.run(os.env("CROMO"), ["design", "--generate", folder + "/plain.form"])
+    string code = fs.readText(folder + "/plain_form.cro")
+    println("plain {} {}", plain.code, code.contains("setPalette") || code.contains("Color") || code.contains("setCorner"))
+    ret 0
+}

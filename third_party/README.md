@@ -37,3 +37,10 @@ The time zones of `std.time` are not here: `library/std/zoneinfo.dat` holds the 
 files of the IANA Time Zone Database (https://www.iana.org/time-zones, public domain),
 version 2025b, as the package `tzdata` 2025.2 of Python carries them, packed by
 `tools/zoneinfo.py` (D533). A new version of the database needs only that tool run again.
+
+One file of SDL is changed: `SDL/src/camera/android/SDL_camera_android.c` writes the two
+planes of the colors of a frame interleaved, as NV12 wants them, from the pixel stride and
+the row stride of each (`AImage_getPlanePixelStride`), where the original copied the plane
+of U as if it held both: the colors were wrong where the planes are separate, as on the
+emulator of Android (D537). The lines changed are marked `Cromo:`; a new version of SDL
+needs the change again, unless it has it.
