@@ -1,0 +1,1630 @@
+// Databases: a 'Database' opens one, a 'Connection' runs statements and transactions
+// on it, and a 'Statement' has parameters and gives rows. The text that opens the
+// database says which one it is: the name of a file is a database of SQLite, which
+// is inside the program, made if it is missing, ":memory:" one in memory, and
+// "postgresql://user:password@host:5432/name" one of a server of PostgreSQL.
+//
+// '''
+// import std.db
+//
+// db.Database data = db.Database("notes.db")
+// db.Connection c = data.connect()
+// c.exec("CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, title TEXT)")
+// db.Statement insert = c.prepare("INSERT INTO notes (title) VALUES (?)")
+// insert.setText(1, "Buy the bread")
+// insert.exec()
+// db.Statement all = c.prepare("SELECT id, title FROM notes ORDER BY id")
+// for (all.next()) {
+//     println("{} {}", all.getInt(0), all.getText(1))
+// }
+// '''
+//
+// A wrong use of the module, as a column that the row does not have, is a panic. An
+// error of the database, as a statement that is not SQL or a table that is missing,
+// is an 'Error' with the message of the database.
+//
+// The guide: [Databases](https://cromolang.org/book/en/databases.html).
+
+// The module std.db (D528-D531, P72), on SQLite compiled into the runtime without the
+// C library (D529). A connection is a block on the heap, whose address a 'Connection'
+// and its statements have: first its lock, taken for each call, so that a statement
+// given to another task never uses the connection together with it; then, for SQLite,
+// its handle and how many have its address. The connections do not wait for each
+// other but on the locks of the files, as SQLite wants: the lock is never held while
+// a statement waits for one of them. PostgreSQL is a client written here, at the end
+// of the file (D531): 'remote' tells its connections and its statements from those of
+// SQLite, and their block has a 'Wire' after the lock.
+import std.crypto
+import std.net
+import std.thread
+import std.time
+import unsafe
+
+extern "cromo" {
+    i32 sqlite3_open_v2(addr name, ref i64 handle, i32 flags, addr vfs)  // the addresses come back as numbers
+    i32 sqlite3_close_v2(addr handle)
+    i32 sqlite3_prepare_v2(addr handle, addr sql, i32 size, ref i64 statement, ref i64 tail)
+    i32 sqlite3_step(addr statement)
+    i32 sqlite3_reset(addr statement)
+    i32 sqlite3_finalize(addr statement)
+    i32 sqlite3_bind_int64(addr statement, i32 index, i64 value)
+    i32 sqlite3_bind_double(addr statement, i32 index, f64 value)
+    i32 sqlite3_bind_text(addr statement, i32 index, addr text, i32 size, addr release)
+    i32 sqlite3_bind_blob(addr statement, i32 index, addr data, i32 size, addr release)
+    i32 sqlite3_bind_null(addr statement, i32 index)
+    i32 sqlite3_bind_parameter_count(addr statement)
+    i32 sqlite3_column_count(addr statement)
+    addr sqlite3_column_name(addr statement, i32 index)
+    i32 sqlite3_column_type(addr statement, i32 index)
+    i64 sqlite3_column_int64(addr statement, i32 index)
+    f64 sqlite3_column_double(addr statement, i32 index)
+    addr sqlite3_column_text(addr statement, i32 index)
+    addr sqlite3_column_blob(addr statement, i32 index)
+    i32 sqlite3_column_bytes(addr statement, i32 index)
+    i64 sqlite3_total_changes64(addr handle)
+    addr sqlite3_errmsg(addr handle)
+    i32 sqlite3_extended_errcode(addr handle)
+    i32 sqlite3_get_autocommit(addr handle)
+    addr sqlite3_backup_init(addr to, addr toName, addr from, addr fromName)
+    i32 sqlite3_backup_step(addr backup, i32 pages)
+    i32 sqlite3_backup_finish(addr backup)
+    i32 cromo_db_setup()  // starts SQLite, once: 0 if it cannot
+}
+
+// Takes the lock of a connection, at the start of its block.
+void enter(addr handle) {
+    mutexLock(handle)
+}
+
+void leave(addr handle) {
+    mutexUnlock(handle)
+}
+
+// The handle of SQLite of a connection, after its lock.
+addr raw(addr handle) {
+    ret addr(take<i64>(offset(handle, 8)))
+}
+
+// One more, or one less, that has the address of a connection of SQLite: without
+// any, its memory is given back. With its lock taken.
+void count(addr handle, i64 change) {
+    i64 users = take<i64>(offset(handle, 16)) + change
+    put<i64>(offset(handle, 16), users)
+}
+
+// Closes a connection of SQLite, which its statements can still name: its block
+// lasts as long as they do.
+void shut(addr handle) {
+    enter(handle)
+    sqlite3_close_v2(raw(handle))  // SQLite keeps it until its statements have ended
+    count(handle, -1)
+    bool last = take<i64>(offset(handle, 16)) == 0
+    leave(handle)
+    if (last) {
+        free(handle)
+    }
+}
+
+// A string of C, ended by a zero.
+string cText(addr text) {
+    addr none
+    if (text == none) {
+        ret ""
+    }
+    i64 n = 0
+    for (take<u8>(offset(text, n)) != 0) {
+        n++
+    }
+    ret string(text, n)
+}
+
+// The error of the last call on a connection, with what the program was doing.
+Error failure(addr handle, string action) {
+    enter(handle)
+    string reason = cText(sqlite3_errmsg(raw(handle)))
+    leave(handle)
+    ret Error(format("{}: {}", action, reason))
+}
+
+// Opens a database of SQLite, made if it is missing.
+addr open(string text) {
+    addr none
+    if (cromo_db_setup() == 0) {
+        throw Error(format("cannot open the database {}: SQLite cannot start", text))
+    }
+    i64 opened = 0
+    i32 code = sqlite3_open_v2(text.cstring(), ref opened, 6, none)  // READWRITE | CREATE
+    if (code != 0) {
+        string reason = cText(sqlite3_errmsg(addr(opened)))
+        sqlite3_close_v2(addr(opened))
+        throw Error(format("cannot open the database {}: {}", text, reason))
+    }
+    addr handle = alloc(24)
+    put<u64>(handle, 0)
+    put<i64>(offset(handle, 8), opened)
+    put<i64>(offset(handle, 16), 1)
+    ret handle
+}
+
+// A step of a statement. When another connection has the lock of the file that it
+// needs, it waits, without the lock of its connection, and tries again, for 'timeout'
+// milliseconds: 100 is a row, 101 the end, the others are errors. It does not wait
+// when waiting cannot help: the connection is reading the database as it was before
+// another one wrote, so it cannot write (SQLITE_BUSY_SNAPSHOT).
+i32 step(addr handle, addr statement, i64 timeout) {
+    i64 waited = 0
+    i64 pause = 1
+    for {
+        enter(handle)
+        i32 code = sqlite3_step(statement)
+        bool stale = code == 5 && sqlite3_extended_errcode(raw(handle)) == 517
+        leave(handle)
+        if (code != 5 || stale || waited >= timeout) {  // SQLITE_BUSY
+            ret code
+        }
+        time.msleep(pause)
+        waited += pause
+        if (pause < 32) {
+            pause *= 2
+        }
+    }
+}
+
+// Prepares the statement at the start of a text of C, of 'size' bytes or, with -1, up
+// to its zero, and gives where the next one starts. It reads what the database has,
+// so it waits for a lock of the file as a step does.
+i32 compile(addr handle, addr text, i64 size, ref i64 made, ref i64 tail, i64 timeout) {
+    i64 waited = 0
+    i64 pause = 1
+    for {
+        enter(handle)
+        i32 code = sqlite3_prepare_v2(raw(handle), text, i32(size), ref made, ref tail)
+        bool stale = code == 5 && sqlite3_extended_errcode(raw(handle)) == 517
+        leave(handle)
+        if (code != 5 || stale || waited >= timeout) {  // SQLITE_BUSY
+            ret code
+        }
+        time.msleep(pause)
+        waited += pause
+        if (pause < 32) {
+            pause *= 2
+        }
+    }
+}
+
+// What a 'Database' and its connections share.
+struct Pool {
+    string text
+    bool remote      // a server of PostgreSQL
+    bool memory      // one connection, which is the database
+    bool taken       // that connection is out
+    list<addr> idle  // the connections that wait to be used again
+    i64 most = 4     // how many of them are kept
+    i64 timeout = 5000
+}
+
+// A database, opened by its text. It is a handle: its copies are the same database,
+// and the threads and the tasks capture it. It keeps the connections that are given
+// back, to give them again, so 'connect()' costs little: a request of a server takes a
+// connection, uses it and lets it end.
+//
+// '''
+// db.Database data = db.Database("notes.db")  // a file of SQLite, made if it is missing
+// db.Database quick = db.Database(":memory:")  // a database in memory, gone with the program
+// db.Database shared = db.Database("postgresql://notes:secret@db.example.com/notes?sslmode=require")
+// '''
+//
+// An address of PostgreSQL is postgresql://user:password@host:port/name: the port is
+// 5432 without one, the host this computer, and the name the one of the user. A
+// character of the user or of the password that an address cannot have is written
+// with its code, as %40 for @. With ?sslmode=require at the end the connection is
+// encrypted with TLS, and the certificate of the server is verified as 'net.connectTls'
+// does; without it, or with ?sslmode=disable, it is not encrypted.
+public struct Database {
+    thread.Shared<Pool> pool
+
+    // Opens the database: an 'Error' when it cannot, as for a folder that is missing,
+    // a server that does not answer or a wrong password. A database in memory has one
+    // connection, so 'connect()' waits for it while another part of the program has it.
+    public Database(string text) {
+        Pool first
+        first.text = text.copy()
+        first.remote = text.startsWith("postgresql://") || text.startsWith("postgres://")
+        first.memory = !first.remote && (text == ":memory:" || text == "")
+        if (first.remote) {
+            first.idle.add(dial(text, first.timeout))
+        } else {
+            first.idle.add(open(text))
+        }
+        pool = thread.Shared<Pool>(move first)
+    }
+
+    // How many connections the database keeps when they are given back, 4 by default:
+    // the others are closed.
+    public void setMaxIdle(i64 count) const {
+        if (count < 0) {
+            panic(format("db: the connections to keep are {}, and cannot be negative", count))
+        }
+        pool.lock([count](ref Pool p) { p.most = count })
+    }
+
+    // How long a statement waits for a lock that another connection or another
+    // program holds, in milliseconds, 5000 by default, before it is an 'Error'. For
+    // the connections made from now on; with PostgreSQL, for the ones opened from now
+    // on, not for those that the database kept.
+    public void setTimeout(i64 milliseconds) const {
+        if (milliseconds < 0) {
+            panic(format("db: the timeout is {}, and cannot be negative", milliseconds))
+        }
+        pool.lock([milliseconds](ref Pool p) { p.timeout = milliseconds })
+    }
+
+    // A connection to the database: one that was given back, or a new one. It goes
+    // back to the database when its variable ends.
+    public Connection connect() const {
+        addr none
+        addr handle
+        string text
+        i64 timeout = 0
+        bool wait = true
+        bool far = false
+        for (wait) {
+            pool.lock([ref handle, ref text, ref timeout, ref wait, ref far](ref Pool p) {
+                timeout = p.timeout
+                far = p.remote
+                if (p.memory && p.taken) {
+                    ret
+                }
+                wait = false
+                p.taken = p.memory
+                if (p.idle.len() > 0) {
+                    handle = p.idle.remove(p.idle.len() - 1)
+                } else {
+                    text = p.text
+                }
+            })
+            if (wait) {
+                time.msleep(1)
+            }
+        }
+        if (handle == none && far) {
+            handle = dial(text, timeout)
+        } else if (handle == none) {
+            handle = open(text)
+        }
+        Connection made
+        made.handle = handle
+        made.home = pool
+        made.timeout = timeout
+        made.remote = far
+        ret made
+    }
+}
+
+// A connection to a database, from 'Database.connect()': it runs statements, one
+// after the other. It cannot be copied; at the end of its variable a transaction
+// still open is rolled back, and the connection goes back to its database.
+public struct Connection {
+    addr handle
+    thread.Shared<Pool> home
+    i64 timeout
+    bool remote
+
+    ~Connection() {
+        addr none
+        if (handle == none) {
+            ret
+        }
+        addr mine = handle
+        handle = none
+        if (remote) {
+            bool fine = false
+            enter(mine)
+            Wire w = take<Wire>(offset(mine, 8))
+            try {
+                if (!w.broken && w.state != 'I') {
+                    simple(ref w, "ROLLBACK", "cannot end the transaction")
+                }
+                fine = !w.broken
+            } catch (Exception e) {
+            }
+            w.turn++
+            put<Wire>(offset(mine, 8), move w)
+            leave(mine)
+            bool back = false
+            try {
+                if (fine) {
+                    home.lock([mine, ref back](ref Pool p) {
+                        if (p.idle.len() < p.most) {
+                            p.idle.add(mine)
+                            back = true
+                        }
+                    })
+                }
+            } catch (Exception e) {
+            }
+            if (!back) {
+                release(mine, true)
+            }
+            ret
+        }
+        enter(mine)
+        bool open = sqlite3_get_autocommit(raw(mine)) == 0
+        leave(mine)
+        bool kept = false
+        try {
+            if (open) {
+                run(mine, "ROLLBACK", 0)
+            }
+            home.lock([mine, ref kept](ref Pool p) {
+                p.taken = false
+                if (p.memory || p.idle.len() < p.most) {
+                    p.idle.add(mine)
+                    kept = true
+                }
+            })
+        } catch (Exception e) {
+        }
+        if (!kept) {
+            shut(mine)
+        }
+    }
+
+    // Runs the statements of 'sql', separated by ';', which have no parameters, and
+    // gives how many rows they inserted, changed and deleted.
+    //
+    // '''
+    // c.exec("CREATE TABLE notes (id INTEGER PRIMARY KEY, title TEXT); CREATE INDEX byTitle ON notes (title)")
+    // i64 gone = c.exec("DELETE FROM notes WHERE title = ''")
+    // '''
+    public i64 exec(string sql) {
+        if (remote) {
+            enter(handle)
+            Wire w = take<Wire>(offset(handle, 8))
+            try {
+                ret simple(ref w, sql, "cannot run the statement")
+            } finally {
+                put<Wire>(offset(handle, 8), move w)
+                leave(handle)
+            }
+        }
+        enter(handle)
+        i64 before = sqlite3_total_changes64(raw(handle))
+        leave(handle)
+        string problem = run(handle, sql, timeout)
+        if (problem.len() > 0) {
+            throw Error(format("cannot run the statement: {}", problem))
+        }
+        enter(handle)
+        i64 after = sqlite3_total_changes64(raw(handle))
+        leave(handle)
+        ret after - before
+    }
+
+    // Starts a transaction: the statements that follow are all kept by 'commit()', or
+    // all undone by 'rollback()', and by the end of the connection without a commit.
+    //
+    // '''
+    // c.begin()
+    // c.exec("UPDATE accounts SET balance = balance - 30 WHERE id = 1")
+    // c.exec("UPDATE accounts SET balance = balance + 30 WHERE id = 2")
+    // c.commit()
+    // '''
+    public void begin() {
+        exec("BEGIN")
+    }
+
+    // Keeps what the transaction did.
+    public void commit() {
+        exec("COMMIT")
+    }
+
+    // Undoes what the transaction did.
+    public void rollback() {
+        exec("ROLLBACK")
+    }
+
+    // A statement to run more than once, and with parameters, each written '?' in
+    // 'sql' and set by number, from 1. A value is never written inside the text of a
+    // statement: a parameter cannot be taken for SQL, whatever it holds. With
+    // PostgreSQL, whose operators can have a ?, '??' is a ? of the statement.
+    public Statement prepare(string sql) {
+        if (remote) {
+            Statement far
+            far.remote = true
+            i64 count = 0
+            far.sql = numbered(sql, ref count)
+            for (i64 i = 0; i < count; i++) {
+                far.values.add("")
+                far.given.add(false)
+            }
+            enter(handle)
+            Wire w = take<Wire>(offset(handle, 8))
+            try {
+                describe(ref w, far.sql, ref far.answer)
+                w.users++
+                far.turn = w.turn
+            } finally {
+                put<Wire>(offset(handle, 8), move w)
+                leave(handle)
+            }
+            far.handle = handle
+            ret far
+        }
+        i64 statement = 0
+        i64 tail = 0
+        i64 size = sql.len()
+        addr text = alloc(size + 1)
+        copyMemory(text, sql.cstring(), size)
+        put<u8>(offset(text, size), 0)
+        i32 code = compile(handle, text, size, ref statement, ref tail, timeout)
+        free(text)
+        if (code != 0) {
+            throw failure(handle, "cannot prepare the statement")
+        }
+        if (statement == 0) {
+            throw Error("cannot prepare the statement: it is empty")
+        }
+        Statement made
+        made.statement = addr(statement)
+        enter(handle)
+        count(handle, 1)
+        leave(handle)
+        made.handle = handle
+        made.timeout = timeout
+        ret made
+    }
+
+    // Whether the database has a table, or a view, with this name.
+    public bool hasTable(string name) {
+        if (remote) {
+            Statement far = prepare("SELECT 1 FROM information_schema.tables WHERE table_name = ? AND table_schema = ANY (current_schemas(false))")
+            far.setText(1, name)
+            ret far.next()
+        }
+        Statement ask = prepare("SELECT 1 FROM sqlite_master WHERE type IN ('table', 'view') AND name = ?")
+        ask.setText(1, name)
+        ret ask.next()
+    }
+
+    // Whether a table has a column with this name.
+    public bool hasColumn(string table, string name) {
+        if (remote) {
+            Statement far = prepare("SELECT 1 FROM information_schema.columns WHERE table_name = ? AND column_name = ? AND table_schema = ANY (current_schemas(false))")
+            far.setText(1, table)
+            far.setText(2, name)
+            ret far.next()
+        }
+        Statement ask = prepare("SELECT 1 FROM pragma_table_info(?) WHERE name = ?")
+        ask.setText(1, table)
+        ask.setText(2, name)
+        ret ask.next()
+    }
+
+    // Copies the whole database into another file, also while it is used: the file is
+    // made, and what it held is replaced. Only for SQLite: a database of PostgreSQL is
+    // copied with the tools of its server, and this throws an 'Error'.
+    public void backup(string file) {
+        if (remote) {
+            throw Error(format("cannot copy the database to {}: only a database of SQLite is copied by std.db", file))
+        }
+        addr none
+        addr target = open(file)
+        enter(handle)
+        addr copy = sqlite3_backup_init(raw(target), "main".cstring(), raw(handle), "main".cstring())
+        i32 code = 1
+        if (copy != none) {
+            sqlite3_backup_step(copy, -1)
+            code = sqlite3_backup_finish(copy)
+        }
+        string reason = code == 0 ? "" : cText(sqlite3_errmsg(raw(target)))
+        leave(handle)
+        shut(target)
+        if (code != 0) {
+            throw Error(format("cannot copy the database to {}: {}", file, reason))
+        }
+    }
+}
+
+// Runs the statements of a text, one after the other, and gives the error of the
+// first that fails, or "".
+string run(addr handle, string sql, i64 timeout) {
+    addr none
+    i64 size = sql.len()
+    addr text = alloc(size + 1)
+    copyMemory(text, sql.cstring(), size)
+    put<u8>(offset(text, size), 0)
+    addr at = text
+    string problem
+    for (problem.len() == 0 && take<u8>(at) != 0) {
+        i64 made = 0
+        i64 tail = 0
+        i32 code = compile(handle, at, -1, ref made, ref tail, timeout)
+        if (code != 0) {
+            enter(handle)
+            problem = cText(sqlite3_errmsg(raw(handle)))
+            leave(handle)
+            break
+        }
+        at = addr(tail)
+        addr statement = addr(made)
+        if (statement == none) {  // spaces, or a comment
+            continue
+        }
+        code = 100
+        for (code == 100) {
+            code = step(handle, statement, timeout)
+        }
+        enter(handle)
+        if (code != 101) {
+            problem = cText(sqlite3_errmsg(raw(handle)))
+        }
+        sqlite3_finalize(statement)
+        leave(handle)
+    }
+    free(text)
+    ret problem
+}
+
+// A statement of a connection, from 'Connection.prepare()': its parameters are set by
+// number, from 1, then 'exec()' runs it, or 'next()' reads its rows one at a time,
+// with the columns by number, from 0. It cannot be copied.
+//
+// '''
+// db.Statement find = c.prepare("SELECT title, done FROM notes WHERE id > ? ORDER BY id")
+// find.setInt(1, 10)
+// for (find.next()) {
+//     println("{} {}", find.getText(0), find.getBool(1))
+// }
+// '''
+public struct Statement {
+    addr statement
+    addr handle
+    i64 timeout
+    bool row       // it is on a row
+    bool finished  // it gave its last row
+    bool remote    // of PostgreSQL, with the fields below
+    i64 turn       // the one of its connection when it was made
+    string sql     // with $1 for its parameters
+    list<string> values
+    list<bool> given  // the parameters that have a value: the others are NULL
+    Answer answer     // its columns and, once run, all its rows
+    bool ran
+    i64 current  // the row it is on
+
+    ~Statement() {
+        addr none
+        if (remote) {
+            if (handle != none) {
+                release(handle, false)
+                handle = none
+            }
+            ret
+        }
+        if (statement != none) {
+            enter(handle)
+            sqlite3_finalize(statement)
+            count(handle, -1)
+            bool last = take<i64>(offset(handle, 16)) == 0
+            leave(handle)
+            if (last) {
+                free(handle)
+            }
+            statement = none
+        }
+    }
+
+    // Sets a parameter of a statement of PostgreSQL, as the text that the server reads.
+    void assign(i64 index, string value, bool has) {
+        if (index < 1 || index > values.len()) {
+            panic(format("db: the parameter {} is not among the {} of the statement", index, values.len()))
+        }
+        values[index - 1] = value
+        given[index - 1] = has
+    }
+
+    // Runs a statement of PostgreSQL on its connection.
+    void perform(bool keep) {
+        enter(handle)
+        Wire w = take<Wire>(offset(handle, 8))
+        try {
+            if (w.turn != turn || w.broken) {
+                throw Error("cannot run the statement: its connection has ended")
+            }
+            execute(ref w, sql, values, given, keep, ref answer)
+        } finally {
+            put<Wire>(offset(handle, 8), move w)
+            leave(handle)
+        }
+    }
+
+    void bound(i32 code, i64 index) {
+        if (code == 25) {  // SQLITE_RANGE
+            enter(handle)
+            i32 count = sqlite3_bind_parameter_count(statement)
+            leave(handle)
+            panic(format("db: the parameter {} is not among the {} of the statement", index, count))
+        }
+        if (code != 0) {
+            throw failure(handle, "cannot set the parameter")
+        }
+    }
+
+    // Sets the parameter 'index', from 1, to an integer.
+    public void setInt(i64 index, i64 value) {
+        if (remote) {
+            assign(index, format("{}", value), true)
+            ret
+        }
+        enter(handle)
+        i32 code = sqlite3_bind_int64(statement, i32(index), value)
+        leave(handle)
+        bound(code, index)
+    }
+
+    // Sets the parameter 'index' to a number with a fraction.
+    public void setFloat(i64 index, f64 value) {
+        if (remote) {
+            assign(index, format("{}", value), true)
+            ret
+        }
+        enter(handle)
+        i32 code = sqlite3_bind_double(statement, i32(index), value)
+        leave(handle)
+        bound(code, index)
+    }
+
+    // Sets the parameter 'index' to a text.
+    public void setText(i64 index, string value) {
+        if (remote) {
+            assign(index, value, true)
+            ret
+        }
+        enter(handle)
+        i32 code = sqlite3_bind_text(statement, i32(index), value.cstring(), i32(value.len()), addr(-1))  // copied
+        leave(handle)
+        bound(code, index)
+    }
+
+    // Sets the parameter 'index' to bytes, as an image.
+    public void setBytes(i64 index, list<u8> value) {
+        if (remote) {
+            assign(index, "\\x" + crypto.hex(value), true)
+            ret
+        }
+        addr data = alloc(value.len() + 1)
+        for (i64 i = 0; i < value.len(); i++) {
+            put<u8>(offset(data, i), value[i])
+        }
+        enter(handle)
+        i32 code = sqlite3_bind_blob(statement, i32(index), data, i32(value.len()), addr(-1))  // copied
+        leave(handle)
+        free(data)
+        bound(code, index)
+    }
+
+    // Sets the parameter 'index' to true or false, kept as 1 or 0.
+    public void setBool(i64 index, bool value) {
+        setInt(index, value ? 1 : 0)
+    }
+
+    // Sets the parameter 'index' to no value, the NULL of SQL.
+    public void setNull(i64 index) {
+        if (remote) {
+            assign(index, "", false)
+            ret
+        }
+        enter(handle)
+        i32 code = sqlite3_bind_null(statement, i32(index))
+        leave(handle)
+        bound(code, index)
+    }
+
+    // Runs the statement to its end and gives how many rows it inserted, changed or
+    // deleted. Then it is ready to run again: the parameters keep their values until
+    // they are set again.
+    //
+    // '''
+    // db.Statement insert = c.prepare("INSERT INTO notes (title) VALUES (?)")
+    // for (string title in titles) {
+    //     insert.setText(1, title)
+    //     insert.exec()
+    // }
+    // '''
+    public i64 exec() {
+        reset()
+        if (remote) {
+            perform(false)
+            ret answer.changed
+        }
+        enter(handle)
+        i64 before = sqlite3_total_changes64(raw(handle))
+        leave(handle)
+        i32 code = 100
+        for (code == 100) {
+            code = step(handle, statement, timeout)
+        }
+        if (code != 101) {
+            Error problem = failure(handle, "cannot run the statement")
+            reset()
+            throw problem
+        }
+        enter(handle)
+        i64 after = sqlite3_total_changes64(raw(handle))
+        sqlite3_reset(statement)
+        leave(handle)
+        ret after - before
+    }
+
+    // Goes to the next row of the statement, the first one the first time: false when
+    // there are no more. The columns are then read with 'getInt', 'getText' and the
+    // others. A statement that is on a row keeps reading the database as it was at its
+    // first row, and keeps the others from writing some of it: 'reset()', or its end,
+    // lets it go.
+    public bool next() {
+        if (finished) {
+            ret false
+        }
+        if (remote) {
+            if (!ran) {
+                perform(true)
+                ran = true
+                current = -1
+            }
+            current++
+            row = answer.names.len() > 0 && current < answer.cells.len() / answer.names.len()
+            finished = !row
+            ret row
+        }
+        i32 code = step(handle, statement, timeout)
+        row = code == 100
+        if (code == 101) {
+            finished = true
+        } else if (code != 100) {
+            Error problem = failure(handle, "cannot run the statement")
+            reset()
+            throw problem
+        }
+        ret row
+    }
+
+    // Makes the statement ready to run again from its first row. The parameters keep
+    // their values.
+    public void reset() {
+        if (remote) {
+            answer.cells.clear()
+            answer.missing.clear()
+            ran = false
+        } else {
+            enter(handle)
+            sqlite3_reset(statement)
+            leave(handle)
+        }
+        row = false
+        finished = false
+    }
+
+    // How many columns the rows of the statement have: 0 for one that gives no rows.
+    public i64 columnCount() const {
+        if (remote) {
+            ret answer.names.len()
+        }
+        enter(handle)
+        i32 count = sqlite3_column_count(statement)
+        leave(handle)
+        ret i64(count)
+    }
+
+    // The name of the column 'index', from 0.
+    public string columnName(i64 index) const {
+        i64 count = columnCount()
+        if (index < 0 || index >= count) {
+            panic(format("db: the column {} is not among the {} of the statement", index, count))
+        }
+        if (remote) {
+            ret answer.names[index]
+        }
+        enter(handle)
+        string name = cText(sqlite3_column_name(statement, i32(index)))
+        leave(handle)
+        ret name
+    }
+
+    void column(i64 index) const {
+        if (!row) {
+            panic("db: the statement is not on a row: next() goes to one")
+        }
+        i64 count = columnCount()
+        if (index < 0 || index >= count) {
+            panic(format("db: the column {} is not among the {} of the row", index, count))
+        }
+    }
+
+    // Whether the column 'index' of the row, from 0, has no value, the NULL of SQL.
+    public bool isNull(i64 index) const {
+        column(index)
+        if (remote) {
+            ret answer.missing[current * answer.names.len() + index]
+        }
+        enter(handle)
+        i32 kind = sqlite3_column_type(statement, i32(index))
+        leave(handle)
+        ret kind == 5
+    }
+
+    // The column 'index' of the row as an integer: 0 without a value.
+    public i64 getInt(i64 index) const {
+        column(index)
+        if (remote) {
+            string text = answer.cells[current * answer.names.len() + index]
+            if (answer.types[index] == 16) {  // a boolean
+                ret text == "t" ? 1 : 0
+            }
+            try {
+                ret i64(text)
+            } catch (Exception e) {
+            }
+            f64 number = getFloat(index)
+            if (number > -9e18 && number < 9e18) {
+                ret i64(number)
+            }
+            ret 0
+        }
+        enter(handle)
+        i64 value = sqlite3_column_int64(statement, i32(index))
+        leave(handle)
+        ret value
+    }
+
+    // The column 'index' of the row as a number with a fraction: 0 without a value.
+    public f64 getFloat(i64 index) const {
+        column(index)
+        if (remote) {
+            string text = answer.cells[current * answer.names.len() + index]
+            if (answer.types[index] == 16) {
+                ret text == "t" ? 1.0 : 0.0
+            }
+            try {
+                ret f64(text)
+            } catch (Exception e) {
+                ret 0.0
+            }
+        }
+        enter(handle)
+        f64 value = sqlite3_column_double(statement, i32(index))
+        leave(handle)
+        ret value
+    }
+
+    // The column 'index' of the row as a text: "" without a value.
+    public string getText(i64 index) const {
+        column(index)
+        if (remote) {
+            ret answer.cells[current * answer.names.len() + index]
+        }
+        addr none
+        enter(handle)
+        addr text = sqlite3_column_text(statement, i32(index))
+        i64 size = i64(sqlite3_column_bytes(statement, i32(index)))
+        string value = text == none ? "" : string(text, size)
+        leave(handle)
+        ret value
+    }
+
+    // The column 'index' of the row as bytes: none without a value.
+    public list<u8> getBytes(i64 index) const {
+        column(index)
+        if (remote) {
+            string text = answer.cells[current * answer.names.len() + index]
+            if (answer.types[index] == 17 && text.startsWith("\\x")) {  // bytea, written in base 16
+                ret crypto.fromHex(text.slice(2, text.len()))
+            }
+            ret text.bytes()
+        }
+        list<u8> value
+        enter(handle)
+        addr data = sqlite3_column_blob(statement, i32(index))
+        i64 size = i64(sqlite3_column_bytes(statement, i32(index)))
+        value.reserve(size)
+        for (i64 i = 0; i < size; i++) {
+            value.add(take<u8>(offset(data, i)))
+        }
+        leave(handle)
+        ret value
+    }
+
+    // The column 'index' of the row as true or false: false for 0 and without a value.
+    public bool getBool(i64 index) const {
+        ret getInt(index) != 0
+    }
+}
+
+// ---- PostgreSQL (D531): the protocol of the server, version 3, over std.net ----
+
+// A connection to a server of PostgreSQL, on the heap: a 'Connection' and its
+// statements have its address, and 'users' counts them, so that it lives as long as
+// one of them does.
+struct Wire {
+    net.Connection link
+    list<u8> pending  // the bytes read and not used yet
+    i64 at            // the first of them not used
+    u8 state          // the transaction, as the server says: 'I' none, 'T' inside one, 'E' one that failed
+    bool broken       // the conversation with the server is lost
+    i64 users
+    i64 turn  // grows when the connection goes back to its database: the statements of before end
+}
+
+// Where a database of PostgreSQL is, from postgresql://user:password@host:port/name.
+struct Place {
+    string host
+    i64 port
+    string user
+    string password
+    string name
+    bool tls
+}
+
+// A text of an address with its %41 as the characters they are.
+string unescaped(string text) {
+    list<u8> out
+    i64 at = 0
+    for (at < text.len()) {
+        if (text[at] == '%' && at + 2 < text.len() + 0 && hexDigit(text[at + 1]) >= 0 && hexDigit(text[at + 2]) >= 0) {
+            out.add(u8(hexDigit(text[at + 1]) * 16 + hexDigit(text[at + 2])))
+            at += 3
+        } else {
+            out.add(text[at])
+            at++
+        }
+    }
+    ret string(out)
+}
+
+i64 hexDigit(u8 c) {
+    if (c >= '0' && c <= '9') {
+        ret i64(c - '0')
+    }
+    u8 lower = c | 0x20
+    if (lower >= 'a' && lower <= 'f') {
+        ret i64(lower - 'a') + 10
+    }
+    ret -1
+}
+
+Place place(string text) {
+    string rest = text.slice(text.find("://") + 3, text.len())
+    Place where
+    where.host = "localhost"
+    where.port = 5432
+    i64 after = rest.findLast("@")  // the last one: a password can have the others
+    if (after >= 0 && after < rest.len()) {
+        string who = rest.slice(0, after)
+        rest = rest.slice(after + 1, rest.len())
+        i64 colon = who.find(":")
+        if (colon >= 0) {
+            where.password = unescaped(who.slice(colon + 1, who.len()))
+            who = who.slice(0, colon)
+        }
+        where.user = unescaped(who)
+    }
+    string options = ""
+    i64 question = rest.find("?")
+    if (question >= 0) {
+        options = rest.slice(question + 1, rest.len())
+        rest = rest.slice(0, question)
+    }
+    i64 slash = rest.find("/")
+    if (slash >= 0) {
+        where.name = unescaped(rest.slice(slash + 1, rest.len()))
+        rest = rest.slice(0, slash)
+    }
+    string port = ""
+    if (rest.startsWith("[")) {  // an address of IPv6
+        i64 close = rest.find("]")
+        if (close < 0) {
+            throw Error("cannot open the database: the address has a [ without its ]")
+        }
+        where.host = rest.slice(1, close)
+        if (close + 1 < rest.len()) {
+            port = rest.slice(close + 2, rest.len())
+        }
+    } else {
+        i64 colon = rest.findLast(":")
+        if (colon >= 0 && colon < rest.len()) {
+            port = rest.slice(colon + 1, rest.len())
+            rest = rest.slice(0, colon)
+        }
+        if (rest.len() > 0) {
+            where.host = rest
+        }
+    }
+    if (port.len() > 0) {
+        try {
+            where.port = i64(port)
+        } catch (Exception e) {
+            where.port = 0
+        }
+        if (where.port < 1 || where.port > 65535) {
+            throw Error(format("cannot open the database: '{}' is not a port", port))
+        }
+    }
+    if (where.user.len() == 0) {
+        throw Error("cannot open the database: the address has no user, as postgresql://user:password@host/name")
+    }
+    if (where.name.len() == 0) {
+        where.name = where.user
+    }
+    for (string option in options.split("&")) {
+        if (option.len() == 0) {
+            continue
+        }
+        if (option == "sslmode=disable") {
+            where.tls = false
+        } else if (option == "sslmode=require" || option == "sslmode=verify-full") {
+            where.tls = true
+        } else {
+            throw Error(format("cannot open the database: std.db does not know '{}' in the address", option))
+        }
+    }
+    ret where
+}
+
+void putInt32(ref list<u8> out, i64 value) {
+    out.add(u8(value >> 24 & 0xFF))
+    out.add(u8(value >> 16 & 0xFF))
+    out.add(u8(value >> 8 & 0xFF))
+    out.add(u8(value & 0xFF))
+}
+
+void putInt16(ref list<u8> out, i64 value) {
+    out.add(u8(value >> 8 & 0xFF))
+    out.add(u8(value & 0xFF))
+}
+
+void putBytes(ref list<u8> out, string text) {
+    for (i64 i = 0; i < text.len(); i++) {
+        out.add(text[i])
+    }
+}
+
+// The text and the zero that ends it.
+void putText(ref list<u8> out, string text) {
+    putBytes(ref out, text)
+    out.add(0)
+}
+
+// Adds a message: its letter, its length and its body.
+void frame(ref list<u8> all, u8 kind, list<u8> body) {
+    all.add(kind)
+    putInt32(ref all, body.len() + 4)
+    for (u8 b in body) {
+        all.add(b)
+    }
+}
+
+i64 int32At(list<u8> data, i64 at) {
+    i64 value = i64(data[at]) << 24 | i64(data[at + 1]) << 16 | i64(data[at + 2]) << 8 | i64(data[at + 3])
+    if (value >= 0x80000000) {
+        value -= 0x100000000
+    }
+    ret value
+}
+
+i64 int16At(list<u8> data, i64 at) {
+    ret i64(data[at]) << 8 | i64(data[at + 1])
+}
+
+// The text from 'at' to 'end'.
+string textOf(list<u8> data, i64 at, i64 end) {
+    list<u8> part
+    part.reserve(end - at)
+    for (i64 i = at; i < end; i++) {
+        part.add(data[i])
+    }
+    ret string(part)
+}
+
+// The text at 'at' up to its zero, and 'at' after it.
+string textAt(list<u8> data, ref i64 at) {
+    i64 end = at
+    for (end < data.len() && data[end] != 0) {
+        end++
+    }
+    string text = textOf(data, at, end)
+    at = end + 1
+    ret text
+}
+
+void transmit(ref Wire w, list<u8> all) {
+    try {
+        w.link.write(all)
+    } catch (Exception e) {
+        w.broken = true
+        throw Error(format("the connection to the database is lost: {}", e.message()))
+    }
+}
+
+// Waits until 'need' bytes of the server are there.
+void fill(ref Wire w, i64 need) {
+    for (w.pending.len() - w.at < need) {
+        list<u8> more
+        try {
+            more = w.link.read(65536)
+        } catch (Exception e) {
+            w.broken = true
+            throw Error(format("the connection to the database is lost: {}", e.message()))
+        }
+        if (more.len() == 0) {
+            w.broken = true
+            throw Error("the connection to the database is lost: the server has closed it")
+        }
+        if (w.at > 0) {  // only what is not used yet is kept
+            list<u8> left
+            for (i64 i = w.at; i < w.pending.len(); i++) {
+                left.add(w.pending[i])
+            }
+            w.pending = move left
+            w.at = 0
+        }
+        for (u8 b in more) {
+            w.pending.add(b)
+        }
+    }
+}
+
+// The next message of the server: its letter, and its body in 'body'.
+u8 receive(ref Wire w, ref list<u8> body) {
+    fill(ref w, 5)
+    u8 kind = w.pending[w.at]
+    i64 size = int32At(w.pending, w.at + 1) - 4
+    if (size < 0) {
+        w.broken = true
+        throw Error("the connection to the database is lost: the server sent a message that is not of its protocol")
+    }
+    fill(ref w, 5 + size)
+    body.clear()
+    body.reserve(size)
+    for (i64 i = 0; i < size; i++) {
+        body.add(w.pending[w.at + 5 + i])
+    }
+    w.at += 5 + size
+    ret kind
+}
+
+// An error of the server as a text: what the program was doing, the message and
+// the code of five characters (SQLSTATE).
+string errorText(list<u8> body, string action) {
+    string message = ""
+    string code = ""
+    i64 at = 0
+    for (at < body.len() && body[at] != 0) {
+        u8 field = body[at]
+        at++
+        string value = textAt(body, ref at)
+        if (field == 'M') {
+            message = value
+        } else if (field == 'C') {
+            code = value
+        }
+    }
+    ret format("{}: {} ({})", action, message, code)
+}
+
+// The rows that a statement inserted, changed or deleted, from the tag of its end,
+// as "INSERT 0 3" or "UPDATE 2".
+i64 tagCount(list<u8> body) {
+    i64 at = 0
+    string tag = textAt(body, ref at)
+    if (!tag.startsWith("INSERT ") && !tag.startsWith("UPDATE ") && !tag.startsWith("DELETE ") &&
+        !tag.startsWith("MERGE ")) {
+        ret 0
+    }
+    try {
+        ret i64(tag.slice(tag.findLast(" ") + 1, tag.len()))
+    } catch (Exception e) {
+        ret 0
+    }
+}
+
+// What a statement gives, as the server sends it.
+struct Answer {
+    list<string> names  // of the columns
+    list<i64> types     // of the columns, as the numbers of the types of PostgreSQL
+    list<string> cells  // the values of the rows, one row after the other
+    list<bool> missing  // the ones that are NULL
+    i64 changed
+}
+
+// Reads the answers of the server to what was sent, up to the one that says it is
+// ready again, and throws the first error among them. The rows are kept with 'keep'.
+void answers(ref Wire w, string action, bool keep, ref Answer answer) {
+    string problem = ""
+    list<u8> body
+    for {
+        u8 kind = receive(ref w, ref body)
+        if (kind == 'Z') {  // ready
+            w.state = body[0]
+            break
+        } else if (kind == 'E') {
+            if (problem.len() == 0) {
+                problem = errorText(body, action)
+            }
+        } else if (kind == 'C') {
+            answer.changed += tagCount(body)
+        } else if (kind == 'T') {  // the columns
+            answer.names.clear()
+            answer.types.clear()
+            i64 count = int16At(body, 0)
+            i64 at = 2
+            for (i64 i = 0; i < count; i++) {
+                answer.names.add(textAt(body, ref at))
+                answer.types.add(int32At(body, at + 6))
+                at += 18
+            }
+        } else if (kind == 'D' && keep) {  // a row
+            i64 count = int16At(body, 0)
+            i64 at = 2
+            for (i64 i = 0; i < count; i++) {
+                i64 size = int32At(body, at)
+                at += 4
+                if (size < 0) {
+                    answer.cells.add("")
+                    answer.missing.add(true)
+                } else {
+                    answer.cells.add(textOf(body, at, at + size))
+                    answer.missing.add(false)
+                    at += size
+                }
+            }
+        } else if (kind == 'G') {  // COPY FROM STDIN: the server waits for data that std.db does not send
+            list<u8> refusal
+            putText(ref refusal, "std.db does not copy from the program")
+            list<u8> all
+            frame(ref all, 'f', refusal)
+            transmit(ref w, all)
+        }
+    }
+    if (problem.len() > 0) {
+        throw Error(problem)
+    }
+}
+
+// Runs the statements of a text, without parameters, and gives the rows changed.
+i64 simple(ref Wire w, string sql, string action) {
+    list<u8> body
+    putText(ref body, sql)
+    list<u8> all
+    frame(ref all, 'Q', body)
+    transmit(ref w, all)
+    Answer answer
+    answers(ref w, action, false, ref answer)
+    ret answer.changed
+}
+
+// Has the server read a statement, and gives its columns.
+void describe(ref Wire w, string sql, ref Answer answer) {
+    list<u8> all
+    list<u8> body
+    putText(ref body, "")
+    putText(ref body, sql)
+    putInt16(ref body, 0)
+    frame(ref all, 'P', body)
+    body.clear()
+    body.add('S')
+    putText(ref body, "")
+    frame(ref all, 'D', body)
+    body.clear()
+    frame(ref all, 'S', body)
+    transmit(ref w, all)
+    answers(ref w, "cannot prepare the statement", false, ref answer)
+}
+
+// Runs a statement with its parameters, as texts: the server reads them as the types
+// that the statement wants.
+void execute(ref Wire w, string sql, list<string> values, list<bool> given, bool keep, ref Answer answer) {
+    list<u8> all
+    list<u8> body
+    putText(ref body, "")
+    putText(ref body, sql)
+    putInt16(ref body, 0)
+    frame(ref all, 'P', body)
+    body.clear()
+    putText(ref body, "")
+    putText(ref body, "")
+    putInt16(ref body, 0)
+    putInt16(ref body, values.len())
+    for (i64 i = 0; i < values.len(); i++) {
+        if (given[i]) {
+            putInt32(ref body, values[i].len())
+            putBytes(ref body, values[i])
+        } else {
+            putInt32(ref body, -1)
+        }
+    }
+    putInt16(ref body, 0)
+    frame(ref all, 'B', body)
+    body.clear()
+    body.add('P')
+    putText(ref body, "")
+    frame(ref all, 'D', body)
+    body.clear()
+    putText(ref body, "")
+    putInt32(ref body, 0)
+    frame(ref all, 'E', body)
+    body.clear()
+    frame(ref all, 'S', body)
+    transmit(ref w, all)
+    answer.cells.clear()
+    answer.missing.clear()
+    answer.changed = 0
+    answers(ref w, "cannot run the statement", keep, ref answer)
+}
+
+// The password stretched with a salt, as SCRAM wants it (PBKDF2 with HMAC-SHA-256).
+list<u8> salted(list<u8> password, list<u8> salt, i64 rounds) {
+    list<u8> first = salt.copy()
+    first.add(0)
+    first.add(0)
+    first.add(0)
+    first.add(1)
+    list<u8> last = crypto.hmac(crypto.Hash.Sha256, password, first)
+    list<u8> result = last.copy()
+    for (i64 i = 1; i < rounds; i++) {
+        last = crypto.hmac(crypto.Hash.Sha256, password, last)
+        for (i64 k = 0; k < result.len(); k++) {
+            result[k] = result[k] ^ last[k]
+        }
+    }
+    ret result
+}
+
+// Connects to a server of PostgreSQL and logs in: the address of a 'Wire' on the
+// heap. The password never goes to the server with SCRAM-SHA-256, and the server
+// must prove that it knows it too.
+addr dial(string text, i64 timeout) {
+    Place where = place(text)
+    string action = format("cannot open the database {} at {}:{}", where.name, where.host, where.port)
+    Wire w
+    try {
+        w.link = net.connect(where.host, i32(where.port))
+    } catch (Exception e) {
+        throw Error(format("{}: {}", action, e.message()))
+    }
+    if (where.tls) {
+        list<u8> ask
+        putInt32(ref ask, 8)
+        putInt32(ref ask, 80877103)
+        transmit(ref w, ask)
+        fill(ref w, 1)
+        u8 reply = w.pending[w.at]
+        w.at++
+        if (reply != 'S' || w.at != w.pending.len()) {
+            throw Error(format("{}: the server does not accept TLS", action))
+        }
+        try {
+            w.link.startTls(where.host)
+        } catch (Exception e) {
+            throw Error(format("{}: {}", action, e.message()))
+        }
+    }
+    list<u8> start
+    putInt32(ref start, 0)  // the length, written below
+    putInt32(ref start, 196608)
+    putText(ref start, "user")
+    putText(ref start, where.user)
+    putText(ref start, "database")
+    putText(ref start, where.name)
+    putText(ref start, "client_encoding")
+    putText(ref start, "UTF8")
+    start.add(0)
+    start[2] = u8(start.len() >> 8 & 0xFF)
+    start[3] = u8(start.len() & 0xFF)
+    transmit(ref w, start)
+
+    string bare = ""  // the first message of SCRAM, without its header
+    string nonce = ""
+    string expected = ""  // the proof of the server
+    bool proved = true
+    list<u8> body
+    for {
+        u8 kind = receive(ref w, ref body)
+        if (kind == 'Z') {
+            w.state = body[0]
+            break
+        }
+        if (kind == 'E') {
+            throw Error(errorText(body, action))
+        }
+        if (kind != 'R') {
+            continue
+        }
+        i64 how = int32At(body, 0)
+        list<u8> answer
+        if (how == 0) {  // logged in
+            continue
+        } else if (how == 3) {  // the password as it is
+            putText(ref answer, where.password)
+        } else if (how == 5) {  // MD5, with the salt of the server
+            string inner = crypto.hex(crypto.md5((where.password + where.user).bytes()))
+            list<u8> second = inner.bytes()
+            for (i64 i = 4; i < 8; i++) {
+                second.add(body[i])
+            }
+            putText(ref answer, "md5" + crypto.hex(crypto.md5(second)))
+        } else if (how == 10) {  // SASL: the ways that the server has
+            bool scram = false
+            i64 at = 4
+            for (at < body.len() && body[at] != 0) {
+                if (textAt(body, ref at) == "SCRAM-SHA-256") {
+                    scram = true
+                }
+            }
+            if (!scram) {
+                throw Error(format("{}: the server asks for a way to log in that std.db does not have", action))
+            }
+            nonce = crypto.base64(crypto.random(18))
+            bare = "n=,r=" + nonce
+            proved = false
+            putText(ref answer, "SCRAM-SHA-256")
+            putInt32(ref answer, bare.len() + 3)
+            putBytes(ref answer, "n,," + bare)
+        } else if (how == 11) {  // SCRAM: the salt and the rounds of the server
+            string first = textOf(body, 4, body.len())
+            string all = ""
+            string salt = ""
+            i64 rounds = 0
+            for (string part in first.split(",")) {
+                if (part.startsWith("r=")) {
+                    all = part.slice(2, part.len())
+                } else if (part.startsWith("s=")) {
+                    salt = part.slice(2, part.len())
+                } else if (part.startsWith("i=")) {
+                    try {
+                        rounds = i64(part.slice(2, part.len()))
+                    } catch (Exception e) {
+                        rounds = 0
+                    }
+                }
+            }
+            if (nonce.len() == 0 || !all.startsWith(nonce) || all.len() == nonce.len() || rounds < 1 ||
+                rounds > 10000000) {
+                throw Error(format("{}: the server did not follow SCRAM", action))
+            }
+            list<u8> key = salted(where.password.bytes(), crypto.fromBase64(salt), rounds)
+            list<u8> clientKey = crypto.hmac(crypto.Hash.Sha256, key, "Client Key".bytes())
+            list<u8> storedKey = crypto.sha256(clientKey)
+            string unproved = "c=biws,r=" + all
+            string message = bare + "," + first + "," + unproved
+            list<u8> signature = crypto.hmac(crypto.Hash.Sha256, storedKey, message.bytes())
+            for (i64 i = 0; i < clientKey.len(); i++) {
+                clientKey[i] = clientKey[i] ^ signature[i]
+            }
+            list<u8> serverKey = crypto.hmac(crypto.Hash.Sha256, key, "Server Key".bytes())
+            expected = crypto.base64(crypto.hmac(crypto.Hash.Sha256, serverKey, message.bytes()))
+            putBytes(ref answer, unproved + ",p=" + crypto.base64(clientKey))
+        } else if (how == 12) {  // SCRAM: the proof of the server
+            proved = expected.len() > 0 && textOf(body, 4, body.len()) == "v=" + expected
+            if (!proved) {
+                throw Error(format("{}: the server did not prove that it knows the password", action))
+            }
+            continue
+        } else {
+            throw Error(format("{}: the server asks for a way to log in that std.db does not have", action))
+        }
+        list<u8> all
+        frame(ref all, 'p', answer)
+        transmit(ref w, all)
+    }
+    if (!proved) {
+        throw Error(format("{}: the server did not prove that it knows the password", action))
+    }
+    simple(ref w, format("SET lock_timeout = {}", timeout), action)
+    w.users = 1
+    addr home = alloc(8 + sizeOf<Wire>())
+    put<u64>(home, 0)
+    put<Wire>(offset(home, 8), move w)
+    ret home
+}
+
+// One user less of the connection at 'home', closed first with 'close': without
+// users, its memory is given back.
+void release(addr home, bool close) {
+    enter(home)
+    Wire w = take<Wire>(offset(home, 8))
+    if (close) {
+        try {
+            w.link.close()
+        } catch (Exception e) {
+        }
+        w.broken = true
+    }
+    w.users--
+    i64 left = w.users
+    put<Wire>(offset(home, 8), move w)
+    leave(home)
+    if (left == 0) {
+        Wire last = take<Wire>(offset(home, 8))
+        free(home)
+    }
+}
+
+// The statement with $1, $2 and the others where it has its ?, as PostgreSQL wants
+// them, and how many they are. The ? inside the texts, the names between quotes and
+// the comments stay as they are, and ?? is one ?, for the operators that have it.
+string numbered(string sql, ref i64 count) {
+    list<u8> out
+    i64 size = sql.len()
+    i64 at = 0
+    for (at < size) {
+        u8 c = sql[at]
+        if (c == '?') {
+            if (at + 1 < size && sql[at + 1] == '?') {
+                out.add('?')
+                at += 2
+                continue
+            }
+            count++
+            putBytes(ref out, format("${}", count))
+            at++
+            continue
+        }
+        i64 end = at + 1
+        if (c == '\'') {  // a text: '' inside it is a quote, and after an E a \ takes the next character
+            bool escapes = at > 0 && (sql[at - 1] == 'E' || sql[at - 1] == 'e')
+            for (end < size) {
+                if (escapes && sql[end] == '\\') {
+                    end += 2
+                } else if (sql[end] != '\'') {
+                    end++
+                } else if (end + 1 < size && sql[end + 1] == '\'') {
+                    end += 2
+                } else {
+                    end++
+                    break
+                }
+            }
+        } else if (c == '"') {  // a name
+            for (end < size && sql[end] != '"') {
+                end++
+            }
+            end++
+        } else if (c == '-' && end < size && sql[end] == '-') {  // a comment to the end of the line
+            for (end < size && sql[end] != '\n') {
+                end++
+            }
+        } else if (c == '/' && end < size && sql[end] == '*') {  // a comment, with others inside it
+            i64 depth = 1
+            end++
+            for (end < size && depth > 0) {
+                if (sql[end] == '/' && end + 1 < size && sql[end + 1] == '*') {
+                    depth++
+                    end += 2
+                } else if (sql[end] == '*' && end + 1 < size && sql[end + 1] == '/') {
+                    depth--
+                    end += 2
+                } else {
+                    end++
+                }
+            }
+        } else if (c == '$') {  // a text between $tag$ and $tag$
+            i64 close = end
+            for (close < size && (sql[close] | 0x20 >= 'a' && sql[close] | 0x20 <= 'z' || sql[close] == '_' ||
+                close > end && sql[close] >= '0' && sql[close] <= '9')) {
+                close++
+            }
+            if (close < size && sql[close] == '$') {
+                string tag = sql.slice(at, close + 1)
+                i64 last = sql.findFrom(tag, close + 1)
+                end = last < 0 ? size : last + tag.len()
+            }
+        }
+        if (end > size) {
+            end = size
+        }
+        for (i64 i = at; i < end; i++) {
+            out.add(sql[i])
+        }
+        at = end
+    }
+    ret string(out)
+}

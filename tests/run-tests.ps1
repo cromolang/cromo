@@ -28,6 +28,9 @@
 #                                  with spaces
 #   // program-arg: text           an argument of the program (repeatable, exact)
 #   // program-env: NAME=value     a variable of the environment of the program
+#   // needs-env: NAME             the test runs only when the tests have that variable, which the
+#                                  program has too: a test that needs a server, as one of
+#                                  PostgreSQL (CROMO_TEST_POSTGRES, the address of a database)
 #   // program-input: text         a line of the standard input of the program (repeatable)
 #                                  (repeatable); {dir} is the folder of the test,
 #                                  {cromo} the cromo of the tests, {port} a free port
@@ -272,6 +275,7 @@ foreach ($test in Get-ChildItem $PSScriptRoot -Recurse -Filter *.cro | Sort-Obje
     $only = ''
     $programArgs = @()
     $programEnv = @{}
+    $needsEnv = @()
     $programInput = $null
     $command = 'build'
     foreach ($line in Get-Content $test.FullName -Encoding UTF8) {
@@ -285,6 +289,7 @@ foreach ($test in Get-ChildItem $PSScriptRoot -Recurse -Filter *.cro | Sort-Obje
         elseif ($line -match '^\s*//\s*target:\s*([\w\s-]+?)\s*$') { $only = $matches[1] -split '\s+' }
         elseif ($line -match '^\s*//\s*program-arg:\s?(.*)$') { $programArgs += $matches[1] }
         elseif ($line -match '^\s*//\s*program-env:\s*([^=\s]+)=(.*?)\s*$') { $programEnv[$matches[1]] = $matches[2] }
+        elseif ($line -match '^\s*//\s*needs-env:\s*(\w+)\s*$') { $needsEnv += $matches[1] }
         elseif ($line -match '^\s*//\s*program-input:\s?(.*)$') { $programInput += [Text.Encoding]::UTF8.GetBytes($matches[1] + "`n") }
         elseif ($line -match '^\s*//\s*cromo-command:\s*(\w+)\s*$') { $command = $matches[1] }
     }
@@ -299,6 +304,12 @@ foreach ($test in Get-ChildItem $PSScriptRoot -Recurse -Filter *.cro | Sort-Obje
         $skipped++
         continue
     }
+    $missing = $needsEnv | Where-Object { -not [Environment]::GetEnvironmentVariable($_) }
+    if ($missing) {
+        $skipped++
+        continue
+    }
+    foreach ($needed in $needsEnv) { $programEnv[$needed] = [Environment]::GetEnvironmentVariable($needed) }
     $folder = $test.DirectoryName
     if ($linux) { $folder = ConvertTo-LinuxPath $folder }
     if ($android) { $folder = Get-DeviceFolder $folder }

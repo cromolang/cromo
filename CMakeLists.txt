@@ -83,6 +83,11 @@ file(GLOB CROMO_TLS_THIRD_PARTY CONFIGURE_DEPENDS
      "${CMAKE_SOURCE_DIR}/third_party/mbedtls/library/*.c" "${CMAKE_SOURCE_DIR}/third_party/monocypher/*.c")
 file(GLOB CROMO_TLS_GLUE CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/runtime/tls/*.c")
 file(GLOB CROMO_TLS_HEADERS CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/runtime/tls/*.h" "${CMAKE_SOURCE_DIR}/runtime/libc/*.h")
+# SQLite for std.db (D529), compiled in the same way and added to the same archives:
+# for a system that it does not know, with its files and its pieces of the C library
+# in runtime/db, and runtime/db/sqlite_config.h in front of both.
+set(CROMO_DB_SOURCES "${CMAKE_SOURCE_DIR}/third_party/sqlite/sqlite3.c" "${CMAKE_SOURCE_DIR}/runtime/db/sqlite_os.c")
+set(CROMO_DB_HEADERS "${CMAKE_SOURCE_DIR}/third_party/sqlite/sqlite3.h" "${CMAKE_SOURCE_DIR}/runtime/db/sqlite_config.h")
 # Without the compatibility with MSVC, clang defines __GNUC__ for Windows too, and
 # mbedTLS multiplies its big integers with the assembly of x64, as on Linux: RSA
 # takes half the time. The headers are those of runtime/libc, not of the SDK.
@@ -137,17 +142,23 @@ set(CROMO_GUI_LINUX_OBJECTS "${CROMO_RT_DIR}/gui_linux.o" "${CROMO_RT_DIR}/gui_f
 function(cromo_tls_objects folder flags objects)
   set(result)
   set(listing "")
-  foreach(source ${CROMO_TLS_THIRD_PARTY} ${CROMO_TLS_GLUE})
+  foreach(source ${CROMO_TLS_THIRD_PARTY} ${CROMO_TLS_GLUE} ${CROMO_DB_SOURCES})
     get_filename_component(name "${source}" NAME_WE)
     set(object "${CROMO_RT_DIR}/${folder}/${name}.o")
     set(warnings)
-    if(source IN_LIST CROMO_TLS_GLUE)
+    if(source IN_LIST CROMO_TLS_GLUE OR source MATCHES "/runtime/db/")
       set(warnings -Wall -Wextra)
+    endif()
+    set(more)
+    set(headers)
+    if(source IN_LIST CROMO_DB_SOURCES)
+      set(more -include "${CMAKE_SOURCE_DIR}/runtime/db/sqlite_config.h")
+      set(headers ${CROMO_DB_HEADERS})
     endif()
     add_custom_command(
       OUTPUT "${object}"
-      COMMAND "${CROMO_CLANG}" ${flags} ${warnings} ${CROMO_TLS_FLAGS} -c "${source}" -o "${object}"
-      DEPENDS "${source}" ${CROMO_TLS_HEADERS}
+      COMMAND "${CROMO_CLANG}" ${flags} ${warnings} ${CROMO_TLS_FLAGS} ${more} -c "${source}" -o "${object}"
+      DEPENDS "${source}" ${CROMO_TLS_HEADERS} ${headers}
       VERBATIM)
     list(APPEND result "${object}")
     string(APPEND listing "${object}\n")
@@ -458,7 +469,8 @@ else()
   message(STATUS "No SDK in CROMO_ANDROID_SDK or no JDK: lib/android will have no classes.dex (D453)")
 endif()
 
-file(GLOB CROMO_STD_MODULES CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/library/std/*.cro")
+# The modules, and the time zones that std.time carries (D533).
+file(GLOB CROMO_STD_MODULES CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/library/std/*.cro" "${CMAKE_SOURCE_DIR}/library/std/*.dat")
 # The programs of cromo written in Cromo, as cromo update (D403), and their icons (D425).
 file(GLOB CROMO_TOOLS CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/library/tools/*.cro" "${CMAKE_SOURCE_DIR}/library/tools/*.ico")
 add_custom_command(

@@ -38,6 +38,18 @@ The runtime contains Monocypher 4.0, for Ed25519 and X25519: <https://monocypher
 
 Dual-licensed under CC0 1.0 or the 2-clause BSD license. Its license is in `licenses/monocypher.md` (`third_party/monocypher/LICENCE.md` in the repository).
 
+## SQLite
+
+The runtime contains SQLite 3.54, for `std.db`: <https://sqlite.org>.
+
+SQLite is in the public domain: its authors have dedicated it to the public domain, as the top of `third_party/sqlite/sqlite3.c` says, and it has no license to follow.
+
+## IANA Time Zone Database
+
+The library contains the time zones of the IANA Time Zone Database 2025b, for `std.time`, in the programs that ask for a zone by its name: <https://www.iana.org/time-zones>.
+
+The database is in the public domain.
+
 ## SDL
 
 The programs that use the windows of the library, and the apps for Android, contain SDL 3.4: <https://libsdl.org>.

@@ -1,0 +1,279 @@
+// The log of a program: lines with the time, a level and a message, on the standard
+// error or at the end of a file, as text or as JSON for the services.
+//
+// '''
+// import std.log
+//
+// log.info(format("listening on {}", port))   // 2026-11-12T10:03:12.250+01:00 INFO  listening on 8080
+//
+// log.Logger service
+// service.setLevel(log.Level.Debug)           // debug() writes too
+// service.setFile("service.log")              // at the end of that file
+// service.setJson(true)                       // {"time":"...","level":"INFO","message":"..."}
+// service.info("started")
+//
+// log.Logger request = service.with("request", id).withInt("user", 42)
+// request.warn("slow answer")                 // ... "message":"slow answer","request":"7f3a","user":42}
+// '''
+//
+// The guide: [Files, processes and time](https://cromolang.org/book/en/system.html).
+
+// The module std.log (D535, P74). Nothing here is of the whole program: where a
+// logger writes, from which level and how are in the logger, a value that the
+// program keeps and gives to who writes. A line is written with one call of the
+// system, so the lines of the threads stay whole without a lock.
+import std.fs
+import std.time
+
+// How much a line of the log matters.
+public enum Level {
+    Debug  // the details that serve who looks for a problem
+    Info   // what the program does: the level of a logger that is told nothing else
+    Warn   // something to look at, which did not stop the work
+    Error  // something that failed
+}
+
+i64 rank(Level level) {
+    switch (level) {
+        case Debug {
+            ret 0
+        }
+        case Info {
+            ret 1
+        }
+        case Warn {
+            ret 2
+        }
+        case Error {
+            ret 3
+        }
+    }
+}
+
+// Writes a line that says what the program does, on the standard error, as a
+// 'Logger' that is told nothing does.
+public void info(string message) {
+    Logger plain
+    plain.info(message)
+}
+
+// Writes a line about something to look at, on the standard error.
+public void warn(string message) {
+    Logger plain
+    plain.warn(message)
+}
+
+// Writes a line about something that failed, on the standard error.
+public void error(string message) {
+    Logger plain
+    plain.error(message)
+}
+
+// A logger that writes on the standard error, whose lines have the field 'key' with
+// the text 'value' after the message: the request, the user, the part of the
+// program that writes.
+public Logger with(string key, string value) {
+    Logger plain
+    ret plain.with(key, value)
+}
+
+// A logger that writes on the standard error, whose lines have the field 'key' with
+// the number 'value'.
+public Logger withInt(string key, i64 value) {
+    Logger plain
+    ret plain.withInt(key, value)
+}
+
+// Writes the lines of a log: to the standard error or to a file, from a level on,
+// as text or as JSON, with some fields of its own after the message. One declared
+// without a value writes text to the standard error from 'Info' on. It is a value:
+// a copy has what the logger had when it was copied, and is given to the functions
+// and to the tasks that write.
+public struct Logger {
+    list<string> keys
+    list<string> values
+    list<bool> numbers  // the values written as they are in JSON
+    i64 least = 1       // the rank of the lowest level written: Info
+    bool json
+    string path  // of the file, or "" for the standard error
+
+    // The lowest level that the logger writes, 'Info' at the start: the lines below
+    // it are not written.
+    public void setLevel(Level level) {
+        least = rank(level)
+    }
+
+    // With true the lines are objects of JSON, one for each line, with "time",
+    // "level", "message" and the fields of the logger, for the tools that collect
+    // the logs; with false they are text again.
+    public void setJson(bool on) {
+        json = on
+    }
+
+    // The lines go at the end of the file at 'file', created if it does not exist,
+    // and with "" to the standard error again. The file is opened for each line, so
+    // a tool that rotates the logs can move it away at any time: the next line makes
+    // a new one. A line that cannot be written to the file goes to the standard
+    // error.
+    public void setFile(string file) {
+        path = file.copy()
+    }
+
+    // A logger as this one, with the field 'key' with the text 'value' too.
+    public Logger with(string key, string value) const {
+        Logger more = same()
+        more.keys.add(key)
+        more.values.add(value)
+        more.numbers.add(false)
+        ret more
+    }
+
+    // A logger as this one, with the field 'key' with the number 'value' too.
+    public Logger withInt(string key, i64 value) const {
+        Logger more = same()
+        more.keys.add(key)
+        more.values.add(format("{}", value))
+        more.numbers.add(true)
+        ret more
+    }
+
+    Logger same() const {
+        Logger twin
+        twin.keys = keys.copy()
+        twin.values = values.copy()
+        twin.numbers = numbers.copy()
+        twin.least = least
+        twin.json = json
+        twin.path = path.copy()
+        ret twin
+    }
+
+    // Writes a line for who looks for a problem, when the level is 'Debug'.
+    public void debug(string message) const {
+        write(0, "DEBUG", message)
+    }
+
+    // Writes a line that says what the program does.
+    public void info(string message) const {
+        write(1, "INFO", message)
+    }
+
+    // Writes a line about something to look at.
+    public void warn(string message) const {
+        write(2, "WARN", message)
+    }
+
+    // Writes a line about something that failed.
+    public void error(string message) const {
+        write(3, "ERROR", message)
+    }
+
+    void write(i64 level, string name, string message) const {
+        if (level < least) {
+            ret
+        }
+        string now = time.localNow().text()
+        list<u8> line
+        if (json) {
+            append(ref line, "{\"time\":")
+            quote(ref line, now)
+            append(ref line, ",\"level\":")
+            quote(ref line, name)
+            append(ref line, ",\"message\":")
+            quote(ref line, message)
+            for (i64 i = 0; i < keys.len(); i++) {
+                line.add(',')
+                quote(ref line, keys[i])
+                line.add(':')
+                if (numbers[i]) {
+                    append(ref line, values[i])
+                } else {
+                    quote(ref line, values[i])
+                }
+            }
+            line.add('}')
+        } else {
+            append(ref line, now)
+            line.add(' ')
+            append(ref line, name)
+            for (i64 i = name.len(); i < 6; i++) {
+                line.add(' ')
+            }
+            escape(ref line, message)
+            for (i64 i = 0; i < keys.len(); i++) {
+                line.add(' ')
+                append(ref line, keys[i])
+                line.add('=')
+                if (plain(values[i])) {
+                    append(ref line, values[i])
+                } else {
+                    quote(ref line, values[i])
+                }
+            }
+        }
+        line.add('\n')
+        string text = string(line)
+        if (path.len() > 0) {
+            try {
+                fs.appendText(path, text)
+                ret
+            } catch (Exception e) {
+            }
+        }
+        eprint("{}", text)
+    }
+}
+
+void append(ref list<u8> line, string text) {
+    for (i64 i = 0; i < text.len(); i++) {
+        line.add(text[i])
+    }
+}
+
+// The text with the ends of line and the other control characters written as in
+// JSON, so that a message is always one line.
+void escape(ref list<u8> line, string text) {
+    for (i64 i = 0; i < text.len(); i++) {
+        u8 c = text[i]
+        if (c == '\n') {
+            append(ref line, "\\n")
+        } else if (c == '\r') {
+            append(ref line, "\\r")
+        } else if (c == '\t') {
+            append(ref line, "\\t")
+        } else if (c < 0x20 || c == 0x7F) {
+            append(ref line, format("\\u{:04x}", c))
+        } else {
+            line.add(c)
+        }
+    }
+}
+
+// The text between quotes, as a string of JSON.
+void quote(ref list<u8> line, string text) {
+    line.add('"')
+    i64 from = 0
+    for (i64 i = 0; i < text.len(); i++) {
+        u8 c = text[i]
+        if (c == '"' || c == '\\') {
+            escape(ref line, text.slice(from, i))
+            line.add('\\')
+            line.add(c)
+            from = i + 1
+        }
+    }
+    escape(ref line, text.slice(from, text.len()))
+    line.add('"')
+}
+
+// A value that the text writes without quotes: not empty, with no spaces, quotes,
+// equals signs or control characters.
+bool plain(string value) {
+    for (i64 i = 0; i < value.len(); i++) {
+        u8 c = value[i]
+        if (c <= ' ' || c == '"' || c == '=' || c == '\\' || c == 0x7F) {
+            ret false
+        }
+    }
+    ret value.len() > 0
+}

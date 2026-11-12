@@ -1,0 +1,80 @@
+// std.db with the write-ahead log of SQLite (D529): the index of the log is memory
+// that the connections share; a reader reads while a transaction writes, and sees
+// what it wrote after the commit; tasks write together; a checkpoint brings the log
+// into the database.
+// Not on ARM64 here: the old qemu of the tests refuses the locks of the open files (F_OFD_SETLK).
+// target: windows linux-x86_64
+// program-env: OUT={dir}/../out/db
+// expect-output: mode wal
+// expect-output: files true true
+// expect-output: the reader sees 2 while the writer has 3
+// expect-output: the reader sees 3 after the commit
+// expect-output: tasks 403
+// expect-output: checkpoint 0
+// expect-output: again 403, mode wal
+import std.db
+import std.fs
+import std.os
+import std.thread
+
+i64 count(ref db.Connection c) {
+    db.Statement all = c.prepare("SELECT count(*) FROM notes")
+    all.next()
+    ret all.getInt(0)
+}
+
+string mode(ref db.Connection c, string sql) {
+    db.Statement ask = c.prepare(sql)
+    ask.next()
+    ret ask.getText(0)
+}
+
+i32 main() {
+    string folder = os.env("OUT")
+    fs.createFolders(folder)
+    string file = folder + "/wal.db"
+    fs.removeAll(file)
+    fs.removeAll(file + "-wal")
+    fs.removeAll(file + "-shm")
+
+    if (true) {
+        db.Database data = db.Database(file)
+        db.Connection writer = data.connect()
+        println("mode {}", mode(ref writer, "PRAGMA journal_mode = WAL"))
+        writer.exec("CREATE TABLE notes (id INTEGER PRIMARY KEY, title TEXT)")
+        writer.exec("INSERT INTO notes (title) VALUES ('one'), ('two')")
+        println("files {} {}", fs.exists(file + "-wal"), fs.exists(file + "-shm"))
+
+        db.Connection reader = data.connect()
+        writer.begin()
+        writer.exec("INSERT INTO notes (title) VALUES ('three')")
+        println("the reader sees {} while the writer has {}", count(ref reader), count(ref writer))
+        writer.commit()
+        println("the reader sees {} after the commit", count(ref reader))
+
+        data.setTimeout(20000)
+        thread.Group tasks
+        for (i64 t = 0; t < 20; t++) {
+            tasks.start([data, t]() {
+                db.Connection c = data.connect()
+                db.Statement insert = c.prepare("INSERT INTO notes (title) VALUES (?)")
+                db.Statement read = c.prepare("SELECT count(*) FROM notes")
+                for (i64 i = 0; i < 20; i++) {
+                    insert.setText(1, format("task {} row {}", t, i))
+                    insert.exec()
+                    read.next()
+                    read.reset()  // a statement left on a row would keep its view of the database
+                }
+            })
+        }
+        tasks.wait()
+        println("tasks {}", count(ref reader))
+        db.Statement checkpoint = writer.prepare("PRAGMA wal_checkpoint(TRUNCATE)")
+        checkpoint.next()
+        println("checkpoint {}", checkpoint.getInt(0))
+    }
+    db.Database data = db.Database(file)  // the file again: the mode stays in it
+    db.Connection c = data.connect()
+    println("again {}, mode {}", count(ref c), mode(ref c, "PRAGMA journal_mode"))
+    ret 0
+}

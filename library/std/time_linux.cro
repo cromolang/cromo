@@ -1,7 +1,7 @@
 // std.time on Linux (D202): clock_gettime and nanosleep, whose numbers are in
 // time_linux_x86_64.cro and time_linux_arm64.cro (D408, P23), and the zone of the
-// system from /etc/localtime (TZif, RFC 8536), with the rule of POSIX at its end
-// for the times after its last transition (D203).
+// system from /etc/localtime, and the zones with a name from the files of the
+// system (D203, D533). time.cro reads their format.
 import unsafe
 import std.fs
 
@@ -49,202 +49,57 @@ i32 localOffset(i64 seconds) {
     ret i32(zoneOffset(data, seconds) / 60)
 }
 
-// The offset in seconds: the one of the last transition before `seconds`, or the
-// rule at the end of the file after the last transition.
-i64 zoneOffset(list<u8> data, i64 seconds) {
-    if (data.len() < 44 || data[0] != 'T' || data[1] != 'Z' || data[2] != 'i' || data[3] != 'f') {
-        ret 0
+// The rules of the zone 'name' as the system has them, in TZif: a file of
+// /usr/share/zoneinfo or, on Android, a piece of the file with all the zones. Empty
+// when the system does not have the zone.
+list<u8> systemZone(string name) {
+    list<u8> none
+    try {
+        ret fs.readBytes("/usr/share/zoneinfo/" + name)
+    } catch (Exception e) {
     }
-    i64 start = 0
-    i64 timeSize = 4
-    if (data[4] >= '2') {  // the second block, with times of 64 bits
-        start = 44 + blockSize(data, 0, 4)
-        timeSize = 8
-        if (data.len() < start + 44) {
-            ret 0
+    list<string> bundles = ["/apex/com.android.tzdata/etc/tz/tzdata", "/system/usr/share/zoneinfo/tzdata"]
+    for (string bundle in bundles) {
+        list<u8> all
+        try {
+            all = fs.readBytes(bundle)
+        } catch (Exception e) {
+            continue
         }
-    }
-    i64 timeCount = number(data, start + 32, 4)
-    i64 times = start + 44
-    i64 kinds = times + timeCount * timeSize
-    i64 infos = kinds + timeCount
-    i64 index = -1
-    for (i64 i = 0; i < timeCount; i++) {
-        if (number(data, times + i * timeSize, timeSize) > seconds) {
-            break
+        if (all.len() < 24) {
+            continue
         }
-        index = i
-    }
-    if (timeSize == 8 && index == timeCount - 1) {
-        i64 footer = start + 44 + blockSize(data, start, 8)
-        if (footer < data.len() && data[footer] == '\n') {
-            list<u8> rule
-            for (i64 at = footer + 1; at < data.len() && data[at] != '\n'; at++) {
-                rule.add(data[at])
+        // "tzdata2025b" and a zero, then where the index and the data start; an entry
+        // of the index is a name of 40 bytes, a place in the data and a length.
+        i64 index = number(all, 12, 4)
+        i64 data = number(all, 16, 4)
+        for (i64 at = index; at + 52 <= data && at + 52 <= all.len(); at += 52) {
+            i64 size = 0
+            for (size < 40 && all[at + size] != 0) {
+                size++
             }
-            if (rule.len() > 0) {
-                ret ruleOffset(string(rule), seconds)
+            if (size != name.len()) {
+                continue
             }
+            bool same = true
+            for (i64 i = 0; i < size && same; i++) {
+                same = all[at + i] == name[i]
+            }
+            if (!same) {
+                continue
+            }
+            i64 from = data + number(all, at + 40, 4)
+            i64 length = number(all, at + 44, 4)
+            if (from < 0 || length < 0 || from + length > all.len()) {
+                ret none
+            }
+            list<u8> rules
+            rules.reserve(length)
+            for (i64 i = 0; i < length; i++) {
+                rules.add(all[from + i])
+            }
+            ret rules
         }
     }
-    i64 type = 0
-    if (index >= 0) {
-        type = i64(data[kinds + index])
-    }
-    ret number(data, infos + type * 6, 4)
-}
-
-// The bytes of a block of data after its header of 44 bytes.
-i64 blockSize(list<u8> data, i64 header, i64 timeSize) {
-    i64 utcCount = number(data, header + 20, 4)
-    i64 standardCount = number(data, header + 24, 4)
-    i64 leapCount = number(data, header + 28, 4)
-    i64 timeCount = number(data, header + 32, 4)
-    i64 typeCount = number(data, header + 36, 4)
-    i64 charCount = number(data, header + 40, 4)
-    ret timeCount * (timeSize + 1) + typeCount * 6 + charCount + leapCount * (timeSize + 4) + standardCount + utcCount
-}
-
-// A big-endian number of 4 or 8 bytes, with its sign.
-i64 number(list<u8> data, i64 at, i64 size) {
-    u64 value = 0
-    for (i64 i = 0; i < size; i++) {
-        value = value << 8 | u64(data[at + i])
-    }
-    if (size == 4 && value >= 0x80000000) {
-        ret i64(value) - 0x100000000
-    }
-    ret i64(value)
-}
-
-// The offset of a rule of POSIX, as "CET-1CEST,M3.5.0,M10.5.0/3", at `seconds`.
-i64 ruleOffset(string rule, i64 seconds) {
-    i64 at = 0
-    skipName(rule, ref at)
-    i64 standard = -clockValue(rule, ref at)  // POSIX counts west of Greenwich
-    if (at >= rule.len()) {
-        ret standard
-    }
-    skipName(rule, ref at)
-    i64 summer = standard + 3600
-    if (at < rule.len() && rule[at] != ',') {
-        summer = -clockValue(rule, ref at)
-    }
-    if (at >= rule.len() || rule[at] != ',') {
-        ret standard
-    }
-    at++
-    i64 startMonth = 0
-    i64 startWeek = 0
-    i64 startDay = 0
-    i64 startTime = 0
-    if (!dateRule(rule, ref at, ref startMonth, ref startWeek, ref startDay, ref startTime)) {
-        ret standard
-    }
-    if (at >= rule.len() || rule[at] != ',') {
-        ret standard
-    }
-    at++
-    i64 endMonth = 0
-    i64 endWeek = 0
-    i64 endDay = 0
-    i64 endTime = 0
-    if (!dateRule(rule, ref at, ref endMonth, ref endWeek, ref endDay, ref endTime)) {
-        ret standard
-    }
-    i64 year = i64(dateTime((seconds + standard) * 1000000000, 0).year)
-    i64 begin = ruleDay(year, startMonth, startWeek, startDay) * 86400 + startTime - standard
-    i64 end = ruleDay(year, endMonth, endWeek, endDay) * 86400 + endTime - summer
-    bool inside = seconds >= begin && seconds < end
-    if (begin > end) {  // the south: the summer goes across the new year
-        inside = seconds >= begin || seconds < end
-    }
-    if (inside) {
-        ret summer
-    }
-    ret standard
-}
-
-// A name of the zone: letters, or between < and >.
-void skipName(string rule, ref i64 at) {
-    if (at < rule.len() && rule[at] == '<') {
-        for (at < rule.len() && rule[at] != '>') {
-            at++
-        }
-        at++
-        ret
-    }
-    for (at < rule.len() && rule[at] | 0x20 >= 'a' && rule[at] | 0x20 <= 'z') {
-        at++
-    }
-}
-
-// [+|-]hh[:mm[:ss]] in seconds.
-i64 clockValue(string rule, ref i64 at) {
-    i64 sign = 1
-    if (at < rule.len() && (rule[at] == '+' || rule[at] == '-')) {
-        if (rule[at] == '-') {
-            sign = -1
-        }
-        at++
-    }
-    i64 total = digits(rule, ref at) * 3600
-    if (at < rule.len() && rule[at] == ':') {
-        at++
-        total += digits(rule, ref at) * 60
-    }
-    if (at < rule.len() && rule[at] == ':') {
-        at++
-        total += digits(rule, ref at)
-    }
-    ret sign * total
-}
-
-i64 digits(string rule, ref i64 at) {
-    i64 value = 0
-    for (at < rule.len() && rule[at] >= '0' && rule[at] <= '9') {
-        value = value * 10 + i64(rule[at] - '0')
-        at++
-    }
-    ret value
-}
-
-// Mm.w.d[/time]: the day d of the week (0 is Sunday) of the week w (5 is the last)
-// of the month m, at `time` seconds of local time, 02:00 when not written.
-bool dateRule(string rule, ref i64 at, ref i64 month, ref i64 week, ref i64 day, ref i64 time) {
-    if (at >= rule.len() || rule[at] != 'M') {
-        ret false
-    }
-    at++
-    month = digits(rule, ref at)
-    if (at >= rule.len() || rule[at] != '.') {
-        ret false
-    }
-    at++
-    week = digits(rule, ref at)
-    if (at >= rule.len() || rule[at] != '.') {
-        ret false
-    }
-    at++
-    day = digits(rule, ref at)
-    time = 7200
-    if (at < rule.len() && rule[at] == '/') {
-        at++
-        time = clockValue(rule, ref at)
-    }
-    ret true
-}
-
-// The day, from 1970-01-01, of a rule Mm.w.d in `year`.
-i64 ruleDay(i64 year, i64 month, i64 week, i64 weekday) {
-    i64 first = daysFromCivil(year, month, 1)
-    i64 next = daysFromCivil(year, month + 1, 1)
-    if (month == 12) {
-        next = daysFromCivil(year + 1, 1, 1)
-    }
-    i64 day = (weekday - (first + 4) % 7 + 7) % 7 + (week - 1) * 7  // 1970-01-01 was a Thursday
-    for (first + day >= next) {
-        day -= 7
-    }
-    ret first + day
+    ret none
 }

@@ -576,6 +576,11 @@ Each milestone lists the decisions still open that are needed **before** writing
 | **M70** | `std.gui`: the windows drawn when something changes, the components found by halves, the layout that visits each component once | none: D522 |
 | **M71** | `cromo design`, the designer of the windows: sixteen components, selections, anchors, groups and panels, the preview of a phone, undo, the form and the module made from it | none: D523, D524 |
 | **M72** | `std.gui`: a window drawn while it is resized, its title bar hidden or of another height, the buttons and the icon of the bar, rounded corners; the icon of `cromo design` | none: D525-D527 |
+| **M73** | `std.db` with SQLite: SQLite compiled without the C library, its files and its locks from the runtime, the pool, the connections, the statements and the transactions | none: D528-D530, P72 |
+| **M74** | `std.db` with PostgreSQL: the protocol of the server over `std.net`, SCRAM-SHA-256 and MD5, TLS | none: D531, P72 |
+| **M75** | The dates of `std.time`: the time zones with a name, from the system or carried by the library, a date in a zone, the formats of `strftime`, the dates read from a text | none: D532-D534, P73 |
+| **M76** | `std.log`: the levels, the lines of text and of JSON, the fields of a logger, the standard error or a file | none: D535, P74 |
+| **M77** | `std.regex`: the syntax of RE2 read into a program, the search in linear time, the groups, the replacements and the pieces | none: D536, P75 |
 | **Later** | Packages: `cromo.mod`, `cromo.sum`, `cromo get`, the archives of the tags over HTTPS, a reader of tar (D376–D391) | none: D376–D391 |
 | **Last** | Compiler written in Cromo that compiles itself and makes the same archives, when the language is mature (§2, D147, D290, D291) | |
 

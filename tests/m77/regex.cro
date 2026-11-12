@@ -1,0 +1,116 @@
+// std.regex (D536): the search and the groups, with a name too, the classes,
+// the repetitions greedy and lazy, the flags, the characters of Unicode, all the
+// matches, the replacements, the pieces, the whole text, an expression that would
+// take years with backtracking, and the errors of the expressions.
+// expect-output: 2026-11-12 of the year 2026 at 12
+// expect-output: 12/11/2026 and 02/01/2025
+// expect-output: ada@example.com: ada at example.com, 3 groups
+// expect-output: true false true
+// expect-output: <b>one</b> | <b>
+// expect-output: caffè è 9 bytes, 5 characters
+// expect-output: Hello hello HELLO
+// expect-output: first second
+// expect-output: [a] [b] [c d]
+// expect-output: 1 22 333
+// expect-output: k=v; k2=v2 and $ and v
+// expect-output: one 1-2, two -1--1 false
+// expect-output: -a-b-c-
+// expect-output: true true false
+// expect-output: 1\+1=2\? 1+1=2?
+// expect-output: found nothing: -1 -1 ""
+// expect-output: linear true 6
+// expect-output: cannot read the regular expression 'a(b': a ( without its ), at 3
+// expect-output: cannot read the regular expression '(a)\1': a reference to a group: std.regex has none, to search in a time that grows with the text, at 4
+// expect-output: cannot read the regular expression 'a(?=b)': a lookahead or a lookbehind: std.regex has none, to search in a time that grows with the text, at 3
+// expect-output: cannot read the regular expression '*a': nothing to repeat, at 0
+// expect-output: cannot read the regular expression '[z-a]': a range of a class with its end before its start, at 4
+// expect-output: cannot read the regular expression '(a{1000}){1000}': it is too large
+// expect-output: the replacement '$2' asks for the group 2, and '(a)' has 1
+import std.regex
+
+void broken(string pattern) {
+    try {
+        regex.Regex r = regex.Regex(pattern)
+        println("read {}", r.pattern())
+    } catch (Exception e) {
+        println("{}", e.message())
+    }
+}
+
+i32 main() {
+    regex.Regex date = regex.Regex("(\\d{4})-(\\d{2})-(\\d{2})")
+    regex.Match found
+    if (date.find("released on 2026-11-12", ref found)) {
+        println("{} of the year {} at {}", found.text(), found.group(1), found.start())
+    }
+    println("{}", date.replace("2026-11-12 and 2025-01-02", "$3/$2/$1"))
+
+    regex.Regex mail = regex.Regex("(?P<user>[\\w.+-]+)@(?<host>[\\w-]+(\\.[\\w-]+)+)")
+    if (mail.find("write to ada@example.com today", ref found)) {
+        println("{}: {} at {}, {} groups", found.text(), found.named("user"), found.named("host"), mail.groups())
+    }
+    println("{} {} {}", mail.matches("x ada@example.com"), mail.matchesWhole("x ada@example.com"),
+        mail.matchesWhole("ada@example.com"))
+
+    regex.Regex greedy = regex.Regex("<b>.*</b>")
+    regex.Regex lazy = regex.Regex("<b>.*?")
+    greedy.find("<b>one</b> two", ref found)
+    string all = found.text()
+    lazy.find("<b>one</b> two", ref found)
+    println("{} | {}", all, found.text())
+
+    regex.Regex word = regex.Regex("\\w+è\\s.")
+    word.find("un caffè è", ref found)
+    println("{} {} bytes, {} characters", found.text(), found.end() - found.start(),
+        regex.Regex(".").findAll("caffè").len())
+
+    string hellos = ""
+    for (regex.Match hello in regex.Regex("(?i)hello").findAll("Hello, hello and HELLO")) {
+        hellos += hello.text() + " "
+    }
+    println("{}", hellos.trim())
+    string lines = ""
+    for (regex.Match line in regex.Regex("(?m)^\\w+$").findAll("first\nsecond\n")) {
+        lines += line.text() + " "
+    }
+    println("{}", lines.trim())
+
+    string pieces = ""
+    for (string piece in regex.Regex("\\s*[,;]\\s*").split("a , b;c d")) {
+        pieces += format("[{}] ", piece)
+    }
+    println("{}", pieces.trim())
+    println("{}", regex.Regex("(\\d)\\d*").replace("1 22 333", "$0"))
+    println("{}", regex.Regex("(?P<key>\\w+):(\\w+)").replace("k:v; k2:v2", "${key}=${2}").concat(
+        regex.Regex("x").replaceFirst("x and x", " and $$")).replace(" and x", " and v"))
+
+    regex.Regex either = regex.Regex("(a)|(b)")
+    either.findFrom("ba", 1, ref found)
+    println("one {}-{}, two {}-{} {}", found.groupStart(1), found.groupEnd(1), found.groupStart(2), found.groupEnd(2),
+        found.has(2))
+    println("{}", regex.Regex("").replace("abc", "-"))
+    println("{} {} {}", regex.Regex("^[[:alpha:]_][[:alnum:]_]*$").matches("name_1"),
+        regex.Regex("\\x41\\x{e8}\\Q.*\\E").matches("Aè.*"), regex.Regex("a.c").matches("a\nc"))
+    println("{} {}", regex.escape("1+1=2?"), regex.Regex(regex.escape("1+1=2?")).replace("1+1=2?", "$0"))
+    regex.Match nothing
+    println("found nothing: {} {} {:?}", nothing.start(), nothing.end(), nothing.text())
+
+    // With backtracking, each 'a' more doubles the time of this search.
+    regex.Regex slow = regex.Regex("(a*)*(a|aa)+(a+a+)+b|(x+x+)+y")
+    string many = "a".repeat(20000)
+    println("linear {} {}", !slow.matches(many) && slow.matches(many + "b"),
+        regex.Regex("(x+x+)+y").findAll("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx xxxy xxy xy").len() * 3)
+
+    broken("a(b")
+    broken("(a)\\1")
+    broken("a(?=b)")
+    broken("*a")
+    broken("[z-a]")
+    broken("(a{1000}){1000}")
+    try {
+        regex.Regex("(a)").replace("a", "$2")
+    } catch (Exception e) {
+        println("{}", e.message())
+    }
+    ret 0
+}

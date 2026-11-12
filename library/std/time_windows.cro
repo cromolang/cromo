@@ -58,6 +58,12 @@ i32 localOffset(i64 seconds) {
     ret i32((moved - utc) / 600000000)
 }
 
+// Windows has no files of the zones: std.time uses the ones it carries.
+list<u8> systemZone(string name) {
+    list<u8> none
+    ret none
+}
+
 // In a task, the task waits and its thread runs the others (D269).
 void pause(i64 nanoseconds) {
     if (nanoseconds <= 0 || cromo_task_sleep(nanoseconds) != 0) {

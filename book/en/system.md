@@ -7,7 +7,8 @@ This chapter is about the modules that talk to the operating system:
 | [std.fs](std.fs.html) | files and folders, paths, links |
 | [std.os](std.os.html) | the system, the environment, the standard input, the end of the program |
 | [std.process](std.process.html) | other programs, with their input and output |
-| [std.time](std.time.html) | clocks, dates and pauses |
+| [std.time](std.time.html) | clocks, dates, time zones and pauses |
+| [std.log](std.log.html) | the log of the program |
 | [std.cmdline](std.cmdline.html) | the options of the command line, and the help |
 | [std.zip](std.zip.html), [std.tar](std.tar.html) | archives |
 
@@ -948,6 +949,145 @@ written less than 2 seconds ago: true
 
 So `time.unix() - fs.modified(path) > 24 * 3600` says that a file is older than a day.
 
+### Time zones
+
+A `time.Zone` says how far from UTC the clocks of a place are at each moment, with its summer time and the changes of its history. `time.zone(name)` gives the zone with a name of the IANA Time Zone Database, as `"Europe/Rome"` or `"America/New_York"`, and throws for a name that is not a zone; `time.utc()` is UTC, `time.local()` the zone of the system, and `time.fixedZone(minutes)` a zone that is always that far from UTC.
+
+`time.date(year, month, day, hour, minute, second, zone)` is the moment when the clocks of the zone show that date. A `DateTime` is a moment: `inZone(zone)` gives the same moment on the clocks of another zone, and `unix()` its seconds from 1970, the same in every zone.
+
+```cromo
+import std.time
+
+i32 main() {
+    time.Zone rome = time.zone("Europe/Rome")
+    time.Zone tokyo = time.zone("Asia/Tokyo")
+    time.DateTime meeting = time.date(2026, 7, 1, 9, 30, 0, rome)
+    println("{}", meeting.text())
+    println("{}", meeting.inZone(tokyo).text())
+    println("{}", meeting.inZone(time.utc()).text())
+    println("{} {}", rome.offsetAt(meeting.unix()), rome.name())
+
+    time.DateTime winter = meeting.addSeconds(180 * 86400).inZone(rome)
+    println("{}", winter.text())
+    ret 0
+}
+```
+
+```output
+2026-07-01T09:30:00.000+02:00
+2026-07-01T16:30:00.000+09:00
+2026-07-01T07:30:00.000Z
+120 Europe/Rome
+2026-12-28T08:30:00.000+01:00
+```
+
+A `DateTime` knows its offset from UTC, not its zone. `add(duration)` and `addSeconds(seconds)` give a later moment with the same offset, and `inZone` puts it on the clocks of the zone, which in the example have gone back to the winter time. `later.since(earlier)` is the `Duration` between two moments, `weekday()` the day of the week, from 0 for Sunday, and `yearDay()` the day of the year, from 1.
+
+The numbers of `time.date` out of their range move the others, as in `mktime` of C: the month 13 is January of the next year, and the day 0 is the last day of the month before. So `time.date(d.year, d.month + 1, 0, 0, 0, 0, zone)` is the last day of the month of `d`. When the summer time begins the clocks skip an hour, and when it ends they show an hour twice: a time that they skip is taken with the offset of before, and one that they show twice is the first of the two.
+
+The rules of the zones come from the system when it has them, as Linux and Android do, and follow its updates; otherwise from a copy of the database that the library carries, which goes into the programs that call `time.zone`, about 220 KB. So a name is known on every system, also on Windows. `time.zone` reads the rules each time: a program asks for a zone once and keeps it.
+
+### Writing and reading dates
+
+`d.format(pattern)` writes a date as the pattern says, with the letters of `strftime` of C after a `%`; `time.parse(text, pattern)` reads one with the same letters.
+
+```cromo
+import std.time
+
+i32 main() {
+    time.DateTime d = time.date(2026, 7, 1, 9, 5, 0, time.zone("Europe/Rome"))
+    println("{}", d.format("%d/%m/%Y %H:%M"))
+    println("{}", d.format("%A %e %B %Y, %I:%M %p"))
+    println("{}", d.inZone(time.utc()).format("%a, %d %b %Y %H:%M:%S GMT"))
+    println("{}", d.format("%F %T %:z, day %j, week day %u"))
+
+    time.DateTime read = time.parse("01/07/2026 09:05", "%d/%m/%Y %H:%M")
+    println("{}", read.text())
+    time.DateTime local = time.parseIn("01/07/2026 09:05", "%d/%m/%Y %H:%M", time.zone("America/New_York"))
+    println("{} {}", local.text(), local.weekday())
+    println("{}", time.parseIso("2026-07-01T09:05:00+02:00").unix() == d.unix())
+    try {
+        time.parse("31/02/2026", "%d/%m/%Y")
+    } catch (Exception e) {
+        println("{}", e.message())
+    }
+    ret 0
+}
+```
+
+```output
+01/07/2026 09:05
+Wednesday  1 July 2026, 09:05 AM
+Wed, 01 Jul 2026 07:05:00 GMT
+2026-07-01 09:05:00 +02:00, day 182, week day 3
+2026-07-01T09:05:00.000Z
+2026-07-01T09:05:00.000-04:00 3
+true
+the date '31/02/2026' is not of the calendar
+```
+
+| Letters | Write | Example |
+|---|---|---|
+| `%Y` `%y` | the year, whole and its last two digits | `2026` `26` |
+| `%m` `%B` `%b` | the month: its number, its name, its first three letters | `07` `July` `Jul` |
+| `%d` `%e` `%j` | the day of the month, with a zero or a space in front, and of the year | `01` ` 1` `182` |
+| `%A` `%a` `%u` `%w` | the day of the week: its name, three letters, its number from Monday (1 to 7) and from Sunday (0 to 6) | `Wednesday` `Wed` `3` `3` |
+| `%H` `%I` `%p` | the hour of 24, of 12, and AM or PM | `09` `09` `AM` |
+| `%M` `%S` | the minutes and the seconds | `05` `00` |
+| `%f` `%3f` `%6f` `%9f` | the fraction of the second: microseconds, or 3, 6 and 9 digits | `250000` `250` |
+| `%z` `%:z` | the offset from UTC | `+0200` `+02:00` |
+| `%s` | the seconds from 1970 | `1782889500` |
+| `%F` `%T` `%D` `%R` | `%Y-%m-%d`, `%H:%M:%S`, `%m/%d/%y`, `%H:%M` | `2026-07-01` |
+| `%%` `%n` `%t` | a `%`, an end of line, a tab | |
+
+The names of the days and of the months are in English. A letter that is not in the table throws an `Error`.
+
+`time.parse` wants the whole text to be as the pattern says, and throws an `Error` otherwise, or for a date that the calendar does not have. It takes the names in full or with three letters, in capitals or not; a space of the pattern is any number of spaces. What the pattern does not say is the first of January of 1970, at midnight. The offset is the one of the text, with `%z`, and UTC without it; `time.parseIn(text, pattern, zone)` takes a text without an offset on the clocks of a zone. `time.parseIso(text)` reads ISO 8601 and RFC 3339, what `text()` writes: `2026-07-01`, `2026-07-01T09:05`, `2026-07-01 09:05:00.250+02:00`.
+
+## The log
+
+A program that runs for long, as a service, writes what it does in a log: lines with the time, a level and a message. The module [std.log](std.log.html) writes them to the standard error, or at the end of a file.
+
+```cromo nocheck
+import std.log
+
+void serve(log.Logger service, string id) {
+    log.Logger request = service.with("request", id).withInt("user", 42)
+    request.debug("the request starts")
+    request.warn("slow answer")
+}
+
+i32 main() {
+    log.info("the service starts")
+
+    log.Logger service
+    service.setLevel(log.Level.Debug)
+    serve(service, "7f3a")
+    service.setJson(true)
+    serve(service, "7f3b")
+    ret 0
+}
+```
+
+```text
+2026-11-12T10:03:12.250+01:00 INFO  the service starts
+2026-11-12T10:03:12.250+01:00 DEBUG the request starts request=7f3a user=42
+2026-11-12T10:03:12.251+01:00 WARN  slow answer request=7f3a user=42
+{"time":"2026-11-12T10:03:12.251+01:00","level":"DEBUG","message":"the request starts","request":"7f3b","user":42}
+{"time":"2026-11-12T10:03:12.251+01:00","level":"WARN","message":"slow answer","request":"7f3b","user":42}
+```
+
+- `log.info`, `log.warn` and `log.error` write a line of their level on the standard error. The message is one string: `format` makes it from the values.
+- A `log.Logger` has the same functions, and `debug`, and it says where and how its lines are written. One declared without a value writes text on the standard error, from the level `Info` on.
+- `setLevel(level)` sets the lowest level that the logger writes, among `log.Level.Debug`, `Info`, `Warn` and `Error`.
+- `setJson(true)` makes each line an object of JSON, with `time`, `level`, `message` and the fields: the format that the tools that collect the logs of the services read.
+- `setFile(path)` sends the lines to the end of a file, created if it does not exist, and `setFile("")` to the standard error again. The file is opened for each line, so a tool that rotates the logs, as `logrotate`, can move it away at any time; the library does not rotate the files itself.
+- `with(key, text)` and `withInt(key, number)` give a logger as that one, whose lines have that field too after the message. `log.with` and `log.withInt` start from a logger of the standard error.
+
+Nothing of the log is of the whole program: a logger is a value, as a string. The program makes one, sets it, and gives it to the functions and to the tasks that write; a copy has what the logger had when it was copied, so a function that serves a request adds the number of the request to its copy and gives it to what it calls.
+
+The lines of the threads and of the tasks never mix, and a message is always one line: an end of line in it is written `\n`, so a text that comes from outside cannot make a line that looks like another. The log never throws: a line that cannot be written to the file goes to the standard error.
+
 ## Archives
 
 `std.zip` reads the archives of zip, as Windows, macOS and the forges make them, also above 4 GB; `std.tar` reads the archives of tar, as GNU tar and bsdtar make them. A `.tar.gz` is a tar compressed with gzip: `std.gzip` decompresses it first. They read and extract archives, and do not write them.
@@ -1050,5 +1190,6 @@ An archive that comes from the network cannot write outside the folder: a name t
 - `std.os` gives the system, the environment, the current folder and the standard input, and `os.exit` ends the program without running the destructors.
 - `std.cmdline` reads the options of the command line, writes the help, and handles a wrong command line with the exit code 2.
 - `std.process` runs programs to their end with `run`, or alongside with `start`, without a shell; an exit code is a value, a program that cannot start is an exception, and a `Process` waits for its program when it is destroyed.
-- `std.time` measures durations with a monotonic clock, gives the date and the time, the seconds of Unix, and pauses.
+- `std.time` measures durations with a monotonic clock, gives the date and the time, the seconds of Unix, and pauses; it moves a date between the time zones, writes it with the letters of `strftime` and reads it from a text.
+- `std.log` writes lines with the time, a level and a message, as text or as JSON, to the standard error or to a file.
 - `std.zip` and `std.tar`, with `std.gzip`, read and extract archives, without writing outside the folder.

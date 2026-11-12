@@ -1,0 +1,84 @@
+// std.log (D535): the levels and the lowest one written, the lines of text with
+// the fields of a logger, the lines of JSON, a message of more lines kept on one,
+// the file and the standard error, a copy of a logger, and the lines of many tasks,
+// never mixed.
+// program-env: OUT={dir}/../out/logs
+// expect-stderr: INFO  to the standard error
+// expect-stderr: WARN  again there user=7
+// expect-output: INFO  started
+// expect-output: WARN  slow answer request=7f3a user=42 note="two words" empty=""
+// expect-output: ERROR two\nlines and a tab\t
+// expect-output: DEBUG now the details
+// expect-output: {"time":"T","level":"INFO","message":"said \"hello\"","path":"C:\\data","count":-3}
+// expect-output: INFO  a copy keeps what it had request=7f3a user=42
+// expect-output: times true true
+// expect-output: tasks 400 lines, 400 whole
+import std.fs
+import std.log
+import std.os
+import std.thread
+import std.time
+
+i32 main() {
+    string folder = os.env("OUT")
+    fs.createFolders(folder)
+    string file = folder + "/test.log"
+    fs.removeAll(file)
+
+    log.info("to the standard error")
+    log.Logger service
+    service.setFile(file)
+    service.debug("not written")
+    service.info("started")
+    log.Logger request = service.with("request", "7f3a").withInt("user", 42)
+    request.with("note", "two words").with("empty", "").warn("slow answer")
+    service.error("two\nlines and a tab\t")
+    service.setLevel(log.Level.Debug)
+    service.debug("now the details")
+    service.setLevel(log.Level.Error)
+    service.warn("not written either")
+    service.setLevel(log.Level.Info)
+    service.setJson(true)
+    service.with("path", "C:\\data").withInt("count", -3).info("said \"hello\"")
+    request.info("a copy keeps what it had")
+    service.setJson(false)
+
+    list<string> lines = fs.readText(file).trim().split("\n")
+    bool text = true
+    bool json = false
+    for (string line in lines) {
+        if (line.startsWith("{")) {
+            i64 from = line.find("\"time\":\"") + 8
+            i64 to = line.findFrom("\"", from)
+            json = time.parseIso(line.slice(from, to)).year >= 2026
+            println("{}T{}", line.slice(0, from), line.slice(to, line.len()))
+        } else {
+            i64 space = line.find(" ")
+            text = text && time.parseIso(line.slice(0, space)).year >= 2026
+            println("{}", line.slice(space + 1, line.len()))
+        }
+    }
+    println("times {} {}", text, json)
+
+    fs.removeAll(file)
+    thread.Group tasks
+    for (i64 t = 0; t < 20; t++) {
+        tasks.start([service, t]() {
+            log.Logger mine = service.withInt("task", t)
+            for (i64 i = 0; i < 20; i++) {
+                mine.info(format("line {} of a task that writes with the others", i))
+            }
+        })
+    }
+    tasks.wait()
+    list<string> written = fs.readText(file).trim().split("\n")
+    i64 whole = 0
+    for (string line in written) {
+        if (line.contains("INFO  line ") && line.contains(" of a task that writes with the others task=")) {
+            whole++
+        }
+    }
+    println("tasks {} lines, {} whole", written.len(), whole)
+    log.withInt("user", 7).warn("again there")
+    ret 0
+}

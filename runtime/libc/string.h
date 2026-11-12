@@ -13,3 +13,9 @@ int strncmp(const char* a, const char* b, size_t count);
 char* strchr(const char* text, int value);
 char* strstr(const char* text, const char* part);
 char* strncpy(char* dest, const char* src, size_t count);
+
+// For SQLite (D529), in runtime/db/sqlite_os.c under the names of sqlite_config.h.
+size_t strspn(const char* text, const char* accept);
+size_t strcspn(const char* text, const char* reject);
+char* strrchr(const char* text, int value);
+void* memchr(const void* data, int value, size_t count);

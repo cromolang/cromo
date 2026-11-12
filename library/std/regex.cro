@@ -1,0 +1,1517 @@
+// Regular expressions: a 'Regex' says whether a text has a pattern, finds where,
+// with the groups between parentheses, replaces and splits. The time of a search
+// grows with the length of the text and never more, whatever the expression and
+// the text: an expression that comes from outside cannot stop a service.
+//
+// '''
+// import std.regex
+//
+// regex.Regex date = regex.Regex("(\\d{4})-(\\d{2})-(\\d{2})")
+// regex.Match found
+// if (date.find("released on 2026-11-12", ref found)) {
+//     println("{} of the year {}", found.text(), found.group(1))   // 2026-11-12 of the year 2026
+// }
+// println("{}", date.replace("2026-11-12", "$3/$2/$1"))            // 12/11/2026
+// '''
+//
+// The guide: [Regular expressions](https://cromolang.org/book/en/regex.html).
+
+// The module std.regex (D536). The expression is read into a tree, the tree
+// becomes a program of small instructions, and the search runs all the ways through
+// the program together, one character of the text at a time (the machine of Pike):
+// each instruction is visited at most once for each character.
+
+const i64 opChar = 0    // the character x
+const i64 opAny = 1     // any character but the end of line
+const i64 opAnyAll = 2  // any character
+const i64 opClass = 3   // a character of the class x
+const i64 opMatch = 4   // the expression is found
+const i64 opJump = 5    // goes on from x
+const i64 opSplit = 6   // goes on from x and, with less right, from y
+const i64 opSave = 7    // the position goes into the slot x of the groups
+const i64 opAssert = 8  // goes on if the position is as x says
+
+const i64 atTextStart = 0
+const i64 atTextEnd = 1
+const i64 atLineStart = 2
+const i64 atLineEnd = 3
+const i64 atWordEdge = 4
+const i64 notAtWordEdge = 5
+
+const i64 nodeEmpty = 0
+const i64 nodeChar = 1    // value: the character
+const i64 nodeAny = 2     // value: 1 when it takes the end of line too
+const i64 nodeClass = 3   // value: the class
+const i64 nodeAssert = 4  // value: where
+const i64 nodeCat = 5     // left then right
+const i64 nodeAlt = 6     // left or right
+const i64 nodeRepeat = 7  // left, from value to right times (-1: any), lazy or not
+const i64 nodeGroup = 8   // left, in the group value
+
+const i64 largest = 0x10FFFF  // the last character of Unicode
+const i64 mostCode = 100000   // the instructions of the largest program
+
+// A regular expression, ready to search. Making one reads the expression, so a
+// program makes it once and keeps it; it can be copied and given to the tasks.
+//
+// The syntax is the one of RE2, which Go and Rust use:
+//   .  any character but the end of line     [a-z0-9_]  one of a class    [^a-z]  not of it
+//   \d a digit   \w a letter, a digit or _   \s a space    \D \W \S  not of them
+//   [[:alpha:]] and the other classes of POSIX, inside a class
+//   x*  x+  x?  x{3}  x{2,}  x{2,5}          as many as it can;  x*? x+? x?? x{2,5}?  as few
+//   ab  one after the other     a|b  one or the other
+//   (x) a group     (?:x) not counted     (?P<name>x) or (?<name>x) with a name
+//   ^  $  the start and the end of the text; of each line with (?m)
+//   \A \z  the start and the end of the text     \b \B  at the edge of a word, or not
+//   (?i) capitals or not   (?s) the . takes the end of line too   (?m)   (?i:x) only for x
+//   \n \t \r \f \v \a   \x41   \x{1F600}   \Q...\E as it is   \. \* \\ the character itself
+// The characters are the ones of Unicode, so '.' takes "è" whole; \d, \w, \s, \b and
+// (?i) know the letters of ASCII only. There are no references to a group (\1) and
+// no lookahead or lookbehind ((?=x), (?!x), (?<=x)), which need more than a time
+// that grows with the text; nor the classes of Unicode (\p{L}).
+public struct Regex {
+    string source
+    list<i64> ops
+    list<i64> xs
+    list<i64> ys
+    list<list<i64>> classes  // each one its ranges in order, first and last
+    list<string> names       // of each group, "" without one; the group 0 is the whole
+    bool anchored            // the expression starts at the start of the text
+    string prefix            // the text that every match starts with
+
+    // Reads the expression. It throws an 'Error' that says what is wrong and where
+    // for an expression that is not valid, or too large.
+    public Regex(string pattern) {
+        source = pattern
+        Parser parser
+        parser.pattern = pattern
+        parser.names.add("")
+        i64 root = parser.parseAlt()
+        if (parser.at < pattern.len()) {
+            parser.fail("a ) without its (")
+        }
+        names = parser.names.copy()
+        emit(opSave, 0, 0)
+        build(parser, root)
+        emit(opSave, 1, 0)
+        emit(opMatch, 0, 0)
+        classes = parser.classes.copy()
+        i64 first = 1
+        for (first < ops.len() && ops[first] == opSave) {
+            first++
+        }
+        anchored = ops[first] == opAssert && xs[first] == atTextStart
+        list<u8> start
+        for (first < ops.len() && (ops[first] == opChar || ops[first] == opSave)) {
+            if (ops[first] == opChar) {
+                encode(ref start, xs[first])
+            }
+            first++
+        }
+        prefix = string(start)
+    }
+
+    // The expression as it was written.
+    public string pattern() const {
+        ret source
+    }
+
+    // How many groups the expression has, without the whole match, the group 0.
+    public i64 groups() const {
+        ret names.len() - 1
+    }
+
+    // True when the text has the expression somewhere in it.
+    public bool matches(string text) const {
+        list<i64> none
+        ret run(text, 0, 0, false, ref none)
+    }
+
+    // True when the whole text is the expression, from its start to its end.
+    public bool matchesWhole(string text) const {
+        list<i64> none
+        ret run(text, 0, 0, true, ref none)
+    }
+
+    // Finds the first match of the expression in the text, the leftmost one: true
+    // when there is one, which goes into 'found' with its groups.
+    public bool find(string text, ref Match found) const {
+        ret findFrom(text, 0, ref found)
+    }
+
+    // Finds the first match that starts at the position 'from', in bytes, or after
+    // it. The text before 'from' is still there for ^, \b and the others.
+    public bool findFrom(string text, i64 from, ref Match found) const {
+        if (from < 0 || from > text.len()) {
+            panic(format("regex: the position {} is not in a text of {} bytes", from, text.len()))
+        }
+        list<i64> spans
+        if (!run(text, from, names.len() * 2, false, ref spans)) {
+            ret false
+        }
+        found = made(text, spans)
+        ret true
+    }
+
+    // All the matches of the expression in the text, in order, each one after the
+    // end of the one before.
+    public list<Match> findAll(string text) const {
+        list<Match> all
+        i64 from = 0
+        i64 last = -1  // the end of the match before
+        for (from <= text.len()) {
+            list<i64> spans
+            if (!run(text, from, names.len() * 2, false, ref spans)) {
+                break
+            }
+            if (spans[1] > spans[0] || spans[0] != last) {  // not an empty one right after a match
+                all.add(made(text, spans))
+                last = spans[1]
+            }
+            from = spans[1]
+            if (spans[1] == spans[0]) {
+                from += width(text, from)
+                if (from == spans[1]) {
+                    break  // an empty match at the end of the text
+                }
+            }
+        }
+        ret all
+    }
+
+    // The text with every match replaced by 'replacement', where $1 is the group 1
+    // of the match, ${1} the same, ${name} the group with that name, $0 the whole
+    // match and $$ a $. It throws an 'Error' for a group that the expression does
+    // not have.
+    public string replace(string text, string replacement) const {
+        ret replaced(text, replacement, -1)
+    }
+
+    // The text with the first match replaced, as replace() does.
+    public string replaceFirst(string text, string replacement) const {
+        ret replaced(text, replacement, 1)
+    }
+
+    // The pieces of the text between the matches: Regex("\\s*,\\s*").split("a , b,c")
+    // gives "a", "b" and "c". A text with no match is one piece.
+    public list<string> split(string text) const {
+        list<string> pieces
+        i64 from = 0
+        for (Match found in findAll(text)) {
+            if (found.end() == found.start() && (found.start() == 0 || found.start() == text.len())) {
+                continue  // an empty match at an end splits nothing
+            }
+            pieces.add(text.slice(from, found.start()))
+            from = found.end()
+        }
+        pieces.add(text.slice(from, text.len()))
+        ret pieces
+    }
+
+    string replaced(string text, string replacement, i64 most) const {
+        list<Piece> pieces = template(replacement)
+        list<u8> out
+        i64 from = 0
+        i64 done = 0
+        for (Match found in findAll(text)) {
+            if (done == most) {
+                break
+            }
+            done++
+            appendSlice(ref out, text, from, found.start())
+            for (Piece piece in pieces) {
+                if (piece.group < 0) {
+                    appendSlice(ref out, piece.text, 0, piece.text.len())
+                } else {
+                    string value = found.group(piece.group)
+                    appendSlice(ref out, value, 0, value.len())
+                }
+            }
+            from = found.end()
+        }
+        appendSlice(ref out, text, from, text.len())
+        ret string(out)
+    }
+
+    // The pieces of a replacement: texts and groups.
+    list<Piece> template(string replacement) const {
+        list<Piece> pieces
+        list<u8> plain
+        i64 at = 0
+        for (at < replacement.len()) {
+            u8 c = replacement[at]
+            at++
+            if (c != '$' || at >= replacement.len()) {
+                plain.add(c)
+                continue
+            }
+            u8 next = replacement[at]
+            i64 group = -1
+            if (next == '$') {
+                plain.add('$')
+                at++
+                continue
+            } else if (next >= '0' && next <= '9') {
+                group = 0
+                for (at < replacement.len() && replacement[at] >= '0' && replacement[at] <= '9' && group < 100000) {
+                    group = group * 10 + i64(replacement[at] - '0')
+                    at++
+                }
+            } else if (next == '{') {
+                i64 close = replacement.findFrom("}", at)
+                if (close < 0) {
+                    throw Error(format("the replacement '{}' has a ${{ without its }}", replacement))
+                }
+                string name = replacement.slice(at + 1, close)
+                at = close + 1
+                group = groupOf(name)
+                if (group < 0) {
+                    throw Error(format("the replacement '{}' asks for the group '{}', which '{}' does not have",
+                        replacement, name, source))
+                }
+            } else {
+                plain.add(c)
+                continue
+            }
+            if (group >= names.len()) {
+                throw Error(format("the replacement '{}' asks for the group {}, and '{}' has {}", replacement, group,
+                    source, names.len() - 1))
+            }
+            Piece text
+            text.group = -1
+            text.text = string(plain)
+            pieces.add(text)
+            plain.clear()
+            Piece taken
+            taken.group = group
+            pieces.add(taken)
+        }
+        Piece rest
+        rest.group = -1
+        rest.text = string(plain)
+        pieces.add(rest)
+        ret pieces
+    }
+
+    // The group with a name, or the one of a number written as text: -1 without it.
+    i64 groupOf(string name) const {
+        bool number = name.len() > 0 && name.len() < 6
+        for (i64 i = 0; i < name.len() && number; i++) {
+            number = name[i] >= '0' && name[i] <= '9'
+        }
+        if (number) {
+            i64 index = i64(name)
+            if (index < names.len()) {
+                ret index
+            }
+            ret -1
+        }
+        for (i64 i = 1; i < names.len(); i++) {
+            if (name.len() > 0 && names[i] == name) {
+                ret i
+            }
+        }
+        ret -1
+    }
+
+    Match made(string text, list<i64> spans) const {
+        Match found
+        found.spans = spans.copy()
+        found.names = names.copy()
+        for (i64 i = 0; i < names.len(); i++) {
+            if (spans[i * 2] >= 0 && spans[i * 2 + 1] >= 0) {
+                found.texts.add(text.slice(spans[i * 2], spans[i * 2 + 1]))
+            } else {
+                found.texts.add("")
+            }
+        }
+        ret found
+    }
+
+    // ---- from the tree to the program ----
+
+    i64 emit(i64 op, i64 x, i64 y) {
+        if (ops.len() >= mostCode) {
+            throw Error(format("cannot read the regular expression '{}': it is too large", source))
+        }
+        ops.add(op)
+        xs.add(x)
+        ys.add(y)
+        ret ops.len() - 1
+    }
+
+    void build(Parser parser, i64 node) {
+        i64 kind = parser.kinds[node]
+        i64 left = parser.lefts[node]
+        i64 right = parser.rights[node]
+        i64 value = parser.values[node]
+        if (kind == nodeChar) {
+            emit(opChar, value, 0)
+        } else if (kind == nodeAny) {
+            if (value == 1) {
+                emit(opAnyAll, 0, 0)
+            } else {
+                emit(opAny, 0, 0)
+            }
+        } else if (kind == nodeClass) {
+            emit(opClass, value, 0)
+        } else if (kind == nodeAssert) {
+            emit(opAssert, value, 0)
+        } else if (kind == nodeCat) {
+            build(parser, left)
+            build(parser, right)
+        } else if (kind == nodeAlt) {
+            i64 split = emit(opSplit, 0, 0)
+            xs[split] = ops.len()
+            build(parser, left)
+            i64 jump = emit(opJump, 0, 0)
+            ys[split] = ops.len()
+            build(parser, right)
+            xs[jump] = ops.len()
+        } else if (kind == nodeGroup) {
+            if (value > 0) {
+                emit(opSave, value * 2, 0)
+            }
+            build(parser, left)
+            if (value > 0) {
+                emit(opSave, value * 2 + 1, 0)
+            }
+        } else if (kind == nodeRepeat) {
+            bool lazy = parser.lazies[node]
+            i64 copies = value
+            if (right < 0 && value > 0) {
+                copies--  // the last one is the body of the loop
+            }
+            for (i64 i = 0; i < copies; i++) {
+                build(parser, left)
+            }
+            if (right < 0 && value > 0) {  // once, and again while it can: a loop that ends after its body
+                i64 start = ops.len()
+                build(parser, left)
+                i64 split = emit(opSplit, 0, 0)
+                choose(split, start, ops.len(), lazy)
+            } else if (right < 0 && parser.nullable(left)) {
+                // Any number of something that can take nothing: once or more, or not at
+                // all, so that the ways have the right order (as Go does).
+                i64 skip = emit(opSplit, 0, 0)
+                i64 start = ops.len()
+                build(parser, left)
+                i64 split = emit(opSplit, 0, 0)
+                choose(split, start, ops.len(), lazy)
+                choose(skip, start, ops.len(), lazy)
+            } else if (right < 0) {  // any number: a loop that can be skipped
+                i64 split = emit(opSplit, 0, 0)
+                build(parser, left)
+                emit(opJump, split, 0)
+                choose(split, split + 1, ops.len(), lazy)
+            } else {  // and then up to right - value more, each one only after the one before
+                list<i64> splits
+                for (i64 i = value; i < right; i++) {
+                    splits.add(emit(opSplit, 0, 0))
+                    build(parser, left)
+                }
+                for (i64 split in splits) {
+                    choose(split, split + 1, ops.len(), lazy)
+                }
+            }
+        }
+    }
+
+    // A split that goes on with the expression first, or after it first when lazy.
+    void choose(i64 split, i64 inside, i64 after, bool lazy) {
+        if (lazy) {
+            xs[split] = after
+            ys[split] = inside
+        } else {
+            xs[split] = inside
+            ys[split] = after
+        }
+    }
+
+    // ---- the search ----
+
+    // Searches from 'from': true with a match, whose first 'slots' positions of the
+    // groups go into 'result'. With 'whole' the match is the text from 'from' to its
+    // end.
+    bool run(string text, i64 from, i64 slots, bool whole, ref list<i64> result) const {
+        Threads one = threads(ops.len(), slots)
+        Threads two = threads(ops.len(), slots)
+        list<i64> work
+        for (i64 i = 0; i < slots; i++) {
+            work.add(-1)
+        }
+        list<i64> stack
+        bool matched = false
+        i64 at = from
+        bool flip = false
+        for {
+            bool more = false
+            if (flip) {
+                more = advance(text, from, ref at, slots, whole, ref two, ref one, ref work, ref stack, ref matched,
+                    ref result)
+            } else {
+                more = advance(text, from, ref at, slots, whole, ref one, ref two, ref work, ref stack, ref matched,
+                    ref result)
+            }
+            if (!more) {
+                break
+            }
+            flip = !flip
+        }
+        ret matched
+    }
+
+    // A character of the text: the ways in 'current' that take it go into 'next'.
+    // False when the search is over.
+    bool advance(string text, i64 from, ref i64 at, i64 slots, bool whole, ref Threads current, ref Threads next,
+        ref list<i64> work, ref list<i64> stack, ref bool matched, ref list<i64> result) const {
+        bool fixed = anchored || whole
+        if (!matched && (at == from || !fixed)) {  // a match can start here, after the ones that started before
+            if (current.count == 0 && prefix.len() > 0 && !fixed) {
+                i64 found = text.findFrom(prefix, at)
+                if (found < 0) {
+                    ret false
+                }
+                at = found
+            }
+            for (i64 i = 0; i < slots; i++) {
+                work[i] = -1
+            }
+            add(ref current, 0, at, text, slots, ref work, ref stack)
+        }
+        if (current.count == 0 && (matched || fixed)) {
+            ret false
+        }
+        i64 c = -1
+        i64 size = 0
+        if (at < text.len()) {
+            size = width(text, at)
+            c = decode(text, at, size)
+        }
+        next.count = 0
+        next.stamp++
+        for (i64 i = 0; i < current.count; i++) {
+            i64 pc = current.pcs[i]
+            i64 op = ops[pc]
+            if (op == opMatch) {
+                if (whole && at != text.len()) {
+                    continue
+                }
+                result.clear()
+                for (i64 s = 0; s < slots; s++) {
+                    result.add(current.slots[i * slots + s])
+                }
+                matched = true
+                break  // the ways after this one have less right
+            }
+            bool takes = false
+            if (c < 0) {
+                takes = false
+            } else if (op == opChar) {
+                takes = c == xs[pc]
+            } else if (op == opAny) {
+                takes = c != 10
+            } else if (op == opAnyAll) {
+                takes = true
+            } else if (op == opClass) {
+                takes = inClass(classes[xs[pc]], c)
+            }
+            if (takes) {
+                for (i64 s = 0; s < slots; s++) {
+                    work[s] = current.slots[i * slots + s]
+                }
+                add(ref next, pc + 1, at + size, text, slots, ref work, ref stack)
+            }
+        }
+        if (c < 0) {
+            ret false
+        }
+        at += size
+        ret true
+    }
+
+    // Adds to the ways the instructions that take a character, reached from 'pc'
+    // without taking one, in the order of their right; each one once.
+    void add(ref Threads ways, i64 start, i64 at, string text, i64 slots, ref list<i64> work,
+        ref list<i64> stack) const {
+        stack.clear()
+        stack.add(start)
+        stack.add(-1)
+        for (stack.len() > 0) {
+            i64 old = stack.remove(stack.len() - 1)
+            i64 pc = stack.remove(stack.len() - 1)
+            if (pc < 0) {  // back from a group: its slot as it was
+                work[-pc - 1] = old
+                continue
+            }
+            if (ways.marks[pc] == ways.stamp) {
+                continue
+            }
+            ways.marks[pc] = ways.stamp
+            i64 op = ops[pc]
+            if (op == opJump) {
+                stack.add(xs[pc])
+                stack.add(-1)
+            } else if (op == opSplit) {
+                stack.add(ys[pc])
+                stack.add(-1)
+                stack.add(xs[pc])
+                stack.add(-1)
+            } else if (op == opSave) {
+                i64 slot = xs[pc]
+                if (slot < slots) {
+                    stack.add(-slot - 1)
+                    stack.add(work[slot])
+                    work[slot] = at
+                }
+                stack.add(pc + 1)
+                stack.add(-1)
+            } else if (op == opAssert) {
+                if (holds(xs[pc], text, at)) {
+                    stack.add(pc + 1)
+                    stack.add(-1)
+                }
+            } else {
+                i64 place = ways.count
+                ways.pcs[place] = pc
+                for (i64 s = 0; s < slots; s++) {
+                    ways.slots[place * slots + s] = work[s]
+                }
+                ways.count++
+            }
+        }
+    }
+}
+
+// A match of an expression in a text, from find() and findAll(): where it is, its
+// text and the ones of its groups. The positions are in bytes, as the ones of a
+// string. A 'Match' that no search has filled has no text, and -1 as its start and
+// its end.
+public struct Match {
+    list<i64> spans
+    list<string> texts
+    list<string> names
+
+    // Where the match starts in the text.
+    public i64 start() const {
+        if (spans.len() == 0) {
+            ret -1
+        }
+        ret spans[0]
+    }
+
+    // Where the match ends: the position after its last byte.
+    public i64 end() const {
+        if (spans.len() == 0) {
+            ret -1
+        }
+        ret spans[1]
+    }
+
+    // The text of the match.
+    public string text() const {
+        if (texts.len() == 0) {
+            ret ""
+        }
+        ret texts[0]
+    }
+
+    // The text of the group 'index': 1 is the first ( of the expression, 0 the whole
+    // match. Empty for a group that the match did not go through, as (b) in "a|(b)"
+    // on "a": has() tells it from a group that took an empty text. A group that the
+    // expression does not have is a panic.
+    public string group(i64 index) const {
+        check(index)
+        ret texts[index]
+    }
+
+    // True when the match went through the group 'index'.
+    public bool has(i64 index) const {
+        check(index)
+        ret spans[index * 2] >= 0
+    }
+
+    // Where the group 'index' starts, or -1 when the match did not go through it.
+    public i64 groupStart(i64 index) const {
+        check(index)
+        ret spans[index * 2]
+    }
+
+    // Where the group 'index' ends, or -1 when the match did not go through it.
+    public i64 groupEnd(i64 index) const {
+        check(index)
+        ret spans[index * 2 + 1]
+    }
+
+    // The text of the group with a name, as (?P<year>\d+): empty for a group that
+    // the match did not go through. A name that the expression does not have is a
+    // panic.
+    public string named(string name) const {
+        for (i64 i = 1; i < names.len(); i++) {
+            if (name.len() > 0 && names[i] == name) {
+                ret texts[i]
+            }
+        }
+        panic(format("regex: the expression has no group '{}'", name))
+    }
+
+    void check(i64 index) const {
+        if (index < 0 || index >= texts.len()) {
+            panic(format("regex: the group {} is not among the {} of the expression", index, texts.len() - 1))
+        }
+    }
+}
+
+// The text with a \ before the characters that mean something in an expression: an
+// expression that finds the text as it is. escape("1+1") is "1\+1".
+public string escape(string text) {
+    list<u8> out
+    for (i64 i = 0; i < text.len(); i++) {
+        u8 c = text[i]
+        if (special(c)) {
+            out.add('\\')
+        }
+        out.add(c)
+    }
+    ret string(out)
+}
+
+bool special(u8 c) {
+    ret c == '\\' || c == '.' || c == '+' || c == '*' || c == '?' || c == '(' || c == ')' || c == '|' || c == '[' ||
+        c == ']' || c == '{' || c == '}' || c == '^' || c == '$'
+}
+
+// A piece of a replacement: a text, or the group to put there.
+struct Piece {
+    i64 group  // -1 for a text
+    string text
+}
+
+// The ways through the program that are alive at a character: where each one is,
+// and its positions of the groups. An instruction is in it once: 'marks' says
+// whether it is there already.
+struct Threads {
+    list<i64> pcs
+    list<i64> slots
+    list<i64> marks
+    i64 stamp
+    i64 count
+}
+
+Threads threads(i64 size, i64 slots) {
+    Threads ways
+    ways.stamp = 1
+    ways.pcs.reserve(size)
+    ways.marks.reserve(size)
+    ways.slots.reserve(size * slots)
+    for (i64 i = 0; i < size; i++) {
+        ways.pcs.add(0)
+        ways.marks.add(0)
+    }
+    for (i64 i = 0; i < size * slots; i++) {
+        ways.slots.add(-1)
+    }
+    ret ways
+}
+
+bool holds(i64 where, string text, i64 at) {
+    if (where == atTextStart) {
+        ret at == 0
+    }
+    if (where == atTextEnd) {
+        ret at == text.len()
+    }
+    if (where == atLineStart) {
+        ret at == 0 || text[at - 1] == '\n'
+    }
+    if (where == atLineEnd) {
+        ret at == text.len() || text[at] == '\n'
+    }
+    bool before = at > 0 && wordByte(text[at - 1])
+    bool after = at < text.len() && wordByte(text[at])
+    if (where == atWordEdge) {
+        ret before != after
+    }
+    ret before == after
+}
+
+bool wordByte(u8 c) {
+    ret c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_'
+}
+
+// The bytes of the character of UTF-8 at 'at'.
+i64 width(string text, i64 at) {
+    if (at >= text.len()) {
+        ret 0
+    }
+    u8 c = text[at]
+    i64 size = 1
+    if (c >= 0xF0) {
+        size = 4
+    } else if (c >= 0xE0) {
+        size = 3
+    } else if (c >= 0xC0) {
+        size = 2
+    }
+    if (at + size > text.len()) {
+        ret 1
+    }
+    ret size
+}
+
+// The character of 'size' bytes at 'at'.
+i64 decode(string text, i64 at, i64 size) {
+    i64 c = i64(text[at])
+    if (size == 2) {
+        ret (c & 0x1F) << 6 | i64(text[at + 1]) & 0x3F
+    }
+    if (size == 3) {
+        ret (c & 0x0F) << 12 | (i64(text[at + 1]) & 0x3F) << 6 | i64(text[at + 2]) & 0x3F
+    }
+    if (size == 4) {
+        ret (c & 0x07) << 18 | (i64(text[at + 1]) & 0x3F) << 12 | (i64(text[at + 2]) & 0x3F) << 6 |
+            i64(text[at + 3]) & 0x3F
+    }
+    ret c
+}
+
+// Adds the bytes of UTF-8 of a character.
+void encode(ref list<u8> out, i64 c) {
+    if (c < 0x80) {
+        out.add(u8(c))
+    } else if (c < 0x800) {
+        out.add(u8(0xC0 | c >> 6))
+        out.add(u8(0x80 | c & 0x3F))
+    } else if (c < 0x10000) {
+        out.add(u8(0xE0 | c >> 12))
+        out.add(u8(0x80 | c >> 6 & 0x3F))
+        out.add(u8(0x80 | c & 0x3F))
+    } else {
+        out.add(u8(0xF0 | c >> 18))
+        out.add(u8(0x80 | c >> 12 & 0x3F))
+        out.add(u8(0x80 | c >> 6 & 0x3F))
+        out.add(u8(0x80 | c & 0x3F))
+    }
+}
+
+void appendSlice(ref list<u8> out, string text, i64 from, i64 to) {
+    for (i64 i = from; i < to; i++) {
+        out.add(text[i])
+    }
+}
+
+// True when the character is in one of the ranges, which are in order.
+bool inClass(list<i64> ranges, i64 c) {
+    i64 low = 0
+    i64 high = ranges.len() / 2
+    for (low < high) {
+        i64 middle = (low + high) / 2
+        if (c < ranges[middle * 2]) {
+            high = middle
+        } else if (c > ranges[middle * 2 + 1]) {
+            low = middle + 1
+        } else {
+            ret true
+        }
+    }
+    ret false
+}
+
+// The ranges in order, with the ones that touch joined.
+list<i64> ordered(list<i64> ranges) {
+    list<i64> sorted = ranges.copy()
+    for (i64 i = 2; i < sorted.len(); i += 2) {  // few ranges: an insertion sort
+        i64 first = sorted[i]
+        i64 last = sorted[i + 1]
+        i64 j = i
+        for (j >= 2 && sorted[j - 2] > first) {
+            sorted[j] = sorted[j - 2]
+            sorted[j + 1] = sorted[j - 1]
+            j -= 2
+        }
+        sorted[j] = first
+        sorted[j + 1] = last
+    }
+    list<i64> joined
+    for (i64 i = 0; i < sorted.len(); i += 2) {
+        i64 end = joined.len()
+        if (end > 0 && sorted[i] <= joined[end - 1] + 1) {
+            if (sorted[i + 1] > joined[end - 1]) {
+                joined[end - 1] = sorted[i + 1]
+            }
+        } else {
+            joined.add(sorted[i])
+            joined.add(sorted[i + 1])
+        }
+    }
+    ret joined
+}
+
+// The characters that are not in the ranges.
+list<i64> inverted(list<i64> ranges) {
+    list<i64> sorted = ordered(ranges)
+    list<i64> others
+    i64 next = 0
+    for (i64 i = 0; i < sorted.len(); i += 2) {
+        if (sorted[i] > next) {
+            others.add(next)
+            others.add(sorted[i] - 1)
+        }
+        next = sorted[i + 1] + 1
+    }
+    if (next <= largest) {
+        others.add(next)
+        others.add(largest)
+    }
+    ret others
+}
+
+// The ranges with the letters of ASCII in both cases.
+list<i64> bothCases(list<i64> ranges) {
+    list<i64> more = ranges.copy()
+    for (i64 i = 0; i < ranges.len(); i += 2) {
+        addCase(ref more, ranges[i], ranges[i + 1], 0x61, 0x7A, -32)
+        addCase(ref more, ranges[i], ranges[i + 1], 0x41, 0x5A, 32)
+    }
+    ret more
+}
+
+// The part of first-last between low and high, moved by shift.
+void addCase(ref list<i64> more, i64 first, i64 last, i64 low, i64 high, i64 shift) {
+    i64 from = first
+    if (from < low) {
+        from = low
+    }
+    i64 to = last
+    if (to > high) {
+        to = high
+    }
+    if (from <= to) {
+        more.add(from + shift)
+        more.add(to + shift)
+    }
+}
+
+// The ranges of \d, \w and \s, and of a class of POSIX; empty for another name.
+list<i64> namedClass(string name) {
+    switch (name) {
+        case "d" {
+            ret [0x30, 0x39]
+        }
+        case "w" {
+            ret [0x30, 0x39, 0x41, 0x5A, 0x5F, 0x5F, 0x61, 0x7A]
+        }
+        case "s" {
+            ret [0x09, 0x0A, 0x0C, 0x0D, 0x20, 0x20]
+        }
+        case "alpha" {
+            ret [0x41, 0x5A, 0x61, 0x7A]
+        }
+        case "digit" {
+            ret [0x30, 0x39]
+        }
+        case "alnum" {
+            ret [0x30, 0x39, 0x41, 0x5A, 0x61, 0x7A]
+        }
+        case "upper" {
+            ret [0x41, 0x5A]
+        }
+        case "lower" {
+            ret [0x61, 0x7A]
+        }
+        case "space" {
+            ret [0x09, 0x0D, 0x20, 0x20]
+        }
+        case "blank" {
+            ret [0x09, 0x09, 0x20, 0x20]
+        }
+        case "punct" {
+            ret [0x21, 0x2F, 0x3A, 0x40, 0x5B, 0x60, 0x7B, 0x7E]
+        }
+        case "xdigit" {
+            ret [0x30, 0x39, 0x41, 0x46, 0x61, 0x66]
+        }
+        case "word" {
+            ret [0x30, 0x39, 0x41, 0x5A, 0x5F, 0x5F, 0x61, 0x7A]
+        }
+        case "ascii" {
+            ret [0, 0x7F]
+        }
+        case "cntrl" {
+            ret [0, 0x1F, 0x7F, 0x7F]
+        }
+        case "print" {
+            ret [0x20, 0x7E]
+        }
+        case "graph" {
+            ret [0x21, 0x7E]
+        }
+    }
+    list<i64> none
+    ret none
+}
+
+// Reads an expression into a tree of nodes.
+struct Parser {
+    string pattern
+    i64 at
+    list<i64> kinds
+    list<i64> lefts
+    list<i64> rights
+    list<i64> values
+    list<bool> lazies
+    list<list<i64>> classes
+    list<string> names
+    bool anyCase    // (?i)
+    bool lines      // (?m)
+    bool wholeDot   // (?s)
+    bool reluctant  // (?U): the repetitions take as few as they can, and as many with a ?
+    i64 depth
+
+    void fail(string reason) const {
+        throw Error(format("cannot read the regular expression '{}': {}, at {}", pattern, reason, at))
+    }
+
+    i64 node(i64 kind, i64 left, i64 right, i64 value) {
+        if (kinds.len() >= mostCode) {
+            fail("it is too large")
+        }
+        kinds.add(kind)
+        lefts.add(left)
+        rights.add(right)
+        values.add(value)
+        lazies.add(false)
+        ret kinds.len() - 1
+    }
+
+    bool more() const {
+        ret at < pattern.len()
+    }
+
+    // True when the node can match without taking a character.
+    bool nullable(i64 index) const {
+        i64 kind = kinds[index]
+        if (kind == nodeEmpty || kind == nodeAssert) {
+            ret true
+        }
+        if (kind == nodeCat) {
+            ret nullable(lefts[index]) && nullable(rights[index])
+        }
+        if (kind == nodeAlt) {
+            ret nullable(lefts[index]) || nullable(rights[index])
+        }
+        if (kind == nodeGroup) {
+            ret nullable(lefts[index])
+        }
+        if (kind == nodeRepeat) {
+            ret values[index] == 0 || nullable(lefts[index])
+        }
+        ret false
+    }
+
+    // a|b|c
+    i64 parseAlt() {
+        depth++
+        if (depth > 200) {
+            fail("too many ( one inside the other")
+        }
+        i64 left = parseCat()
+        for (more() && pattern[at] == '|') {
+            at++
+            i64 right = parseCat()
+            left = node(nodeAlt, left, right, 0)
+        }
+        depth--
+        ret left
+    }
+
+    // abc
+    i64 parseCat() {
+        i64 all = -1
+        for (more() && pattern[at] != '|' && pattern[at] != ')') {
+            i64 piece = parseRepeat()
+            if (piece < 0) {  // flags, as (?i): nothing to find
+                continue
+            }
+            if (all < 0) {
+                all = piece
+            } else {
+                all = node(nodeCat, all, piece, 0)
+            }
+        }
+        if (all < 0) {
+            all = node(nodeEmpty, 0, 0, 0)
+        }
+        ret all
+    }
+
+    // a* a+ a? a{2,5}, and with a ? after them
+    i64 parseRepeat() {
+        i64 atom = parseAtom()
+        if (!more()) {
+            ret atom
+        }
+        u8 c = pattern[at]
+        i64 least = 0
+        i64 most = -1
+        if (c == '*') {
+            at++
+        } else if (c == '+') {
+            least = 1
+            at++
+        } else if (c == '?') {
+            most = 1
+            at++
+        } else if (c != '{' || !parseCount(ref least, ref most)) {
+            ret atom
+        }
+        if (atom < 0) {
+            fail("nothing to repeat")
+        }
+        bool lazy = reluctant
+        if (more() && pattern[at] == '?') {
+            lazy = !lazy
+            at++
+        }
+        if (more() && (pattern[at] == '*' || pattern[at] == '+' || pattern[at] == '?')) {
+            fail("a repetition of a repetition: put the first one between ( and )")
+        }
+        i64 repeat = node(nodeRepeat, atom, most, least)
+        lazies[repeat] = lazy
+        ret repeat
+    }
+
+    // {3} {2,} {2,5} at the position: false, with nothing read, for a { that is not
+    // a count.
+    bool parseCount(ref i64 least, ref i64 most) {
+        i64 start = at
+        at++
+        i64 first = digits()
+        bool fine = first >= 0
+        i64 last = first
+        if (fine && more() && pattern[at] == ',') {
+            at++
+            last = -1
+            if (more() && pattern[at] != '}') {
+                last = digits()
+                fine = last >= 0
+            }
+        }
+        if (!fine || !more() || pattern[at] != '}') {
+            at = start
+            ret false
+        }
+        at++
+        if (first > 1000 || last > 1000) {
+            fail("a repetition of more than 1000 times")
+        }
+        if (last >= 0 && last < first) {
+            fail("a repetition with the most below the least")
+        }
+        least = first
+        most = last
+        ret true
+    }
+
+    // A number at the position, or -1.
+    i64 digits() {
+        i64 start = at
+        i64 value = 0
+        for (more() && pattern[at] >= '0' && pattern[at] <= '9' && value < 100000) {
+            value = value * 10 + i64(pattern[at] - '0')
+            at++
+        }
+        if (at == start) {
+            ret -1
+        }
+        ret value
+    }
+
+    // A character, a class, a group: -1 for flags alone.
+    i64 parseAtom() {
+        u8 c = pattern[at]
+        if (c == '(') {
+            at++
+            ret parseGroup()
+        }
+        if (c == '[') {
+            at++
+            ret parseClass()
+        }
+        if (c == '.') {
+            at++
+            if (wholeDot) {
+                ret node(nodeAny, 0, 0, 1)
+            }
+            ret node(nodeAny, 0, 0, 0)
+        }
+        if (c == '^') {
+            at++
+            if (lines) {
+                ret node(nodeAssert, 0, 0, atLineStart)
+            }
+            ret node(nodeAssert, 0, 0, atTextStart)
+        }
+        if (c == '$') {
+            at++
+            if (lines) {
+                ret node(nodeAssert, 0, 0, atLineEnd)
+            }
+            ret node(nodeAssert, 0, 0, atTextEnd)
+        }
+        if (c == '*' || c == '+' || c == '?') {
+            fail("nothing to repeat")
+        }
+        if (c == '\\') {
+            at++
+            ret parseEscape()
+        }
+        i64 size = width(pattern, at)
+        i64 value = decode(pattern, at, size)
+        at += size
+        ret literal(value)
+    }
+
+    // A character as it is: with (?i), a class of its two cases.
+    i64 literal(i64 c) {
+        bool letter = c >= 0x41 && c <= 0x5A || c >= 0x61 && c <= 0x7A
+        if (anyCase && letter) {
+            list<i64> both = [c & 0x5F, c & 0x5F, c | 0x20, c | 0x20]
+            classes.add(move both)
+            ret node(nodeClass, 0, 0, classes.len() - 1)
+        }
+        ret node(nodeChar, 0, 0, c)
+    }
+
+    i64 classNode(list<i64> ranges) {
+        list<i64> sorted = ordered(ranges)
+        classes.add(move sorted)
+        ret node(nodeClass, 0, 0, classes.len() - 1)
+    }
+
+    // After a (.
+    i64 parseGroup() {
+        bool wasAnyCase = anyCase
+        bool wasLines = lines
+        bool wasWholeDot = wholeDot
+        bool wasReluctant = reluctant
+        i64 index = -1
+        if (more() && pattern[at] == '?') {
+            at++
+            if (!more()) {
+                fail("a (? with nothing after it")
+            }
+            u8 c = pattern[at]
+            if (c == 'P' && at + 1 < pattern.len() && pattern[at + 1] == '<') {
+                at += 2
+                index = named()
+            } else if (c == '<' && at + 1 < pattern.len() && pattern[at + 1] != '=' && pattern[at + 1] != '!') {
+                at++
+                index = named()
+            } else if (c == '=' || c == '!' || c == '<') {
+                fail("a lookahead or a lookbehind: std.regex has none, to search in a time that grows with the text")
+            } else if (c == ':') {
+                at++
+            } else {
+                bool on = true
+                for (more() && pattern[at] != ')' && pattern[at] != ':') {
+                    u8 flag = pattern[at]
+                    if (flag == '-') {
+                        on = false
+                    } else if (flag == 'i') {
+                        anyCase = on
+                    } else if (flag == 'm') {
+                        lines = on
+                    } else if (flag == 's') {
+                        wholeDot = on
+                    } else if (flag == 'U') {
+                        reluctant = on
+                    } else {
+                        fail(format("an unknown flag '{}'", string([flag])))
+                    }
+                    at++
+                }
+                if (!more()) {
+                    fail("a ( without its )")
+                }
+                if (pattern[at] == ')') {  // (?i): for the rest of the group around it
+                    at++
+                    ret -1
+                }
+                at++
+            }
+        } else {
+            names.add("")
+            index = names.len() - 1
+        }
+        i64 inside = parseAlt()
+        if (!more() || pattern[at] != ')') {
+            fail("a ( without its )")
+        }
+        at++
+        anyCase = wasAnyCase
+        lines = wasLines
+        wholeDot = wasWholeDot
+        reluctant = wasReluctant
+        ret node(nodeGroup, inside, 0, index)
+    }
+
+    // The name of a group up to its >: the index of the new group.
+    i64 named() {
+        i64 start = at
+        for (more() && pattern[at] != '>') {
+            if (!wordByte(pattern[at])) {
+                fail("a name of a group with a character that is not a letter, a digit or _")
+            }
+            at++
+        }
+        if (!more() || at == start) {
+            fail("a group with no name between < and >")
+        }
+        string name = pattern.slice(start, at)
+        at++
+        for (string other in names) {
+            if (other == name) {
+                fail(format("two groups with the name '{}'", name))
+            }
+        }
+        names.add(name)
+        ret names.len() - 1
+    }
+
+    // After a \, outside a class.
+    i64 parseEscape() {
+        if (!more()) {
+            fail("a \\ with nothing after it")
+        }
+        u8 c = pattern[at]
+        if (c == 'b') {
+            at++
+            ret node(nodeAssert, 0, 0, atWordEdge)
+        }
+        if (c == 'B') {
+            at++
+            ret node(nodeAssert, 0, 0, notAtWordEdge)
+        }
+        if (c == 'A') {
+            at++
+            ret node(nodeAssert, 0, 0, atTextStart)
+        }
+        if (c == 'z') {
+            at++
+            ret node(nodeAssert, 0, 0, atTextEnd)
+        }
+        if (c == 'Q') {  // as it is, up to \E
+            at++
+            i64 all = node(nodeEmpty, 0, 0, 0)
+            for (more() && !(pattern[at] == '\\' && at + 1 < pattern.len() && pattern[at + 1] == 'E')) {
+                i64 size = width(pattern, at)
+                i64 piece = literal(decode(pattern, at, size))
+                at += size
+                all = node(nodeCat, all, piece, 0)
+            }
+            if (more()) {
+                at += 2
+            }
+            ret all
+        }
+        if (c >= '1' && c <= '9') {
+            fail("a reference to a group: std.regex has none, to search in a time that grows with the text")
+        }
+        list<i64> ranges
+        if (escapedClass(ref ranges)) {
+            ret classNode(ranges)
+        }
+        ret literal(escapedChar())
+    }
+
+    // \d \w \s and \D \W \S at the position, after the \: their ranges.
+    bool escapedClass(ref list<i64> ranges) {
+        u8 c = pattern[at]
+        u8 lower = c | 0x20
+        if (lower != 'd' && lower != 'w' && lower != 's') {
+            if (lower == 'p') {
+                fail("a class of Unicode (\\p): std.regex does not have them")
+            }
+            ret false
+        }
+        at++
+        ranges = namedClass(string([lower]))
+        if (c != lower) {
+            ranges = inverted(ranges)
+        }
+        ret true
+    }
+
+    // The character of an escape at the position, after the \.
+    i64 escapedChar() {
+        u8 c = pattern[at]
+        at++
+        if (c == 'n') {
+            ret 10
+        }
+        if (c == 't') {
+            ret 9
+        }
+        if (c == 'r') {
+            ret 13
+        }
+        if (c == 'f') {
+            ret 12
+        }
+        if (c == 'v') {
+            ret 11
+        }
+        if (c == 'a') {
+            ret 7
+        }
+        if (c == '0') {
+            ret 0
+        }
+        if (c == 'x') {
+            i64 value = 0
+            i64 count = 0
+            if (more() && pattern[at] == '{') {
+                at++
+                for (more() && pattern[at] != '}' && count < 7) {
+                    value = value * 16 + hex(pattern[at])
+                    at++
+                    count++
+                }
+                if (!more() || pattern[at] != '}' || count == 0 || value > largest) {
+                    fail("a \\x{ that is not a character")
+                }
+                at++
+                ret value
+            }
+            for (count < 2) {
+                if (!more()) {
+                    fail("a \\x without two digits")
+                }
+                value = value * 16 + hex(pattern[at])
+                at++
+                count++
+            }
+            ret value
+        }
+        if (wordByte(c)) {
+            at--
+            fail(format("an unknown \\{}", string([c])))
+        }
+        if (c >= 0x80) {  // a character of more bytes: itself
+            at--
+            i64 size = width(pattern, at)
+            i64 value = decode(pattern, at, size)
+            at += size
+            ret value
+        }
+        ret i64(c)
+    }
+
+    i64 hex(u8 c) const {
+        if (c >= '0' && c <= '9') {
+            ret i64(c - '0')
+        }
+        u8 lower = c | 0x20
+        if (lower >= 'a' && lower <= 'f') {
+            ret i64(lower - 'a') + 10
+        }
+        fail("a \\x with a digit that is not of base 16")
+        ret 0
+    }
+
+    // After a [.
+    i64 parseClass() {
+        bool negated = false
+        if (more() && pattern[at] == '^') {
+            negated = true
+            at++
+        }
+        list<i64> ranges
+        bool first = true
+        for {
+            if (!more()) {
+                fail("a [ without its ]")
+            }
+            if (pattern[at] == ']' && !first) {
+                at++
+                break
+            }
+            first = false
+            if (pattern[at] == '[' && at + 1 < pattern.len() && pattern[at + 1] == ':') {
+                i64 close = pattern.findFrom(":]", at + 2)
+                if (close < 0) {
+                    fail("a [: without its :]")
+                }
+                string name = pattern.slice(at + 2, close)
+                bool reversed = name.startsWith("^")
+                if (reversed) {
+                    name = name.slice(1, name.len())
+                }
+                list<i64> known
+                if (name.len() > 1) {
+                    known = namedClass(name)
+                }
+                if (known.len() == 0) {
+                    fail(format("an unknown class [:{}:]", name))
+                }
+                if (reversed) {
+                    known = inverted(known)
+                }
+                at = close + 2
+                for (i64 value in known) {
+                    ranges.add(value)
+                }
+                continue
+            }
+            if (pattern[at] == '\\' && at + 1 < pattern.len()) {
+                at++
+                list<i64> known
+                if (escapedClass(ref known)) {
+                    for (i64 value in known) {
+                        ranges.add(value)
+                    }
+                    continue
+                }
+                at--
+            }
+            i64 low = classChar()
+            i64 high = low
+            if (at + 1 < pattern.len() && pattern[at] == '-' && pattern[at + 1] != ']') {
+                at++
+                high = classChar()
+                if (high < low) {
+                    fail("a range of a class with its end before its start")
+                }
+            }
+            ranges.add(low)
+            ranges.add(high)
+        }
+        if (anyCase) {
+            ranges = bothCases(ranges)
+        }
+        if (negated) {
+            ranges = inverted(ranges)
+        }
+        ret classNode(ranges)
+    }
+
+    // A character of a class, with its escapes.
+    i64 classChar() {
+        if (pattern[at] == '\\') {
+            at++
+            if (!more()) {
+                fail("a \\ with nothing after it")
+            }
+            if (pattern[at] == 'b') {  // in a class, the backspace
+                at++
+                ret 8
+            }
+            ret escapedChar()
+        }
+        i64 size = width(pattern, at)
+        i64 value = decode(pattern, at, size)
+        at += size
+        ret value
+    }
+}

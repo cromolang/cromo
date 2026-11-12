@@ -1,0 +1,67 @@
+// std.time with the time zones, the formats and the dates read from a text
+// (D532-D534): a date in a zone and the same moment in another, the times that the
+// clocks skip and show twice, the numbers out of their range, the letters of
+// strftime, ISO 8601, the times before 1970, a zone after its last transition, and
+// the errors.
+// expect-output: 2026-07-01T09:30:00.000+02:00
+// expect-output: Wednesday 01 July 2026 03:30 -04:00
+// expect-output: 2026-03-29T03:30:00.000+02:00
+// expect-output: 2026-10-25T02:30:00.000+02:00
+// expect-output: 2026-10-25T02:30:00.000+01:00
+// expect-output: 2027-01-01T01:00:00.000Z
+// expect-output: 1782898205 182 3 09AM 26
+// expect-output: 2026-07-01T09:30:05.250+02:00
+// expect-output: 2026-07-01T21:05:00.000+02:00
+// expect-output: 1969-12-31 18:29:59 -0530
+// expect-output: Monday
+// expect-output: 2040-08-01T12:00:00.000+10:00
+// expect-output: unknown time zone 'Mars/Olympus'
+// expect-output: the date '2026-02-30' is not of the calendar
+// expect-output: Local true
+// expect-output: 2026-01-31T12:00:00.000Z +05:30
+// expect-output: the format of the date has no %Q
+// expect-output: the date '2026-07-01 x' goes on after its format '%F'
+import std.time
+
+i32 main() {
+    time.Zone rome = time.zone("Europe/Rome")
+    time.DateTime meeting = time.date(2026, 7, 1, 9, 30, 0, rome)
+    println("{}", meeting.text())
+    println("{}", meeting.inZone(time.zone("America/New_York")).format("%A %d %B %Y %H:%M %:z"))
+    println("{}", time.date(2026, 3, 29, 2, 30, 0, rome).text())
+    println("{}", time.date(2026, 10, 25, 2, 30, 0, rome).text())
+    println("{}", time.date(2026, 10, 25, 2, 30, 0, rome).addSeconds(3600).inZone(rome).text())
+    println("{}", time.date(2026, 13, 0, 25, 0, 0, time.utc()).text())
+    println("{}", time.parse("Wed, 01 Jul 2026 09:30:05 GMT", "%a, %d %b %Y %H:%M:%S GMT").format("%s %j %u %I%p %y"))
+    println("{}", time.parseIso("2026-07-01T09:30:05.25+02:00").text())
+    println("{}", time.parseIn("1/7/2026 9:05 pm", "%d/%m/%Y %I:%M %p", rome).text())
+    println("{}", time.fromUnix(-1, time.fixedZone(-330)).format("%F %T %z"))
+    println("{}", time.date(1900, 1, 1, 0, 0, 0, time.utc()).format("%A"))
+    println("{}", time.date(2040, 8, 1, 12, 0, 0, time.zone("Australia/Sydney")).text())
+    try {
+        time.zone("Mars/Olympus")
+    } catch (Exception e) {
+        println("{}", e.message())
+    }
+    try {
+        time.parse("2026-02-30", "%F")
+    } catch (Exception e) {
+        println("{}", e.message())
+    }
+    time.DateTime now = time.localNow()
+    time.DateTime same = now.inZone(time.local())
+    println("{} {}", time.local().name(), same.text() == now.text() && now.inZone(time.utc()).unix() == now.unix())
+    time.DateTime start = time.parseIso("2026-01-31")
+    println("{} {}", start.add(start.since(time.parseIso("2026-01-30 12:00"))).text(), time.fixedZone(330).name())
+    try {
+        time.utcNow().format("%Q")
+    } catch (Exception e) {
+        println("{}", e.message())
+    }
+    try {
+        time.parse("2026-07-01 x", "%F")
+    } catch (Exception e) {
+        println("{}", e.message())
+    }
+    ret 0
+}

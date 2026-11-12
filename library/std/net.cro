@@ -216,6 +216,20 @@ public struct Connection {
         sendAll(text.cstring(), text.len())
     }
 
+    // Starts TLS on a connection that 'connect' gave, for the protocols that begin in
+    // clear and then ask for it, as SMTP and PostgreSQL: from then on 'read' and 'write'
+    // are encrypted. The certificate of the server must come from an authority that the
+    // system trusts, and name 'host', as for 'connectTls': otherwise an exception says
+    // why. On a connection that has TLS already it is a panic.
+    public void startTls(string host) {
+        addr none
+        if (tls != none) {
+            panic("net: the connection has TLS already")
+        }
+        tls = cromo_tls_connect(host.cstring(), host.len())
+        handshake(format("start TLS with {}", host))
+    }
+
     // Sets how long each following read or write waits for the other side, in
     // milliseconds, also in the handshake of TLS of a server; past it the call throws.
     // -1, the default, waits as long as it takes.

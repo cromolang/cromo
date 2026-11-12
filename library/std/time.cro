@@ -1,6 +1,8 @@
-// Clocks and pauses: now() reads a monotonic clock to measure how long something
-// takes, utcNow() and localNow() give the date and the time, unix() the seconds from
-// 1970, and sleep(), msleep() and usleep() pause the program.
+// Clocks, dates and pauses: now() reads a monotonic clock to measure how long
+// something takes, utcNow() and localNow() give the date and the time, unix() the
+// seconds from 1970, and sleep(), msleep() and usleep() pause the program. A
+// 'DateTime' goes to another time zone, is written with a format and read from a
+// text.
 //
 // '''
 // import std.time
@@ -9,16 +11,22 @@
 // time.msleep(50)
 // println("{} ms", start.elapsed().milliseconds())
 // println("{}", time.localNow().text())   // 2026-10-29T14:03:12.250+01:00
+//
+// time.Zone rome = time.zone("Europe/Rome")
+// time.DateTime meeting = time.date(2026, 7, 1, 9, 30, 0, rome)
+// println("{}", meeting.inZone(time.zone("America/New_York")).format("%A %H:%M"))   // Wednesday 03:30
+// time.DateTime read = time.parse("2026-07-01 09:30", "%Y-%m-%d %H:%M")
 // '''
 //
 // The guide: [Files, processes and time](https://cromolang.org/book/en/system.html).
 
 // The module std.time (D203): a monotonic clock to measure, the date and the
-// time in UTC and in the zone of the system, and pauses. The clocks are in
-// time_windows.cro and time_linux.cro (D202), with:
+// time in UTC, in the zone of the system and in the zones with a name (D532-D534),
+// and pauses. The clocks are in time_windows.cro and time_linux.cro (D202), with:
 //   i64 monotonic()               nanoseconds from an origin of the system
 //   i64 unixNanoseconds()         nanoseconds from 1970-01-01 UTC
 //   i32 localOffset(i64 seconds)  the offset of the zone at that time, in minutes
+//   list<u8> systemZone(string)   the rules of a zone that the system has, or nothing
 //   void pause(i64 nanoseconds)
 
 // A span of time, as elapsed() and since() give it.
@@ -62,8 +70,37 @@ public struct Instant {
     }
 }
 
-// A date with the time of day, in UTC or in the zone of the system, from utcNow()
-// or localNow().
+// A time zone: UTC, the one of the system, one with a name of the IANA database as
+// "Europe/Rome", or a fixed offset. It says how far from UTC the clocks of a place
+// are at each moment, with its summer time and the changes of its history.
+public struct Zone {
+    string title
+    i32 kind        // 0 a fixed offset, 1 the rules of a zone, 2 the zone of the system
+    i32 minutes     // the fixed offset
+    list<u8> rules  // the TZif of the zone (RFC 8536)
+
+    // The name of the zone: "Europe/Rome", "UTC", "Local" for the one of the system,
+    // "+05:30" for a fixed offset.
+    public string name() const {
+        ret title
+    }
+
+    // The offset from UTC of the zone, in minutes, at 'seconds' from 1970-01-01 UTC:
+    // 60 in Rome in winter and 120 in summer.
+    public i32 offsetAt(i64 seconds) const {
+        if (kind == 1) {
+            ret i32(floorDiv(zoneOffset(rules, seconds), 60))
+        }
+        if (kind == 2) {
+            ret localOffset(seconds)
+        }
+        ret minutes
+    }
+}
+
+// A date with the time of day and its offset from UTC: from utcNow() and
+// localNow(), from date() and fromUnix() in a zone, from parse(). It is a moment:
+// inZone() gives the same moment on the clocks of another zone.
 public struct DateTime {
     public i32 year        // with all its digits: 2026
     public i32 month       // 1 to 12
@@ -89,6 +126,205 @@ public struct DateTime {
         }
         ret format("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}{}", year, month, day, hour, minute, second,
             nanosecond / 1000000, zone)
+    }
+
+    // The seconds from 1970-01-01 UTC of this moment.
+    public i64 unix() const {
+        ret civilSeconds(i64(year), i64(month), i64(day), i64(hour), i64(minute), i64(second)) - i64(offset) * 60
+    }
+
+    // The nanoseconds from 1970-01-01 UTC of this moment.
+    public i64 unixNano() const {
+        ret unix() * 1000000000 + i64(nanosecond)
+    }
+
+    // The same moment on the clocks of 'zone'.
+    public DateTime inZone(Zone zone) const {
+        i64 seconds = unix()
+        ret dateTime(seconds * 1000000000 + i64(nanosecond), zone.offsetAt(seconds))
+    }
+
+    // The day of the week: 0 is Sunday, 1 Monday, up to 6, Saturday.
+    public i32 weekday() const {
+        ret i32(floorMod(daysFromCivil(i64(year), i64(month), i64(day)) + 4, 7))  // 1970-01-01 was a Thursday
+    }
+
+    // The day of the year: 1 is the first of January.
+    public i32 yearDay() const {
+        ret i32(daysFromCivil(i64(year), i64(month), i64(day)) - daysFromCivil(i64(year), 1, 1) + 1)
+    }
+
+    // The moment 'span' later, or earlier with a negative one, with the same offset
+    // from UTC: inZone() then gives it on the clocks of a zone, which may have
+    // changed their offset in between.
+    public DateTime add(Duration span) const {
+        ret dateTime(unixNano() + span.nanoseconds, offset)
+    }
+
+    // The moment 'seconds' seconds later, as add(): 86400 are a day.
+    public DateTime addSeconds(i64 seconds) const {
+        ret dateTime(unixNano() + seconds * 1000000000, offset)
+    }
+
+    // The time from 'earlier' to this moment; negative if 'earlier' comes after it.
+    public Duration since(DateTime earlier) const {
+        Duration result
+        result.nanoseconds = unixNano() - earlier.unixNano()
+        ret result
+    }
+
+    // The date and the time written as 'pattern' says, with the letters of strftime
+    // of C after a %:
+    //   %Y 2026    %m 07    %d 01    %e " 1"   %j 182 (the day of the year)   %y 26
+    //   %H 09      %I 09 (of 12)     %M 30     %S 05    %p AM or PM
+    //   %f 250000 (microseconds)     %3f 250   %6f 250000   %9f 250000000
+    //   %A Wednesday   %a Wed   %B July   %b Jul   %u 3 (1 is Monday)   %w 3 (0 is Sunday)
+    //   %z +0200   %:z +02:00   %s the seconds from 1970
+    //   %F %Y-%m-%d    %T %H:%M:%S    %D %m/%d/%y    %R %H:%M    %% a %
+    // The names are in English. A letter that is not of these throws an 'Error'.
+    public string format(string pattern) const {
+        list<u8> out
+        i64 at = 0
+        for (at < pattern.len()) {
+            u8 c = pattern[at]
+            at++
+            if (c != '%') {
+                out.add(c)
+                continue
+            }
+            if (at >= pattern.len()) {
+                throw Error("the format of the date ends with a %")
+            }
+            u8 letter = pattern[at]
+            at++
+            i64 digits = 0
+            bool colon = false
+            if (letter == ':' && at < pattern.len() && pattern[at] == 'z') {
+                colon = true
+                letter = 'z'
+                at++
+            } else if ((letter == '3' || letter == '6' || letter == '9') && at < pattern.len() && pattern[at] == 'f') {
+                digits = i64(letter - '0')
+                letter = 'f'
+                at++
+            }
+            appendText(ref out, formatLetter(letter, digits, colon))
+        }
+        ret string(out)
+    }
+
+    // What a letter of the format writes.
+    string formatLetter(u8 letter, i64 digits, bool colon) const {
+        i32 hour12 = hour % 12
+        if (hour12 == 0) {
+            hour12 = 12
+        }
+        i64 shortYear = floorMod(i64(year), 100)
+        switch (letter) {
+            case 'Y' {
+                ret format("{:04}", year)
+            }
+            case 'y' {
+                ret format("{:02}", shortYear)
+            }
+            case 'm' {
+                ret format("{:02}", month)
+            }
+            case 'd' {
+                ret format("{:02}", day)
+            }
+            case 'e' {
+                ret format("{:2}", day)
+            }
+            case 'j' {
+                ret format("{:03}", yearDay())
+            }
+            case 'H' {
+                ret format("{:02}", hour)
+            }
+            case 'I' {
+                ret format("{:02}", hour12)
+            }
+            case 'M' {
+                ret format("{:02}", minute)
+            }
+            case 'S' {
+                ret format("{:02}", second)
+            }
+            case 'p' {
+                if (hour < 12) {
+                    ret "AM"
+                }
+                ret "PM"
+            }
+            case 'f' {
+                if (digits == 3) {
+                    ret format("{:03}", nanosecond / 1000000)
+                }
+                if (digits == 9) {
+                    ret format("{:09}", nanosecond)
+                }
+                ret format("{:06}", nanosecond / 1000)
+            }
+            case 'A' {
+                ret dayNames()[i64(weekday())]
+            }
+            case 'a' {
+                ret dayNames()[i64(weekday())].slice(0, 3)
+            }
+            case 'B' {
+                ret monthNames()[i64(month) - 1]
+            }
+            case 'b' {
+                ret monthNames()[i64(month) - 1].slice(0, 3)
+            }
+            case 'h' {
+                ret monthNames()[i64(month) - 1].slice(0, 3)
+            }
+            case 'u' {
+                ret format("{}", (weekday() + 6) % 7 + 1)
+            }
+            case 'w' {
+                ret format("{}", weekday())
+            }
+            case 'z' {
+                i32 minutes = offset
+                string sign = "+"
+                if (minutes < 0) {
+                    sign = "-"
+                    minutes = -minutes
+                }
+                if (colon) {
+                    ret format("{}{:02}:{:02}", sign, minutes / 60, minutes % 60)
+                }
+                ret format("{}{:02}{:02}", sign, minutes / 60, minutes % 60)
+            }
+            case 's' {
+                ret format("{}", unix())
+            }
+            case 'F' {
+                ret format("{:04}-{:02}-{:02}", year, month, day)
+            }
+            case 'T' {
+                ret format("{:02}:{:02}:{:02}", hour, minute, second)
+            }
+            case 'D' {
+                ret format("{:02}/{:02}/{:02}", month, day, shortYear)
+            }
+            case 'R' {
+                ret format("{:02}:{:02}", hour, minute)
+            }
+            case 'n' {
+                ret "\n"
+            }
+            case 't' {
+                ret "\t"
+            }
+            case '%' {
+                ret "%"
+            }
+        }
+        throw Error(format("the format of the date has no %{}", string([letter])))
     }
 }
 
@@ -124,6 +360,150 @@ public DateTime localNow() {
     ret dateTime(now, localOffset(now / 1000000000))
 }
 
+// UTC, the zone with no offset.
+public Zone utc() {
+    Zone result
+    result.title = "UTC"
+    ret result
+}
+
+// The zone of the system, the one of localNow(): its name is "Local".
+public Zone local() {
+    Zone result
+    result.title = "Local"
+    result.kind = 2
+    ret result
+}
+
+// A zone that is always 'minutes' minutes from UTC, east with a positive number:
+// fixedZone(330) is "+05:30".
+public Zone fixedZone(i32 minutes) {
+    Zone result
+    result.minutes = minutes
+    i32 size = minutes
+    string sign = "+"
+    if (size < 0) {
+        sign = "-"
+        size = -size
+    }
+    result.title = format("{}{:02}:{:02}", sign, size / 60, size % 60)
+    ret result
+}
+
+// The zone with a name of the IANA Time Zone Database, as "Europe/Rome",
+// "America/New_York" or "UTC". Its rules are the ones of the system when it has
+// them, as Linux and Android do, and otherwise the ones that the library carries,
+// which go into the program: so the name is known on every system. It throws an
+// 'Error' for a name that is not a zone. A program asks for a zone once and keeps it.
+public Zone zone(string name) {
+    bool fine = name.len() > 0 && name.len() < 64 && name[0] != '/' && !name.contains("..")
+    for (i64 i = 0; i < name.len() && fine; i++) {
+        u8 c = name[i]
+        u8 lower = c | 0x20
+        fine = lower >= 'a' && lower <= 'z' || c >= '0' && c <= '9' || c == '/' || c == '_' || c == '-' || c == '+'
+    }
+    if (!fine) {
+        throw Error(format("unknown time zone '{}'", name))
+    }
+    Zone result
+    result.title = name
+    result.kind = 1
+    result.rules = systemZone(name)
+    if (!isZone(result.rules)) {
+        result.rules = carriedZone(name)
+    }
+    if (!isZone(result.rules)) {
+        throw Error(format("unknown time zone '{}'", name))
+    }
+    ret result
+}
+
+// The moment at 'seconds' from 1970-01-01 UTC, on the clocks of 'zone'.
+public DateTime fromUnix(i64 seconds, Zone zone) {
+    ret dateTime(seconds * 1000000000, zone.offsetAt(seconds))
+}
+
+// The moment when the clocks of 'zone' show this date and this time. The numbers
+// out of their range move the others, as in mktime of C: the month 13 is January
+// of the next year, the day 0 the last one of the month before. A time that the
+// clocks skip when the summer time begins is taken with the offset of before, and
+// one that they show twice when it ends is the first of the two.
+public DateTime date(i32 year, i32 month, i32 day, i32 hour, i32 minute, i32 second, Zone zone) {
+    i64 months = i64(year) * 12 + i64(month) - 1
+    i64 shown = civilSeconds(floorDiv(months, 12), floorMod(months, 12) + 1, 1, i64(hour), i64(minute), i64(second)) +
+        (i64(day) - 1) * 86400
+    ret shownIn(shown, 0, zone)
+}
+
+// Reads a date and a time written as 'pattern' says, with the letters of
+// DateTime.format(): parse("2026-07-01 09:30", "%Y-%m-%d %H:%M"). The text must be
+// all and only what the pattern says; a space of the pattern is any number of
+// spaces, the names of the days and of the months are in English, in full or with
+// three letters, in capitals or not. What the pattern does not have is the first
+// of January, midnight. The offset is the one of the text, with %z, and UTC without
+// it. It throws an 'Error' for a text that is not as the pattern, or not a date.
+public DateTime parse(string text, string pattern) {
+    ret parseIn(text, pattern, utc())
+}
+
+// Reads a date and a time as parse() does, on the clocks of 'zone' when the text
+// has no offset.
+public DateTime parseIn(string text, string pattern, Zone zone) {
+    Fields fields
+    fields.year = 1970
+    fields.month = 1
+    fields.day = 1
+    fields.half = -1
+    i64 at = 0
+    readPattern(text, ref at, pattern, ref fields)
+    if (at != text.len()) {
+        throw Error(format("the date '{}' goes on after its format '{}'", text, pattern))
+    }
+    if (fields.hasUnix) {
+        ret dateTime(fields.unix * 1000000000 + fields.nanosecond, zone.offsetAt(fields.unix))
+    }
+    if (fields.half >= 0) {
+        if (fields.hour < 1 || fields.hour > 12) {
+            throw Error(format("the date '{}' is not of the calendar", text))
+        }
+        fields.hour = fields.hour % 12 + fields.half * 12
+    }
+    ret made(text, fields, zone)
+}
+
+// Reads a date of ISO 8601 and RFC 3339, as text() writes it: "2026-07-01",
+// "2026-07-01T09:30", "2026-07-01T09:30:05.250+02:00", with a space for the T too,
+// and Z or an offset at the end; UTC without it. It throws an 'Error' for another
+// text.
+public DateTime parseIso(string text) {
+    Fields fields
+    fields.half = -1
+    i64 at = 0
+    try {
+        readPattern(text, ref at, "%Y-%m-%d", ref fields)
+        if (at < text.len() && (text[at] == 'T' || text[at] == 't' || text[at] == ' ')) {
+            at++
+            readPattern(text, ref at, "%H:%M", ref fields)
+            if (at < text.len() && text[at] == ':') {
+                readPattern(text, ref at, ":%S", ref fields)
+                if (at < text.len() && (text[at] == '.' || text[at] == ',')) {
+                    at++
+                    readPattern(text, ref at, "%f", ref fields)
+                }
+            }
+            if (at < text.len()) {
+                readPattern(text, ref at, "%z", ref fields)
+            }
+        }
+    } catch (Exception e) {
+        at = -1
+    }
+    if (at != text.len()) {
+        throw Error(format("the date '{}' is not of ISO 8601", text))
+    }
+    ret made(text, fields, utc())
+}
+
 // Pauses for 'seconds' seconds; in a task, the task waits and its thread runs the
 // other tasks. Nothing happens for 0 or less.
 public void sleep(i64 seconds) {
@@ -143,11 +523,11 @@ public void usleep(i64 microseconds) {
 // The date of `nanoseconds` from 1970-01-01 UTC, moved by `offset` minutes, with
 // the algorithm of Howard Hinnant for the days.
 DateTime dateTime(i64 nanoseconds, i32 offset) {
-    i64 seconds = nanoseconds / 1000000000 + i64(offset) * 60
-    i64 days = seconds / 86400
-    i64 rest = seconds % 86400
+    i64 seconds = floorDiv(nanoseconds, 1000000000) + i64(offset) * 60
+    i64 days = floorDiv(seconds, 86400)
+    i64 rest = floorMod(seconds, 86400)
     i64 shifted = days + 719468
-    i64 era = shifted / 146097
+    i64 era = floorDiv(shifted, 146097)
     i64 dayOfEra = shifted - era * 146097
     i64 yearOfEra = (dayOfEra - dayOfEra / 1460 + dayOfEra / 36524 - dayOfEra / 146096) / 365
     i64 dayOfYear = dayOfEra - (365 * yearOfEra + yearOfEra / 4 - yearOfEra / 100)
@@ -163,7 +543,7 @@ DateTime dateTime(i64 nanoseconds, i32 offset) {
     result.hour = i32(rest / 3600)
     result.minute = i32(rest % 3600 / 60)
     result.second = i32(rest % 60)
-    result.nanosecond = i32(nanoseconds % 1000000000)
+    result.nanosecond = i32(floorMod(nanoseconds, 1000000000))
     result.offset = offset
     ret result
 }
@@ -174,9 +554,601 @@ i64 daysFromCivil(i64 year, i64 month, i64 day) {
     if (month <= 2) {
         y--
     }
-    i64 era = y / 400
+    i64 era = floorDiv(y, 400)
     i64 yearOfEra = y - era * 400
     i64 shiftedMonth = (month + 9) % 12
     i64 dayOfYear = (153 * shiftedMonth + 2) / 5 + day - 1
     ret era * 146097 + yearOfEra * 365 + yearOfEra / 4 - yearOfEra / 100 + dayOfYear - 719468
+}
+
+// The seconds from 1970-01-01 00:00:00 to a date and a time, with no zone.
+i64 civilSeconds(i64 year, i64 month, i64 day, i64 hour, i64 minute, i64 second) {
+    ret daysFromCivil(year, month, day) * 86400 + hour * 3600 + minute * 60 + second
+}
+
+// The division that goes down for the negative numbers, and its rest, never
+// negative: the times before 1970.
+i64 floorDiv(i64 a, i64 b) {
+    i64 q = a / b
+    if (a % b < 0) {
+        q--
+    }
+    ret q
+}
+
+i64 floorMod(i64 a, i64 b) {
+    i64 r = a % b
+    if (r < 0) {
+        r += b
+    }
+    ret r
+}
+
+// The moment when the clocks of `zone` show `shown`, seconds from 1970 with no
+// zone, and `nanosecond`.
+DateTime shownIn(i64 shown, i64 nanosecond, Zone zone) {
+    // The offsets a day before and a day after: the same but near a change, where the
+    // one of before is tried first, so that a time shown twice is the first of the
+    // two, and a time skipped goes on with the offset of before.
+    i64 before = i64(zone.offsetAt(shown - 86400)) * 60
+    i64 after = i64(zone.offsetAt(shown + 86400)) * 60
+    i64 seconds = shown - before
+    if (i64(zone.offsetAt(seconds)) * 60 != before && i64(zone.offsetAt(shown - after)) * 60 == after) {
+        seconds = shown - after
+    }
+    ret dateTime(seconds * 1000000000 + nanosecond, zone.offsetAt(seconds))
+}
+
+list<string> dayNames() {
+    ret ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+}
+
+list<string> monthNames() {
+    ret ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
+        "November", "December"]
+}
+
+void appendText(ref list<u8> out, string text) {
+    for (i64 i = 0; i < text.len(); i++) {
+        out.add(text[i])
+    }
+}
+
+// What parse() has read.
+struct Fields {
+    i64 year
+    i64 month
+    i64 day
+    i64 hour
+    i64 minute
+    i64 second
+    i64 nanosecond
+    i64 half  // 0 AM, 1 PM, -1 not said
+    bool hasOffset
+    i64 offset  // in minutes
+    bool hasUnix
+    i64 unix
+}
+
+// The date of the fields, which must be one of the calendar.
+DateTime made(string text, Fields fields, Zone zone) {
+    bool fine = fields.month >= 1 && fields.month <= 12 && fields.day >= 1 && fields.hour <= 23 &&
+        fields.minute <= 59 && fields.second <= 59
+    if (fine) {
+        i64 months = fields.year * 12 + fields.month
+        i64 length = daysFromCivil(floorDiv(months, 12), floorMod(months, 12) + 1, 1) -
+            daysFromCivil(fields.year, fields.month, 1)
+        fine = fields.day <= length
+    }
+    if (!fine) {
+        throw Error(format("the date '{}' is not of the calendar", text))
+    }
+    i64 shown = civilSeconds(fields.year, fields.month, fields.day, fields.hour, fields.minute, fields.second)
+    if (fields.hasOffset) {
+        ret dateTime((shown - fields.offset * 60) * 1000000000 + fields.nanosecond, i32(fields.offset))
+    }
+    ret shownIn(shown, fields.nanosecond, zone)
+}
+
+// Reads from `text` at `at` what `pattern` says, into the fields.
+void readPattern(string text, ref i64 at, string pattern, ref Fields fields) {
+    i64 p = 0
+    for (p < pattern.len()) {
+        u8 c = pattern[p]
+        p++
+        if (c == ' ') {
+            skipSpaces(text, ref at)
+            continue
+        }
+        if (c != '%') {
+            if (at >= text.len() || text[at] != c) {
+                throw Error(format("the date '{}' is not as its format '{}'", text, pattern))
+            }
+            at++
+            continue
+        }
+        if (p >= pattern.len()) {
+            throw Error("the format of the date ends with a %")
+        }
+        u8 letter = pattern[p]
+        p++
+        if (letter == ':' && p < pattern.len() && pattern[p] == 'z') {
+            letter = 'z'
+            p++
+        } else if ((letter == '3' || letter == '6' || letter == '9') && p < pattern.len() && pattern[p] == 'f') {
+            letter = 'f'
+            p++
+        }
+        if (!readLetter(text, ref at, letter, ref fields)) {
+            throw Error(format("the date '{}' is not as its format '{}'", text, pattern))
+        }
+    }
+}
+
+// Reads what a letter of the format says: false when the text is not that.
+bool readLetter(string text, ref i64 at, u8 letter, ref Fields fields) {
+    i64 ignored = 0
+    switch (letter) {
+        case 'Y' {
+            i64 sign = 1
+            if (at < text.len() && text[at] == '-') {
+                sign = -1
+                at++
+            }
+            bool fine = readNumber(text, ref at, 4, 4, ref fields.year)
+            fields.year *= sign
+            ret fine
+        }
+        case 'y' {
+            bool fine = readNumber(text, ref at, 2, 2, ref fields.year)
+            if (fields.year < 69) {  // as POSIX: 69 to 99 are of 1900
+                fields.year += 2000
+            } else {
+                fields.year += 1900
+            }
+            ret fine
+        }
+        case 'm' {
+            ret readNumber(text, ref at, 1, 2, ref fields.month)
+        }
+        case 'd' {
+            ret readNumber(text, ref at, 1, 2, ref fields.day)
+        }
+        case 'e' {
+            skipSpaces(text, ref at)
+            ret readNumber(text, ref at, 1, 2, ref fields.day)
+        }
+        case 'j' {  // from the first of January of the year read so far
+            i64 count = 0
+            if (!readNumber(text, ref at, 1, 3, ref count) || count < 1 || count > 366) {
+                ret false
+            }
+            DateTime moved = dateTime((daysFromCivil(fields.year, 1, 1) + count - 1) * 86400000000000, 0)
+            fields.month = i64(moved.month)
+            fields.day = i64(moved.day)
+            ret i64(moved.year) == fields.year
+        }
+        case 'H' {
+            ret readNumber(text, ref at, 1, 2, ref fields.hour)
+        }
+        case 'I' {
+            if (fields.half < 0) {
+                fields.half = 0
+            }
+            ret readNumber(text, ref at, 1, 2, ref fields.hour)
+        }
+        case 'M' {
+            ret readNumber(text, ref at, 1, 2, ref fields.minute)
+        }
+        case 'S' {
+            ret readNumber(text, ref at, 1, 2, ref fields.second)
+        }
+        case 'p' {
+            string word = piece(text, at, 2).upper()
+            at += 2
+            fields.half = 0
+            if (word == "PM") {
+                fields.half = 1
+            }
+            ret word == "AM" || word == "PM"
+        }
+        case 'f' {
+            i64 from = at
+            i64 value = 0
+            for (at < text.len() && text[at] >= '0' && text[at] <= '9') {
+                if (at - from < 9) {
+                    value = value * 10 + i64(text[at] - '0')
+                }
+                at++
+            }
+            for (i64 i = at - from; i < 9; i++) {
+                value *= 10
+            }
+            fields.nanosecond = value
+            ret at > from
+        }
+        case 'A' {
+            ret readName(text, ref at, dayNames()) >= 0
+        }
+        case 'a' {
+            ret readName(text, ref at, dayNames()) >= 0
+        }
+        case 'B' {
+            fields.month = readName(text, ref at, monthNames()) + 1
+            ret fields.month > 0
+        }
+        case 'b' {
+            fields.month = readName(text, ref at, monthNames()) + 1
+            ret fields.month > 0
+        }
+        case 'h' {
+            fields.month = readName(text, ref at, monthNames()) + 1
+            ret fields.month > 0
+        }
+        case 'u' {
+            ret readNumber(text, ref at, 1, 1, ref ignored)
+        }
+        case 'w' {
+            ret readNumber(text, ref at, 1, 1, ref ignored)
+        }
+        case 'z' {
+            fields.hasOffset = true
+            fields.offset = 0
+            if (at < text.len() && (text[at] == 'Z' || text[at] == 'z')) {
+                at++
+                ret true
+            }
+            if (at >= text.len() || text[at] != '+' && text[at] != '-') {
+                ret false
+            }
+            i64 sign = 1
+            if (text[at] == '-') {
+                sign = -1
+            }
+            at++
+            i64 hours = 0
+            i64 minutes = 0
+            if (!readNumber(text, ref at, 2, 2, ref hours)) {
+                ret false
+            }
+            if (at < text.len() && text[at] == ':') {
+                at++
+                if (!readNumber(text, ref at, 2, 2, ref minutes)) {
+                    ret false
+                }
+            } else if (at < text.len() && text[at] >= '0' && text[at] <= '9') {
+                if (!readNumber(text, ref at, 2, 2, ref minutes)) {
+                    ret false
+                }
+            }
+            fields.offset = sign * (hours * 60 + minutes)
+            ret hours <= 23 && minutes <= 59
+        }
+        case 's' {
+            i64 sign = 1
+            if (at < text.len() && text[at] == '-') {
+                sign = -1
+                at++
+            }
+            bool fine = readNumber(text, ref at, 1, 18, ref fields.unix)
+            fields.unix *= sign
+            fields.hasUnix = true
+            ret fine
+        }
+        case 'F' {
+            readPattern(text, ref at, "%Y-%m-%d", ref fields)
+            ret true
+        }
+        case 'T' {
+            readPattern(text, ref at, "%H:%M:%S", ref fields)
+            ret true
+        }
+        case 'D' {
+            readPattern(text, ref at, "%m/%d/%y", ref fields)
+            ret true
+        }
+        case 'R' {
+            readPattern(text, ref at, "%H:%M", ref fields)
+            ret true
+        }
+        case 'n' {
+            skipSpaces(text, ref at)
+            ret true
+        }
+        case 't' {
+            skipSpaces(text, ref at)
+            ret true
+        }
+        case '%' {
+            at++
+            ret at <= text.len() && text[at - 1] == '%'
+        }
+    }
+    throw Error(format("the format of the date has no %{}", string([letter])))
+}
+
+void skipSpaces(string text, ref i64 at) {
+    for (at < text.len() && (text[at] == ' ' || text[at] == '\t' || text[at] == '\n' || text[at] == '\r')) {
+        at++
+    }
+}
+
+// Up to `size` bytes of the text from `at`.
+string piece(string text, i64 at, i64 size) {
+    i64 end = at + size
+    if (end > text.len()) {
+        end = text.len()
+    }
+    ret text.slice(at, end)
+}
+
+// A number of `least` to `most` digits.
+bool readNumber(string text, ref i64 at, i64 least, i64 most, ref i64 value) {
+    i64 from = at
+    value = 0
+    for (at < text.len() && at - from < most && text[at] >= '0' && text[at] <= '9') {
+        value = value * 10 + i64(text[at] - '0')
+        at++
+    }
+    ret at - from >= least
+}
+
+// One of the names, in full or its first three letters, in capitals or not: its
+// index, or -1.
+i64 readName(string text, ref i64 at, list<string> names) {
+    for (i64 i = 0; i < names.len(); i++) {
+        string name = names[i].lower()
+        if (piece(text, at, name.len()).lower() == name) {
+            at += name.len()
+            ret i
+        }
+    }
+    for (i64 i = 0; i < names.len(); i++) {
+        if (piece(text, at, 3).lower() == names[i].slice(0, 3).lower()) {
+            at += 3
+            ret i
+        }
+    }
+    ret -1
+}
+
+bool isZone(list<u8> data) {
+    ret data.len() >= 44 && data[0] == 'T' && data[1] == 'Z' && data[2] == 'i' && data[3] == 'f'
+}
+
+// The rules of a zone among the ones that the library carries, zoneinfo.dat, which
+// tools/zoneinfo.py writes from the IANA Time Zone Database (D533): after a header
+// of 20 bytes, for each zone the length of its name, its name, where its TZif
+// starts and its length; then the TZif files. Empty when the zone is not there.
+list<u8> carriedZone(string name) {
+    list<u8> all = embed("zoneinfo.dat")
+    list<u8> rules
+    i64 count = little(all, 16)
+    i64 at = 20
+    for (i64 n = 0; n < count; n++) {
+        i64 size = i64(all[at])
+        bool same = size == name.len()
+        for (i64 i = 0; i < size && same; i++) {
+            same = all[at + 1 + i] == name[i]
+        }
+        at += 1 + size
+        if (same) {
+            i64 from = little(all, at)
+            i64 length = little(all, at + 4)
+            rules.reserve(length)
+            for (i64 i = 0; i < length; i++) {
+                rules.add(all[from + i])
+            }
+            ret rules
+        }
+        at += 8
+    }
+    ret rules
+}
+
+i64 little(list<u8> data, i64 at) {
+    ret i64(data[at]) | i64(data[at + 1]) << 8 | i64(data[at + 2]) << 16 | i64(data[at + 3]) << 24
+}
+
+// The format of the zones, TZif (RFC 8536): the transitions of a zone, and the rule
+// of POSIX at its end for the times after the last one.
+
+// The offset in seconds: the one of the last transition before `seconds`, or the
+// rule at the end of the file after the last transition.
+i64 zoneOffset(list<u8> data, i64 seconds) {
+    if (data.len() < 44 || data[0] != 'T' || data[1] != 'Z' || data[2] != 'i' || data[3] != 'f') {
+        ret 0
+    }
+    i64 start = 0
+    i64 timeSize = 4
+    if (data[4] >= '2') {  // the second block, with times of 64 bits
+        start = 44 + blockSize(data, 0, 4)
+        timeSize = 8
+        if (data.len() < start + 44) {
+            ret 0
+        }
+    }
+    i64 timeCount = number(data, start + 32, 4)
+    i64 times = start + 44
+    i64 kinds = times + timeCount * timeSize
+    i64 infos = kinds + timeCount
+    i64 index = -1
+    for (i64 i = 0; i < timeCount; i++) {
+        if (number(data, times + i * timeSize, timeSize) > seconds) {
+            break
+        }
+        index = i
+    }
+    if (timeSize == 8 && index == timeCount - 1) {
+        i64 footer = start + 44 + blockSize(data, start, 8)
+        if (footer < data.len() && data[footer] == '\n') {
+            list<u8> rule
+            for (i64 at = footer + 1; at < data.len() && data[at] != '\n'; at++) {
+                rule.add(data[at])
+            }
+            if (rule.len() > 0) {
+                ret ruleOffset(string(rule), seconds)
+            }
+        }
+    }
+    i64 type = 0
+    if (index >= 0) {
+        type = i64(data[kinds + index])
+    }
+    ret number(data, infos + type * 6, 4)
+}
+
+// The bytes of a block of data after its header of 44 bytes.
+i64 blockSize(list<u8> data, i64 header, i64 timeSize) {
+    i64 utcCount = number(data, header + 20, 4)
+    i64 standardCount = number(data, header + 24, 4)
+    i64 leapCount = number(data, header + 28, 4)
+    i64 timeCount = number(data, header + 32, 4)
+    i64 typeCount = number(data, header + 36, 4)
+    i64 charCount = number(data, header + 40, 4)
+    ret timeCount * (timeSize + 1) + typeCount * 6 + charCount + leapCount * (timeSize + 4) + standardCount + utcCount
+}
+
+// A big-endian number of 4 or 8 bytes, with its sign.
+i64 number(list<u8> data, i64 at, i64 size) {
+    u64 value = 0
+    for (i64 i = 0; i < size; i++) {
+        value = value << 8 | u64(data[at + i])
+    }
+    if (size == 4 && value >= 0x80000000) {
+        ret i64(value) - 0x100000000
+    }
+    ret i64(value)
+}
+
+// The offset of a rule of POSIX, as "CET-1CEST,M3.5.0,M10.5.0/3", at `seconds`.
+i64 ruleOffset(string rule, i64 seconds) {
+    i64 at = 0
+    skipName(rule, ref at)
+    i64 standard = -clockValue(rule, ref at)  // POSIX counts west of Greenwich
+    if (at >= rule.len()) {
+        ret standard
+    }
+    skipName(rule, ref at)
+    i64 summer = standard + 3600
+    if (at < rule.len() && rule[at] != ',') {
+        summer = -clockValue(rule, ref at)
+    }
+    if (at >= rule.len() || rule[at] != ',') {
+        ret standard
+    }
+    at++
+    i64 startMonth = 0
+    i64 startWeek = 0
+    i64 startDay = 0
+    i64 startTime = 0
+    if (!dateRule(rule, ref at, ref startMonth, ref startWeek, ref startDay, ref startTime)) {
+        ret standard
+    }
+    if (at >= rule.len() || rule[at] != ',') {
+        ret standard
+    }
+    at++
+    i64 endMonth = 0
+    i64 endWeek = 0
+    i64 endDay = 0
+    i64 endTime = 0
+    if (!dateRule(rule, ref at, ref endMonth, ref endWeek, ref endDay, ref endTime)) {
+        ret standard
+    }
+    i64 year = i64(dateTime((seconds + standard) * 1000000000, 0).year)
+    i64 begin = ruleDay(year, startMonth, startWeek, startDay) * 86400 + startTime - standard
+    i64 end = ruleDay(year, endMonth, endWeek, endDay) * 86400 + endTime - summer
+    bool inside = seconds >= begin && seconds < end
+    if (begin > end) {  // the south: the summer goes across the new year
+        inside = seconds >= begin || seconds < end
+    }
+    if (inside) {
+        ret summer
+    }
+    ret standard
+}
+
+// A name of the zone: letters, or between < and >.
+void skipName(string rule, ref i64 at) {
+    if (at < rule.len() && rule[at] == '<') {
+        for (at < rule.len() && rule[at] != '>') {
+            at++
+        }
+        at++
+        ret
+    }
+    for (at < rule.len() && rule[at] | 0x20 >= 'a' && rule[at] | 0x20 <= 'z') {
+        at++
+    }
+}
+
+// [+|-]hh[:mm[:ss]] in seconds.
+i64 clockValue(string rule, ref i64 at) {
+    i64 sign = 1
+    if (at < rule.len() && (rule[at] == '+' || rule[at] == '-')) {
+        if (rule[at] == '-') {
+            sign = -1
+        }
+        at++
+    }
+    i64 total = digits(rule, ref at) * 3600
+    if (at < rule.len() && rule[at] == ':') {
+        at++
+        total += digits(rule, ref at) * 60
+    }
+    if (at < rule.len() && rule[at] == ':') {
+        at++
+        total += digits(rule, ref at)
+    }
+    ret sign * total
+}
+
+i64 digits(string rule, ref i64 at) {
+    i64 value = 0
+    for (at < rule.len() && rule[at] >= '0' && rule[at] <= '9') {
+        value = value * 10 + i64(rule[at] - '0')
+        at++
+    }
+    ret value
+}
+
+// Mm.w.d[/time]: the day d of the week (0 is Sunday) of the week w (5 is the last)
+// of the month m, at `time` seconds of local time, 02:00 when not written.
+bool dateRule(string rule, ref i64 at, ref i64 month, ref i64 week, ref i64 day, ref i64 time) {
+    if (at >= rule.len() || rule[at] != 'M') {
+        ret false
+    }
+    at++
+    month = digits(rule, ref at)
+    if (at >= rule.len() || rule[at] != '.') {
+        ret false
+    }
+    at++
+    week = digits(rule, ref at)
+    if (at >= rule.len() || rule[at] != '.') {
+        ret false
+    }
+    at++
+    day = digits(rule, ref at)
+    time = 7200
+    if (at < rule.len() && rule[at] == '/') {
+        at++
+        time = clockValue(rule, ref at)
+    }
+    ret true
+}
+
+// The day, from 1970-01-01, of a rule Mm.w.d in `year`.
+i64 ruleDay(i64 year, i64 month, i64 week, i64 weekday) {
+    i64 first = daysFromCivil(year, month, 1)
+    i64 next = daysFromCivil(year, month + 1, 1)
+    if (month == 12) {
+        next = daysFromCivil(year + 1, 1, 1)
+    }
+    i64 day = (weekday - (first + 4) % 7 + 7) % 7 + (week - 1) * 7  // 1970-01-01 was a Thursday
+    for (first + day >= next) {
+        day -= 7
+    }
+    ret first + day
 }

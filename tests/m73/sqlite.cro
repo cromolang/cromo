@@ -1,0 +1,71 @@
+// std.db with SQLite (D528-D530): a database in memory, statements with parameters of
+// every type, the rows and their columns, a transaction rolled back and one kept.
+// expect-output: tables true false, columns true false
+// expect-output: inserted 1 1 1
+// expect-output: 3 columns: id title done
+// expect-output: 1 bread 2.5 true bytes 3 null false
+// expect-output: 2 milk 0 false bytes 0 null true
+// expect-output: 3 città 7 true bytes 0 null true
+// expect-output: after the rollback 3
+// expect-output: after the commit 1, changed 2
+// expect-output: again 1
+import std.db
+
+i64 count(ref db.Connection c) {
+    db.Statement all = c.prepare("SELECT count(*) FROM notes")
+    all.next()
+    ret all.getInt(0)
+}
+
+i32 main() {
+    db.Database data = db.Database(":memory:")
+    db.Connection c = data.connect()
+    c.exec("CREATE TABLE notes (id INTEGER PRIMARY KEY, title TEXT, weight REAL, done INTEGER, picture BLOB, extra TEXT); "
+        + "CREATE INDEX byTitle ON notes (title)")
+    println("tables {} {}, columns {} {}", c.hasTable("notes"), c.hasTable("nothing"), c.hasColumn("notes", "weight"),
+        c.hasColumn("notes", "height"))
+
+    db.Statement insert = c.prepare("INSERT INTO notes (title, weight, done, picture, extra) VALUES (?, ?, ?, ?, ?)")
+    insert.setText(1, "bread")
+    insert.setFloat(2, 2.5)
+    insert.setBool(3, true)
+    insert.setBytes(4, [1, 2, 3])
+    insert.setText(5, "soon")
+    i64 first = insert.exec()
+    insert.setText(1, "milk")
+    insert.setFloat(2, 0)
+    insert.setBool(3, false)
+    insert.setNull(4)
+    insert.setNull(5)
+    i64 second = insert.exec()
+    insert.setText(1, "città")
+    insert.setInt(2, 7)
+    insert.setBool(3, true)
+    i64 third = insert.exec()
+    println("inserted {} {} {}", first, second, third)
+
+    db.Statement all = c.prepare("SELECT id, title, weight, done, picture, extra FROM notes WHERE id >= ? ORDER BY id")
+    all.setInt(1, 1)
+    db.Statement names = c.prepare("SELECT id, title, done FROM notes")
+    println("{} columns: {} {} {}", names.columnCount(), names.columnName(0), names.columnName(1), names.columnName(2))
+    for (all.next()) {
+        println("{} {} {} {} bytes {} null {}", all.getInt(0), all.getText(1), all.getFloat(2), all.getBool(3),
+            all.getBytes(4).len(), all.isNull(5))
+    }
+
+    c.begin()
+    c.exec("DELETE FROM notes")
+    c.rollback()
+    println("after the rollback {}", count(ref c))
+    c.begin()
+    i64 changed = c.exec("DELETE FROM notes WHERE id > 1")
+    c.commit()
+    println("after the commit {}, changed {}", count(ref c), changed)
+    all.reset()
+    i64 again = 0
+    for (all.next()) {
+        again++
+    }
+    println("again {}", again)
+    ret 0
+}

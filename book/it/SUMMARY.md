@@ -19,6 +19,8 @@
 - [File, processi e tempo](system.md)
 - [Rete e HTTP](networking.md)
 - [JSON](json.md)
+- [Espressioni regolari](regex.md)
+- [Database](databases.md)
 - [Finestre e app](gui.md)
 - [Chiamare il C](c-interop.md)
 - [Il dialetto unsafe](unsafe.md)

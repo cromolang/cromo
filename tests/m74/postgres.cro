@@ -1,0 +1,170 @@
+// std.db with PostgreSQL (D531): the address of the database, the login, the
+// statements with their parameters and their rows, the types, the ? of a statement
+// and the ones that are not parameters, the transactions, the errors with their
+// code, the connections of many tasks, and a statement whose connection has ended.
+// It runs when CROMO_TEST_POSTGRES is the address of a database that the tests can
+// use, as postgresql://user:password@localhost:5432/name.
+// needs-env: CROMO_TEST_POSTGRES
+// expect-output: table true true false
+// expect-output: inserted 1 1
+// expect-output: columns 6 title count
+// expect-output: 1 "Buy the bread" false 1.5 4 254 9000000000 null false false
+// expect-output: 2 "It's a 'quote' ? and è" true 0 0 0 -7 null true true
+// expect-output: a?b 42 true 3 12 0
+// expect-output: updated 2, deleted 2, after the rollback 2
+// expect-output: after a connection that ended in a transaction 2
+// expect-output: after the commit 1
+// expect-output: missing table true, twice the same key true, not SQL true
+// expect-output: a transaction that failed goes on after its rollback: 1
+// expect-output: tasks 81
+// expect-output: wrong password true
+// expect-output: cannot copy the database to copy.db: only a database of SQLite is copied by std.db
+// expect-output: cannot run the statement: its connection has ended
+// expect-output: cannot open the database: std.db does not know 'sslmode=maybe' in the address
+// expect-output: gone false
+import std.db
+import std.os
+import std.thread
+
+i64 count(ref db.Connection c) {
+    db.Statement all = c.prepare("SELECT count(*) FROM cromo_test_notes")
+    all.next()
+    ret all.getInt(0)
+}
+
+bool fails(ref db.Connection c, string sql, string code) {
+    try {
+        c.exec(sql)
+    } catch (Exception e) {
+        ret e.message().startsWith("cannot run the statement: ") && e.message().endsWith(format("({})", code))
+    }
+    ret false
+}
+
+// A statement that lives after its connection.
+db.Statement orphan(db.Database data) {
+    db.Connection c = data.connect()
+    ret c.prepare("SELECT 1")
+}
+
+i32 main() {
+    string address = os.env("CROMO_TEST_POSTGRES")
+    db.Database data = db.Database(address)
+    db.Connection c = data.connect()
+    c.exec("DROP TABLE IF EXISTS cromo_test_notes")
+    c.exec("CREATE TABLE cromo_test_notes (id SERIAL PRIMARY KEY, title TEXT NOT NULL, done BOOLEAN, " +
+        "score DOUBLE PRECISION, picture BYTEA, count BIGINT)")
+    println("table {} {} {}", c.hasTable("cromo_test_notes"), c.hasColumn("cromo_test_notes", "title"),
+        c.hasColumn("cromo_test_notes", "nothing"))
+
+    db.Statement insert = c.prepare(
+        "INSERT INTO cromo_test_notes (title, done, score, picture, count) VALUES (?, ?, ?, ?, ?)")
+    insert.setText(1, "Buy the bread")
+    insert.setBool(2, false)
+    insert.setFloat(3, 1.5)
+    insert.setBytes(4, [0, 1, 254, 255])
+    insert.setInt(5, 9000000000)
+    i64 first = insert.exec()
+    insert.setText(1, "It's a 'quote' ? and è")
+    insert.setBool(2, true)
+    insert.setNull(3)
+    insert.setNull(4)
+    insert.setInt(5, -7)
+    println("inserted {} {}", first, insert.exec())
+
+    db.Statement all = c.prepare(
+        "SELECT id, title, done, score, picture, count FROM cromo_test_notes WHERE id >= ? ORDER BY id")
+    all.setInt(1, 1)
+    println("columns {} {} {}", all.columnCount(), all.columnName(1), all.columnName(5))
+    for (all.next()) {
+        list<u8> picture = all.getBytes(4)
+        i64 third = 0
+        if (picture.len() > 2) {
+            third = i64(picture[2])
+        }
+        println("{} {:?} {} {} {} {} {} null {} {}", all.getInt(0), all.getText(1), all.getBool(2), all.getFloat(3),
+            picture.len(), third, all.getInt(5), all.isNull(3), all.isNull(4))
+    }
+
+    // A ? in a text is not a parameter, and ?? is the ? of an operator.
+    db.Statement marks = c.prepare(
+        "SELECT 'a?b', ?::int + 1, '{\"k\": 1}'::jsonb ?? 'k', 3.7::float8, 12::numeric, 'x' -- is it?")
+    marks.setInt(1, 41)
+    marks.next()
+    println("{} {} {} {} {} {}", marks.getText(0), marks.getInt(1), marks.getBool(2), marks.getInt(3),
+        marks.getInt(4), marks.getInt(5))
+
+    i64 updated = c.exec("UPDATE cromo_test_notes SET done = true")
+    c.begin()
+    i64 deleted = c.exec("DELETE FROM cromo_test_notes")
+    c.rollback()
+    println("updated {}, deleted {}, after the rollback {}", updated, deleted, count(ref c))
+    if (true) {
+        db.Connection other = data.connect()
+        other.begin()
+        other.exec("DELETE FROM cromo_test_notes")
+    }
+    println("after a connection that ended in a transaction {}", count(ref c))
+    c.begin()
+    c.exec("DELETE FROM cromo_test_notes WHERE id = 2")
+    c.commit()
+    println("after the commit {}", count(ref c))
+
+    bool notSql = false
+    try {
+        db.Statement wrong = c.prepare("SELEC 1")
+        wrong.next()
+    } catch (Exception e) {
+        notSql = e.message().startsWith("cannot prepare the statement: ") && e.message().endsWith("(42601)")
+    }
+    println("missing table {}, twice the same key {}, not SQL {}", fails(ref c, "SELECT 1 FROM cromo_test_nowhere", "42P01"),
+        fails(ref c, "INSERT INTO cromo_test_notes (id, title) VALUES (1, 'again')", "23505"), notSql)
+    c.begin()
+    fails(ref c, "SELECT 1 FROM cromo_test_nowhere", "42P01")
+    c.rollback()
+    println("a transaction that failed goes on after its rollback: {}", count(ref c))
+
+    thread.Group tasks
+    for (i64 t = 0; t < 8; t++) {
+        tasks.start([data, t]() {
+            db.Connection mine = data.connect()
+            db.Statement add = mine.prepare("INSERT INTO cromo_test_notes (title, count) VALUES (?, ?)")
+            for (i64 i = 0; i < 10; i++) {
+                add.setText(1, format("task {}", t))
+                add.setInt(2, i)
+                add.exec()
+            }
+        })
+    }
+    tasks.wait()
+    println("tasks {}", count(ref c))
+
+    bool refused = false
+    try {
+        db.Database nobody = db.Database("postgresql://cromo_test_nobody:wrong" + address.slice(address.findLast("@"), address.len()))
+        nobody.connect()
+    } catch (Exception e) {
+        refused = e.message().startsWith("cannot open the database ")
+    }
+    println("wrong password {}", refused)
+    try {
+        c.backup("copy.db")
+    } catch (Exception e) {
+        println("{}", e.message())
+    }
+    try {
+        db.Statement late = orphan(data)
+        late.next()
+    } catch (Exception e) {
+        println("{}", e.message())
+    }
+    try {
+        db.Database unknown = db.Database("postgresql://someone@localhost/name?sslmode=maybe")
+        unknown.connect()
+    } catch (Exception e) {
+        println("{}", e.message())
+    }
+    c.exec("DROP TABLE cromo_test_notes")
+    println("gone {}", c.hasTable("cromo_test_notes"))
+    ret 0
+}

@@ -1,5 +1,5 @@
 // expect-error: cannot find the module modules.missing
-// expect-error: the standard library has no module std.io: it has std.cmdline, std.crypto, std.fs, std.gui, std.gzip, std.http, std.json, std.jwt, std.net, std.os, std.process, std.tar, std.thread, std.time, std.websocket and std.zip, and its core is visible without import
+// expect-error: the standard library has no module std.io: it has std.cmdline, std.crypto, std.db, std.fs, std.gui, std.gzip, std.http, std.json, std.jwt, std.log, std.net, std.os, std.process, std.regex, std.tar, std.thread, std.time, std.websocket and std.zip, and its core is visible without import
 // expect-error: another import is also called geometry
 // expect-error: both modules/both.cro and the folder modules/both exist: rename one of them
 // expect-error: the imports come before the declarations of the module

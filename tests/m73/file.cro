@@ -1,0 +1,101 @@
+// std.db with a file of SQLite (D529): the data stay in the file, two connections wait
+// for each other with the locks of the file, tasks write together through the pool,
+// the errors of the database are exceptions, and a backup is a database.
+// Not on ARM64 here: the old qemu of the tests refuses the locks of the open files (F_OFD_SETLK).
+// target: windows linux-x86_64
+// program-env: OUT={dir}/../out/db
+// expect-output: kept 2
+// expect-output: the other waits: cannot run the statement: database is locked
+// expect-output: after the commit 3
+// expect-output: tasks 203
+// expect-output: cannot prepare the statement: near "SELEC": syntax error
+// expect-output: cannot run the statement: no such table: missing
+// expect-output: cannot run the statement: UNIQUE constraint failed: notes.id
+// expect-output: backup 203
+// expect-output: cannot open the database
+import std.db
+import std.fs
+import std.os
+import std.thread
+
+i64 count(db.Database data) {
+    db.Connection c = data.connect()
+    db.Statement all = c.prepare("SELECT count(*) FROM notes")
+    all.next()
+    ret all.getInt(0)
+}
+
+i32 main() {
+    string folder = os.env("OUT")
+    fs.createFolders(folder)
+    string file = folder + "/notes.db"
+    string copy = folder + "/copy.db"
+    fs.removeAll(file)
+    fs.removeAll(copy)
+
+    if (true) {
+        db.Database first = db.Database(file)
+        db.Connection c = first.connect()
+        c.exec("CREATE TABLE notes (id INTEGER PRIMARY KEY, title TEXT)")
+        c.exec("INSERT INTO notes (title) VALUES ('one'), ('two')")
+    }
+    db.Database data = db.Database(file)  // the file again
+    println("kept {}", count(data))
+
+    // A transaction that writes holds the file: another connection waits, then gives up.
+    data.setTimeout(200)
+    db.Connection writer = data.connect()
+    db.Connection other = data.connect()
+    writer.begin()
+    writer.exec("INSERT INTO notes (title) VALUES ('three')")
+    try {
+        other.exec("INSERT INTO notes (title) VALUES ('four')")
+        println("the other wrote")
+    } catch (Exception e) {
+        println("the other waits: {}", e.message())
+    }
+    writer.commit()
+    println("after the commit {}", count(data))
+
+    // Twenty tasks, ten rows each, with the connections of the pool.
+    data.setTimeout(20000)
+    thread.Group tasks
+    for (i64 t = 0; t < 20; t++) {
+        tasks.start([data, t]() {
+            db.Connection c = data.connect()
+            db.Statement insert = c.prepare("INSERT INTO notes (title) VALUES (?)")
+            for (i64 i = 0; i < 10; i++) {
+                insert.setText(1, format("task {} row {}", t, i))
+                insert.exec()
+            }
+        })
+    }
+    tasks.wait()
+    println("tasks {}", count(data))
+
+    try {
+        other.prepare("SELEC 1")
+    } catch (Exception e) {
+        println("{}", e.message())
+    }
+    try {
+        other.exec("DELETE FROM missing")
+    } catch (Exception e) {
+        println("{}", e.message())
+    }
+    try {
+        other.exec("INSERT INTO notes (id, title) VALUES (1, 'again')")
+    } catch (Exception e) {
+        println("{}", e.message())
+    }
+
+    other.backup(copy)
+    println("backup {}", count(db.Database(copy)))
+
+    try {
+        db.Database(folder + "/missing/notes.db")
+    } catch (Exception e) {
+        println("{}", e.message().slice(0, 24))
+    }
+    ret 0
+}

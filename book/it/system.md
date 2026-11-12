@@ -7,7 +7,8 @@ Questo capitolo tratta dei moduli che dialogano con il sistema operativo:
 | [std.fs](std.fs.html) | file e cartelle, percorsi, link |
 | [std.os](std.os.html) | il sistema, l'ambiente, lo standard input, la fine del programma |
 | [std.process](std.process.html) | altri programmi, con il loro input e output |
-| [std.time](std.time.html) | orologi, date e pause |
+| [std.time](std.time.html) | orologi, date, fusi orari e pause |
+| [std.log](std.log.html) | il log del programma |
 | [std.cmdline](std.cmdline.html) | le opzioni della riga di comando, e l'aiuto |
 | [std.zip](std.zip.html), [std.tar](std.tar.html) | archivi |
 
@@ -948,6 +949,145 @@ written less than 2 seconds ago: true
 
 Così `time.unix() - fs.modified(path) > 24 * 3600` dice che un file ha più di un giorno.
 
+### Fusi orari
+
+Un `time.Zone` dice quanto distano da UTC gli orologi di un luogo in ogni momento, con la sua ora legale e i cambiamenti della sua storia. `time.zone(name)` dà la zona con un nome dell'IANA Time Zone Database, come `"Europe/Rome"` o `"America/New_York"`, e lancia un'eccezione per un nome che non è una zona; `time.utc()` è UTC, `time.local()` la zona del sistema, e `time.fixedZone(minutes)` una zona sempre a quella distanza da UTC.
+
+`time.date(year, month, day, hour, minute, second, zone)` è il momento in cui gli orologi della zona mostrano quella data. Un `DateTime` è un momento: `inZone(zone)` dà lo stesso momento sugli orologi di un'altra zona, e `unix()` i suoi secondi dal 1970, uguali in ogni zona.
+
+```cromo
+import std.time
+
+i32 main() {
+    time.Zone rome = time.zone("Europe/Rome")
+    time.Zone tokyo = time.zone("Asia/Tokyo")
+    time.DateTime meeting = time.date(2026, 7, 1, 9, 30, 0, rome)
+    println("{}", meeting.text())
+    println("{}", meeting.inZone(tokyo).text())
+    println("{}", meeting.inZone(time.utc()).text())
+    println("{} {}", rome.offsetAt(meeting.unix()), rome.name())
+
+    time.DateTime winter = meeting.addSeconds(180 * 86400).inZone(rome)
+    println("{}", winter.text())
+    ret 0
+}
+```
+
+```output
+2026-07-01T09:30:00.000+02:00
+2026-07-01T16:30:00.000+09:00
+2026-07-01T07:30:00.000Z
+120 Europe/Rome
+2026-12-28T08:30:00.000+01:00
+```
+
+Un `DateTime` conosce il suo offset da UTC, non la sua zona. `add(duration)` e `addSeconds(seconds)` danno un momento successivo con lo stesso offset, e `inZone` lo mette sugli orologi della zona, che nell'esempio sono tornati all'ora solare. `later.since(earlier)` è la `Duration` fra due momenti, `weekday()` il giorno della settimana, da 0 per la domenica, e `yearDay()` il giorno dell'anno, da 1.
+
+I numeri di `time.date` fuori dal loro intervallo spostano gli altri, come in `mktime` del C: il mese 13 è gennaio dell'anno dopo, e il giorno 0 è l'ultimo giorno del mese prima. Così `time.date(d.year, d.month + 1, 0, 0, 0, 0, zone)` è l'ultimo giorno del mese di `d`. Quando comincia l'ora legale gli orologi saltano un'ora, e quando finisce mostrano un'ora due volte: un orario che saltano è preso con l'offset di prima, e uno che mostrano due volte è il primo dei due.
+
+Le regole delle zone vengono dal sistema quando le ha, come Linux e Android, e ne seguono gli aggiornamenti; altrimenti da una copia del database che la libreria porta con sé, e che entra nei programmi che chiamano `time.zone`, circa 220 KB. Così un nome è conosciuto su ogni sistema, anche su Windows. `time.zone` legge le regole ogni volta: un programma chiede una zona una volta e la conserva.
+
+### Scrivere e leggere le date
+
+`d.format(pattern)` scrive una data come dice il pattern, con le lettere di `strftime` del C dopo un `%`; `time.parse(text, pattern)` ne legge una con le stesse lettere.
+
+```cromo
+import std.time
+
+i32 main() {
+    time.DateTime d = time.date(2026, 7, 1, 9, 5, 0, time.zone("Europe/Rome"))
+    println("{}", d.format("%d/%m/%Y %H:%M"))
+    println("{}", d.format("%A %e %B %Y, %I:%M %p"))
+    println("{}", d.inZone(time.utc()).format("%a, %d %b %Y %H:%M:%S GMT"))
+    println("{}", d.format("%F %T %:z, day %j, week day %u"))
+
+    time.DateTime read = time.parse("01/07/2026 09:05", "%d/%m/%Y %H:%M")
+    println("{}", read.text())
+    time.DateTime local = time.parseIn("01/07/2026 09:05", "%d/%m/%Y %H:%M", time.zone("America/New_York"))
+    println("{} {}", local.text(), local.weekday())
+    println("{}", time.parseIso("2026-07-01T09:05:00+02:00").unix() == d.unix())
+    try {
+        time.parse("31/02/2026", "%d/%m/%Y")
+    } catch (Exception e) {
+        println("{}", e.message())
+    }
+    ret 0
+}
+```
+
+```output
+01/07/2026 09:05
+Wednesday  1 July 2026, 09:05 AM
+Wed, 01 Jul 2026 07:05:00 GMT
+2026-07-01 09:05:00 +02:00, day 182, week day 3
+2026-07-01T09:05:00.000Z
+2026-07-01T09:05:00.000-04:00 3
+true
+the date '31/02/2026' is not of the calendar
+```
+
+| Lettere | Scrivono | Esempio |
+|---|---|---|
+| `%Y` `%y` | l'anno, intero e le sue ultime due cifre | `2026` `26` |
+| `%m` `%B` `%b` | il mese: il numero, il nome, le prime tre lettere | `07` `July` `Jul` |
+| `%d` `%e` `%j` | il giorno del mese, con uno zero o uno spazio davanti, e dell'anno | `01` ` 1` `182` |
+| `%A` `%a` `%u` `%w` | il giorno della settimana: il nome, tre lettere, il numero da lunedì (da 1 a 7) e da domenica (da 0 a 6) | `Wednesday` `Wed` `3` `3` |
+| `%H` `%I` `%p` | l'ora di 24, di 12, e AM o PM | `09` `09` `AM` |
+| `%M` `%S` | i minuti e i secondi | `05` `00` |
+| `%f` `%3f` `%6f` `%9f` | la frazione del secondo: microsecondi, oppure 3, 6 e 9 cifre | `250000` `250` |
+| `%z` `%:z` | l'offset da UTC | `+0200` `+02:00` |
+| `%s` | i secondi dal 1970 | `1782889500` |
+| `%F` `%T` `%D` `%R` | `%Y-%m-%d`, `%H:%M:%S`, `%m/%d/%y`, `%H:%M` | `2026-07-01` |
+| `%%` `%n` `%t` | un `%`, una fine riga, una tabulazione | |
+
+I nomi dei giorni e dei mesi sono in inglese. Una lettera che non è nella tabella lancia un `Error`.
+
+`time.parse` vuole che tutto il testo sia come dice il pattern, e lancia un `Error` altrimenti, o per una data che il calendario non ha. Accetta i nomi per intero o con tre lettere, in maiuscolo o no; uno spazio del pattern è un numero qualsiasi di spazi. Ciò che il pattern non dice è il primo gennaio 1970, a mezzanotte. L'offset è quello del testo, con `%z`, e UTC senza; `time.parseIn(text, pattern, zone)` prende un testo senza offset sugli orologi di una zona. `time.parseIso(text)` legge ISO 8601 e RFC 3339, ciò che `text()` scrive: `2026-07-01`, `2026-07-01T09:05`, `2026-07-01 09:05:00.250+02:00`.
+
+## Il log
+
+Un programma che gira a lungo, come un servizio, scrive ciò che fa in un log: righe con l'ora, un livello e un messaggio. Il modulo [std.log](std.log.html) le scrive sullo standard error, o alla fine di un file.
+
+```cromo nocheck
+import std.log
+
+void serve(log.Logger service, string id) {
+    log.Logger request = service.with("request", id).withInt("user", 42)
+    request.debug("the request starts")
+    request.warn("slow answer")
+}
+
+i32 main() {
+    log.info("the service starts")
+
+    log.Logger service
+    service.setLevel(log.Level.Debug)
+    serve(service, "7f3a")
+    service.setJson(true)
+    serve(service, "7f3b")
+    ret 0
+}
+```
+
+```text
+2026-11-12T10:03:12.250+01:00 INFO  the service starts
+2026-11-12T10:03:12.250+01:00 DEBUG the request starts request=7f3a user=42
+2026-11-12T10:03:12.251+01:00 WARN  slow answer request=7f3a user=42
+{"time":"2026-11-12T10:03:12.251+01:00","level":"DEBUG","message":"the request starts","request":"7f3b","user":42}
+{"time":"2026-11-12T10:03:12.251+01:00","level":"WARN","message":"slow answer","request":"7f3b","user":42}
+```
+
+- `log.info`, `log.warn` e `log.error` scrivono una riga del loro livello sullo standard error. Il messaggio è una stringa: `format` la compone dai valori.
+- Un `log.Logger` ha le stesse funzioni, più `debug`, e dice dove e come vengono scritte le sue righe. Uno dichiarato senza valore scrive testo sullo standard error, dal livello `Info` in su.
+- `setLevel(level)` imposta il livello più basso che il logger scrive, fra `log.Level.Debug`, `Info`, `Warn` ed `Error`.
+- `setJson(true)` rende ogni riga un oggetto JSON, con `time`, `level`, `message` e i campi: il formato che leggono gli strumenti che raccolgono i log dei servizi.
+- `setFile(path)` manda le righe alla fine di un file, creato se non esiste, e `setFile("")` di nuovo sullo standard error. Il file viene aperto a ogni riga, così uno strumento che ruota i log, come `logrotate`, può spostarlo in qualsiasi momento; la libreria non ruota i file da sé.
+- `with(key, text)` e `withInt(key, number)` danno un logger come quello, le cui righe hanno anche quel campo dopo il messaggio. `log.with` e `log.withInt` partono da un logger dello standard error.
+
+Niente del log appartiene all'intero programma: un logger è un valore, come una stringa. Il programma ne crea uno, lo imposta e lo passa alle funzioni e ai task che scrivono; una copia ha ciò che il logger aveva quando è stato copiato, così una funzione che serve una richiesta aggiunge il numero della richiesta alla sua copia e la passa a ciò che chiama.
+
+Le righe dei thread e dei task non si mescolano mai, e un messaggio è sempre una riga: una fine riga al suo interno è scritta `\n`, così un testo che viene da fuori non può creare una riga che sembra un'altra. Il log non lancia mai eccezioni: una riga che non può essere scritta nel file va sullo standard error.
+
 ## Archivi
 
 `std.zip` legge gli archivi zip, come li creano Windows, macOS e le forge, anche oltre i 4 GB; `std.tar` legge gli archivi tar, come li creano GNU tar e bsdtar. Un `.tar.gz` è un tar compresso con gzip: prima lo decomprime `std.gzip`. Leggono ed estraggono archivi, ma non li scrivono.
@@ -1050,5 +1190,6 @@ Un archivio che arriva dalla rete non può scrivere fuori dalla cartella: un nom
 - `std.os` fornisce il sistema, l'ambiente, la cartella corrente e lo standard input, e `os.exit` termina il programma senza eseguire i distruttori.
 - `std.cmdline` legge le opzioni della riga di comando, scrive l'aiuto, e gestisce una riga di comando sbagliata con il codice di uscita 2.
 - `std.process` esegue programmi fino alla fine con `run`, o in parallelo con `start`, senza una shell; un codice di uscita è un valore, un programma che non riesce a partire è un'eccezione, e un `Process` attende il suo programma quando viene distrutto.
-- `std.time` misura le durate con un orologio monotono, fornisce la data e l'ora, i secondi di Unix, e le pause.
+- `std.time` misura le durate con un orologio monotono, fornisce la data e l'ora, i secondi di Unix, e le pause; sposta una data fra i fusi orari, la scrive con le lettere di `strftime` e la legge da un testo.
+- `std.log` scrive righe con l'ora, un livello e un messaggio, come testo o come JSON, sullo standard error o in un file.
 - `std.zip` e `std.tar`, con `std.gzip`, leggono ed estraggono archivi, senza scrivere fuori dalla cartella.
