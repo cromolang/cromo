@@ -177,6 +177,8 @@ extern const u8 cromo_gui_mono_semibold[];
 #define GLYPHS 4096      // the slots of the table of the glyphs, a power of 2
 #define SLANT 0.2f       // the italic: the tangent of its slant, about 11 degrees
 #define OBLIQUE 8        // the bit of the italic in the face
+#define SMALL_TEXT 24    // up to these pixels of the display the text is small (D542)
+#define PHASES 4         // the places of a small glyph in a pixel, across
 
 typedef struct {
     i32 code;  // -1 for a free slot
@@ -191,6 +193,9 @@ typedef struct {
     stbtt_fontinfo info;
     f32 density;  // pixels for each logical pixel
     f32 scale;    // of stb_truetype, for the size in pixels
+    f32 scaleY;   // down: the same, or a little more or less for the small letters on whole pixels (D542)
+    i32 small;    // small text: its glyphs at quarters of a pixel (D542)
+    i32 strong;   // small text and small icons: more contrast (D542)
     f32 ascent;   // in logical pixels, as the others
     f32 descent;
     f32 gap;
@@ -238,6 +243,19 @@ void* cromo_gui_font(void* renderer, i32 face, f32 size, f32 density) {
     } else {
         font->scale = stbtt_ScaleForPixelHeight(&font->info, size * density);
     }
+    font->scaleY = font->scale;
+    font->strong = size * density <= SMALL_TEXT;
+    font->small = family != 2 && font->strong;
+    i32 bx0, by0, bx1, by1;
+    if (family != 2 && stbtt_GetCodepointBox(&font->info, 'x', &bx0, &by0, &bx1, &by1)) {
+        // The top of the small letters on a line of pixels, when it is close to one: the
+        // text is sharper, and its height changes by less than a pixel.
+        f32 height = by1 * font->scale;
+        f32 whole = (f32)SDL_floor(height + 0.5);
+        if (whole >= 3 && height > 0 && whole / height > 0.9f && whole / height < 1.12f) {
+            font->scaleY = font->scale * whole / height;
+        }
+    }
     i32 ascent, descent, gap;
     stbtt_GetFontVMetrics(&font->info, &ascent, &descent, &gap);
     font->ascent = ascent * font->scale / density;
@@ -284,10 +302,11 @@ static i32 outlineOf(Font* font, i32 index, stbtt_vertex** vertices) {
     return count;
 }
 
-// The box of the pixels of a glyph, from the pen and the baseline, y down.
-static void boxOf(Font* font, i32 index, i32* x0, i32* y0, i32* x1, i32* y1) {
+// The box of the pixels of a glyph, from the pen and the baseline, y down, with the
+// glyph moved right by shift, a part of a pixel.
+static void boxOf(Font* font, i32 index, f32 shift, i32* x0, i32* y0, i32* x1, i32* y1) {
     if (!font->oblique) {
-        stbtt_GetGlyphBitmapBox(&font->info, index, font->scale, font->scale, x0, y0, x1, y1);
+        stbtt_GetGlyphBitmapBoxSubpixel(&font->info, index, font->scale, font->scaleY, shift, 0, x0, y0, x1, y1);
         return;
     }
     stbtt_vertex* vertices;
@@ -310,16 +329,16 @@ static void boxOf(Font* font, i32 index, i32* x0, i32* y0, i32* x1, i32* y1) {
         *x0 = *y0 = *x1 = *y1 = 0;
         return;
     }
-    *x0 = STBTT_ifloor(left * font->scale);
-    *y0 = STBTT_ifloor(-high * font->scale);
-    *x1 = STBTT_iceil(right * font->scale);
-    *y1 = STBTT_iceil(-low * font->scale);
+    *x0 = STBTT_ifloor(left * font->scale + shift);
+    *y0 = STBTT_ifloor(-high * font->scaleY);
+    *x1 = STBTT_iceil(right * font->scale + shift);
+    *y1 = STBTT_iceil(-low * font->scaleY);
 }
 
 // The coverage of a glyph into its box, w by h pixels from (x0, y0).
-static void rasterize(Font* font, i32 index, u8* coverage, i32 w, i32 h, i32 x0, i32 y0) {
+static void rasterize(Font* font, i32 index, f32 shift, u8* coverage, i32 w, i32 h, i32 x0, i32 y0) {
     if (!font->oblique) {
-        stbtt_MakeGlyphBitmap(&font->info, coverage, w, h, w, font->scale, font->scale, index);
+        stbtt_MakeGlyphBitmapSubpixel(&font->info, coverage, w, h, w, font->scale, font->scaleY, shift, 0, index);
         return;
     }
     stbtt_vertex* vertices;
@@ -329,11 +348,19 @@ static void rasterize(Font* font, i32 index, u8* coverage, i32 w, i32 h, i32 x0,
     bitmap.h = h;
     bitmap.stride = w;
     bitmap.pixels = coverage;
-    stbtt_Rasterize(&bitmap, 0.35f, vertices, count, font->scale, font->scale, 0, 0, x0, y0, 1, font->info.userdata);
+    stbtt_Rasterize(&bitmap, 0.35f, vertices, count, font->scale, font->scaleY, shift, 0, x0, y0, 1, font->info.userdata);
     STBTT_free(vertices, font->info.userdata);
 }
 
-static Glyph* findGlyph(Font* font, i32 code) {
+// The coverage of a small glyph, made stronger: without the hints of the font its thin
+// strokes are gray, most of all the light ones on a dark ground (D542).
+static u8 stronger[256];
+
+// The glyph of a letter at a phase, the quarters of a pixel that it is moved right by:
+// the same letter at each phase is a glyph of its own.
+static Glyph* findGlyph(Font* font, i32 letter, i32 phase) {
+    i32 code = letter + (phase << 21);
+    f32 shift = phase / (f32)PHASES;
     u32 slot = ((u32)code * 2654435761u) & (GLYPHS - 1);
     for (;;) {
         Glyph* glyph = &font->glyphs[slot];
@@ -343,12 +370,12 @@ static Glyph* findGlyph(Font* font, i32 code) {
     }
     if (font->count >= GLYPHS / 2) {
         clearAtlas(font);
-        return findGlyph(font, code);
+        return findGlyph(font, letter, phase);
     }
-    i32 index = stbtt_FindGlyphIndex(&font->info, code);
+    i32 index = stbtt_FindGlyphIndex(&font->info, letter);
     i32 advance, bearing, x0, y0, x1, y1;
     stbtt_GetGlyphHMetrics(&font->info, index, &advance, &bearing);
-    boxOf(font, index, &x0, &y0, &x1, &y1);
+    boxOf(font, index, shift, &x0, &y0, &x1, &y1);
     i32 w = x1 - x0, h = y1 - y0;
     if (w > 0 && h > 0) {
         if (font->shelfX + w + 1 > font->atlas) {
@@ -358,7 +385,7 @@ static Glyph* findGlyph(Font* font, i32 code) {
         }
         if (font->shelfY + h > font->atlas) {
             clearAtlas(font);
-            return findGlyph(font, code);
+            return findGlyph(font, letter, phase);
         }
     }
     Glyph* glyph = &font->glyphs[slot];
@@ -375,10 +402,13 @@ static Glyph* findGlyph(Font* font, i32 code) {
         u8* coverage = SDL_malloc((size_t)w * h);
         u8* pixels = SDL_malloc((size_t)w * h * 4);
         if (coverage && pixels) {
-            rasterize(font, index, coverage, w, h, x0, y0);
+            rasterize(font, index, shift, coverage, w, h, x0, y0);
+            if (!stronger[255]) {
+                for (i32 v = 0; v < 256; ++v) stronger[v] = (u8)(255.0 * SDL_pow(v / 255.0, 0.78) + 0.5);
+            }
             for (i32 i = 0; i < w * h; ++i) {
                 pixels[4 * i] = pixels[4 * i + 1] = pixels[4 * i + 2] = 255;
-                pixels[4 * i + 3] = coverage[i];
+                pixels[4 * i + 3] = font->strong ? stronger[coverage[i]] : coverage[i];
             }
             struct {
                 i32 x, y, w, h;
@@ -416,13 +446,14 @@ f32 cromo_gui_text_width(void* data, const u8* text, i64 length, f32 spacing) {
     while (text < end) {
         i32 code = nextCode(&text, end);
         if (previous) pen += stbtt_GetCodepointKernAdvance(&font->info, previous, code) * font->scale;
-        pen += findGlyph(font, code)->advance + spacing * font->density;  // D512: after each letter
+        pen += findGlyph(font, code, 0)->advance + spacing * font->density;  // D512: after each letter
         previous = code;
     }
     return pen / font->density;
 }
 
-// The text with its baseline at y, each glyph on a whole pixel of the display.
+// The text with its baseline at y, each glyph on a whole pixel of the display, or the
+// glyphs of a small text at the quarter of a pixel nearest to their place (D542).
 void cromo_gui_text(void* data, const u8* text, i64 length, f32 x, f32 y, f32 spacing, u8 r, u8 g, u8 b, u8 alpha) {
     Font* font = data;
     const u8* end = text + length;
@@ -434,9 +465,19 @@ void cromo_gui_text(void* data, const u8* text, i64 length, f32 x, f32 y, f32 sp
     while (text < end) {
         i32 code = nextCode(&text, end);
         if (previous) pen += stbtt_GetCodepointKernAdvance(&font->info, previous, code) * font->scale;
-        Glyph* glyph = findGlyph(font, code);
+        f32 whole = (f32)SDL_floor(pen + 0.5);
+        i32 phase = 0;
+        if (font->small) {
+            whole = (f32)SDL_floor(pen);
+            phase = (i32)((pen - whole) * PHASES + 0.5f);
+            if (phase >= PHASES) {
+                phase = 0;
+                whole += 1;
+            }
+        }
+        Glyph* glyph = findGlyph(font, code, phase);
         if (glyph->w > 0) {
-            f32 left = (f32)SDL_floor(pen + 0.5) + glyph->left;
+            f32 left = whole + glyph->left;
             FRect source = {(f32)glyph->x, (f32)glyph->y, (f32)glyph->w, (f32)glyph->h};
             FRect target = {left / font->density, (baseline + glyph->top) / font->density, glyph->w / font->density,
                             glyph->h / font->density};
@@ -643,7 +684,7 @@ void cromo_gui_icon(void* renderer, i32 code, f32 x, f32 y, f32 size, f32 densit
     }
     Font* font = icons->font;
     if (!font) return;
-    Glyph* glyph = findGlyph(font, code);
+    Glyph* glyph = findGlyph(font, code, 0);
     if (glyph->w <= 0) return;
     SDL_SetTextureColorMod(font->texture, r, g, b);
     SDL_SetTextureAlphaMod(font->texture, alpha);
