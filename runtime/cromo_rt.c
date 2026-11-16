@@ -1467,6 +1467,7 @@ typedef struct {
 void cromo_sigreturn(void);  // mem_x64.S, mem_arm64.S
 
 static u8 mainCrashStack[CRASH_STACK];
+static SignalAction crashBefore;  // what handled SIGSEGV before the runtime: on Android, the one that writes the crash
 
 // The registers in the ucontext of the kernel.
 #ifdef __aarch64__
@@ -1481,15 +1482,21 @@ static u8 mainCrashStack[CRASH_STACK];
 #define CONTEXT_PC 16          // rip
 #endif
 
-// An address near the stack pointer is the guard page of a stack: other faults,
-// of C code, end the program as usual, faulting again without this handler.
+// An address near the stack pointer is the guard page of a stack. The other faults
+// are not of Cromo: they go to the handler that was there before this one, as that
+// of Android, whose runtime of Java uses SIGSEGV for its own checks and comes back
+// from it, and which writes the crash in the log; without one the program ends as
+// usual, faulting again without this handler.
 static void crashHandler(i32 signal, void* info, void* context) {
-    (void)signal;
     u64 address = *(u64*)((u8*)info + 16);  // si_addr
     u64* registers = (u64*)((u8*)context + CONTEXT_REGISTERS);
     u64 sp = registers[CONTEXT_SP];
     u64 distance = address > sp ? address - sp : sp - address;
     if (distance > ((u64)1 << 20)) {
+        if ((u64)crashBefore.handler > 1) {  // not SIG_DFL, not SIG_IGN
+            ((void (*)(i32, void*, void*))crashBefore.handler)(signal, info, context);
+            return;
+        }
         SignalAction usual = {0, 0, 0, 0};
         systemCall(SYS_rt_sigaction, 11, (i64)&usual, 0, 8, 0, 0);
         return;
@@ -1513,7 +1520,7 @@ static void crashStart(void) {
     crashStack(0);
     // SA_SIGINFO, SA_ONSTACK and SA_RESTORER, without the C library to give it.
     SignalAction action = {(void*)crashHandler, 0x4 | 0x08000000 | 0x04000000, cromo_sigreturn, 0};
-    systemCall(SYS_rt_sigaction, 11, (i64)&action, 0, 8, 0, 0);
+    systemCall(SYS_rt_sigaction, 11, (i64)&action, (i64)&crashBefore, 8, 0, 0);
 }
 
 #endif

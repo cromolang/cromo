@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16...3.20)  # 3.16 in WSL for cromo for Linux, without the runtime
-project(cromo VERSION 0.83.0 LANGUAGES CXX)  # 0.milestone.fix (D157)
+project(cromo VERSION 0.86.0 LANGUAGES CXX)  # 0.milestone.fix (D157)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -106,6 +106,8 @@ set(CROMO_GUI_SOURCES runtime/gui/gui.c runtime/gui/fonts.S third_party/stb/stb_
     third_party/jetbrains-mono/JetBrainsMonoNL-Regular.ttf third_party/jetbrains-mono/JetBrainsMonoNL-SemiBold.ttf)
 set(CROMO_GUI_IMAGE_SOURCES runtime/gui/image.c third_party/stb/stb_image.h third_party/nanosvg/nanosvg.h
     third_party/nanosvg/nanosvgrast.h)
+# The part of std.audio in C (D547), with stb_vorbis: an object of its own as the images, with the same flags.
+set(CROMO_AUDIO_SOURCES runtime/audio/audio.c third_party/stb/stb_vorbis.c)
 set(CROMO_GUI_IMAGE_FLAGS -nostdlibinc -isystem "${CMAKE_SOURCE_DIR}/runtime/libc" "-I${CMAKE_SOURCE_DIR}/third_party/stb"
     "-I${CMAKE_SOURCE_DIR}/third_party/nanosvg")
 add_custom_command(
@@ -121,6 +123,11 @@ add_custom_command(
   DEPENDS ${CROMO_GUI_IMAGE_SOURCES}
   COMMENT "Compiling the images of std.gui")
 add_custom_command(
+  OUTPUT "${CROMO_RT_DIR}/audio.obj"
+  COMMAND "${CROMO_CLANG}" ${CROMO_RT_FLAGS} -fno-ms-compatibility ${CROMO_GUI_IMAGE_FLAGS} -c "${CMAKE_SOURCE_DIR}/runtime/audio/audio.c" -o "${CROMO_RT_DIR}/audio.obj"
+  DEPENDS ${CROMO_AUDIO_SOURCES}
+  COMMENT "Compiling the part of std.audio in C")
+add_custom_command(
   OUTPUT "${CROMO_RT_DIR}/gui_linux.o" "${CROMO_RT_DIR}/gui_fonts_linux.o"
   COMMAND "${CROMO_CLANG}" ${CROMO_RT_LINUX_FLAGS} "-I${CMAKE_SOURCE_DIR}/third_party/stb" -c "${CMAKE_SOURCE_DIR}/runtime/gui/gui.c" -o "${CROMO_RT_DIR}/gui_linux.o"
   COMMAND "${CROMO_CLANG}" --target=x86_64-unknown-linux-gnu "-I${CMAKE_SOURCE_DIR}/third_party/inter"
@@ -132,9 +139,15 @@ add_custom_command(
   COMMAND "${CROMO_CLANG}" ${CROMO_RT_LINUX_FLAGS} ${CROMO_GUI_IMAGE_FLAGS} -c "${CMAKE_SOURCE_DIR}/runtime/gui/image.c" -o "${CROMO_RT_DIR}/gui_image_linux.o"
   DEPENDS ${CROMO_GUI_IMAGE_SOURCES}
   COMMENT "Compiling the images of std.gui for Linux")
-set(CROMO_GUI_WINDOWS_OBJECTS "${CROMO_RT_DIR}/gui.obj" "${CROMO_RT_DIR}/gui_fonts.obj" "${CROMO_RT_DIR}/gui_image.obj")
+add_custom_command(
+  OUTPUT "${CROMO_RT_DIR}/audio_linux.o"
+  COMMAND "${CROMO_CLANG}" ${CROMO_RT_LINUX_FLAGS} ${CROMO_GUI_IMAGE_FLAGS} -c "${CMAKE_SOURCE_DIR}/runtime/audio/audio.c" -o "${CROMO_RT_DIR}/audio_linux.o"
+  DEPENDS ${CROMO_AUDIO_SOURCES}
+  COMMENT "Compiling the part of std.audio in C for Linux")
+set(CROMO_GUI_WINDOWS_OBJECTS "${CROMO_RT_DIR}/gui.obj" "${CROMO_RT_DIR}/gui_fonts.obj" "${CROMO_RT_DIR}/gui_image.obj"
+    "${CROMO_RT_DIR}/audio.obj")
 set(CROMO_GUI_LINUX_OBJECTS "${CROMO_RT_DIR}/gui_linux.o" "${CROMO_RT_DIR}/gui_fonts_linux.o"
-    "${CROMO_RT_DIR}/gui_image_linux.o")
+    "${CROMO_RT_DIR}/gui_image_linux.o" "${CROMO_RT_DIR}/audio_linux.o")
 
 # The objects for one system, in <folder>, and a response file that lists them
 # for the archiver: their command line would be too long for Windows. The archive
@@ -305,22 +318,23 @@ foreach(arch arm64 x86_64)
     COMMENT "Assembling the Cromo runtime for Android on ${arch}")
   # The part of std.gui in C (D441), as for Linux (M44).
   add_custom_command(
-    OUTPUT "${dir}/gui.o" "${dir}/gui_fonts.o" "${dir}/gui_image.o"
+    OUTPUT "${dir}/gui.o" "${dir}/gui_fonts.o" "${dir}/gui_image.o" "${dir}/audio.o"
     COMMAND "${CROMO_CLANG}" ${base} -Wall -Wextra "-I${CMAKE_SOURCE_DIR}/third_party/stb" -c
             "${CMAKE_SOURCE_DIR}/runtime/gui/gui.c" -o "${dir}/gui.o"
     COMMAND "${CROMO_CLANG}" --target=${triple} "-I${CMAKE_SOURCE_DIR}/third_party/inter" "-I${CMAKE_SOURCE_DIR}/third_party/lucide" "-I${CMAKE_SOURCE_DIR}/third_party/jetbrains-mono"
             -c "${CMAKE_SOURCE_DIR}/runtime/gui/fonts.S" -o "${dir}/gui_fonts.o"
     COMMAND "${CROMO_CLANG}" ${base} ${CROMO_GUI_IMAGE_FLAGS} -c "${CMAKE_SOURCE_DIR}/runtime/gui/image.c" -o "${dir}/gui_image.o"
-    DEPENDS ${CROMO_GUI_SOURCES} ${CROMO_GUI_IMAGE_SOURCES}
+    COMMAND "${CROMO_CLANG}" ${base} -Wall -Wextra ${CROMO_GUI_IMAGE_FLAGS} -c "${CMAKE_SOURCE_DIR}/runtime/audio/audio.c" -o "${dir}/audio.o"
+    DEPENDS ${CROMO_GUI_SOURCES} ${CROMO_GUI_IMAGE_SOURCES} ${CROMO_AUDIO_SOURCES}
     COMMENT "Compiling the part of std.gui in C for Android on ${arch}")
   add_custom_command(
     OUTPUT "${dir}/libcromo_rt.a"
     COMMAND "${CMAKE_COMMAND}" -E rm -f "${dir}/libcromo_rt.a"
     COMMAND "${CROMO_LLVM_AR}" rcs "${dir}/libcromo_rt.a" "${dir}/cromo_rt.o" "${dir}/bionic.o" "${dir}/${mem}.o"
-            "${dir}/runtime_cromo.o" "${dir}/gui.o" "${dir}/gui_fonts.o" "${dir}/gui_image.o"
+            "${dir}/runtime_cromo.o" "${dir}/gui.o" "${dir}/gui_fonts.o" "${dir}/gui_image.o" "${dir}/audio.o"
             "@${CROMO_RT_DIR}/tls_android_${arch}.rsp"
     DEPENDS "${dir}/cromo_rt.o" "${dir}/bionic.o" "${dir}/${mem}.o" "${dir}/runtime_cromo.o" "${dir}/gui.o" "${dir}/gui_fonts.o"
-            "${dir}/gui_image.o" ${tls_objects} "${CROMO_RT_DIR}/tls_android_${arch}.rsp"
+            "${dir}/gui_image.o" "${dir}/audio.o" ${tls_objects} "${CROMO_RT_DIR}/tls_android_${arch}.rsp"
     COMMENT "Archiving the Cromo runtime for Android on ${arch}")
   set(stubs libc.so libm.so libdl.so liblog.so)
   list(TRANSFORM stubs PREPEND "${dir}/bionic/" OUTPUT_VARIABLE stub_files)

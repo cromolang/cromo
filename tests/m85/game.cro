@@ -1,0 +1,109 @@
+// What a game asks of a window: the handler of each frame with the seconds since the
+// one before (D543), the keys released and those that repeat (D544), the fingers with
+// their numbers and their places (D545), the whole screen and the orientation (D546).
+// The events are those of SDL, made by the test.
+// target: windows linux-x86_64
+// program-env: SDL_VIDEO_DRIVER=offscreen
+// expect-output: frames: many true, the first with 0 true, the seconds add up true
+// expect-output: down 97 repeated false
+// expect-output: down 97 repeated true
+// expect-output: up 97
+// expect-output: touch down finger 7 at 100 65 pressure 0.5
+// expect-output: touch move finger 7 at 200 115
+// expect-output: touch down finger 8 at 300 15 pressure 0.5
+// expect-output: touch up finger 7 at 200 115
+// expect-output: touch up finger 8 at 300 15
+// expect-output: whole screen false true false
+// expect-output: the content is under the title bar again: true
+// expect-output: orientation Any Landscape
+import std.gui
+import std.thread
+import std.time
+import unsafe
+
+extern "SDL3" {
+    bool SDL_PushEvent(addr event)
+}
+
+// An event for the window, whatever its number among the first ones.
+void push(u32 kind, i64 code, bool again, i64 finger, f32 x, f32 y) {
+    addr event = alloc(128)
+    for (i64 window = 1; window < 8; window++) {
+        for (i64 i = 0; i < 128; i++) {
+            put<u8>(offset(event, i), 0)
+        }
+        put<u32>(event, kind)
+        if (kind == 0x300 || kind == 0x301) {  // a key
+            put<u32>(offset(event, 16), u32(window))
+            put<u32>(offset(event, 28), u32(code))
+            put<u8>(offset(event, 36), kind == 0x300 ? 1 : 0)
+            put<u8>(offset(event, 37), again ? 1 : 0)
+        } else {  // a finger: its place in parts of the window
+            put<u64>(offset(event, 16), 1)
+            put<u64>(offset(event, 24), u64(finger))
+            put<f32>(offset(event, 32), x)
+            put<f32>(offset(event, 36), y)
+            put<f32>(offset(event, 48), 0.5)
+            put<u32>(offset(event, 52), u32(window))
+        }
+        SDL_PushEvent(event)
+    }
+    free(event)
+    time.msleep(120)
+}
+
+struct Seen {
+    i64 frames
+    f32 first = -1
+    f32 total
+}
+
+i32 main() {
+    gui.Window w = gui.Window("game", 400, 235)  // the content is 400 by 200
+    thread.Shared<Seen> seen = thread.Shared<Seen>(Seen())
+    w.onUpdate([seen](f32 seconds) {
+        seen.lock([seconds](ref Seen s) {
+            if (s.frames == 0) {
+                s.first = seconds
+            }
+            s.frames++
+            s.total += seconds
+        })
+    })
+    w.onKeyDown([](gui.Key key) { println("down {} repeated {}", key.code, key.repeated) })
+    w.onKeyUp([](gui.Key key) { println("up {}", key.code) })
+    w.onTouchDown([](gui.Touch t) { println("touch down finger {} at {:.0f} {:.0f} pressure {}", t.finger, t.x, t.y, t.pressure) })
+    w.onTouchMove([](gui.Touch t) { println("touch move finger {} at {:.0f} {:.0f}", t.finger, t.x, t.y) })
+    w.onTouchUp([](gui.Touch t) { println("touch up finger {} at {:.0f} {:.0f}", t.finger, t.x, t.y) })
+    w.start()
+    Seen s
+    for (i64 waited = 0; waited < 10000 && s.total < 0.6; waited += 50) {  // the window opens when the system gives it
+        time.msleep(50)
+        seen.lock([ref s](ref Seen now) { s = now })
+    }
+    println("frames: many {}, the first with 0 {}, the seconds add up {}", s.frames > 20, s.first == 0, s.total > 0.5 && s.total < 1.5)
+
+    push(0x300, 97, false, 0, 0, 0)
+    push(0x300, 97, true, 0, 0, 0)
+    push(0x301, 97, false, 0, 0, 0)
+    push(0x700, 0, false, 7, 0.25, 100.0 / 235.0)
+    push(0x702, 0, false, 7, 0.5, 150.0 / 235.0)
+    push(0x700, 0, false, 8, 0.75, 50.0 / 235.0)
+    push(0x701, 0, false, 7, 0.5, 150.0 / 235.0)
+    push(0x703, 0, false, 8, 0.75, 50.0 / 235.0)  // taken away by the system: up, for the program
+
+    bool before = w.fullscreen()
+    w.setFullscreen(true)
+    time.msleep(200)
+    bool during = w.fullscreen()
+    w.setFullscreen(false)
+    time.msleep(200)
+    println("whole screen {} {} {}", before, during, w.fullscreen())
+    println("the content is under the title bar again: {}", w.titleBarVisible())
+    gui.Orientation first = w.orientation()
+    w.setOrientation(gui.Orientation.Landscape)
+    time.msleep(100)
+    println("orientation {:?} {:?}", first, w.orientation())
+    w.close()
+    ret 0
+}

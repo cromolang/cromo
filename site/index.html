@@ -126,7 +126,7 @@ sum: 120 µs</pre></div>
       <div class="stat"><b>0</b><span>dependencies: no libc, no Windows SDK</span></div>
       <div class="stat"><b>32 KB</b><span>for a hello world, statically linked</span></div>
       <div class="stat"><b>4</b><span>targets: Windows x64, Linux x64, Linux ARM64 and Android</span></div>
-      <div class="stat"><b>542</b><span>design decisions, all written down</span></div>
+      <div class="stat"><b>547</b><span>design decisions, all written down</span></div>
     </div></div>
   </div>
 
@@ -226,6 +226,21 @@ i32 main() {
         </ul>
       </div>
       <figure class="shot"><img src="app.png" width="633" height="620" alt="The same Cromo program as a window on Windows and as an app on an Android phone" loading="lazy"></figure>
+    </div>
+  </section>
+
+  <section id="games">
+    <div class="wrap">
+      <div class="kicker">Games</div>
+      <h2>2D games, <span class="chrome">desktop and Android</span></h2>
+      <p class="section-lead">A game is a window with a canvas. The same source plays in a window with the keyboard and on a phone with a finger, and <code>cromo run --target android</code> puts it there with one command. There is no garbage collector to stop a frame.</p>
+      <ul class="modes">
+        <li><b>frames</b><span><code>w.onUpdate</code> calls the game at each frame, with the seconds since the one before: what moves goes as fast on every device.</span></li>
+        <li><b>input</b><span>The keys pressed and released, the mouse, and each finger on the screen with its number, for swipes and for more fingers together.</span></li>
+        <li><b>sound</b><span><code>std.audio</code> plays effects from WAV and music from Ogg Vorbis, as many together as the game starts, from files that <code>embed</code> puts in the program.</span></li>
+      </ul>
+      <figure class="shot" style="margin-top:28px"><img src="snake.png" width="1040" height="695" alt="Snake, an example of Cromo, on an Android phone: the game with its score, the snake grown long, and the end of a game" loading="lazy"></figure>
+      <p class="section-lead" style="margin-top:20px;margin-bottom:0">This is <code>examples/25_snake.cro</code>: about 600 lines, with its drawing, its sounds and its music, and nothing else to install.</p>
     </div>
   </section>
 
@@ -487,7 +502,7 @@ cromo @VERSION@ (LLVM 23.1.4)</pre>
       <div class="progress" aria-hidden="true"><div style="width:99%"></div></div>
       <div class="roadmap">
         <div class="phase">
-          <h3>Done <span class="badge done">M0 – M83</span></h3>
+          <h3>Done <span class="badge done">M0 – M86</span></h3>
           <ul class="steps">
             <li><b>M0–2</b><span>LLVM backend, numbers, control flow, structs, RAII</span></li>
             <li><b>M3–6</b><span>Ownership, generics, interfaces, lists, strings, enums, exceptions</span></li>
@@ -537,6 +552,7 @@ cromo @VERSION@ (LLVM 23.1.4)</pre>
             <li><b>M78–79</b><span>The colors of a program, as a palette by roles, and the look of each component</span></li>
             <li><b>M80–81</b><span>The camera and the sensors of motion, on a computer and on a phone</span></li>
             <li><b>M82–83</b><span><code>cromo design</code> for every day: colors chosen with a picker and seen at once, the bars and the pages of an app, tabs, splits, groups in groups, clipboard, alignment and guides</span></li>
+            <li><b>M85–86</b><span>Games: a handler for each frame, the keys held, the fingers on the screen, the whole screen, and <code>std.audio</code> with sounds from WAV and Ogg Vorbis; Snake as an example</span></li>
           </ul>
         </div>
         <div class="phase">

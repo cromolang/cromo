@@ -523,7 +523,7 @@ i32 main() {
 ```
 
 ```output
-error: the standard library has no module std.io: it has std.cmdline, std.crypto, std.db,
+error: the standard library has no module std.io: it has std.audio, std.cmdline, std.crypto, std.db,
 ```
 
 ## Progetti: cromo.mod

@@ -2549,6 +2549,21 @@ i32 total = sum.sum()
 ### D542. The small text: quarters of a pixel, more contrast, the small letters on whole pixels
 *2026-11-13.* Chosen by the author, on the captures of the components before and after. The text of `std.gui` is drawn by stb_truetype without the hints of the font (D433), and it was as good as FreeType without hints; three things were left, all in the small sizes. The glyphs of a text up to 24 pixels of the display are placed at the quarter of a pixel nearest to their place, each quarter with a glyph of its own in the texture, where before each one went to the whole pixel: the room between the letters is even, most of all in the semibold. Their coverage, and that of the icons up to the same size, is made stronger, with a power of 0.78: the thin strokes were gray, most of all the light ones on a dark ground. And at every size the scale down of the letters changes by a little, less than 12% up and 10% down, so that the top of the small letters is on a line of pixels: the widths of the texts, and so the layouts, do not change. The italic and the monospaced font follow the same rules. The hints of the font, or the colors of the parts of a pixel as ClearType, would be another rasterizer, and a text tied to the order of the colors of each display.
 
+### D543. A game is a window: the handler of each frame
+*2026-11-13.* Chosen by the author. What a game needs is added to `std.gui`, not to a module of its own with its window and its loop, as LÖVE and raylib have: a game is a window with a canvas, and its menus, its scores and its pauses are the components that the programmer knows already. `Window.onUpdate(handler)` calls a handler at each frame of the window, with the seconds since its call before, as `requestAnimationFrame` of a browser and the timer of a frame of Qt: there the game takes its step, and the window is drawn again when the handler changed something in it. A second way to open a window, with the mouse, the keys, the images and the text of `std.gui` once more, would be two things to learn for one.
+
+### D544. The keys released, and those that repeat
+*2026-11-13.* A consequence of D543. `Window.onKeyUp(handler)` is called with each key released, as `onKeyDown` is with each key pressed, and a `gui.Key` says with `repeated` that the key is held down and the event is not its first: with them a program knows the keys that are held, and takes a press once. They are the two events and the flag of SDL, of the browser and of Qt.
+
+### D545. The fingers: touches with their numbers
+*2026-11-13.* Chosen by the author. `Window.onTouchDown`, `onTouchMove` and `onTouchUp` give each finger on the screen as a `gui.Touch`, with a number that is the same from when it comes down to when it goes up, its place in the content and its pressure: the model of SDL, of Android and of the browser. A swipe, or two fingers that pinch, are a few lines of the program; gestures made by the library would bring their distances and their times as choices of the library, to explain and to make settable. The first finger is still the left button of the mouse, so the components answer as before.
+
+### D546. The whole screen and the orientation are methods of the window
+*2026-11-13.* Chosen by the author. `Window.setFullscreen(bool)` gives the window the whole screen, on a computer without its title bar and on a phone without the bars of the system; `Window.setOrientation(gui.Orientation)` says how a phone holds it, `Portrait`, `Landscape` or `Any`. They are methods, called by the program when it wants, and the same on every system; an attribute next to `[[android(...)]]` would be fixed in the manifest of the APK, for Android only, and a computer would need the method anyway.
+
+### D547. `std.audio`: sounds from WAV and Ogg Vorbis
+*2026-11-13.* Chosen by the author. The sounds are a module of their own, `std.audio`, since a program without windows plays them too. It reads WAV, which SDL decodes, for the effects, and Ogg Vorbis for the music, with stb_vorbis, one file in the public domain as stb_truetype: a minute of music is ten megabytes as WAV and less than one as Ogg Vorbis, which counts in an APK; they are the formats of LÖVE, raylib and Godot. MP3 would be a second decoder to carry, for files that can be converted. A `Player` is a value that holds the device, and its voices are mixed by SDL: the module has no state of its own, and a program can have more players.
+
 ---
 
 ## Proposed
@@ -2953,6 +2968,20 @@ A component keeps the distances from the edges of its parent, the content of the
 - The frames are turned upright, by the quarters of a turn that SDL says for the sensor and for how the phone is held.
 - An app for Android asks for the permission `CAMERA` when the program makes a `gui.Camera`, as for `INTERNET` with `std.net` (D463): the compiler notes it, and the system asks the user the first time.
 - The camera of SDL for Android is changed in `third_party` (see its README): it read the planes of the colors as interleaved, which is wrong where each is a plane of its own, as on the emulator.
+
+### P79. The names of what a game asks (D543-D546)
+- `w.onUpdate(handler)` takes a `func(f32)`, the seconds since the call before, 0 the first time; it is called at the frames of `setFps`, 60 a second by default, and not while the window is minimized. The seconds are those measured: a program that must not jump after a pause of the system takes the least of them and a tenth of a second, as the example of Snake does.
+- `w.onKeyUp(handler)` takes a `func(gui.Key)`; `gui.Key.repeated` is true for the events of a key held down after the first.
+- `gui.Touch` has `finger`, an `i64`, `x` and `y` in logical pixels from the corner of the content, and `pressure` from 0 to 1. A finger that the system takes away, as for a gesture of its own, goes up for the program: `onTouchUp`. On a computer the handlers are called only by a screen that feels the fingers.
+- `w.setFullscreen(bool)` and `w.fullscreen()`; the title bar comes back as it was. `w.setOrientation(gui.Orientation.Portrait)` and `w.orientation()`; called before `start` the window opens so.
+- On Android the activity asks for the insets of the bars of the system after it colors them: a window with the dark theme from its start had its content under the bar of the status, since nothing else asked for them.
+- The handler of SIGSEGV of the runtime (D339) gives the faults that are not of the stack of Cromo to the handler that was there before it, and ends the program only without one. On Android that handler is of the runtime of Java, which uses the signal for its own checks and comes back from it: on a phone every app of Cromo ended at its first frame, which the emulator never showed; and it is the one that writes a crash in the log.
+
+### P80. The names of the sounds (D547)
+- `audio.Sound(bytes)` reads a sound from the bytes of a file, as `embed` gives them, and `audio.load(path)` from a file; what is not a sound throws an `Error`. `seconds()` is its length. A sound is not copied, only moved.
+- `audio.Player()` opens the device of the system; without one it is silent, and `ready()` says so: a program does not fail for a computer without speakers. `play(sound)` plays once, `playAt(sound, volume)` at a volume, `loop(sound, volume)` again and again; each gives an `audio.Voice`, a number of the player, for `stop(voice)`, `setVoiceVolume(voice, volume)` and `playing(voice)`. `setVolume`, `pause`, `resume` and `stopAll` are for all of them. A volume is from 0, and 1 is that of the file.
+- An Ogg Vorbis longer than ten seconds is decoded while it plays, by the thread of the audio of SDL, and a shorter one, as every WAV, once into samples of 16 bits. Sounds of more than two channels are mixed down to two.
+- The part in C is `runtime/audio/audio.c`, in the archives of the runtime as the images. stb_vorbis takes all its memory from a block that the runtime gives it, so it needs neither `malloc` nor `alloca`.
 
 ## Open
 

@@ -731,6 +731,8 @@ def check(cromo, only=None, languages=None):
             work = tempfile.mkdtemp(prefix=f'book-{language}-')
             if os.path.isdir(os.path.join(BOOK, 'images')):  # for embed()
                 shutil.copytree(os.path.join(BOOK, 'images'), os.path.join(work, 'images'))
+            if os.path.isdir(os.path.join(BOOK, 'sounds')):  # the sounds that the examples embed
+                shutil.copytree(os.path.join(BOOK, 'sounds'), os.path.join(work, 'sounds'))
             number = 0
             for i, b in enumerate(blocks):
                 if b.kind != 'code':

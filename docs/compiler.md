@@ -588,6 +588,8 @@ Each milestone lists the decisions still open that are needed **before** writing
 | **M82** | The designer, its area of work: the picker of the colors, the pages of the navigation bar, a window that scrolls, the clipboard, the commands that arrange, the guides, the keys | none: D541, P76 |
 | **M83** | The designer, the components that are missing, the groups inside the groups, the tree of the window | none: D541 |
 | **M84** | The designer, the properties of each kind of component, of several together, and the preview of the themes | none: D541 |
+| **M85** | What a game asks of `std.gui`: the handler of each frame, the keys released, the fingers, the whole screen and the orientation; the example of Snake | none: D543-D546, P79 |
+| **M86** | `std.audio`: sounds from WAV and Ogg Vorbis, a player with its voices; the sounds of Snake | none: D547, P80 |
 | **Later** | Packages: `cromo.mod`, `cromo.sum`, `cromo get`, the archives of the tags over HTTPS, a reader of tar (D376–D391) | none: D376–D391 |
 | **Last** | Compiler written in Cromo that compiles itself and makes the same archives, when the language is mature (§2, D147, D290, D291) | |
 

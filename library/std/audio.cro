@@ -1,0 +1,215 @@
+// Sounds: a 'Player' plays them on the speakers of the computer or of the phone, as
+// many together as the program starts, each with its volume, once or again and again
+// as a music. A 'Sound' is read from the bytes of a WAV or Ogg Vorbis file, those of
+// a file or those that 'embed' puts in the program.
+//
+// '''
+// import std.audio
+//
+// audio.Player player = audio.Player()
+// audio.Sound coin = audio.Sound(embed("coin.wav"))
+// audio.Sound music = audio.load("theme.ogg")
+// player.loop(music, 0.5)   // again and again, at half its volume
+// player.play(coin)         // over the music
+// '''
+//
+// The guide: [Sounds](https://cromolang.org/book/en/gui.html#sounds).
+
+// The module std.audio (D547). The work is in the runtime, runtime/audio/audio.c:
+// the files are decoded by SDL and by stb_vorbis, and each voice is a stream of SDL
+// bound to the device of its player. Here there are the handles, which free what
+// they hold, and no state of the module: a program can have more players.
+import std.fs
+import unsafe
+
+extern "SDL3" {
+    addr SDL_GetError()
+}
+
+extern "cromo" {
+    addr cromo_audio_open()
+    void cromo_audio_close(addr player)
+    addr cromo_audio_sound(addr bytes, i64 size, addr reason, i64 room)
+    void cromo_audio_sound_free(addr sound)
+    f64 cromo_audio_sound_seconds(addr sound)
+    i64 cromo_audio_play(addr player, addr sound, f32 volume, i32 loop)
+    void cromo_audio_stop(addr player, i64 voice)
+    void cromo_audio_voice_volume(addr player, i64 voice, f32 volume)
+    i32 cromo_audio_playing(addr player, i64 voice)
+    void cromo_audio_volume(addr player, f32 volume)
+    void cromo_audio_pause(addr player, i32 paused)
+}
+
+// A string of C, ended by a zero.
+string cText(addr text) {
+    i64 n = 0
+    for (take<u8>(offset(text, n)) != 0) {
+        n++
+    }
+    ret string(text, n)
+}
+
+// A sound, ready to be played: a short one is decoded when it is made, and a long one
+// in Ogg Vorbis, as a music, while it plays. It is not copied, only moved; a player
+// that is playing it keeps what it needs of it until the end.
+public struct Sound {
+    addr handle
+
+    // Reads the sound from the bytes of a WAV or Ogg Vorbis file, as 'embed' and
+    // 'fs.readBytes' give them. Bytes that are not a sound that can be read throw an
+    // 'Error' with the reason.
+    public Sound(list<u8> bytes) {
+        addr data = alloc(bytes.len() > 0 ? bytes.len() : 1)
+        for (i64 i = 0; i < bytes.len(); i++) {
+            put<u8>(offset(data, i), bytes[i])
+        }
+        addr reason = alloc(160)
+        handle = cromo_audio_sound(data, bytes.len(), reason, 160)
+        string why = cText(reason)
+        free(reason)
+        free(data)
+        addr none
+        if (handle == none) {
+            throw Error(format("cannot read the sound: {}", why))
+        }
+    }
+
+    ~Sound() {
+        addr none
+        if (handle != none) {
+            cromo_audio_sound_free(handle)
+        }
+    }
+
+    // How long the sound is, in seconds.
+    public f64 seconds() const {
+        ret cromo_audio_sound_seconds(handle)
+    }
+}
+
+// Reads a sound from a WAV or Ogg Vorbis file. Throws an 'Error' when the file cannot
+// be read or is not a sound.
+public Sound load(string path) {
+    ret Sound(fs.readBytes(path))
+}
+
+// A sound that a player is playing, from 'Player.play' and 'Player.loop': the player
+// stops it, changes its volume and says whether it still plays.
+public struct Voice {
+    i64 id
+}
+
+// What plays the sounds, on the device that the system uses for them. Each sound
+// started is a voice, mixed with the others. On a computer without a device for the
+// sounds the player is silent: its methods do nothing, and 'ready' says so. It is not
+// copied, only moved, and its voices stop when it ends.
+public struct Player {
+    addr handle
+
+    // Opens the device of the system for the sounds.
+    public Player() {
+        handle = cromo_audio_open()
+    }
+
+    ~Player() {
+        addr none
+        if (handle != none) {
+            cromo_audio_close(handle)
+        }
+    }
+
+    // Whether the player has a device: false on a computer without one.
+    public bool ready() const {
+        addr none
+        ret handle != none
+    }
+
+    // Plays the sound once, at its volume, over what is playing.
+    public Voice play(Sound sound) const {
+        ret start(sound.handle, 1, false)
+    }
+
+    // Plays the sound once at a volume: 1 is its own, 0.5 half of it, and more than 1
+    // louder. A volume below 0 is a panic.
+    public Voice playAt(Sound sound, f32 volume) const {
+        ret start(sound.handle, volume, false)
+    }
+
+    // Plays the sound again and again, as a music, at a volume, until 'stop'.
+    public Voice loop(Sound sound, f32 volume) const {
+        ret start(sound.handle, volume, true)
+    }
+
+    Voice start(addr sound, f32 volume, bool again) const {
+        if (volume < 0) {
+            panic(format("the volume of a sound is from 0, found {}", volume))
+        }
+        Voice voice
+        addr none
+        if (handle != none) {
+            voice.id = cromo_audio_play(handle, sound, volume, again ? 1 : 0)
+        }
+        ret voice
+    }
+
+    // Stops a voice; one that ended already is left alone.
+    public void stop(Voice voice) const {
+        addr none
+        if (handle != none && voice.id != 0) {
+            cromo_audio_stop(handle, voice.id)
+        }
+    }
+
+    // Stops all the voices.
+    public void stopAll() const {
+        addr none
+        if (handle != none) {
+            cromo_audio_stop(handle, -1)
+        }
+    }
+
+    // Changes the volume of a voice that is playing. A volume below 0 is a panic.
+    public void setVoiceVolume(Voice voice, f32 volume) const {
+        if (volume < 0) {
+            panic(format("the volume of a sound is from 0, found {}", volume))
+        }
+        addr none
+        if (handle != none && voice.id != 0) {
+            cromo_audio_voice_volume(handle, voice.id, volume)
+        }
+    }
+
+    // Whether a voice still plays: false once its sound has ended, or after 'stop'.
+    public bool playing(Voice voice) const {
+        addr none
+        ret handle != none && voice.id != 0 && cromo_audio_playing(handle, voice.id) != 0
+    }
+
+    // Sets the volume of all that the player plays: 1 by default, 0 for silence. A
+    // volume below 0 is a panic.
+    public void setVolume(f32 volume) const {
+        if (volume < 0) {
+            panic(format("the volume of a player is from 0, found {}", volume))
+        }
+        addr none
+        if (handle != none) {
+            cromo_audio_volume(handle, volume)
+        }
+    }
+
+    // Holds all the voices where they are, as when a game is paused.
+    public void pause() const {
+        addr none
+        if (handle != none) {
+            cromo_audio_pause(handle, 1)
+        }
+    }
+
+    // Lets the voices go on after 'pause'.
+    public void resume() const {
+        addr none
+        if (handle != none) {
+            cromo_audio_pause(handle, 0)
+        }
+    }
+}

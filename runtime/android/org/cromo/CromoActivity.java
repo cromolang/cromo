@@ -51,6 +51,9 @@ public class CromoActivity extends SDLActivity {
         View decor = window.getDecorView();
         int flags = decor.getSystemUiVisibility();
         decor.setSystemUiVisibility((value & 0x1000000) != 0 ? flags | dark : flags & ~dark);
+        // The insets of the bars come to the surface when something asks for them: the
+        // flags above do when they change, which the dark theme at the start does not.
+        decor.requestApplyInsets();
         return true;
     }
 }

@@ -1,0 +1,75 @@
+// std.audio (D547): sounds from WAV and from Ogg Vorbis, a short one decoded at once
+// and a long one while it plays; voices that end by themselves, that go on again and
+// again, that are stopped; the bytes that are not a sound. The device is the one of
+// SDL that plays nothing, at the speed of a real one.
+// target: windows linux-x86_64
+// program-env: SDL_AUDIO_DRIVER=dummy
+// expect-output: ready true
+// expect-output: beep.wav 0.20 s, beep.ogg 0.20 s, long.ogg 12.0 s
+// expect-output: playing at once: true true
+// expect-output: after its end: false
+// expect-output: the music still plays: true
+// expect-output: over the music: true, then false
+// expect-output: the long one plays: true
+// expect-output: stopped: false false
+// expect-output: after stopAll: false
+// expect-output: not a sound: cannot read the sound: the file is neither WAV nor Ogg Vorbis
+// expect-output: short: cannot read the sound: the file is too short for a sound
+// expect-output: damaged: cannot read the sound: the file is not Ogg Vorbis, or it is damaged
+import std.audio
+import std.time
+
+void refused(string what, list<u8> bytes) {
+    try {
+        audio.Sound s = audio.Sound(bytes)
+        println("{}: read, {} s", what, s.seconds())
+    } catch (Error e) {
+        println("{}: {}", what, e.message())
+    }
+}
+
+i32 main() {
+    audio.Player player = audio.Player()
+    println("ready {}", player.ready())
+    audio.Sound beep = audio.Sound(embed("beep.wav"))
+    audio.Sound soft = audio.Sound(embed("beep.ogg"))
+    audio.Sound long = audio.Sound(embed("long.ogg"))
+    println("beep.wav {:.2f} s, beep.ogg {:.2f} s, long.ogg {:.1f} s", beep.seconds(), soft.seconds(), long.seconds())
+
+    audio.Voice first = player.play(beep)
+    audio.Voice second = player.playAt(soft, 0.5)
+    println("playing at once: {} {}", player.playing(first), player.playing(second))
+    time.msleep(900)
+    println("after its end: {}", player.playing(first) || player.playing(second))
+
+    audio.Voice music = player.loop(beep, 0.3)  // 0.2 seconds, again and again
+    time.msleep(900)
+    println("the music still plays: {}", player.playing(music))
+    audio.Voice over = player.play(soft)
+    bool together = player.playing(over) && player.playing(music)
+    time.msleep(900)
+    println("over the music: {}, then {}", together, player.playing(over))
+
+    audio.Voice theme = player.loop(long, 1)
+    player.setVoiceVolume(theme, 0.2)
+    player.pause()
+    player.resume()
+    time.msleep(400)
+    println("the long one plays: {}", player.playing(theme))
+    player.stop(theme)
+    player.stop(music)
+    println("stopped: {} {}", player.playing(theme), player.playing(music))
+    player.play(long)
+    player.stopAll()
+    time.msleep(100)
+    println("after stopAll: {}", player.playing(theme))
+
+    refused("not a sound", "this is not a sound, it is a text".bytes())
+    refused("short", [1, 2, 3])
+    list<u8> damaged = embed("beep.ogg")
+    for (i64 i = 30; i < damaged.len(); i++) {
+        damaged[i] = 0
+    }
+    refused("damaged", damaged)
+    ret 0
+}

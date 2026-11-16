@@ -1358,6 +1358,95 @@ Con il dispositivo davanti all'utente, tenuto come di default, x va verso destra
 
 I sensori misurano dal primo handler in poi. Un computer per lo più non ne ha: l'handler allora non viene mai chiamato, e `gui.hasMotion()`, una volta partita la prima finestra, dice se ce ne sono.
 
+## Giochi: fotogrammi, tasti e dita
+
+Un gioco è una finestra con un canvas, che si ridisegna molte volte al secondo. `w.onUpdate(handler)` chiama un handler a ogni fotogramma della finestra, con i secondi passati dalla chiamata precedente: lì ciò che si muove fa il suo passo, e dà al canvas il nuovo disegno.
+
+```cromo norun
+import std.gui
+import std.thread
+
+struct Ball {
+    f32 x = 40
+    f32 speed = 160  // logical pixels a second
+    bool held        // the space bar is down: the ball waits
+}
+
+[[window]]
+i32 main() {
+    gui.Window w = gui.Window("Ball", 480, 235)
+    gui.Canvas canvas = w.add(gui.Canvas(0, 0, 480, 200))
+    thread.Shared<Ball> ball = thread.Shared<Ball>(Ball())
+
+    w.onUpdate([ball, canvas](f32 seconds) {
+        gui.Drawing d
+        ball.lock([seconds, ref d](ref Ball b) {
+            if (!b.held) {
+                b.x += b.speed * seconds
+            }
+            if (b.x > 440 || b.x < 40) {
+                b.speed = -b.speed
+            }
+            d.rect(0, 0, 480, 200, gui.rgb(0x12324A))
+            d.circle(b.x, 100, 24, gui.rgb(0xFFC94A))
+        })
+        canvas.setDrawing(move d)
+    })
+    w.onKeyDown([ball](gui.Key key) {
+        if (key.code == 32 && !key.repeated) {
+            ball.lock([](ref Ball b) { b.held = true })
+        }
+    })
+    w.onKeyUp([ball](gui.Key key) {
+        if (key.code == 32) {
+            ball.lock([](ref Ball b) { b.held = false })
+        }
+    })
+    w.onTouchDown([ball](gui.Touch t) { ball.lock([t](ref Ball b) { b.x = t.x }) })
+    w.start()
+    ret 0
+}
+```
+
+- **I fotogrammi.** L'handler di `onUpdate` è chiamato 60 volte al secondo, o quante ne dice `w.setFps`, con i secondi passati dalla chiamata precedente, e 0 la prima volta. Una velocità è in pixel al secondo, moltiplicata per quei secondi: la palla va veloce uguale su un computer lento e su uno veloce. La finestra viene ridisegnata quando l'handler ha cambiato qualcosa; mentre è minimizzata l'handler aspetta.
+- **I tasti.** `w.onKeyUp(handler)` è chiamato quando un tasto viene rilasciato, come `onKeyDown` quando viene premuto: fra i due il tasto è tenuto giù. Un tasto tenuto premuto torna a `onKeyDown` mentre si ripete, con `key.repeated` a true: un gioco che vuole ogni pressione una volta sola li scarta.
+- **Le dita.** `w.onTouchDown`, `onTouchMove` e `onTouchUp` danno ogni dito sullo schermo di un telefono come un `gui.Touch`: `finger` è il suo numero, lo stesso da quando tocca a quando si alza, così due dita si distinguono; `x` e `y` sono la sua posizione nel contenuto, e `pressure` va da 0 a 1. Uno scorrimento è il punto dove un dito ha toccato, confrontato con dove si trova ora. Il primo dito è anche il mouse: i componenti, e gli handler del mouse, gli rispondono come prima.
+- **Lo schermo.** `w.setFullscreen(true)` dà alla finestra tutto lo schermo, senza la barra del titolo, e su un telefono senza le barre di sistema; `w.setOrientation(gui.Orientation.Portrait)`, o `Landscape`, dice come un telefono tiene la finestra, che di default ruota con lui.
+
+Lo stato del gioco sta in un `thread.Shared`, come quello di ogni handler, e gli handler girano uno alla volta sul thread delle finestre. `examples/25_snake.cro` è un gioco intero fatto così: lo stesso sorgente si gioca in una finestra con le frecce e su un telefono con un dito, con `cromo run --target android`.
+
+## Suoni
+
+`std.audio` riproduce i suoni: gli effetti di un gioco, il tono di una notifica, una musica. Un `Sound` si legge da un file WAV o Ogg Vorbis, e un `Player` lo riproduce dagli altoparlanti del computer o del telefono, sopra quelli che stanno già suonando.
+
+```cromo norun
+import std.audio
+import std.gui
+
+[[window]]
+i32 main() {
+    gui.Window w = gui.Window("Sounds", 320, 120)
+    gui.Button ring = w.add(gui.Button("Coin", 16, 16, 120, 32))
+
+    audio.Player player = audio.Player()
+    audio.Sound coin = audio.Sound(embed("sounds/coin.wav"))
+    audio.Sound music = audio.Sound(embed("sounds/theme.ogg"))
+    player.loop(music, 0.4)  // again and again, softly
+
+    // The handler keeps the player and the sounds: they live as long as it does.
+    ring.onClick([move player, move coin, move music]() { player.play(coin) })
+    w.start()
+    ret 0
+}
+```
+
+- **I suoni.** `audio.Sound(bytes)` legge un suono dai byte di un file, quelli che `embed` mette nel programma o quelli di `fs.readBytes`, e `audio.load(path)` da un file. WAV è per gli effetti brevi; Ogg Vorbis, dieci volte più piccolo, per la musica, che viene decodificata mentre suona. Ciò che non è un suono lancia un `Error` con il motivo.
+- **Il player.** `player.play(sound)` riproduce un suono una volta, `playAt(sound, volume)` a un volume, e `loop(sound, volume)` di continuo; un volume di 1 è quello del file, e 0.5 la metà. Ogni chiamata avvia una voce, mescolata alle altre: dieci monete in un secondo sono dieci suoni.
+- **Le voci.** Le chiamate restituiscono un `audio.Voice`, con cui il player ferma quel suono con `stop`, ne cambia il volume con `setVoiceVolume`, e dice con `playing` se è finito. `setVolume` vale per tutte le voci insieme, `pause` e `resume` le trattengono e le lasciano andare, come quando un gioco è in pausa, e `stopAll` le termina.
+- **Senza altoparlanti.** Su un computer senza un dispositivo per i suoni il player è muto e i suoi metodi non fanno nulla: `player.ready()` dice se ce n'è uno.
+
+Un suono e un player non si copiano, si spostano soltanto: l'handler che suona li prende con `move`, e finiscono con lui. In un gioco li tiene l'handler di `onUpdate`, che riproduce ciò che è successo nel suo fotogramma, come fa `examples/25_snake.cro`.
+
 ## Disegnare una finestra: cromo design
 
 > `cromo design` progetta una finestra, con ventidue tipi di componenti. Il formato del form e i nomi del modulo possono ancora cambiare.
@@ -1443,5 +1532,7 @@ i32 main() {
 - `embed` mette i file nell'eseguibile; `[[window]]` produce un programma senza console, i cui errori fatali compaiono in una finestra di messaggio, e un'icona accanto al file entra nell'eseguibile.
 - Un programma ha i suoi colori con una `gui.Palette` per la finestra, o per un pannello; un singolo componente ha il suo sfondo, i suoi colori, i suoi angoli e la dimensione del suo testo, come valori o come ruoli del tema.
 - `gui.Camera` dà i fotogrammi di una telecamera e `gui.CameraView` li mostra; `w.onMotion` dà ciò che misurano l'accelerometro e il giroscopio di un telefono.
+- `w.onUpdate` chiama un handler a ogni fotogramma, con i secondi passati dal precedente; `onKeyUp` e `key.repeated` dicono i tasti tenuti; `onTouchDown`, `onTouchMove` e `onTouchUp` danno le dita; `setFullscreen` e `setOrientation` lo schermo: ciò che serve a un gioco.
+- `std.audio` riproduce suoni da file WAV e Ogg Vorbis: un `Player`, i suoi `play` e `loop`, e una voce per ogni suono.
 - Lo stesso programma è un'app per Android con `--target android`: una sola finestra che riempie lo schermo, con una barra dell'app, una barra di navigazione e delle pagine.
 - `cromo design` compone una finestra con il mouse, con i suoi colori, le sue barre e le sue pagine, e la scrive come modulo.

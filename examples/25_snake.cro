@@ -1,0 +1,636 @@
+// Example 25: Snake, a game for a computer and for a phone from the same source. The
+// snake slides from a cell to the next one, turns with the arrows or with a finger
+// that swipes, and goes faster as it grows; a gem comes for a few seconds every five
+// apples. Its sounds and its music are in the program, with embed.
+//
+// Decided: the canvas and its drawing (D483), the handler of each frame (D543), the
+//          keys that repeat (D544), the fingers (D545), the whole screen and the
+//          orientation of a phone (D546), the state of the handlers in a
+//          thread.Shared (D485), the sounds and their player (D547)
+// Draft:   the names of the handlers, of the fingers and of the orientation (P79),
+//          the names of the sounds and of the player (P80)
+//
+// cromo run 25_snake.cro plays it in a window; cromo run --target android 25_snake.cro
+// on the phone.
+import std.audio
+import std.gui
+import std.thread
+import std.time
+
+const i32 columns = 13
+const i32 rows = 18
+const f32 slowest = 0.17  // the seconds of a step at the start
+const f32 fastest = 0.08  // and with a long snake
+const f32 gemTime = 6     // the seconds that a gem stays
+
+const u32 sky = 0x12324A
+const u32 frame = 0x0C2438
+const u32 grass = 0xA9DB6F
+const u32 grassDark = 0x9BD061
+const u32 skin = 0x4F8DF7
+const u32 skinDark = 0x2F5FD0
+const u32 belly = 0xCFE3FF
+const u32 apple = 0xF2545B
+const u32 leaf = 0x3FA34D
+const u32 blush = 0xFF8FA3
+const u32 ink = 0xFFFFFF
+const u32 faint = 0x9DB8CE
+const u32 gold = 0xFFC94A
+
+enum Stage {
+    Ready
+    Playing
+    Paused
+    Over
+}
+
+// A spark that flies from what the snake eats, and a number that floats up.
+struct Spark {
+    f32 x  // in cells
+    f32 y
+    f32 dx  // in cells a second
+    f32 dy
+    f32 age
+    u32 color
+    i32 points  // more than 0: the number, in place of the spark
+}
+
+struct Game {
+    Stage stage
+    list<i32> xs  // the cells of the snake, from its head
+    list<i32> ys
+    i32 lastX  // where the end of its tail was a step ago
+    i32 lastY
+    i32 dx = 1  // where it goes
+    i32 dy
+    list<i32> turns  // the turns asked and not taken yet: 0 right, 1 down, 2 left, 3 up
+    i32 foodX
+    i32 foodY
+    i32 gemX
+    i32 gemY
+    f32 gemLeft  // the seconds that the gem still stays, or 0 without one
+    i32 eaten    // the apples of this game
+    i32 score
+    i32 best
+    f32 clock  // the seconds of the step done so far
+    f32 age    // the seconds since the program started, for what moves by itself
+    f32 ended  // the seconds since the game ended
+    list<Spark> sparks
+    u64 seed
+    f32 fingerX  // where the finger that swipes came down
+    f32 fingerY
+    i64 finger = -1
+    list<i32> heard  // what happened in this frame, for its sounds: 1 an apple, 2 a gem, 3 the end, 4 the start
+    bool muted
+    bool quiet  // the player is held: the game is paused, or muted
+    f32 pauseX  // the button of the pause, where the last drawing put it
+    f32 pauseY
+}
+
+// A number from 0 to below 'limit', from the seed of the game.
+i32 random(ref Game g, i32 limit) {
+    g.seed = wrapAdd(wrapMul(g.seed, 6364136223846793005), 1442695040888963407)
+    ret i32((g.seed >> 33) % u64(limit))
+}
+
+bool onSnake(ref Game g, i32 x, i32 y) {
+    for (i64 i = 0; i < g.xs.len(); i++) {
+        if (g.xs[i] == x && g.ys[i] == y) {
+            ret true
+        }
+    }
+    ret false
+}
+
+// A free cell for an apple or a gem; false when the snake fills the board.
+bool freeCell(ref Game g, ref i32 x, ref i32 y) {
+    if (g.xs.len() + 2 >= i64(columns * rows)) {
+        ret false
+    }
+    for (true) {
+        i32 cx = random(ref g, columns)
+        i32 cy = random(ref g, rows)
+        bool taken = (cx == g.foodX && cy == g.foodY) || (g.gemLeft > 0 && cx == g.gemX && cy == g.gemY)
+        if (!onSnake(ref g, cx, cy) && !taken) {
+            x = cx
+            y = cy
+            ret true
+        }
+    }
+    ret false
+}
+
+void placeFood(ref Game g) {
+    i32 x = -1
+    i32 y = -1
+    g.foodX = -1
+    freeCell(ref g, ref x, ref y)
+    g.foodX = x
+    g.foodY = y
+}
+
+void restart(ref Game g) {
+    g.xs.clear()
+    g.ys.clear()
+    for (i32 i = 0; i < 4; i++) {
+        g.xs.add(columns / 2 - i)
+        g.ys.add(rows / 2)
+    }
+    g.lastX = g.xs[3]
+    g.lastY = g.ys[3]
+    g.dx = 1
+    g.dy = 0
+    g.turns.clear()
+    g.sparks.clear()
+    g.score = 0
+    g.eaten = 0
+    g.clock = 0
+    g.gemLeft = 0
+    g.stage = Stage.Playing
+    g.heard.add(4)
+    placeFood(ref g)
+}
+
+// A turn asked with a key or a finger: kept for the next steps, two at the most, and
+// never back onto the neck.
+void turn(ref Game g, i32 way) {
+    if (g.stage != Stage.Playing || g.turns.len() >= 2) {
+        ret
+    }
+    i32 before = g.dx == 1 ? 0 : g.dy == 1 ? 1 : g.dx == -1 ? 2 : 3
+    if (g.turns.len() > 0) {
+        before = g.turns[g.turns.len() - 1]
+    }
+    if (way != before && way != (before + 2) % 4) {
+        g.turns.add(way)
+    }
+}
+
+// Space, Enter, a click or a tap: starts, starts again after a moment, or goes on.
+void go(ref Game g) {
+    if (g.stage == Stage.Ready || (g.stage == Stage.Over && g.ended > 0.6)) {
+        restart(ref g)
+    } else if (g.stage == Stage.Paused) {
+        g.stage = Stage.Playing
+    }
+}
+
+void pause(ref Game g) {
+    if (g.stage == Stage.Playing) {
+        g.stage = Stage.Paused
+    } else if (g.stage == Stage.Paused) {
+        g.stage = Stage.Playing
+    }
+}
+
+f32 pace(ref Game g) {
+    f32 seconds = slowest - f32(g.eaten) * 0.004
+    ret seconds < fastest ? fastest : seconds
+}
+
+// Sparks from a cell, and the points that float up from it.
+void burst(ref Game g, i32 x, i32 y, u32 color, i32 points) {
+    for (i32 i = 0; i < 12; i++) {
+        Spark s
+        s.x = f32(x) + 0.5
+        s.y = f32(y) + 0.5
+        s.dx = f32(random(ref g, 200) - 100) / 28
+        s.dy = f32(random(ref g, 200) - 130) / 28
+        s.color = i % 3 == 0 ? ink : color
+        g.sparks.add(s)
+    }
+    Spark number
+    number.x = f32(x) + 0.5
+    number.y = f32(y)
+    number.dy = -1.6
+    number.points = points
+    g.sparks.add(number)
+}
+
+// One step of the snake: it turns, moves its head, and eats or loses its tail.
+void step(ref Game g) {
+    if (g.turns.len() > 0) {
+        i32 way = g.turns.remove(0)
+        g.dx = way == 0 ? 1 : way == 2 ? -1 : 0
+        g.dy = way == 1 ? 1 : way == 3 ? -1 : 0
+    }
+    i32 x = g.xs[0] + g.dx
+    i32 y = g.ys[0] + g.dy
+    i64 last = g.xs.len() - 1
+    bool eats = x == g.foodX && y == g.foodY
+    bool wall = x < 0 || y < 0 || x >= columns || y >= rows
+    bool bites = onSnake(ref g, x, y) && (eats || x != g.xs[last] || y != g.ys[last])  // the end of the tail moves away
+    if (wall || bites) {
+        g.stage = Stage.Over
+        g.ended = 0
+        g.heard.add(3)
+        if (g.score > g.best) {
+            g.best = g.score
+        }
+        ret
+    }
+    g.lastX = g.xs[last]
+    g.lastY = g.ys[last]
+    g.xs.insert(0, x)
+    g.ys.insert(0, y)
+    if (g.gemLeft > 0 && x == g.gemX && y == g.gemY) {
+        g.gemLeft = 0
+        g.score += 5
+        burst(ref g, x, y, gold, 5)
+        g.heard.add(2)
+    }
+    if (eats) {
+        g.score++
+        g.eaten++
+        burst(ref g, x, y, apple, 1)
+        g.heard.add(1)
+        placeFood(ref g)
+        if (g.eaten % 5 == 0) {
+            i32 gx = 0
+            i32 gy = 0
+            if (freeCell(ref g, ref gx, ref gy)) {
+                g.gemX = gx
+                g.gemY = gy
+                g.gemLeft = gemTime
+            }
+        }
+    } else {
+        g.xs.remove(last + 1)
+        g.ys.remove(last + 1)
+    }
+}
+
+// The time of a frame: the sparks fly, and the snake takes the steps that fit in it.
+void advance(ref Game g, f32 seconds) {
+    f32 passed = seconds < 0.1 ? seconds : 0.1  // after a pause of the system, one step and not ten
+    g.age += passed
+    g.ended += passed
+    for (i64 i = g.sparks.len() - 1; i >= 0; i--) {
+        g.sparks[i].age += passed
+        g.sparks[i].x += g.sparks[i].dx * passed
+        g.sparks[i].y += g.sparks[i].dy * passed
+        if (g.sparks[i].points == 0) {
+            g.sparks[i].dy += 9 * passed  // they fall
+        }
+        if (g.sparks[i].age > 0.7) {
+            g.sparks.remove(i)
+        }
+    }
+    if (g.stage != Stage.Playing) {
+        ret
+    }
+    if (g.gemLeft > 0) {
+        g.gemLeft = g.gemLeft > passed ? g.gemLeft - passed : 0
+    }
+    g.clock += passed
+    for (g.stage == Stage.Playing && g.clock >= pace(ref g)) {
+        g.clock -= pace(ref g)
+        step(ref g)
+    }
+}
+
+// A color between two, by their parts of red, green and blue.
+gui.Color mix(u32 a, u32 b, f32 t) {
+    u32 made = 0
+    for (u32 shift = 0; shift <= 16; shift += 8) {
+        f32 from = f32((a >> shift) & 0xFF)
+        f32 to = f32((b >> shift) & 0xFF)
+        made = made | (u32(from + (to - from) * t + 0.5) << shift)
+    }
+    ret gui.rgb(made)
+}
+
+// From 0 to 1 and back, once every 'period' seconds.
+f32 wave(f32 seconds, f32 period) {
+    f32 part = seconds / period
+    part = part - f32(i64(part))
+    ret part < 0.5 ? part * 2 : 2 - part * 2
+}
+
+// The face of the snake at (x, y), which looks toward (fx, fy): its eyes, which blink
+// and are two crosses when the game is over, its cheeks and its tongue.
+void face(ref gui.Drawing d, f32 x, f32 y, f32 fx, f32 fy, f32 cell, u32 color, f32 age, bool over) {
+    if (!over && wave(age, 1.4) > 0.8) {  // the tongue, now and then
+        f32 tipX = x + fx * cell * 0.78
+        f32 tipY = y + fy * cell * 0.78
+        d.line(x + fx * cell * 0.4, y + fy * cell * 0.4, tipX, tipY, cell * 0.08, gui.rgb(apple))
+        d.line(tipX, tipY, tipX + (fx - fy) * cell * 0.12, tipY + (fy + fx) * cell * 0.12, cell * 0.06, gui.rgb(apple))
+        d.line(tipX, tipY, tipX + (fx + fy) * cell * 0.12, tipY + (fy - fx) * cell * 0.12, cell * 0.06, gui.rgb(apple))
+    }
+    d.circle(x, y, cell * 0.5, gui.rgb(color))
+    bool blinks = age - f32(i64(age / 3.2)) * 3.2 < 0.13
+    for (i32 side = -1; side <= 1; side += 2) {
+        f32 across = f32(side)
+        f32 eyeX = x + fx * cell * 0.12 - fy * across * cell * 0.24
+        f32 eyeY = y + fy * cell * 0.12 + fx * across * cell * 0.24
+        f32 cheekX = x - fx * cell * 0.04 - fy * across * cell * 0.4
+        f32 cheekY = y - fy * cell * 0.04 + fx * across * cell * 0.4
+        d.circle(cheekX, cheekY, cell * 0.1, gui.rgba(blush, 170))
+        if (over) {
+            f32 arm = cell * 0.1
+            d.line(eyeX - arm, eyeY - arm, eyeX + arm, eyeY + arm, cell * 0.07, gui.rgb(ink))
+            d.line(eyeX - arm, eyeY + arm, eyeX + arm, eyeY - arm, cell * 0.07, gui.rgb(ink))
+        } else if (blinks) {
+            d.line(eyeX + fy * cell * 0.13, eyeY - fx * cell * 0.13, eyeX - fy * cell * 0.13, eyeY + fx * cell * 0.13, cell * 0.07, gui.rgb(frame))
+        } else {
+            d.circle(eyeX, eyeY, cell * 0.17, gui.rgb(ink))
+            d.circle(eyeX + fx * cell * 0.05, eyeY + fy * cell * 0.05, cell * 0.1, gui.rgb(frame))
+            d.circle(eyeX + fx * cell * 0.05 - cell * 0.04, eyeY + fy * cell * 0.05 - cell * 0.04, cell * 0.035, gui.rgb(ink))
+        }
+    }
+}
+
+// The game drawn in a canvas of this size: the score above, the board under it with
+// cells as large as they fit, and the words of the stage over it.
+gui.Drawing drawingOf(ref Game g, f32 width, f32 height) {
+    gui.Drawing d
+    d.rect(0, 0, width, height, gui.rgb(sky))
+    f32 top = 84  // under the score
+    f32 across = (width - 28) / f32(columns)
+    f32 down = (height - top - 20) / f32(rows)
+    f32 cell = f32(i64(across < down ? across : down))
+    if (cell < 6) {
+        ret d
+    }
+    f32 boardWidth = cell * f32(columns)
+    f32 boardHeight = cell * f32(rows)
+    f32 left = f32(i64((width - boardWidth) / 2))
+    top = top + f32(i64((height - top - 20 - boardHeight) / 2))  // in the middle of a tall screen
+    f32 right = left + boardWidth
+
+    d.text("SCORE", left, top - 62, 11, gui.rgb(faint), gui.Horizontal.Left)
+    d.text(format("{}", g.score), left, top - 36, 30, gui.rgb(ink), gui.Horizontal.Left)
+    d.text("BEST", right, top - 62, 11, gui.rgb(faint), gui.Horizontal.Right)
+    d.text(format("{}", g.best), right, top - 36, 30, gui.rgb(g.score > 0 && g.score >= g.best ? gold : ink), gui.Horizontal.Right)
+    g.pauseX = left + boardWidth / 2
+    g.pauseY = top - 44
+    if (g.stage == Stage.Playing || g.stage == Stage.Paused) {  // the button of the pause: two bars, or a triangle to go on
+        d.circle(g.pauseX, g.pauseY, 20, gui.rgb(frame))
+        if (g.stage == Stage.Playing) {
+            d.roundRect(g.pauseX - 7, g.pauseY - 8, 5, 16, 2, gui.rgb(ink))
+            d.roundRect(g.pauseX + 2, g.pauseY - 8, 5, 16, 2, gui.rgb(ink))
+        } else {
+            d.polygon([g.pauseX - 5, g.pauseY - 9, g.pauseX + 9, g.pauseY, g.pauseX - 5, g.pauseY + 9], gui.rgb(ink))
+        }
+    }
+
+    // The meadow, in a frame, which shakes for a moment when the game ends.
+    if (g.stage == Stage.Over && g.ended < 0.3) {
+        left = left + (wave(g.ended, 0.07) - 0.5) * 12 * (1 - g.ended / 0.3)
+    }
+    d.roundRect(left - 8, top - 8, boardWidth + 16, boardHeight + 16, 18, gui.rgb(frame))
+    d.roundRect(left, top, boardWidth, boardHeight, 10, gui.rgb(grass))
+    for (i32 y = 0; y < rows; y++) {
+        for (i32 x = (y % 2); x < columns; x += 2) {
+            bool corner = (x == 0 || x == columns - 1) && (y == 0 || y == rows - 1)
+            d.roundRect(left + f32(x) * cell, top + f32(y) * cell, cell, cell, corner ? 10 : 0, gui.rgb(grassDark))
+        }
+    }
+    if (g.xs.len() == 0) {  // before the first game: the face of the snake, and how to play
+        f32 bob = wave(g.age, 1.6) * 8
+        face(ref d, left + boardWidth / 2, top + boardHeight / 2 - 110 + bob, 0, 1, 96, skin, g.age, false)
+        words(ref d, "Snake", "Swipe, or use the arrows", "Tap or press Space to start", left, top + 50, boardWidth, boardHeight, false)
+        ret d
+    }
+
+    // The apple, which breathes, with its leaf and a light on it.
+    if (g.foodX >= 0) {
+        f32 foodX = left + (f32(g.foodX) + 0.5) * cell
+        f32 foodY = top + (f32(g.foodY) + 0.5) * cell
+        f32 radius = cell * (0.31 + 0.04 * wave(g.age, 0.9))
+        d.circle(foodX, foodY + cell * 0.3, radius * 0.8, gui.rgba(0x000000, 28))
+        d.circle(foodX - radius * 0.3, foodY + cell * 0.04, radius * 0.85, gui.rgb(apple))
+        d.circle(foodX + radius * 0.3, foodY + cell * 0.04, radius * 0.85, gui.rgb(apple))
+        d.circle(foodX - radius * 0.5, foodY - radius * 0.25, radius * 0.2, gui.rgba(ink, 150))
+        d.line(foodX, foodY - radius * 0.5, foodX + cell * 0.04, foodY - radius - cell * 0.1, cell * 0.07, gui.rgb(0x7A4A21))
+        d.circle(foodX + cell * 0.16, foodY - radius - cell * 0.04, cell * 0.1, gui.rgb(leaf))
+    }
+    if (g.gemLeft > 0) {  // the gem, with the time that it still stays around it
+        f32 gemX = left + (f32(g.gemX) + 0.5) * cell
+        f32 gemY = top + (f32(g.gemY) + 0.5) * cell - cell * 0.08 * wave(g.age, 0.6)
+        f32 size = cell * 0.34
+        d.ring(gemX, gemY, cell * 0.46, cell * 0.06, gui.rgba(ink, u8(60 + 140 * g.gemLeft / gemTime)))
+        d.polygon([gemX, gemY - size, gemX + size, gemY - size * 0.2, gemX, gemY + size, gemX - size, gemY - size * 0.2], gui.rgb(gold))
+        d.polygon([gemX, gemY - size, gemX + size * 0.45, gemY - size * 0.2, gemX, gemY + size, gemX - size * 0.45, gemY - size * 0.2], gui.rgb(0xFFE08A))
+    }
+
+    // The snake, a tube from its tail to its head: its two ends are between two cells,
+    // as far as the step has gone. Its shadow first, then its body with a lighter
+    // spot on every other cell, then its face.
+    bool over = g.stage == Stage.Over
+    f32 gone = over ? 1 : g.clock / pace(ref g)
+    gone = gone > 1 ? 1 : gone
+    i64 count = g.xs.len()
+    list<f32> px
+    list<f32> py
+    px.add(left + (f32(g.xs[1]) + f32(g.xs[0] - g.xs[1]) * gone + 0.5) * cell)
+    py.add(top + (f32(g.ys[1]) + f32(g.ys[0] - g.ys[1]) * gone + 0.5) * cell)
+    for (i64 i = 1; i < count; i++) {
+        px.add(left + (f32(g.xs[i]) + 0.5) * cell)
+        py.add(top + (f32(g.ys[i]) + 0.5) * cell)
+    }
+    px.add(left + (f32(g.lastX) + f32(g.xs[count - 1] - g.lastX) * gone + 0.5) * cell)
+    py.add(top + (f32(g.lastY) + f32(g.ys[count - 1] - g.lastY) * gone + 0.5) * cell)
+    f32 thick = cell * 0.78
+    u32 light = over ? 0x9AA7B8 : skin
+    u32 deep = over ? 0x6E7C8F : skinDark
+    i64 ends = px.len() - 1
+    for (i64 i = ends; i >= 0; i--) {
+        if (i > 0) {
+            d.line(px[i], py[i] + cell * 0.14, px[i - 1], py[i - 1] + cell * 0.14, thick, gui.rgba(0x000000, 30))
+        }
+        d.circle(px[i], py[i] + cell * 0.14, thick / 2, gui.rgba(0x000000, 30))
+    }
+    for (i64 i = ends; i >= 0; i--) {
+        gui.Color shade = mix(light, deep, f32(i) / f32(ends))
+        f32 slim = i == ends ? 0.8 : 1  // the end of the tail is thinner
+        if (i > 0) {
+            d.line(px[i], py[i], px[i - 1], py[i - 1], thick * slim, shade)
+        }
+        d.circle(px[i], py[i], thick * slim / 2, shade)
+        if (i > 0 && i < ends && i % 2 == 0) {
+            d.circle(px[i], py[i], thick * 0.2, gui.rgba(belly, 130))
+        }
+    }
+    face(ref d, px[0], py[0], f32(g.dx), f32(g.dy), cell, light, g.age, over)
+
+    for (ref Spark s in g.sparks) {
+        f32 fade = 1 - s.age / 0.7
+        f32 x = left + s.x * cell
+        f32 y = top + s.y * cell
+        if (s.points > 0) {
+            d.text(format("+{}", s.points), x, y, cell * 0.6, gui.rgba(ink, u8(255 * fade)), gui.Horizontal.Center)
+        } else {
+            d.circle(x, y, cell * 0.1 * fade + 1, gui.rgba(s.color, u8(255 * fade)))
+        }
+    }
+
+    if (over && g.ended > 0.4) {
+        string apples = g.eaten == 1 ? "1 apple" : format("{} apples", g.eaten)
+        string line = format("{} points, {}", g.score, apples)
+        if (g.score > 0 && g.score >= g.best) {
+            line = line + ": your best"
+        }
+        words(ref d, "Game over", line, "Tap or press Space to play again", left, top, boardWidth, boardHeight, true)
+    } else if (g.stage == Stage.Paused) {
+        words(ref d, "Paused", "", "Tap or press Space to go on", left, top, boardWidth, boardHeight, true)
+    }
+    ret d
+}
+
+// A title and two lines on a card over the board, and a veil when the game is under.
+void words(ref gui.Drawing d, string title, string line, string hint, f32 left, f32 top, f32 width, f32 height, bool veil) {
+    if (veil) {
+        d.roundRect(left, top, width, height, 10, gui.rgba(frame, 150))
+    }
+    f32 middle = top + height / 2
+    d.roundRect(left + width / 2 - 150, middle - 70, 300, 150, 20, gui.rgba(frame, 235))
+    d.text(title, left + width / 2, middle - 30, 36, gui.rgb(ink), gui.Horizontal.Center)
+    d.text(line, left + width / 2, middle + 14, 15, gui.rgb(gold), gui.Horizontal.Center)
+    d.text(hint, left + width / 2, middle + 46, 13, gui.rgb(faint), gui.Horizontal.Center)
+}
+
+[[window]]
+[[android("org.cromo.examples.snake", "Snake")]]
+i32 main() {
+    gui.Window w = gui.Window("Snake", 420, 700)
+    w.setOrientation(gui.Orientation.Portrait)
+    w.setTheme(gui.Theme.Dark)
+    gui.Canvas canvas = w.add(gui.Canvas(0, 0, 420, 665))
+    canvas.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Stretch)
+
+    Game start
+    start.seed = u64(time.unix())
+    thread.Shared<Game> game = thread.Shared<Game>(move start)
+
+    // The sounds are files in the program; the music goes on again and again, softly.
+    audio.Player player = audio.Player()
+    audio.Sound eat = audio.Sound(embed("sounds/eat.wav"))
+    audio.Sound gem = audio.Sound(embed("sounds/gem.wav"))
+    audio.Sound begin = audio.Sound(embed("sounds/start.wav"))
+    audio.Sound over = audio.Sound(embed("sounds/over.wav"))
+    audio.Sound music = audio.Sound(embed("sounds/music.ogg"))
+    player.loop(music, 0.3)
+
+    // Each frame moves the game by its seconds, draws it as it is now, and plays the
+    // sounds of what happened in it. The handler keeps the player and the sounds.
+    w.onUpdate([game, canvas, move player, move eat, move gem, move begin, move over, move music](f32 seconds) {
+        f32 width = f32(canvas.width())
+        f32 height = f32(canvas.height())
+        gui.Drawing d
+        list<i32> heard
+        i32 hold = 0  // 1 to hold the player, 2 to let it go on
+        game.lock([seconds, width, height, ref d, ref heard, ref hold](ref Game g) {
+            advance(ref g, seconds)
+            d = drawingOf(ref g, width, height)
+            heard = g.heard
+            g.heard.clear()
+            bool quiet = g.muted || g.stage == Stage.Paused
+            if (quiet != g.quiet) {
+                g.quiet = quiet
+                hold = quiet ? 1 : 2
+            }
+        })
+        canvas.setDrawing(move d)
+        if (hold == 1) {
+            player.pause()
+        } else if (hold == 2) {
+            player.resume()
+        }
+        for (i32 what in heard) {
+            if (what == 1) {
+                player.play(eat)
+            } else if (what == 2) {
+                player.play(gem)
+            } else if (what == 3) {
+                player.play(over)
+            } else {
+                player.play(begin)
+            }
+        }
+    })
+
+    // The arrows or W, A, S and D turn; Space and Enter start; P and Esc pause; M mutes
+    // the sounds; F gives the game the whole screen, and takes it back.
+    w.onKeyDown([game, w](gui.Key key) {
+        if (key.repeated) {
+            ret
+        }
+        i64 code = key.code
+        if (code == 102) {
+            w.setFullscreen(!w.fullscreen())
+        }
+        game.lock([code](ref Game g) {
+            if (code == 0x4000004F || code == 100) {
+                turn(ref g, 0)
+            } else if (code == 0x40000051 || code == 115) {
+                turn(ref g, 1)
+            } else if (code == 0x40000050 || code == 97) {
+                turn(ref g, 2)
+            } else if (code == 0x40000052 || code == 119) {
+                turn(ref g, 3)
+            } else if (code == 32 || code == 13) {
+                go(ref g)
+            } else if (code == 112 || code == 27) {
+                pause(ref g)
+            } else if (code == 109) {
+                g.muted = !g.muted
+            }
+        })
+    })
+
+    // A click, or a tap, on the button pauses the game, and anywhere else starts it: a
+    // finger is the mouse too.
+    canvas.onMouseDown([game](gui.Mouse m) {
+        game.lock([m](ref Game g) {
+            f32 across = m.x - g.pauseX
+            f32 down = m.y - g.pauseY
+            if (g.stage == Stage.Playing && across * across + down * down < 28 * 28) {
+                pause(ref g)
+            } else {
+                go(ref g)
+            }
+        })
+    })
+
+    // A finger that swipes turns the snake as soon as it has moved enough, and can turn
+    // it again without going up.
+    w.onTouchDown([game](gui.Touch t) {
+        game.lock([t](ref Game g) {
+            if (g.finger < 0) {
+                g.finger = t.finger
+                g.fingerX = t.x
+                g.fingerY = t.y
+            }
+        })
+    })
+    w.onTouchMove([game](gui.Touch t) {
+        game.lock([t](ref Game g) {
+            if (t.finger != g.finger) {
+                ret
+            }
+            f32 across = t.x - g.fingerX
+            f32 down = t.y - g.fingerY
+            f32 far = (across < 0 ? -across : across) > (down < 0 ? -down : down) ? across : down
+            if (far > -20 && far < 20) {
+                ret
+            }
+            if (far == across) {
+                turn(ref g, across > 0 ? 0 : 2)
+            } else {
+                turn(ref g, down > 0 ? 1 : 3)
+            }
+            g.fingerX = t.x
+            g.fingerY = t.y
+        })
+    })
+    w.onTouchUp([game](gui.Touch t) {
+        game.lock([t](ref Game g) {
+            if (t.finger == g.finger) {
+                g.finger = -1
+            }
+        })
+    })
+    w.start()
+    ret 0
+}

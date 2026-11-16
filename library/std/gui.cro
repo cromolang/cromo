@@ -86,6 +86,7 @@ extern "SDL3" {
     u64 SDL_GetWindowFlags(addr window)
     bool SDL_MinimizeWindow(addr window)
     bool SDL_MaximizeWindow(addr window)
+    bool SDL_SetWindowFullscreen(addr window, bool fullscreen)
     bool SDL_RestoreWindow(addr window)
     f32 SDL_GetWindowDisplayScale(addr window)
     f32 SDL_GetWindowPixelDensity(addr window)
@@ -1058,16 +1059,34 @@ public struct Motion {
     public i64 time  // when the sensor measured, in nanoseconds: for the time between two events
 }
 
-// A key pressed, for the handlers of 'onKeyDown' of a window.
+// A finger on the screen, for the handlers of 'onTouchDown', 'onTouchMove' and
+// 'onTouchUp' of a window (D545). Each finger that touches has a number of its own,
+// the same from when it comes down to when it goes up: two fingers are two numbers.
+public struct Touch {
+    public i64 finger    // the number of the finger, the same for as long as it touches
+    public f32 x         // in logical pixels from the left edge of the content
+    public f32 y         // in logical pixels from the top of the content
+    public f32 pressure  // from 0 to 1, or 1 on a screen that does not measure it
+}
+
+// How a phone holds the window, for 'Window.setOrientation' (D546).
+public enum Orientation {
+    Any        // as the phone is held: the window turns with it
+    Portrait   // upright, taller than wide
+    Landscape  // on its side, wider than tall
+}
+
+// A key pressed or released, for the handlers of 'onKeyDown' and 'onKeyUp' of a window.
 public struct Key {
     // The keycode of SDL. For the letters, the digits and the signs it is the character
     // of the key without Shift: 97 for A, with Shift too, and 49 for 1. Then 13 is
     // Enter, 27 Esc, 32 Space, 8 Backspace and 127 Delete, and the arrows are
     // 0x40000050 left, 0x4000004F right, 0x40000052 up and 0x40000051 down.
     public i64 code
-    public bool shift    // a Shift key is held
-    public bool control  // a Ctrl key is held
-    public bool alt      // an Alt key is held
+    public bool shift     // a Shift key is held
+    public bool control   // a Ctrl key is held
+    public bool alt       // an Alt key is held
+    public bool repeated  // the key is held down, and this is not its first event (D544)
 }
 
 // A component that a window, a group, a panel or a dialog can hold, with their 'add':
@@ -6560,6 +6579,17 @@ struct WindowData {
     list<addr> mouseDown
     list<addr> mouseUp
     list<addr> keyDown
+    list<addr> keyUp      // D544
+    list<addr> update     // the handlers of onUpdate (D543)
+    u64 lastUpdate        // when they were last called, or 0
+    list<addr> touchDown  // D545
+    list<addr> touchMove
+    list<addr> touchUp
+    bool fullscreen  // D546
+    bool fullscreenChanged
+    bool barBefore  // the title bar was shown before the whole screen
+    Orientation orientation
+    bool orientationChanged
     list<addr> motion  // the handlers of onMotion (D538)
     list<addr> resize
     list<addr> close
@@ -7906,6 +7936,125 @@ public struct Window {
         withData([me, box](ref Shared data) { data.windows[indexOf(ref data, me)].keyDown.add(box) })
     }
 
+    // Adds a handler, called on the thread of the windows with each key released, as
+    // 'onKeyDown' is with each key pressed (D544): with both a program knows the keys
+    // that are held, as a game does for its arrows.
+    public void onKeyUp(move func(Key) handler) const {
+        addr box = alloc(sizeOf<func(Key)>())
+        put<func(Key)>(box, move handler)
+        i64 me = id
+        withData([me, box](ref Shared data) { data.windows[indexOf(ref data, me)].keyUp.add(box) })
+    }
+
+    // Adds a handler, called on the thread of the windows at each frame of the window,
+    // 60 times a second or as 'setFps' says, with the seconds since its call before, and
+    // 0 the first time (D543): where a game, or what else moves by itself, takes its step.
+    // The window is drawn again when the handler changes something in it, as the drawing
+    // of a canvas. The handler is not called while the window is minimized.
+    //
+    // '''
+    // w.onUpdate([ball, canvas](f32 seconds) {
+    //     ball.lock([seconds](ref f32 x) { x += 120 * seconds })  // 120 pixels a second
+    //     ...
+    // })
+    // '''
+    public void onUpdate(move func(f32) handler) const {
+        addr box = alloc(sizeOf<func(f32)>())
+        put<func(f32)>(box, move handler)
+        i64 me = id
+        withData([me, box](ref Shared data) { data.windows[indexOf(ref data, me)].update.add(box) })
+    }
+
+    // Adds a handler, called on the thread of the windows when a finger comes down on
+    // the content of the window, with its number and its place (D545). The fingers are
+    // the mouse too, as before: the first one presses the left button, and the components
+    // under it answer. On a computer without a screen that feels the fingers the handler
+    // is never called.
+    public void onTouchDown(move func(Touch) handler) const {
+        addTouch(0, move handler)
+    }
+
+    // Adds a handler, called on the thread of the windows when a finger that touches
+    // the window moves (D545).
+    public void onTouchMove(move func(Touch) handler) const {
+        addTouch(1, move handler)
+    }
+
+    // Adds a handler, called on the thread of the windows when a finger goes up from
+    // the window, or the system takes it away, as for a gesture of its own (D545).
+    public void onTouchUp(move func(Touch) handler) const {
+        addTouch(2, move handler)
+    }
+
+    void addTouch(i32 which, move func(Touch) handler) const {
+        addr box = alloc(sizeOf<func(Touch)>())
+        put<func(Touch)>(box, move handler)
+        i64 me = id
+        withData([me, box, which](ref Shared data) {
+            i64 i = indexOf(ref data, me)
+            if (which == 0) {
+                data.windows[i].touchDown.add(box)
+            } else if (which == 1) {
+                data.windows[i].touchMove.add(box)
+            } else {
+                data.windows[i].touchUp.add(box)
+            }
+        })
+    }
+
+    // Gives the window the whole screen, or takes it back (D546). On a computer the
+    // window covers the screen, without its title bar, and comes back as it was; on a
+    // phone the bars of the system go away, and come back for a moment when the user
+    // pulls them. The program gives its own way out, as Esc.
+    public void setFullscreen(bool value) const {
+        i64 me = id
+        withData([me, value](ref Shared data) {
+            i64 i = indexOf(ref data, me)
+            if (data.windows[i].fullscreen == value) {
+                ret
+            }
+            data.windows[i].fullscreen = value
+            data.windows[i].fullscreenChanged = true
+            if (!data.windows[i].phone) {
+                if (value) {
+                    data.windows[i].barBefore = data.windows[i].bar
+                    data.windows[i].bar = false
+                } else {
+                    data.windows[i].bar = data.windows[i].barBefore
+                }
+                data.windows[i].originY = data.windows[i].bar ? f32(data.windows[i].barSize) : 0
+            }
+        })
+    }
+
+    // Whether the window has the whole screen: false by default.
+    public bool fullscreen() const {
+        i64 me = id
+        bool result = false
+        readData([me, ref result](ref Shared data) { result = data.windows[indexOf(ref data, me)].fullscreen })
+        ret result
+    }
+
+    // Says how a phone holds the window: upright, on its side, or as the phone is
+    // held, which is the default (D546). Called before 'start' the window opens so; after
+    // it, the window turns. On a computer it does nothing.
+    public void setOrientation(Orientation value) const {
+        i64 me = id
+        withData([me, value](ref Shared data) {
+            i64 i = indexOf(ref data, me)
+            data.windows[i].orientation = value
+            data.windows[i].orientationChanged = true
+        })
+    }
+
+    // How a phone holds the window: 'Orientation.Any' by default.
+    public Orientation orientation() const {
+        i64 me = id
+        Orientation result = Orientation.Any
+        readData([me, ref result](ref Shared data) { result = data.windows[indexOf(ref data, me)].orientation })
+        ret result
+    }
+
     // Adds a handler, called on the thread of the windows each time the accelerometer
     // or the gyroscope of the device measures, many times a second, with the last
     // measures of both (D538): to follow how a phone is held, tilted and shaken. The
@@ -8824,6 +8973,7 @@ void run() {
             }
             events = true
         }
+        update()
         draw(events)
         u64 frame = 20000000  // without windows, 50 times a second
         if (fps > 0) {
@@ -8834,6 +8984,42 @@ void run() {
             SDL_DelayPrecise(frame - spent)
         }
     }
+}
+
+// The handlers of onUpdate of each window shown, with the seconds since their last
+// call (D543). What they change is drawn in this frame.
+void update() {
+    list<Call> calls
+    loopData([ref calls](ref Shared data) {
+        u64 now = SDL_GetTicksNS()
+        for (ref WindowData window in data.windows) {
+            addr none
+            if (window.window == none || window.closing || window.minimized || window.update.len() == 0) {
+                window.lastUpdate = 0
+                continue
+            }
+            Call call = callOf(15, window.update)
+            if (window.lastUpdate != 0) {
+                call.amount = f32(f64(now - window.lastUpdate) / 1000000000.0)
+            }
+            window.lastUpdate = now
+            calls.add(move call)
+        }
+    })
+    for (ref Call call in calls) {
+        dispatch(ref call)
+    }
+}
+
+// The words of SDL_HINT_ORIENTATIONS for an orientation (D546).
+string orientations(Orientation value) {
+    if (value == Orientation.Portrait) {
+        ret "Portrait PortraitUpsideDown"
+    }
+    if (value == Orientation.Landscape) {
+        ret "LandscapeLeft LandscapeRight"
+    }
+    ret "LandscapeLeft LandscapeRight Portrait PortraitUpsideDown"
 }
 
 // Opens the windows started, gives to SDL what the program changed, and closes
@@ -8934,6 +9120,10 @@ void open(ref WindowData window) {
         flags = flags | 0x40
     } else if (window.show == 2) {
         flags = flags | 0x80
+    }
+    if (window.orientationChanged) {  // before the window, which opens so (D546)
+        SDL_SetHint("SDL_ORIENTATIONS".cstring(), orientations(window.orientation).cstring())
+        window.orientationChanged = false
     }
     window.window = SDL_CreateWindow(window.title.cstring(), i32(f32(window.width) * scale), i32(f32(window.height) * scale), flags)
     addr none
@@ -9065,6 +9255,17 @@ void apply(ref WindowData window) {
         SDL_SetWindowTitle(window.window, window.title.cstring())
         window.titleChanged = false
     }
+    if (window.fullscreenChanged) {  // D546
+        SDL_SetWindowFullscreen(window.window, window.fullscreen)
+        window.fullscreenChanged = false
+    }
+    if (window.orientationChanged) {  // D546: SDL reads the hint again when the window is told it can turn
+        SDL_SetHint("SDL_ORIENTATIONS".cstring(), orientations(window.orientation).cstring())
+        if (window.phone) {
+            SDL_SetWindowResizable(window.window, true)
+        }
+        window.orientationChanged = false
+    }
     if (window.phone) {
         window.sizeChanged = false
         window.resizableChanged = false
@@ -9164,8 +9365,9 @@ i32 buttonAt(ref WindowData window, f32 x, f32 y, f32 width) {
 struct Call {
     i32 kind  // 1 mouse move, 2 mouse down, 3 mouse up, 4 key, 5 resize, 6 click, 7 text, 8 check, 9 choice,
     // 10 func(i64, i64), 11 func(i64, bool), 12 func(i64, Mouse), 13 func(list<string>),
-    // 14 func(Mouse, f32), 15 func(f32), 16 func(Motion), 17 func(Frame)
+    // 14 func(Mouse, f32), 15 func(f32), 16 func(Motion), 17 func(Frame), 18 func(Touch)
     list<addr> boxes
+    Touch touch
     Motion motion
     Frame frame
     Mouse mouse
@@ -9256,6 +9458,10 @@ void handle(addr event) {
         }
         ret
     }
+    if (kind >= 0x700 && kind <= 0x703) {  // SDL_EVENT_FINGER_DOWN, _UP, _MOTION, _CANCELED (D545)
+        touched(event, kind)
+        ret
+    }
     u32 sdlId = take<u32>(offset(event, 16))
     list<Call> calls
     withData([event, kind, sdlId, ref calls](ref Shared data) {
@@ -9265,6 +9471,37 @@ void handle(addr event) {
                 continue
             }
             route(ref data.windows[w], ref data.parts, event, kind, ref calls)
+            ret
+        }
+    })
+    for (ref Call call in calls) {
+        dispatch(ref call)
+    }
+}
+
+// A finger on a window, for its handlers: SDL gives its place as parts of the window,
+// from 0 to 1 (D545).
+void touched(addr event, u32 kind) {
+    u32 sdlId = take<u32>(offset(event, 52))
+    list<Call> calls
+    loopData([event, kind, sdlId, ref calls](ref Shared data) {
+        for (ref WindowData window in data.windows) {
+            addr none
+            if (window.window == none || window.sdlId != sdlId) {
+                continue
+            }
+            i32 w = 0
+            i32 h = 0
+            SDL_GetWindowSize(window.window, ref w, ref h)
+            f32 scale = toWindow(ref window)
+            Touch touch
+            touch.finger = i64(take<u64>(offset(event, 24)))
+            touch.x = take<f32>(offset(event, 32)) * f32(w) / scale - window.originX
+            touch.y = take<f32>(offset(event, 36)) * f32(h) / scale - window.originY
+            touch.pressure = take<f32>(offset(event, 48))
+            Call call = callOf(18, kind == 0x700 ? window.touchDown : kind == 0x702 ? window.touchMove : window.touchUp)
+            call.touch = touch
+            calls.add(move call)
             ret
         }
     })
@@ -9373,6 +9610,13 @@ void dispatch(ref Call call) {
                 handler(call.motion)
             } finally {
                 put<func(Motion)>(box, move handler)
+            }
+        } else if (call.kind == 18) {
+            func(Touch) handler = take<func(Touch)>(box)
+            try {
+                handler(call.touch)
+            } finally {
+                put<func(Touch)>(box, move handler)
             }
         } else if (call.kind == 17) {
             func(Frame) handler = take<func(Frame)>(box)
@@ -9641,6 +9885,7 @@ void route(ref WindowData window, ref list<PartData> parts, addr event, u32 kind
         key.shift = (modifiers & 0x3) != 0
         key.control = (modifiers & 0xC0) != 0
         key.alt = (modifiers & 0x300) != 0
+        key.repeated = take<u8>(offset(event, 37)) != 0
         if (window.phone && key.code == keyBack && window.dialog != 0) {  // D467
             endDialog(ref window, ref parts, ref calls)
         } else if (window.phone && key.code == keyBack) {  // D457
@@ -9659,6 +9904,18 @@ void route(ref WindowData window, ref list<PartData> parts, addr event, u32 kind
                 call.key = key
                 calls.add(move call)
             }
+        }
+    } else if (kind == 0x301) {  // SDL_EVENT_KEY_UP (D544): not behind a dialog, as the keys pressed
+        if (window.dialog == 0 && window.keyUp.len() > 0) {
+            u32 modifiers = u32(take<u16>(offset(event, 32)))
+            Key key
+            key.code = i64(take<u32>(offset(event, 28)))
+            key.shift = (modifiers & 0x3) != 0
+            key.control = (modifiers & 0xC0) != 0
+            key.alt = (modifiers & 0x300) != 0
+            Call call = callOf(4, window.keyUp)
+            call.key = key
+            calls.add(move call)
         }
     } else if (kind == 0x303) {  // SDL_EVENT_TEXT_INPUT, in UTF-8
         i64 f = partNumber(ref parts, window.focus)
