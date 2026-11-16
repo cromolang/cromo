@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16...3.20)  # 3.16 in WSL for cromo for Linux, without the runtime
-project(cromo VERSION 0.86.0 LANGUAGES CXX)  # 0.milestone.fix (D157)
+project(cromo VERSION 0.90.0 LANGUAGES CXX)  # 0.milestone.fix (D157)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -558,6 +558,7 @@ add_executable(cromo
   src/backend.cpp
   src/libraries.cpp
   src/loader.cpp
+  src/packages.cpp
   src/json.cpp
   src/index.cpp
   src/reference.cpp

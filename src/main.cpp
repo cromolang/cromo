@@ -5,6 +5,7 @@
 #include "lexer.h"
 #include "libraries.h"
 #include "loader.h"
+#include "packages.h"
 #include "lsp.h"
 #include "ownership.h"
 #include "installation.h"
@@ -62,6 +63,9 @@ void printUsage(FILE* out) {
         "  fmt        formats the .cro files, by default of this folder and its subfolders;\n"
         "             --check only lists the ones to format, - formats the standard input\n"
         "  lsp        the language server for editors, on the standard input and output\n"
+        "  get        adds a package to the cromo.mod of this folder, or raises its version: cromo get\n"
+        "             github.com/anna/geometry, with @v2 or @v1.4.0 for a version, and a name after\n"
+        "             it for its imports; build, run and test download what is missing\n"
         "  update     installs the latest version of cromo and makes it the active one; with a\n"
         "             version, as cromo update 0.28.0, that one, also an older one\n"
         "  design     the designer of the windows: the components of a window put with the\n"
@@ -168,10 +172,8 @@ bool readProject(std::vector<Executable>& executables) {
                 if (other.name == words[1]) fail("another executable is called " + words[1]);
             }
             executables.push_back({words[1], words[2]});
-        } else if (words[0] == "require") {
-            fail("the packages are not available yet: require comes later");
-        } else {
-            fail("unknown line " + words[0] + ": cromo.mod has the lines module and bin");
+        } else if (words[0] != "require" && words[0] != "native") {  // those are read with the packages (D377, D551)
+            fail("unknown line " + words[0] + ": cromo.mod has the lines module, bin, require and native");
         }
     }
     if (first) {
@@ -190,6 +192,48 @@ std::string executableNames(const std::vector<Executable>& executables) {
         text += (i == 0 ? "" : i + 1 == executables.size() ? " and " : ", ") + executables[i].name;
     }
     return text;
+}
+
+// A run inside another, as that of tools/get.cro while a program is built to be run,
+// has a folder of its own: the first one has no suffix, as before.
+std::string runSuffix() {
+    static int runs = 0;
+    int number = runs++;
+    return number == 0 ? std::string() : "-" + std::to_string(number);
+}
+
+// Compiles a program of the library, as tools/get.cro, and runs it with these arguments.
+int runTool(const char* file, const std::vector<std::string>& args);
+
+// The packages of the cromo.mod of a folder (D376-D391): those that are not in the cache
+// are downloaded, by tools/get.cro, and cromo.sum has the hash of each. False, after
+// printing why, when it cannot be.
+bool preparePackages(const std::string& project, cromo::Target target) {
+    cromo::Resolution resolution;
+    std::string error;
+    cromo::Fetch fetch = [](const std::string& url, const std::string& version, std::string& why) {
+        if (runTool("tools/get.cro", {"fetch", cromo::packagesFolder().string(), url, version}) == 0) return true;
+        why = "cannot download the package " + url + " " + version;
+        return false;
+    };
+    if (!cromo::resolvePackages(project, resolution, error, &fetch) ||
+        !cromo::checkPackageSums(project, resolution, true, error)) {
+        std::fprintf(stderr, "cromo: %s\n", error.c_str());
+        return false;
+    }
+    // D551: the native libraries of the packages for this system, by their lines native.
+    cromo::FetchNative native = [](const cromo::Native& wanted, std::string& why) {
+        std::vector<std::string> args = {"native", cromo::nativeFolder(wanted).string(), wanted.url, wanted.sha256};
+        args.insert(args.end(), wanted.files.begin(), wanted.files.end());
+        if (runTool("tools/get.cro", args) == 0) return true;
+        why = "cannot download the libraries of " + wanted.url;
+        return false;
+    };
+    if (!cromo::prepareNatives(resolution, target, native, error)) {
+        std::fprintf(stderr, "cromo: %s\n", error.c_str());
+        return false;
+    }
+    return true;
 }
 
 // Compiles the program and writes the executable. Returns the exit code of cromo.
@@ -230,6 +274,11 @@ int build(Compilation& compilation) {
         std::fprintf(stderr, "cromo: cannot read %s\n", sources[1].path.c_str());
         return 2;
     }
+    if (compilation.reference.empty() && !compilation.runtime && !cromo::isLibraryFile(inputPath)) {
+        std::error_code ec;
+        std::string project = cromo::projectFolder(fs::absolute(inputPath, ec).parent_path().string());
+        if (!project.empty() && !preparePackages(project, options.target)) return 1;
+    }
     cromo::Diagnostics diag(sources[0]);
     diag.addFile(sources[1]);
     bool tests = codegen.tests;
@@ -263,11 +312,13 @@ int build(Compilation& compilation) {
     if (diag.hasErrors()) return 1;
     options.archives = libraries.archives;
     options.imports = libraries.imports;
+    options.shared = libraries.shared;
     std::string failure;
     if (options.target == cromo::Target::Linux && !cromo::callsTheCLibrary(options.archives, options.glibc, failure)) {
         std::fprintf(stderr, "cromo: %s\n", failure.c_str());  // D428
         return 1;
     }
+    if (!options.shared.empty()) options.glibc = true;  // D554: a shared library is loaded by the loader of glibc
     for (const cromo::FunctionDecl& function : module.functions) {
         if (!function.androidPackage.empty()) {  // D455
             compilation.androidPackage = function.androidPackage;
@@ -632,7 +683,7 @@ std::wstring quoteArgument(const std::wstring& arg) {
 // and deletes the folder. Returns the exit code of the program.
 int run(Compilation& compilation, const std::vector<std::wstring>& programArgs) {
     std::error_code ec;
-    fs::path folder = fs::temp_directory_path(ec) / ("cromo-run-" + std::to_string(GetCurrentProcessId()));
+    fs::path folder = fs::temp_directory_path(ec) / ("cromo-run-" + std::to_string(GetCurrentProcessId()) + runSuffix());
     fs::create_directories(folder, ec);
     if (ec) {
         std::fprintf(stderr, "cromo: cannot create the folder %s: %s\n", folder.string().c_str(), ec.message().c_str());
@@ -670,7 +721,7 @@ int run(Compilation& compilation, const std::vector<std::wstring>& programArgs) 
 // D156 on Linux: the same, with fork and exec.
 int run(Compilation& compilation, const std::vector<std::string>& programArgs) {
     std::error_code ec;
-    fs::path folder = fs::temp_directory_path(ec) / ("cromo-run-" + std::to_string(getpid()));
+    fs::path folder = fs::temp_directory_path(ec) / ("cromo-run-" + std::to_string(getpid()) + runSuffix());
     fs::create_directories(folder, ec);
     if (ec) {
         std::fprintf(stderr, "cromo: cannot create the folder %s: %s\n", folder.string().c_str(), ec.message().c_str());
@@ -1136,6 +1187,19 @@ int testCommand(Compilation& compilation, bool* unmatched = nullptr) {
     return failed == 0 ? 0 : 1;
 }
 
+int runTool(const char* file, const std::vector<std::string>& args) {
+    Compilation tool;
+    tool.inputPath = cromo::libraryFile(file).string();
+    tool.options.outputPath = fs::path(file).stem().string();
+#ifdef _WIN32
+    std::vector<std::wstring> programArgs;
+    for (const std::string& arg : args) programArgs.push_back(fs::path(arg).wstring());  // in the code page, as narrow()
+#else
+    std::vector<std::string> programArgs = args;
+#endif
+    return run(tool, programArgs);
+}
+
 }  // namespace
 
 #ifdef _WIN32
@@ -1178,6 +1242,26 @@ int main(int argc, char** argv) {
         std::vector<std::string> programArgs(args.begin() + 2, args.end());
 #endif
         return run(compilation, programArgs);
+    }
+    if (command == "get") {
+        // D381: the version is chosen and written in cromo.mod by tools/get.cro, then
+        // the packages are those of a build.
+        std::error_code ec;
+        if (args.size() < 3 || args.size() > 4) {
+            std::fputs("cromo: cromo get takes the address of a package, as cromo get github.com/anna/geometry, with @v2 or "
+                       "@v1.4.0 for a version, and a name after it for its imports\n",
+                       stderr);
+            return 2;
+        }
+        if (!fs::is_regular_file("cromo.mod", ec)) {
+            std::fputs("cromo: there is no cromo.mod in this folder: write one with a line as module example.com/app, the name "
+                       "of the project\n",
+                       stderr);
+            return 1;
+        }
+        int code = runTool("tools/get.cro", {"get", cromo::packagesFolder().string(), args[2], args.size() > 3 ? args[3] : ""});
+        if (code != 0) return code;
+        return preparePackages(fs::current_path(ec).string(), cromo::hostTarget()) ? 0 : 1;
     }
     if (command == "design") {
         // D523: the designer of the windows, a program written in Cromo in the library

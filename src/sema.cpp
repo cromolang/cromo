@@ -73,7 +73,7 @@ std::optional<Intrinsic> findIntrinsic(const std::string& name) {
         {"checkIndex", Intrinsic::CheckIndex}, {"argumentCount", Intrinsic::ArgumentCount},
         {"argumentLength", Intrinsic::ArgumentLength}, {"argumentData", Intrinsic::ArgumentData},
         {"decimalToFloat", Intrinsic::DecimalToFloat}, {"hashBytes", Intrinsic::HashBytes},
-        {"systemCall", Intrinsic::SystemCall}, {"environment", Intrinsic::Environment},
+        {"callC", Intrinsic::CallC}, {"systemCall", Intrinsic::SystemCall}, {"environment", Intrinsic::Environment},
         {"exitProcess", Intrinsic::ExitProcess}, {"threadStart", Intrinsic::ThreadStart},
         {"threadWait", Intrinsic::ThreadWait}, {"threadRethrow", Intrinsic::ThreadRethrow},
         {"threadUncaught", Intrinsic::ThreadUncaught}, {"threadFree", Intrinsic::ThreadFree},
@@ -3381,6 +3381,63 @@ private:
         return Type::error();
     }
 
+    // callC<R>(address, arguments...) (D552): a C function called through its address.
+    // The result is a type of C or void; an argument is a value of a type of C, or
+    // `ref` and a variable, whose address the function takes, as the `ref` parameters
+    // of the extern functions (D128).
+    Type checkCallC(CallExpr& call) {
+        Type result = Type::error();
+        if (call.typeArgs.size() != 1) {
+            diag_->error(call.loc, "'callC' takes 1 type argument, the type of its result: callC<i32>(address, ...)");
+        } else if (std::optional<Type> type = resolveType(call.typeArgs[0])) {
+            if (type->isVoid() || isCType(*type)) {
+                result = *type;
+            } else {
+                diag_->error(call.typeArgs[0].loc, "the result of a C function is a number, a bool, an addr or void, found " + type->name());
+            }
+        }
+        bool ok = !result.isError();
+        if (call.args.empty()) {
+            diag_->error(call.loc, "'callC' takes the address of the function, then its arguments");
+            return Type::error();
+        }
+        for (size_t i = 0; i < call.args.size(); ++i) {
+            ExprPtr& arg = call.args[i];
+            if (arg->kind == ExprKind::Ref && i > 0) {
+                auto& ref = static_cast<RefExpr&>(*arg);
+                Type found = checkExpr(ref.operand, std::nullopt);
+                if (found.isError()) {
+                    ok = false;
+                } else if (!isPlace(*ref.operand)) {
+                    diag_->error(ref.loc, "only a variable or a field can be passed with 'ref'");
+                    ok = false;
+                } else if (std::string reason = readOnlyReason(*ref.operand); !reason.empty()) {
+                    diag_->error(ref.loc, "cannot pass '" + placeText(*ref.operand) + "' with 'ref': " + reason);
+                    ok = false;
+                } else if (!isCPointee(found)) {
+                    diag_->error(ref.loc, "'ref' to a C function is a pointer to a number or to a struct of numbers, not " + found.name());
+                    ok = false;
+                } else {
+                    ref.type = found;
+                }
+                continue;
+            }
+            Type type = checkExpr(arg, std::nullopt);
+            if (type.isError()) {
+                ok = false;
+            } else if (i == 0 && type.kind != TypeKind::Addr) {
+                diag_->error(arg->loc, "the first argument of 'callC' is the address of the function, an addr, found " + type.name());
+                ok = false;
+            } else if (!isCType(type)) {
+                diag_->error(arg->loc, "an argument of a C function is a number, a bool, an addr, or 'ref' and a variable, found " +
+                                           type.name());
+                ok = false;
+            }
+        }
+        call.typeArg = result;
+        return ok ? result : Type::error();
+    }
+
     // Checks one argument against the mode of its parameter (D22).
     bool checkArg(ExprPtr& arg, const Param& param, Type type) {
         std::string name = "parameter '" + param.name + "'";
@@ -4927,6 +4984,7 @@ private:
         call.intrinsic = kind;
         if (kind == Intrinsic::JsonWrite || kind == Intrinsic::JsonRead) return checkJson(call, kind == Intrinsic::JsonWrite);
         if (kind == Intrinsic::DebugWrite) return checkDebug(call);
+        if (kind == Intrinsic::CallC) return checkCallC(call);
         bool atomic = kind == Intrinsic::AtomicLoad || kind == Intrinsic::AtomicStore || kind == Intrinsic::AtomicAdd ||
                       kind == Intrinsic::AtomicExchange || kind == Intrinsic::AtomicCompareExchange ||
                       kind == Intrinsic::AtomicLoadRelaxed || kind == Intrinsic::AtomicStoreRelaxed ||

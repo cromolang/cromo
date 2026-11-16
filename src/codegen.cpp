@@ -2593,6 +2593,39 @@ private:
             if (equals.canThrow) checkRaised();
             return {result, Type::boolType()};
         }
+        case Intrinsic::CallC: {  // D552: as a call of an extern function, through a pointer
+            std::string function = generateExpr(*call.args[0]).ref;
+            std::string args;
+            for (size_t i = 1; i < call.args.size(); ++i) {
+                const Expr& expr = *call.args[i];
+                std::string value;
+                if (expr.kind == ExprKind::Ref) {
+                    value = "ptr " + addressOf(*static_cast<const RefExpr&>(expr).operand);
+                } else {
+                    Value given = generateExpr(expr);
+                    std::string ref = given.ref;
+                    if (given.type.isBool()) {  // a bool of C is a byte (D129)
+                        ref = temp();
+                        inst(ref + " = zext i1 " + given.ref + " to i8");
+                    }
+                    value = cType(given.type) + cExtension(given.type) + " " + ref;
+                }
+                args += (i > 1 ? ", " : "") + value;
+            }
+            if (element.isVoid()) {
+                inst("call void " + function + "(" + args + ")");
+                return {"", element};
+            }
+            if (element.isBool()) {
+                std::string byte = temp();
+                inst(byte + " = call zeroext i8 " + function + "(" + args + ")");
+                inst(result + " = icmp ne i8 " + byte + ", 0");
+                return {result, element};
+            }
+            std::string extension = cExtension(element);
+            inst(result + " = call" + extension + " " + llvmType(element) + " " + function + "(" + args + ")");
+            return {result, element};
+        }
         case Intrinsic::SystemCall: {  // Linux (D202): an address is passed as an integer
             std::string args;
             for (size_t i = 0; i < 7; ++i) {

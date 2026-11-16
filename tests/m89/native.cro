@@ -1,0 +1,194 @@
+// The native libraries of a package (D551): the line native of its cromo.mod names an
+// archive and its hash; cromo downloads it when the program is built, takes the files
+// asked, under the names asked, and refuses an archive that is not the one of the hash.
+// A server in this program gives the archive.
+// target: windows
+// program-env: CROMO={cromo}
+// program-env: OUT={dir}/../out/native
+// expect-output: build: 0
+// expect-output: taken: true true, the rest left: false
+// expect-output: its text: a library
+// expect-output: again, from the cache: 0
+// expect-output: another hash: 1 cromo get: the archive is not the one of cromo.mod
+// expect-output: a file that is not there: 1 cromo get: the archive has no file lib/none.bin
+// expect-output: a wrong line: 1 cromo.mod:2: error: native takes a system
+import std.crypto
+import std.fs
+import std.gzip
+import std.http
+import std.os
+import std.process
+import std.thread
+
+// ---- An archive of tar, as a forge gives it: its files in a folder ----
+
+void field(ref list<u8> block, i64 at, string text) {
+    for (i64 i = 0; i < text.len(); i++) {
+        block[at + i] = text[i]
+    }
+}
+
+string octal(i64 value, i64 digits) {
+    list<u8> made
+    i64 left = value
+    for (i64 i = 0; i < digits; i++) {
+        made.insert(0, u8('0' + u8(left % 8)))
+        left = left / 8
+    }
+    ret string(made)
+}
+
+void addFile(ref list<u8> archive, string name, string text) {
+    list<u8> block
+    for (i64 i = 0; i < 512; i++) {
+        block.add(0)
+    }
+    field(ref block, 0, name)
+    field(ref block, 100, "0000644")
+    field(ref block, 108, "0000000")
+    field(ref block, 116, "0000000")
+    field(ref block, 124, octal(text.len(), 11))
+    field(ref block, 136, "00000000000")
+    field(ref block, 148, "        ")
+    block[156] = '0'
+    field(ref block, 257, "ustar")
+    field(ref block, 263, "00")
+    i64 sum = 0
+    for (u8 b in block) {
+        sum += i64(b)
+    }
+    field(ref block, 148, octal(sum, 6))
+    block[154] = 0
+    block[155] = ' '
+    for (u8 b in block) {
+        archive.add(b)
+    }
+    for (i64 i = 0; i < text.len(); i++) {
+        archive.add(text[i])
+    }
+    for (archive.len() % 512 != 0) {
+        archive.add(0)
+    }
+}
+
+list<u8> archiveOf(string folder, list<string> names, list<string> texts) {
+    list<u8> archive
+    for (i64 i = 0; i < names.len(); i++) {
+        addFile(ref archive, folder + "/" + names[i], texts[i])
+    }
+    for (i64 i = 0; i < 1024; i++) {
+        archive.add(0)
+    }
+    ret gzip.compress(archive)
+}
+
+// ---- cromo, in a folder, with the forge and a cache of its own ----
+
+struct Ran {
+    i32 code
+    string text
+}
+
+Ran cromo(string forge, string folder, string arguments) {
+    string cache = fs.joinPath(os.env("OUT"), "cache")
+    process.Output r
+    if (os.name() == "windows") {  // a batch file: cmd does not read the quotes of an argument as a program does
+        string batch = fs.joinPath(os.env("OUT"), "run.cmd")
+        fs.writeText(batch, format("@echo off\r\nset CROMO_FORGE={}\r\nset CROMO_PACKAGES={}\r\ncd /d \"{}\"\r\n\"{}\" {}\r\n", forge, cache,
+            folder, os.env("CROMO"), arguments))
+        r = process.run("cmd", ["/d", "/c", batch])
+    } else {
+        string line = format("cd '{}' && CROMO_FORGE='{}' CROMO_PACKAGES='{}' '{}' {}", folder, forge, cache, os.env("CROMO"), arguments)
+        r = process.run("sh", ["-c", line])
+    }
+    Ran ran
+    ran.code = r.code
+    list<string> kept
+    for (string line in (r.out + r.err).replace("\r", "").split("\n")) {
+        if (line.len() > 0 && !line.startsWith("Downloading ")) {
+            kept.add(line.copy())
+        }
+    }
+    ran.text = join(kept, " | ")
+    ret ran
+}
+
+void show(string what, Ran ran) {
+    println("{}: {} {}", what, ran.code, ran.text)
+}
+
+string requires(string folder) {
+    list<string> found
+    for (string line in fs.readText(fs.joinPath(folder, "cromo.mod")).split("\n")) {
+        if (line.startsWith("require ")) {
+            found.add(line.copy())
+        }
+    }
+    ret join(found, ", ")
+}
+
+list<u8> libraries() {
+    ret archiveOf("libs-1.0", ["lib/first.bin", "lib/second.bin", "docs/readme.txt"], ["a library", "another", "not asked"])
+}
+
+void project(string folder, string forge, string sum, string files) {
+    fs.createFolders(fs.joinPath(folder, "kit"))
+    fs.writeText(fs.joinPath(folder, "kit/kit.cro"), "public i64 one() {\n    ret 1\n}\n")
+    string lines = "module example.org/kit\n"
+    for (string system in ["windows-x86_64", "linux-x86_64"]) {
+        lines += format("native {} {}/libs-1.0.tar.gz sha256:{} {}\n", system, forge, sum, files)
+    }
+    fs.writeText(fs.joinPath(folder, "kit/cromo.mod"), lines)
+    fs.createFolders(fs.joinPath(folder, "app"))
+    fs.writeText(fs.joinPath(folder, "app/cromo.mod"), "module example.org/app\nrequire kit ../kit\n")
+    fs.writeText(fs.joinPath(folder, "app/main.cro"), "import kit\n\ni32 main() {\n    println(\"{}\", kit.one())\n    ret 0\n}\n")
+}
+
+i32 main() {
+    http.Server server = http.listen("127.0.0.1", 0)
+    string forge = format("http://127.0.0.1:{}", server.port())
+    thread.Thread web = thread.Thread([server]() {
+        server.serve([](ref http.Request req, ref http.Response res) {
+            if (req.path == "/libs-1.0.tar.gz") {
+                res.writeBytes(libraries(), "application/gzip")
+            } else {
+                res.status = 404
+            }
+        })
+    })
+    web.start()
+    string out = os.env("OUT")
+    fs.removeAll(out)
+    fs.createFolders(out)
+    string sum = crypto.hex(crypto.sha256(libraries()))
+
+    string good = fs.joinPath(out, "good")
+    project(good, forge, sum, "libs-1.0/lib/first.bin libs-1.0/lib/second.bin=renamed.bin")
+    println("build: {}", cromo(forge, fs.joinPath(good, "app"), "build main.cro").code)
+    string natives = fs.joinPath(fs.joinPath(out, "cache"), ".native")
+    string cache = fs.joinPath(natives, fs.listFolder(natives)[0])
+    println("taken: {} {}, the rest left: {}", fs.isFile(fs.joinPath(cache, "first.bin")), fs.isFile(fs.joinPath(cache, "renamed.bin")),
+        fs.isFile(fs.joinPath(cache, "readme.txt")))
+    println("its text: {}", fs.readText(fs.joinPath(cache, "first.bin")))
+    println("again, from the cache: {}", cromo("http://127.0.0.1:1", fs.joinPath(good, "app"), "build main.cro").code)
+
+    string other = fs.joinPath(out, "other")
+    project(other, forge, "00" + sum.slice(2, sum.len()), "libs-1.0/lib/first.bin")
+    Ran refused = cromo(forge, fs.joinPath(other, "app"), "build main.cro")
+    println("another hash: {} {}", refused.code, refused.text.slice(0, refused.text.find(" of cromo.mod") + 13).replace(forge + "/libs-1.0.tar.gz ", ""))
+
+    string missing = fs.joinPath(out, "missing")
+    project(missing, forge, sum, "libs-1.0/lib/none.bin")
+    Ran none = cromo(forge, fs.joinPath(missing, "app"), "build main.cro")
+    i64 cut = none.text.find(" | ")
+    println("a file that is not there: {} {}", none.code, none.text.slice(0, cut < 0 ? none.text.len() : cut).replace(forge + "/libs-1.0.tar.gz ", "").replace("libs-1.0/", ""))
+
+    string wrong = fs.joinPath(out, "wrong")
+    project(wrong, forge, sum, "libs-1.0/lib/first.bin")
+    fs.writeText(fs.joinPath(wrong, "kit/cromo.mod"), "module example.org/kit\nnative macos https://example.org/a.zip\n")
+    Ran line = cromo(forge, fs.joinPath(wrong, "app"), "build main.cro")
+    i64 at = line.text.find("cromo.mod:2")
+    println("a wrong line: {} {}", line.code, line.text.slice(at, at + 41))
+    os.exit(0)
+    ret 0
+}

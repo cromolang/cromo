@@ -463,6 +463,27 @@ error: the exported function 'check' can throw, and C has no exceptions: catch t
 error: [[export]] takes the name of the function in C, as [[export("cromo_alloc")]]
 ```
 
+## callC: una funzione C dal suo indirizzo
+
+Alcune librerie C danno le loro funzioni come indirizzi, in una tabella: ONNX Runtime, Vulkan, gli oggetti COM. `callC<R>(indirizzo, argomenti...)` chiama la funzione a un indirizzo: `R` è il tipo del suo risultato, un numero, un `bool`, un `addr`, o `void` se non ne ha, e gli argomenti sono quelli della funzione C, come per una funzione `extern` ([Chiamare il C](c-interop.md)): numeri, `bool`, `addr`, e `ref` con una variabile per un puntatore ad essa.
+
+```cromo ignore
+import unsafe
+
+extern "onnxruntime" {
+    addr OrtGetApiBase()
+}
+
+// The version of the library: the second function of the table that OrtGetApiBase gives.
+string version() {
+    addr base = OrtGetApiBase()
+    addr function = take<addr>(offset(base, 8))
+    ret cText(callC<addr>(function))
+}
+```
+
+Niente dichiara la funzione, quindi niente controlla la chiamata: un argomento in meno, o un `i32` dove il C vuole un `size_t`, è un programma che fallisce quando gira. Un modulo avvolge ogni chiamata in una funzione Cromo con i tipi giusti, e il resto del programma chiama quella. La dimensione di un argomento è quella del suo tipo: scrivi `i64(n)` e `i32(2)` dove il tipo non è quello di una variabile.
+
 ## [[cold]]
 
 `[[cold]]` prima di una funzione dice che viene eseguita di rado, come `#[cold]` di Rust e `__attribute__((cold))` di GCC. Il compilatore la tiene fuori dalle funzioni che la chiamano, e le organizza in favore dell'altro percorso, il che rende più breve il percorso comune. Il runtime lo usa per i percorsi lenti, come quello in cui lo heap chiede al sistema altra memoria.
@@ -522,7 +543,7 @@ La libreria standard usa qualche altra funzione integrata del dialetto, per il p
 
 In un file con `import unsafe` tutti questi nomi sono funzioni integrate:
 
-- `alloc`, `resize`, `free`, `sizeOf`, `offset`, `take`, `put`, `destroy`, `copyAt`, `copyMemory`, `compareMemory`, `checkIndex` e `variableAddress`, di questo capitolo;
+- `alloc`, `resize`, `free`, `sizeOf`, `offset`, `take`, `put`, `destroy`, `copyAt`, `copyMemory`, `compareMemory`, `checkIndex` e `variableAddress`, `callC`, di questo capitolo;
 - `argumentCount`, `argumentLength`, `argumentData`, `environment`, `exitProcess`, `systemCall`, `decimalToFloat`, `hashBytes`, `equalAt`, `jsonWrite`, `jsonRead`, `debugWrite`, `selfAddress`, `threadStart`, `threadWait`, `threadRethrow`, `threadUncaught`, `threadFree`, `taskStart`, `groupStart`, `mutexLock`, `mutexUnlock`, `atomicLoad`, `atomicStore`, `atomicAdd`, `atomicExchange`, `atomicCompareExchange`, `atomicLoadRelaxed`, `atomicStoreRelaxed` e `atomicAddRelaxed`, della libreria.
 
 Una funzione del modulo, o una funzione C, con uno di questi nomi non verrebbe mai chiamata in quel file, perciò è un errore dove viene dichiarata: dai alle tue funzioni altri nomi. Nei file senza `import unsafe` questi nomi sono liberi.

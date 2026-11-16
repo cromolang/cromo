@@ -15,6 +15,7 @@ struct Libraries {
     std::vector<std::string> archives;   // the static libraries next to the modules, given to the linker as they are
     std::vector<ImportLibrary> imports;  // the DLLs whose import library cromo writes
     std::vector<std::string> copies;     // the DLLs next to the modules, to copy next to the executable
+    std::vector<std::string> shared;     // on Linux, the shared libraries, linked as they are and copied too (D554)
 };
 
 // Finds the library of every extern block and checks its C functions in the

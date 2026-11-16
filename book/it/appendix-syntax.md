@@ -148,7 +148,7 @@ I nomi dei tipi convertono, e così due metodi dei numeri in virgola mobile:
 | `T()` | il valore predefinito di `T`, o il suo costruttore | [Struct](structs.md) |
 | `x.bits()`, `f64.fromBits(b)`, `f32.fromBits(b)` | i bit di un numero in virgola mobile, e viceversa | [Numeri e operatori](operators.md) |
 
-Il dialetto di `import unsafe` ha le sue: `alloc`, `resize`, `free`, `sizeOf`, `offset`, `take`, `put`, `destroy`, `copyAt`, `copyMemory`, `compareMemory`, `checkIndex`, `variableAddress`, `addr(n)`, `s.cstring()` e `string(data, length)`; vedi [Il dialetto unsafe](unsafe.md).
+Il dialetto di `import unsafe` ha le sue: `alloc`, `resize`, `free`, `sizeOf`, `offset`, `take`, `put`, `destroy`, `copyAt`, `copyMemory`, `compareMemory`, `checkIndex`, `variableAddress`, `callC`, `addr(n)`, `s.cstring()` e `string(data, length)`; vedi [Il dialetto unsafe](unsafe.md).
 
 ## Il nucleo della libreria
 

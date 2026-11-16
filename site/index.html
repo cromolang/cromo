@@ -126,7 +126,7 @@ sum: 120 µs</pre></div>
       <div class="stat"><b>0</b><span>dependencies: no libc, no Windows SDK</span></div>
       <div class="stat"><b>32 KB</b><span>for a hello world, statically linked</span></div>
       <div class="stat"><b>4</b><span>targets: Windows x64, Linux x64, Linux ARM64 and Android</span></div>
-      <div class="stat"><b>547</b><span>design decisions, all written down</span></div>
+      <div class="stat"><b>554</b><span>design decisions, all written down</span></div>
     </div></div>
   </div>
 
@@ -241,6 +241,24 @@ i32 main() {
       </ul>
       <figure class="shot" style="margin-top:28px"><img src="snake.png" width="1040" height="695" alt="Snake, an example of Cromo, on an Android phone: the game with its score, the snake grown long, and the end of a game" loading="lazy"></figure>
       <p class="section-lead" style="margin-top:20px;margin-bottom:0">This is <code>examples/25_snake.cro</code>: about 600 lines, with its drawing, its sounds and its music, and nothing else to install.</p>
+    </div>
+  </section>
+
+  <section id="packages">
+    <div class="wrap">
+      <div class="kicker">Packages</div>
+      <h2>One line, <span class="chrome">and it is there</span></h2>
+      <p class="section-lead">A package is a Git repository, named by its address, with its tags as versions: there is no registry to ask. <code>cromo get</code> adds one to the project, and <code>cromo build</code> downloads what is missing, checks it by its hash and builds. A package can bring a library written in C or C++: <code>cromo</code> takes the one of the system from where its authors publish it, and puts it next to the executable.</p>
+      <div class="term"><pre><span class="prompt">$ </span><span class="cmd">cromo get github.com/cromolang/duckdb</span>
+duckdb: github.com/cromolang/duckdb v0.1.0</pre></div>
+      <ul class="modes" style="margin-top:20px">
+        <li><b><a href="https://github.com/cromolang/onnxruntime">onnx</a></b><span>Run models in the ONNX format, with ONNX Runtime: neural networks inside the program, with no Python.</span></li>
+        <li><b><a href="https://github.com/cromolang/duckdb">duckdb</a></b><span>DuckDB, the database for analysis: millions of rows, CSV and Parquet files, with SQL and the names of <code>std.db</code>.</span></li>
+        <li><b><a href="https://github.com/cromolang/pdfium">pdfium</a></b><span>PDF documents, with the engine of Chrome: their text, and each page as a picture.</span></li>
+        <li><b><a href="https://github.com/cromolang/toml">toml</a></b><span>TOML, read into a struct of the program. Written in Cromo.</span></li>
+        <li><b><a href="https://github.com/cromolang/redis">redis</a></b><span>A client of Redis. Written in Cromo, on <code>std.net</code>.</span></li>
+      </ul>
+      <p class="section-lead" style="margin-top:20px;margin-bottom:0">The packages with a library are for Windows and Linux on x86-64. <a href="book/en/modules.html#packages">How packages work</a>, and how to write one.</p>
     </div>
   </section>
 
@@ -502,7 +520,7 @@ cromo @VERSION@ (LLVM 23.1.4)</pre>
       <div class="progress" aria-hidden="true"><div style="width:99%"></div></div>
       <div class="roadmap">
         <div class="phase">
-          <h3>Done <span class="badge done">M0 – M86</span></h3>
+          <h3>Done <span class="badge done">M0 – M90</span></h3>
           <ul class="steps">
             <li><b>M0–2</b><span>LLVM backend, numbers, control flow, structs, RAII</span></li>
             <li><b>M3–6</b><span>Ownership, generics, interfaces, lists, strings, enums, exceptions</span></li>
@@ -553,16 +571,16 @@ cromo @VERSION@ (LLVM 23.1.4)</pre>
             <li><b>M80–81</b><span>The camera and the sensors of motion, on a computer and on a phone</span></li>
             <li><b>M82–83</b><span><code>cromo design</code> for every day: colors chosen with a picker and seen at once, the bars and the pages of an app, tabs, splits, groups in groups, clipboard, alignment and guides</span></li>
             <li><b>M85–86</b><span>Games: a handler for each frame, the keys held, the fingers on the screen, the whole screen, and <code>std.audio</code> with sounds from WAV and Ogg Vorbis; Snake as an example</span></li>
+            <li><b>M87–90</b><span>Packages: <code>cromo get</code>, versions from Git tags, <code>cromo.sum</code>; packages that bring a native library, downloaded and checked by <code>cromo</code>; the first ones, with ONNX Runtime, DuckDB and PDFium</span></li>
           </ul>
         </div>
         <div class="phase">
           <h3>Next</h3>
           <ul class="steps">
             <li><b>M34</b><span>Sema in Cromo: the types of the declarations and of the expressions</span></li>
-            <li><b>packages</b><span><code>cromo get</code>, <code>cromo.mod</code> and versions from Git tags</span></li>
             <li><b>macOS</b><span>Programs for macOS, on Apple Silicon and Intel</span></li>
             <li><b>designer</b><span>The properties of each kind of component, and of several together</span></li>
-            <li><b>native</b><span>Packages with a part in C or C++, as ONNX Runtime and OpenCV</span></li>
+            <li><b>packages</b><span>More of them: models of language with llama.cpp, plugins with WebAssembly, video</span></li>
           </ul>
         </div>
         <div class="phase">

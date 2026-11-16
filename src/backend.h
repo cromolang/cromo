@@ -27,6 +27,7 @@ struct BackendOptions {
     bool window = false;    // D426: on Windows, an executable of the windows, without a console
     std::string icon;       // D425: on Windows, the .ico of the executable, or nothing
     bool glibc = false;     // D428: on Linux, linked with glibc, for the C libraries that call it
+    std::vector<std::string> shared;  // D554: on Linux, the shared libraries of the extern blocks, found next to the executable
     bool sharedLibrary = false;  // P44: on Android, libmain.so of an app, whose SDL_main the activity of SDL calls
     // D339: the path of each source file in the debug information, and its name in a stack trace.
     std::vector<std::pair<std::string, std::string>> fileNames;

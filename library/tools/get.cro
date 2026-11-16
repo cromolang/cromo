@@ -1,0 +1,501 @@
+// The packages (D376-D391): cromo compiles this program with the library of the
+// version in use and runs it, as cromo update (D403), for what needs the network.
+//
+//   get fetch <cache> <url> <version>   downloads a version of a package into the cache
+//   get get <cache> <url[@version]> [name]
+//                                       chooses a version by the tags, downloads it and
+//                                       writes its line in the cromo.mod of this folder
+//   get native <folder> <url> <sha256> <file>...
+//                                       downloads the archive of a line native of a
+//                                       cromo.mod (D551), checks its SHA-256 and takes
+//                                       its files into the folder
+//
+// A version is the archive of its tag, as GitHub, GitLab and Codeberg give it over
+// HTTPS (D379), unpacked in <cache>/<url>@<version>, with the hash of its files (D387)
+// in <cache>/<url>@<version>.sum; the tags are read with the HTTP protocol of git
+// (D386). Another host goes through the command git. CROMO_FORGE names a server that
+// stands for every host, for the tests: <forge>/<url>/info/refs and
+// <forge>/<url>/archive/<tag>.tar.gz.
+import std.crypto
+import std.fs
+import std.gzip
+import std.http
+import std.os
+import std.process
+import std.tar
+
+i32 main(list<string> args) {
+    try {
+        if (args.len() == 5 && args[1] == "fetch") {
+            fetch(args[2], args[3], args[4])
+        } else if (args.len() == 5 && args[1] == "get") {
+            get(args[2], args[3], args[4])
+        } else if (args.len() >= 6 && args[1] == "native") {
+            list<string> files
+            for (i64 i = 5; i < args.len(); i++) {
+                files.add(args[i].copy())
+            }
+            native(args[2], args[3], args[4], files)
+        } else {
+            throw Error("it is run by cromo get and cromo build")
+        }
+    } catch (Exception e) {
+        eprintln("cromo get: {}", e.message())
+        ret 1
+    }
+    ret 0
+}
+
+// ---- The versions ----
+
+bool isVersion(string text) {
+    if (text.len() < 6 || text[0] != 'v') {
+        ret false
+    }
+    i64 dots = 0
+    bool digit = false
+    for (i64 i = 1; i < text.len(); i++) {
+        if (text[i] == '.') {
+            if (!digit) {
+                ret false
+            }
+            dots++
+            digit = false
+        } else if (text[i] >= '0' && text[i] <= '9') {
+            digit = true
+        } else {
+            ret false
+        }
+    }
+    ret dots == 2 && digit
+}
+
+bool has(list<string> items, string wanted) {
+    for (string item in items) {
+        if (item == wanted) {
+            ret true
+        }
+    }
+    ret false
+}
+
+// The three numbers of v1.2.3.
+list<i64> numbers(string version) {
+    list<i64> made
+    for (string part in version.slice(1, version.len()).split(".")) {
+        i64 n = 0
+        for (i64 i = 0; i < part.len(); i++) {
+            n = n * 10 + i64(part[i] - '0')
+        }
+        made.add(n)
+    }
+    ret made
+}
+
+bool newer(string a, string b) {
+    list<i64> x = numbers(a)
+    list<i64> y = numbers(b)
+    for (i64 i = 0; i < 3; i++) {
+        if (x[i] != y[i]) {
+            ret x[i] > y[i]
+        }
+    }
+    ret false
+}
+
+string majorOf(string version) {
+    ret version.slice(0, version.find("."))
+}
+
+// ---- The forge ----
+
+string forge() {
+    string address = os.env("CROMO_FORGE")
+    for (address.endsWith("/")) {
+        address = address.slice(0, address.len() - 1)
+    }
+    ret address
+}
+
+string hostOf(string url) {
+    ret url.slice(0, url.find("/"))
+}
+
+bool known(string url) {
+    string host = hostOf(url)
+    ret forge().len() > 0 || host == "github.com" || host == "gitlab.com" || host == "codeberg.org"
+}
+
+http.Response download(string address) {
+    http.Client client
+    client.bodyLimit = 1073741824
+    http.Request request = http.Request("GET", address)
+    ret client.send(request)
+}
+
+// The versions that a repository has: its tags vX.Y.Z.
+list<string> versionsOf(string url) {
+    string text
+    if (known(url)) {
+        string address = forge().len() > 0 ? format("{}/{}/info/refs?service=git-upload-pack", forge(), url) :
+            format("https://{}/info/refs?service=git-upload-pack", url)
+        http.Response answer = download(address)
+        if (answer.status == 401 || answer.status == 403 || answer.status == 404) {
+            throw Error(format("cannot read the tags of {}: there is no such repository, or it is private (the status is {})", url,
+                answer.status))
+        }
+        if (answer.status != 200) {
+            throw Error(format("cannot read the tags of {}: the status is {}", url, answer.status))
+        }
+        list<u8> printable
+        for (u8 b in answer.body) {  // the lines of git have a zero in them
+            printable.add(b == 0 ? u8('\n') : b)
+        }
+        text = string(printable)
+    } else {
+        process.Output listed = process.run("git", ["ls-remote", "--tags", "https://" + url])
+        if (listed.code != 0) {
+            throw Error(format("cannot read the tags of {} with git: {}", url, listed.err.trim()))
+        }
+        text = listed.out.copy()
+    }
+    list<string> found
+    for (string line in text.split("\n")) {
+        i64 at = line.find("refs/tags/")
+        if (at < 0) {
+            continue
+        }
+        string tag = line.slice(at + 10, line.len()).trim()
+        if (tag.endsWith("^{}")) {
+            tag = tag.slice(0, tag.len() - 3)
+        }
+        if (isVersion(tag) && !has(found, tag)) {
+            found.add(tag)
+        }
+    }
+    ret found
+}
+
+string archiveOf(string url, string version) {
+    if (forge().len() > 0) {
+        ret format("{}/{}/archive/{}.tar.gz", forge(), url, version)
+    }
+    string host = hostOf(url)
+    if (host == "gitlab.com") {
+        ret format("https://{}/-/archive/{}/{}-{}.tar.gz", url, version, fs.fileName(url), version)
+    }
+    if (host == "codeberg.org") {
+        ret format("https://{}/archive/{}.tar.gz", url, version)
+    }
+    ret format("https://{}/archive/refs/tags/{}.tar.gz", url, version)
+}
+
+// ---- The cache ----
+
+string folderOf(string cache, string url, string version) {
+    ret fs.joinPath(cache, url.replace(":", "_") + "@" + version)
+}
+
+// The hash of the files of a folder (D387): of the lines, sorted, with the SHA-256
+// of each file and its path, so that it does not depend on how the archive was made.
+string hashOf(string folder) {
+    list<string> paths
+    collect(folder, "", ref paths)
+    sort(ref paths)
+    string lines
+    for (string path in paths) {
+        lines += format("{}  {}\n", crypto.hex(crypto.sha256(fs.readBytes(fs.joinPath(folder, path)))), path)
+    }
+    ret "sha256:" + crypto.hex(crypto.sha256(lines.bytes()))
+}
+
+void collect(string folder, string inside, ref list<string> paths) {
+    for (string name in fs.listFolder(fs.joinPath(folder, inside))) {
+        string path = inside.len() > 0 ? inside + "/" + name : name.copy()
+        if (fs.isFolder(fs.joinPath(folder, path))) {
+            collect(folder, path, ref paths)
+        } else {
+            paths.add(path)
+        }
+    }
+}
+
+// Downloads a version into the cache, where it becomes its folder only when it is whole.
+void fetch(string cache, string url, string version) {
+    string target = folderOf(cache, url, version)
+    if (fs.isFolder(target) && fs.isFile(target + ".sum")) {
+        ret
+    }
+    println("Downloading {} {}...", url, version)
+    string partial = target + ".partial"
+    fs.removeAll(partial)
+    fs.removeAll(target)
+    if (known(url)) {
+        http.Response archive = download(archiveOf(url, version))
+        if (archive.status != 200) {
+            throw Error(format("cannot download {} {}: the status of {} is {}", url, version, archiveOf(url, version), archive.status))
+        }
+        unpack(tar.read(gzip.decompress(archive.body)), partial)
+    } else {
+        process.Output cloned = process.run("git", ["clone", "--quiet", "--depth", "1", "--branch", version, "https://" + url, partial])
+        if (cloned.code != 0) {
+            throw Error(format("cannot download {} {} with git: {}", url, version, cloned.err.trim()))
+        }
+        fs.removeAll(fs.joinPath(partial, ".git"))
+    }
+    if (!fs.isFolder(partial)) {
+        throw Error(format("the archive of {} {} has no files", url, version))
+    }
+    string sum = hashOf(partial)
+    fs.createFolders(fs.parent(target))
+    fs.rename(partial, target)
+    fs.writeText(target + ".sum", sum + "\n")
+}
+
+// The files of an archive of a forge, without the folder that holds them all.
+void unpack(list<tar.Entry> entries, string folder) {
+    for (tar.Entry entry in entries) {
+        i64 slash = entry.name.find("/")
+        if (slash < 0 || entry.folder || entry.link.len() > 0) {
+            continue
+        }
+        string path = entry.name.slice(slash + 1, entry.name.len())
+        if (path.len() == 0 || path.contains("..") || path.startsWith("/") || path.contains("\\") || path.contains(":")) {
+            throw Error(format("the archive has a file with the path {}", entry.name))
+        }
+        string file = fs.joinPath(folder, path)
+        fs.createFolders(fs.parent(file))
+        fs.writeBytes(file, entry.data)
+    }
+}
+
+// ---- The native libraries of a package (D551) ----
+
+// The files asked of an archive, a zip or a tar with gzip, each by its path in it, or
+// 'path=name' to give it another name, as the one a shared library has for the loader.
+void native(string target, string url, string sum, list<string> files) {
+    if (fs.isFolder(target)) {
+        ret
+    }
+    println("Downloading {}...", url)
+    http.Response archive = download(url)
+    if (archive.status != 200) {
+        throw Error(format("cannot download {}: the status is {}", url, archive.status))
+    }
+    string found = crypto.hex(crypto.sha256(archive.body))
+    if (found != sum) {
+        throw Error(format("the archive {} is not the one of cromo.mod: its SHA-256 is {} instead of {}", url, found, sum))
+    }
+    bool zipped = url.endsWith(".zip")
+    list<string> names
+    list<list<u8>> contents
+    if (!zipped) {
+        for (tar.Entry entry in tar.read(gzip.decompress(archive.body))) {
+            if (!entry.folder && entry.link.len() == 0) {
+                names.add(entry.name.copy())
+                contents.add(entry.data)
+            }
+        }
+    }
+    string partial = target + ".partial"
+    fs.removeAll(partial)
+    fs.createFolders(partial)  // and so the folders above the target
+    for (string file in files) {
+        string path = file.copy()
+        string name = fs.fileName(file)
+        i64 equal = file.find("=")
+        if (equal > 0) {
+            path = file.slice(0, equal)
+            name = file.slice(equal + 1, file.len())
+        }
+        if (name.len() == 0 || name.contains("/") || name.contains("\\") || name.contains("..")) {
+            throw Error(format("'{}' cannot be the name of a library", name))
+        }
+        bool taken = false
+        if (zipped) {
+            list<u8> content
+            taken = zipFile(archive.body, path, ref content)
+            if (taken) {
+                fs.writeBytes(fs.joinPath(partial, name), content)
+            }
+        }
+        for (i64 i = 0; i < names.len() && !taken; i++) {
+            if (names[i] == path) {
+                fs.writeBytes(fs.joinPath(partial, name), contents[i])
+                taken = true
+            }
+        }
+        if (!taken) {
+            fs.removeAll(partial)
+            throw Error(format("the archive {} has no file {}", url, path))
+        }
+    }
+    fs.rename(partial, target)
+}
+
+i64 number(list<u8> bytes, i64 at, i64 count) {
+    i64 value = 0
+    for (i64 i = count - 1; i >= 0; i--) {
+        value = value * 256 + i64(bytes[at + i])
+    }
+    ret value
+}
+
+// One file of a zip, by its path: only that one is decompressed, where std.zip reads
+// them all, and the archive of a library can hold hundreds of megabytes of others.
+// False when the archive has no such file.
+bool zipFile(list<u8> archive, string path, ref list<u8> content) {
+    i64 end = archive.len() - 22
+    for (end >= 0 && number(archive, end, 4) != 0x06054B50) {  // the end of the central directory
+        end--
+    }
+    if (end < 0) {
+        throw Error("the archive is not a zip")
+    }
+    i64 at = number(archive, end + 16, 4)
+    i64 count = number(archive, end + 10, 2)
+    for (i64 n = 0; n < count; n++) {
+        if (at + 46 > archive.len() || number(archive, at, 4) != 0x02014B50) {
+            throw Error("the zip has a damaged directory")
+        }
+        i64 method = number(archive, at + 10, 2)
+        i64 packed = number(archive, at + 20, 4)
+        i64 size = number(archive, at + 24, 4)
+        i64 nameLength = number(archive, at + 28, 2)
+        i64 local = number(archive, at + 42, 4)
+        bool same = nameLength == path.len()
+        for (i64 i = 0; same && i < nameLength; i++) {
+            same = archive[at + 46 + i] == path[i]
+        }
+        if (same) {
+            if (packed == 0xFFFFFFFF || size == 0xFFFFFFFF || local == 0xFFFFFFFF) {
+                throw Error(format("the file {} of the zip is larger than 4 GB", path))
+            }
+            i64 data = local + 30 + number(archive, local + 26, 2) + number(archive, local + 28, 2)
+            list<u8> bytes
+            bytes.reserve(packed)
+            for (i64 i = 0; i < packed; i++) {
+                bytes.add(archive[data + i])
+            }
+            if (method == 0) {
+                content = bytes
+            } else if (method == 8) {
+                content = gzip.inflate(bytes, size)
+            } else {
+                throw Error(format("the file {} of the zip is compressed in a way that is not deflate", path))
+            }
+            ret true
+        }
+        at += 46 + nameLength + number(archive, at + 30, 2) + number(archive, at + 32, 2)
+    }
+    ret false
+}
+
+// ---- cromo get ----
+
+void get(string cache, string asked, string given) {
+    string url = asked.copy()
+    string wanted
+    i64 at = asked.find("@")
+    if (at >= 0) {
+        url = asked.slice(0, at)
+        wanted = asked.slice(at + 1, asked.len())
+    }
+    if (url.startsWith("https://")) {
+        url = url.slice(8, url.len())
+    }
+    if (url.find("/") <= 0 || url.endsWith("/")) {
+        throw Error(format("'{}' is not the address of a package, as github.com/anna/geometry", url))
+    }
+    string name = given.len() > 0 ? given.copy() : fs.fileName(url)
+    for (i64 i = 0; i < name.len(); i++) {
+        u8 c = name[i]
+        bool fine = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || (i > 0 && c >= '0' && c <= '9')
+        if (!fine) {
+            throw Error(format("'{}' cannot be the name of the imports of {}: write a name after the address, of letters, digits and _",
+                name, url))
+        }
+    }
+
+    // The lines of cromo.mod: the one of this name, if it has it.
+    list<string> lines = fs.readText("cromo.mod").split("\n")
+    i64 line = -1
+    string before
+    for (i64 i = 0; i < lines.len(); i++) {
+        list<string> words = wordsOf(lines[i])
+        if (words.len() < 3 || words[0] != "require") {
+            continue
+        }
+        if (words[1] == name) {
+            if (words[2] != url) {
+                throw Error(format("the name {} is of the package {}: write another name after the address", name, words[2]))
+            }
+            line = i
+            before = words.len() > 3 ? words[3].copy() : ""
+        } else if (words[2] == url && given.len() == 0 && (wanted.len() == 0 || words.len() < 4 || majorOf(words[3]) == majorOf(wanted + ".0"))) {
+            name = words[1].copy()  // the package is there, under another name
+            line = i
+            before = words.len() > 3 ? words[3].copy() : ""
+        }
+    }
+
+    // D385: the version asked; the last one of the major version asked, or of the one
+    // already required; or the last one of all.
+    string major = wanted.copy()
+    if (isVersion(wanted)) {
+        major = majorOf(wanted)
+    } else if (wanted.len() == 0 && isVersion(before)) {
+        major = majorOf(before)
+    } else if (wanted.len() > 0 && !isVersion(wanted + ".0.0")) {
+        throw Error(format("'{}' is not a version, as v2 or v1.4.0", wanted))
+    }
+    list<string> versions = versionsOf(url)
+    string version
+    for (string v in versions) {
+        bool fits = major.len() == 0 || majorOf(v) == major
+        if (fits && (!isVersion(wanted) || v == wanted) && (version.len() == 0 || newer(v, version))) {
+            version = v.copy()
+        }
+    }
+    if (version.len() == 0) {
+        if (versions.len() == 0) {
+            throw Error(format("{} has no versions: its tags are not as v1.2.0", url))
+        }
+        throw Error(format("{} has no version {}: it has {}", url, wanted.len() > 0 ? wanted : major, join(versions, ", ")))
+    }
+    fetch(cache, url, version)
+    string written = format("require {} {} {}", name, url, version)
+    if (line >= 0) {
+        lines[line] = written
+    } else {
+        for (lines.len() > 0 && lines[lines.len() - 1].trim().len() == 0) {
+            lines.remove(lines.len() - 1)
+        }
+        lines.add(written)
+        lines.add("")
+    }
+    fs.writeText("cromo.mod", join(lines, "\n"))
+    if (before == version) {
+        println("{} is already at {}", name, version)
+    } else if (before.len() > 0) {
+        println("{}: {} from {} to {}", name, url, before, version)
+    } else {
+        println("{}: {} {}", name, url, version)
+    }
+}
+
+// The words of a line of cromo.mod, without its comment.
+list<string> wordsOf(string line) {
+    string text = line.copy()
+    i64 comment = text.find("//")
+    if (comment >= 0) {
+        text = text.slice(0, comment)
+    }
+    list<string> words
+    for (string word in text.replace("\t", " ").replace("\r", " ").split(" ")) {
+        if (word.len() > 0) {
+            words.add(word.copy())
+        }
+    }
+    ret words
+}

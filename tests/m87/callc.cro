@@ -1,0 +1,37 @@
+// callC (D552): a C function called through its address, here those of the memory
+// of SDL, which it gives as four addresses: a result that is an address, arguments
+// that are numbers and addresses, and no result with void.
+// target: windows linux-x86_64
+// expect-output: allocated true
+// expect-output: kept 42 and 7
+// expect-output: grown, still 42
+// expect-output: zeroed 0
+import std.gui  // for SDL3, which is next to it
+import unsafe
+
+extern "SDL3" {
+    void SDL_GetOriginalMemoryFunctions(addr malloc, addr calloc, addr realloc, addr free)  // where it writes each address
+}
+
+i32 main() {
+    addr table = alloc(32)
+    SDL_GetOriginalMemoryFunctions(table, offset(table, 8), offset(table, 16), offset(table, 24))
+    addr malloc = take<addr>(table)
+    addr calloc = take<addr>(offset(table, 8))
+    addr realloc = take<addr>(offset(table, 16))
+    addr release = take<addr>(offset(table, 24))
+    addr none
+    addr block = callC<addr>(malloc, i64(16))
+    println("allocated {}", block != none)
+    put<i64>(block, 42)
+    put<i64>(offset(block, 8), 7)
+    println("kept {} and {}", take<i64>(block), take<i64>(offset(block, 8)))
+    block = callC<addr>(realloc, block, i64(4096))
+    println("grown, still {}", take<i64>(block))
+    callC<void>(release, block)
+    addr zeros = callC<addr>(calloc, i64(4), i64(8))
+    println("zeroed {}", take<i64>(offset(zeros, 24)))
+    callC<void>(release, zeros)
+    free(table)
+    ret 0
+}

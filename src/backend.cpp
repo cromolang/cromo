@@ -634,6 +634,13 @@ bool linkLinux(const std::string& objectPath, const std::string& tablePath, cons
         args.push_back(runtimePath);
         return runLld(args, error);
     }
+    if (!options.shared.empty()) {
+        // D554: looked for next to the executable when it starts; what they need of
+        // other libraries, as that of C++, is found by the loader of the system.
+        args.push_back("-rpath=$ORIGIN");
+        args.push_back("--allow-shlib-undefined");
+        for (const std::string& library : options.shared) args.push_back(library);
+    }
     args.push_back("--as-needed");
     for (const char* stub : kGlibcLibraries) args.push_back((glibcFolder() / stub).string());
     args.push_back("--no-as-needed");

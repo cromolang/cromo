@@ -19,8 +19,9 @@ The command always comes first: `cromo hello.cro` is an error that shows the rig
 | `cromo fmt [--check] [files and folders \| -]` | formats the code, by default of the current folder and its subfolders ([Tools](tools.md)) |
 | `cromo lsp` | the language server, for editors, on the standard input and output ([Tools](tools.md)) |
 | `cromo design [file.form]` | the designer of the windows: a window composed with the mouse, saved as a form and as a module of Cromo ([Windows and apps](gui.md#designing-a-window-cromo-design)) |
+| `cromo get address[@version] [name]` | adds a package to the `cromo.mod` of the folder, or raises its version ([Modules](modules.md#packages)) |
 | `cromo update [version]` | installs the latest version of Cromo, or the one named, and makes it the active one |
-| `cromo version` | prints the version of `cromo` and of LLVM, as `cromo 0.86.0 (LLVM 23.1.4)` |
+| `cromo version` | prints the version of `cromo` and of LLVM, as `cromo 0.90.0 (LLVM 23.1.4)` |
 | `cromo help` | prints the commands and the options |
 
 ### The program to compile
@@ -159,12 +160,14 @@ Of `cromo`:
 | `~/.cromo/versions/<version>` | the installed versions |
 | `lib/` next to `bin/` | the standard library and the runtime, which `cromo` reads |
 | `extension/` next to `bin/` | the extension for Visual Studio Code |
+| `~/.cromo/packages` | the versions of the packages downloaded, for all the projects, and the native libraries of those that have them |
 | `~/.cromo/android` | the key with which `cromo` signs the APKs for debugging, made the first time |
 
 | Variable | Use |
 |---|---|
 | `ANDROID_HOME`, `ANDROID_SDK_ROOT` | where `cromo run --target android` looks for `adb` |
 | `ANDROID_SERIAL` | the device of `cromo run --target android`, with more than one |
+| `CROMO_PACKAGES` | another folder for the packages downloaded |
 | `CROMO_SITE` | another site for `cromo update` and the installation |
 
 On Windows, `~` is `%USERPROFILE%`.

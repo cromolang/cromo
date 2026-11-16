@@ -147,8 +147,10 @@ lld-link: error: undefined symbol: callThrice
 
 Quando si compila per Linux, `extern "name"` è la libreria statica `libname.a`, cercata nelle cartelle dei moduli che dichiarano la libreria, nell'ordine in cui vengono caricati, come su Windows. Il suo codice entra nell'eseguibile, che non ha bisogno di nulla accanto a sé. Quando non la trova, il compilatore lo dice:
 
+Senza una `libname.a`, la libreria può essere condivisa: `libname.so` accanto ai moduli, o `libname.so.1` come si chiama per il loader. L'eseguibile viene allora collegato con essa e con glibc, `cromo` copia la libreria accanto all'eseguibile, come una DLL su Windows, e il programma la cerca lì all'avvio. La libreria statica ha la precedenza quando ci sono entrambe: lascia un solo file da dare ad altri.
+
 ```text
-error: cannot find the library 'maths': there is no libmaths.a next to the modules that use it
+error: cannot find the library 'maths': there is no libmaths.a or libmaths.so next to the modules that use it
 ```
 
 `cromo` non legge i nomi di una libreria statica: una funzione mancante viene segnalata dal linker, che spesso suggerisce quella giusta:

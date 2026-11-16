@@ -79,6 +79,7 @@ extern "SDL3" {
     bool SDL_RenderFillRect(addr renderer, ref Rect rect)
     bool SDL_RenderRect(addr renderer, ref Rect rect)
     bool SDL_RenderPresent(addr renderer)
+    bool SDL_SetRenderVSync(addr renderer, i32 vsync)
     bool SDL_GetWindowSize(addr window, ref i32 w, ref i32 h)
     bool SDL_SetWindowSize(addr window, i32 w, i32 h)
     bool SDL_SetWindowTitle(addr window, addr title)
@@ -1057,6 +1058,24 @@ public struct Motion {
     public f32 rotationY
     public f32 rotationZ
     public i64 time  // when the sensor measured, in nanoseconds: for the time between two events
+}
+
+// A point, or a size or a step, in logical pixels: two numbers that go together, as
+// the place of a shape of a drawing or the speed of what moves (D549). It is a simple
+// value: a program keeps a list of points in place of a list of x and one of y.
+//
+// '''
+// gui.Point ball = gui.Point(40, 100)
+// ball.x += 120 * seconds
+// '''
+public struct Point {
+    public f32 x
+    public f32 y
+
+    public Point(f32 across, f32 down) {
+        x = across
+        y = down
+    }
 }
 
 // A finger on the screen, for the handlers of 'onTouchDown', 'onTouchMove' and
@@ -6590,6 +6609,9 @@ struct WindowData {
     bool barBefore  // the title bar was shown before the whole screen
     Orientation orientation
     bool orientationChanged
+    bool vsync  // D548: asked by the program,
+    bool vsyncChanged
+    bool vsyncOn       // and what the display gave
     list<addr> motion  // the handlers of onMotion (D538)
     list<addr> resize
     list<addr> close
@@ -7831,6 +7853,28 @@ public struct Window {
         withData([me, value](ref Shared data) { data.windows[indexOf(ref data, me)].fps = value })
     }
 
+    // Draws the window in step with the display, each frame at one of its refreshes
+    // (D548): what moves is smooth, without the frames that an own clock skips or shows
+    // twice. While the window is drawn so, the display gives the pace and 'setFps' does
+    // not count; it counts again when nothing in the window changes, and where the
+    // display cannot give its pace. False by default.
+    public void setVsync(bool value) const {
+        i64 me = id
+        withData([me, value](ref Shared data) {
+            i64 i = indexOf(ref data, me)
+            data.windows[i].vsync = value
+            data.windows[i].vsyncChanged = true
+        })
+    }
+
+    // Whether the window is asked to be drawn in step with the display.
+    public bool vsync() const {
+        i64 me = id
+        bool result = false
+        readData([me, ref result](ref Shared data) { result = data.windows[indexOf(ref data, me)].vsync })
+        ret result
+    }
+
     // The most frames of the window drawn each second: 60 by default.
     public i32 fps() const {
         i64 me = id
@@ -8974,13 +9018,13 @@ void run() {
             events = true
         }
         update()
-        draw(events)
-        u64 frame = 20000000  // without windows, 50 times a second
+        bool paced = draw(events)  // a window waited for the display (D548): that was the wait of this frame
+        u64 frame = 20000000       // without windows, 50 times a second
         if (fps > 0) {
             frame = 1000000000 / u64(fps)
         }
         u64 spent = SDL_GetTicksNS() - start
-        if (spent < frame) {
+        if (spent < frame && !paced) {
             SDL_DelayPrecise(frame - spent)
         }
     }
@@ -9254,6 +9298,10 @@ void apply(ref WindowData window) {
     if (window.titleChanged) {
         SDL_SetWindowTitle(window.window, window.title.cstring())
         window.titleChanged = false
+    }
+    if (window.vsyncChanged) {  // D548
+        window.vsyncOn = SDL_SetRenderVSync(window.renderer, window.vsync ? 1 : 0) && window.vsync
+        window.vsyncChanged = false
     }
     if (window.fullscreenChanged) {  // D546
         SDL_SetWindowFullscreen(window.window, window.fullscreen)
@@ -11413,9 +11461,12 @@ void arrange(ref PartData part, i32 width, i32 height) {
 
 // Draws the windows when something changed: an event came, the program changed their
 // data, or a window waits for a moment of its own, as the caret that blinks (D522). The
-// others keep their last frame.
-void draw(bool events) {
-    loopData([events](ref Shared data) {
+// others keep their last frame. True when one of them was shown in step with its
+// display (D548).
+bool draw(bool events) {
+    list<addr> drawn  // their renderers, shown after the lock: with vsync that waits for the display
+    bool paced = false
+    loopData([events, ref drawn, ref paced](ref Shared data) {
         bool all = events || data.changed
         data.changed = false
         u64 now = SDL_GetTicksNS()
@@ -11424,6 +11475,8 @@ void draw(bool events) {
             bool due = all || (window.wake != 0 && now >= window.wake)
             if (window.window != none && !window.closing && due) {
                 drawWindow(ref window, ref data.parts, ref data.images)
+                drawn.add(window.renderer)
+                paced = paced || window.vsyncOn
                 for (ref Call call in window.requests) {  // D486: called before the next frame
                     data.pending.add(move call)
                 }
@@ -11431,6 +11484,10 @@ void draw(bool events) {
             }
         }
     })
+    for (addr renderer in drawn) {
+        SDL_RenderPresent(renderer)
+    }
+    ret paced
 }
 
 // Whether the caret is drawn now: it blinks, on for half a second and off for the next
@@ -11520,7 +11577,6 @@ void drawWindow(ref WindowData window, ref list<PartData> parts, ref list<ImageD
         }
         drawEdge(ref window, ref c, width, height)
     }
-    SDL_RenderPresent(r)
 }
 
 // The components from first to end, excluded, in order, then the bars of those that

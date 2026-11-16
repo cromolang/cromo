@@ -1,0 +1,35 @@
+// callC (D552) with 'ref' and a variable, whose address the C function takes, with a
+// bool as its result and with small integers: functions of kernel32, found by name
+// with GetProcAddress.
+// target: windows
+// expect-output: counted true, a time after 0: true
+// expect-output: the id is the same: true
+// expect-output: lower of 'A' is 97
+import unsafe
+
+extern "kernel32" {
+    addr GetModuleHandleA(addr name)
+    addr GetProcAddress(addr module, addr name)
+    u32 GetCurrentProcessId()
+}
+
+extern "user32" {
+    addr GetDesktopWindow()
+}
+
+addr find(string library, string name) {
+    ret GetProcAddress(GetModuleHandleA(library.cstring()), name.cstring())
+}
+
+i32 main() {
+    i64 ticks = 0
+    bool counted = callC<bool>(find("kernel32.dll", "QueryPerformanceCounter"), ref ticks)
+    println("counted {}, a time after 0: {}", counted, ticks > 0)
+    u32 id = callC<u32>(find("kernel32.dll", "GetCurrentProcessId"))
+    println("the id is the same: {}", id == GetCurrentProcessId())
+    GetDesktopWindow()  // user32 is loaded
+    u16 letter = 65
+    addr lower = callC<addr>(find("user32.dll", "CharLowerW"), addr(i64(letter)))  // a character in place of a text
+    println("lower of 'A' is {}", i64(lower))
+    ret 0
+}

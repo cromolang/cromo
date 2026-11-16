@@ -163,6 +163,7 @@ enum class Intrinsic {
     ArgumentCount, ArgumentLength, ArgumentData, DecimalToFloat, HashBytes, SystemCall, Environment, ExitProcess,
     ThreadStart, ThreadWait, ThreadRethrow, ThreadUncaught, ThreadFree, MutexLock, MutexUnlock, SelfAddress, EqualAt,
     TaskStart, GroupStart,  // D269, D273
+    CallC,                  // D552: a C function called through its address
     Assert,                 // D351: `assert(condition)`, a built-in function as panic
     AtomicLoad, AtomicStore, AtomicAdd, AtomicExchange, AtomicCompareExchange,  // D328
     JsonWrite, JsonRead,  // std.json (D251): for a real type, a call of the function that converts it
@@ -667,6 +668,7 @@ struct ModuleFile {
     std::vector<ImportDecl> imports;
     bool isUnsafe = false;  // `import unsafe` (D127)
     bool isLibrary = false;  // a file of the standard library, embedded in cromo (D201)
+    std::vector<std::string> libraryFolders;  // of the native libraries of its package, for this system (D551)
     // `fs_windows.cro` next to `fs.cro` (D202): the file of the same module whose
     // names it shares; -1 for a file that is a module by itself.
     int part = -1;

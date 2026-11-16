@@ -463,6 +463,27 @@ error: the exported function 'check' can throw, and C has no exceptions: catch t
 error: [[export]] takes the name of the function in C, as [[export("cromo_alloc")]]
 ```
 
+## callC: a C function by its address
+
+Some C libraries give their functions as addresses, in a table: ONNX Runtime, Vulkan, the objects of COM. `callC<R>(address, arguments...)` calls the function at an address: `R` is the type of its result, a number, a `bool`, an `addr`, or `void` for none, and the arguments are those of the C function, as for an `extern` function ([Calling C](c-interop.md)): numbers, `bool`, `addr`, and `ref` with a variable for a pointer to it.
+
+```cromo ignore
+import unsafe
+
+extern "onnxruntime" {
+    addr OrtGetApiBase()
+}
+
+// The version of the library: the second function of the table that OrtGetApiBase gives.
+string version() {
+    addr base = OrtGetApiBase()
+    addr function = take<addr>(offset(base, 8))
+    ret cText(callC<addr>(function))
+}
+```
+
+Nothing declares the function, so nothing checks the call: an argument too few, or an `i32` where the C wants a `size_t`, is a program that fails where it runs. A module wraps each call in a function of Cromo with the right types, and the rest of the program calls that one. The size of an argument is that of its type: write `i64(n)` and `i32(2)` where the type is not that of a variable.
+
 ## [[cold]]
 
 `[[cold]]` before a function says that it runs rarely, as `#[cold]` of Rust and `__attribute__((cold))` of GCC. The compiler keeps it out of the functions that call it, and lays them out for the other path, which makes the common path shorter. The runtime uses it for the slow paths, as the one where the heap asks the system for more memory.
@@ -522,7 +543,7 @@ The standard library uses a few more built-in functions of the dialect, for its 
 
 In a file with `import unsafe` all these names are built-in functions:
 
-- `alloc`, `resize`, `free`, `sizeOf`, `offset`, `take`, `put`, `destroy`, `copyAt`, `copyMemory`, `compareMemory`, `checkIndex` and `variableAddress`, of this chapter;
+- `alloc`, `resize`, `free`, `sizeOf`, `offset`, `take`, `put`, `destroy`, `copyAt`, `copyMemory`, `compareMemory`, `checkIndex`, `variableAddress` and `callC`, of this chapter;
 - `argumentCount`, `argumentLength`, `argumentData`, `environment`, `exitProcess`, `systemCall`, `decimalToFloat`, `hashBytes`, `equalAt`, `jsonWrite`, `jsonRead`, `debugWrite`, `selfAddress`, `threadStart`, `threadWait`, `threadRethrow`, `threadUncaught`, `threadFree`, `taskStart`, `groupStart`, `mutexLock`, `mutexUnlock`, `atomicLoad`, `atomicStore`, `atomicAdd`, `atomicExchange`, `atomicCompareExchange`, `atomicLoadRelaxed`, `atomicStoreRelaxed` and `atomicAddRelaxed`, of the library.
 
 A function of the module, or a C function, with one of these names would never be called there, so it is an error where it is declared: give your functions other names. In the files without `import unsafe` these names are free.

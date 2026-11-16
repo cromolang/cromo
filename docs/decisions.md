@@ -2564,6 +2564,27 @@ i32 total = sum.sum()
 ### D547. `std.audio`: sounds from WAV and Ogg Vorbis
 *2026-11-13.* Chosen by the author. The sounds are a module of their own, `std.audio`, since a program without windows plays them too. It reads WAV, which SDL decodes, for the effects, and Ogg Vorbis for the music, with stb_vorbis, one file in the public domain as stb_truetype: a minute of music is ten megabytes as WAV and less than one as Ogg Vorbis, which counts in an APK; they are the formats of LÖVE, raylib and Godot. MP3 would be a second decoder to carry, for files that can be converted. A `Player` is a value that holds the device, and its voices are mixed by SDL: the module has no state of its own, and a program can have more players.
 
+### D548. `setVsync`: a window drawn in step with the display
+*2026-11-16.* Chosen by the author. `Window.setVsync(true)` draws the window at the refreshes of its display, as the vsync of SDL, of raylib and of every engine: `setFps` alone is a clock of the program, which is not that of the display, and what moves skips a frame now and then. It is a method of its own, off by default, and not a value of `setFps` as 0: the two say different things, a pace given by the display and a most of frames. While a window is drawn so the loop does not wait by itself, since the display made it wait; `setFps` counts again when nothing is drawn, and where the display gives no pace. The windows are shown after the lock of their data is left, so that a program is not held for a refresh.
+
+### D549. `gui.Point`: two numbers that go together
+*2026-11-16.* Chosen by the author. `gui.Point` is a struct with `x` and `y`, `f32`, and a constructor that takes them: a place, a size or a speed in logical pixels, so that a program keeps a list of points and not a list for each axis, as the example of Snake did. It has no operators: Cromo has no overloading of the operators, and whether the structs can define them is a choice of the language, open, to take by itself and not for one type. The types of SIMD (D505) are not for this: they have no `x` and `y`. The methods of `std.gui` that exist keep their numbers, as `Drawing.circle(x, y, ...)`.
+
+### D550. The official packages are repositories of github.com/cromolang
+*2026-11-16.* Chosen by the author. A package of the project, as that of ONNX Runtime, is a repository of its own under `github.com/cromolang`, with tags as versions, taken with `cromo get github.com/cromolang/onnxruntime`: what D376 says for every package, with no registry to write, to keep running and to defend. cromolang.org has a page that lists them. They are not a folder of the repository of Cromo: their versions would be those of the compiler.
+
+### D551. The native libraries of a package are declared, and downloaded when needed
+*2026-11-16.* Chosen by the author. A library of tens of megabytes for each system, as the DLL of ONNX Runtime, is not in the repository of its package: the `cromo.mod` of the package has a line for each system, with the address of the archive that its authors publish and its SHA-256, and `cromo` downloads the one of the system it compiles for, checks it and keeps it in its cache. It is what the crate `ort` of Rust and vcpkg do, but declared in a line, with no script to run. Libraries in the repository (D391) stay for the small ones; a library that the user installs would lose the one line that installs everything.
+
+### D552. `callC`: a C function called through its address
+*2026-11-16.* Chosen by the author. In a module with `import unsafe`, `callC<R>(address, arguments...)` calls the C function at an address: `R` is the type of its result, a type of C (D129) or `void`, and each argument is a value of a type of C, or `ref` and a variable for a pointer to it, as the parameters of an `extern` function (D128). The libraries whose functions are in a table, as ONNX Runtime, Vulkan and COM, are reached so, without a library of C in between, compiled for each system. It is a built-in function as `take<T>` and `put<T>`, and close to `syscall.SyscallN` of Go; a type of C function to declare, as `extern "C" fn` of Rust, would check the arguments at each call, but would be a new kind of type in the language. No declaration checks the arguments: a module wraps each call in a function of Cromo with the right types.
+
+### D553. The pilot of the native packages: ONNX Runtime, for Windows and Linux on x86-64
+*2026-11-16.* Chosen by the author. The first package with a native library is ONNX Runtime, on the two systems where everything is tested here. Android, whose library comes in another kind of archive and must go in the APK, and Linux on ARM64 come once the mechanism is settled.
+
+### D554. On Linux a C library can be shared, next to the executable
+*2026-11-16.* A consequence of D551 and D553, and the decision that D143 left for later: ONNX Runtime for Linux is published only as a shared library. When there is no `libname.a`, `extern "name"` is `libname.so` next to the modules that declare it, or `libname.so.1` as the library names itself for the loader: the executable is linked with it and with glibc (D428), looks for it in its own folder when it starts (`$ORIGIN`), and `cromo` copies it there, as the DLLs of Windows (D138). What the library needs of others, as the C++ library of the system, is found by the loader of the system. The static library still comes first, since it leaves one file to give to others.
+
 ---
 
 ## Proposed
@@ -2975,6 +2996,7 @@ A component keeps the distances from the edges of its parent, the content of the
 - `gui.Touch` has `finger`, an `i64`, `x` and `y` in logical pixels from the corner of the content, and `pressure` from 0 to 1. A finger that the system takes away, as for a gesture of its own, goes up for the program: `onTouchUp`. On a computer the handlers are called only by a screen that feels the fingers.
 - `w.setFullscreen(bool)` and `w.fullscreen()`; the title bar comes back as it was. `w.setOrientation(gui.Orientation.Portrait)` and `w.orientation()`; called before `start` the window opens so.
 - On Android the activity asks for the insets of the bars of the system after it colors them: a window with the dark theme from its start had its content under the bar of the status, since nothing else asked for them.
+- `w.setVsync(bool)` and `w.vsync()`, which says what was asked (D548). Two windows drawn so on the same thread wait one after the other: each has half the refreshes.
 - The handler of SIGSEGV of the runtime (D339) gives the faults that are not of the stack of Cromo to the handler that was there before it, and ends the program only without one. On Android that handler is of the runtime of Java, which uses the signal for its own checks and comes back from it: on a phone every app of Cromo ended at its first frame, which the emulator never showed; and it is the one that writes a crash in the log.
 
 ### P80. The names of the sounds (D547)
@@ -2982,6 +3004,30 @@ A component keeps the distances from the edges of its parent, the content of the
 - `audio.Player()` opens the device of the system; without one it is silent, and `ready()` says so: a program does not fail for a computer without speakers. `play(sound)` plays once, `playAt(sound, volume)` at a volume, `loop(sound, volume)` again and again; each gives an `audio.Voice`, a number of the player, for `stop(voice)`, `setVoiceVolume(voice, volume)` and `playing(voice)`. `setVolume`, `pause`, `resume` and `stopAll` are for all of them. A volume is from 0, and 1 is that of the file.
 - An Ogg Vorbis longer than ten seconds is decoded while it plays, by the thread of the audio of SDL, and a shorter one, as every WAV, once into samples of 16 bits. Sounds of more than two channels are mixed down to two.
 - The part in C is `runtime/audio/audio.c`, in the archives of the runtime as the images. stb_vorbis takes all its memory from a block that the runtime gives it, so it needs neither `malloc` nor `alloca`.
+
+### P81. The packages as they are written (D376-D391)
+- `src/packages.cpp` reads the lines `require` and `native` of the `cromo.mod` files and chooses the versions; the loader gives each file its package, so that an import is looked for among the names of the `cromo.mod` of the package that writes it (D383), and the modules of a package have its address in front of their names (D391). What needs the network is `library/tools/get.cro`, compiled and run by `cromo` as `cromo update` (D403): it reads the tags, downloads and unpacks the archives, and writes the line of `cromo get` in `cromo.mod`.
+- The selection takes, of each package and major version, the highest version among those that the project and the packages already chosen require, until nothing changes. Go reads also the requirements of the versions that are not chosen: here they are not read, so that only the versions used are downloaded, since a version is its whole archive.
+- The cache is `~/.cromo/packages`, or the folder of `CROMO_PACKAGES`; next to the folder of a version, `<version>.sum` has its hash, which `cromo.sum` is checked against at each build. `CROMO_FORGE` names a server that stands for every host, for the tests.
+- The import of the name of a package alone is the module of the files of its root folder (D515), and `name.part` its file or folder `part`; the tests of a package, its files `_test.cro`, are not read by the programs that use it.
+- A package without `cromo.mod` has no requirements. A `module` line that is not the address it was downloaded from is an error (D384).
+- Not done yet: the versions of a host that is not GitHub, GitLab or Codeberg go through `git`, and that way is not tested; `cromo get` does not remove a package, its line is deleted by hand (D389); the language server reads the packages that are in the cache and downloads none.
+
+### P82. The native libraries of a package (D551, D554)
+- A line is `native <system> <address> sha256:<hash> <file>...`, with `windows-x86_64` or `linux-x86_64`: the address of a zip or of a tar with gzip, the SHA-256 of the archive, and the paths in it of the files to take. `path=name` gives a file another name, as `lib/libonnxruntime.so.1.32.0=libonnxruntime.so.1`, the name that the library has for the loader of Linux.
+- The files are in `~/.cromo/packages/.native`, in a folder named by the hash of the archive and by the files taken, and that folder is among those where the libraries of the modules of the package are looked for (D139). Of a zip only the files asked are decompressed: the archive of ONNX Runtime for Windows has 460 MB of debug information.
+- The lines of the system that is not compiled for are not read, and a package can have lines for some systems only: on the others its `extern` blocks do not find their library, and say so.
+- The shared libraries of Linux were tried with ONNX Runtime, by hand and with the tests of its package: there is no test of them among those of Cromo, which have no C compiler to make one.
+
+### P83. The package of ONNX Runtime (D553)
+- `github.com/cromolang/onnxruntime`: `onnxruntime.Session(bytes)` and `onnxruntime.load(path)`, `inputNames()`, `outputNames()`, `run(list<Tensor>)`, `onnxruntime.Tensor(shape, data)` and `onnxruntime.version()`. The tensors are of `f32`, on the processor.
+- It asks ONNX Runtime for the version 17 of its C API, that of 1.17, and calls 27 functions of its table by their places, read from `onnxruntime_c_api.h` by a script of the package; the model is always given as bytes, so the paths of Windows, which the C API wants in UTF-16, are not its matter.
+
+### P84. The first packages (D550)
+- With a native library, by the lines `native` of their `cromo.mod`: `onnxruntime` (ONNX Runtime 1.32.0), `duckdb` (DuckDB 1.5.6, with the names of `std.db`) and `pdfium` (PDFium 159, the builds of the project pdfium-binaries). Written in Cromo alone: `toml`, which reads TOML 1.0 into a `json.Value` or a struct, and `redis`, a client on `std.net`.
+- DuckDB 2.0.0 publishes only its sources, with no library: the package is on 1.5.6.
+- Not done, each for a reason of the language or of the tools. llama.cpp takes and gives structs by value, which an `extern` function cannot (D128), and on Linux a large struct by value goes on the stack, which an address cannot stand for; it is also some twenty libraries that load one another, while `cromo` copies next to the executable only those of an `extern` block. Wasmtime publishes its library for Linux as `.tar.xz`, which `tools/get.cro` does not read. OpenCV has only an API of C++. libmpv has an official library for Windows, as a zip and under the LGPL, and none for Linux.
+- The client of Redis is tested against a small server written in its test, not against Redis.
 
 ## Open
 

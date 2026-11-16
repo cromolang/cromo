@@ -19,8 +19,9 @@ Il comando viene sempre per primo: `cromo hello.cro` è un errore che mostra la 
 | `cromo fmt [--check] [files and folders \| -]` | formatta il codice, di default quello della cartella corrente e delle sue sottocartelle ([Strumenti: formattazione, editor e debugger](tools.md)) |
 | `cromo lsp` | il language server, per gli editor, su standard input e standard output ([Strumenti: formattazione, editor e debugger](tools.md)) |
 | `cromo design [file.form]` | il designer delle finestre: una finestra composta con il mouse, salvata come form e come modulo di Cromo ([Finestre e app](gui.md#disegnare-una-finestra-cromo-design)) |
+| `cromo get indirizzo[@versione] [nome]` | aggiunge un pacchetto al `cromo.mod` della cartella, o ne alza la versione ([Moduli](modules.md#pacchetti)) |
 | `cromo update [version]` | installa l'ultima versione di Cromo, o quella indicata, e la rende attiva |
-| `cromo version` | stampa la versione di `cromo` e di LLVM, come `cromo 0.86.0 (LLVM 23.1.4)` |
+| `cromo version` | stampa la versione di `cromo` e di LLVM, come `cromo 0.90.0 (LLVM 23.1.4)` |
 | `cromo help` | stampa i comandi e le opzioni |
 
 ### Il programma da compilare
@@ -159,12 +160,14 @@ Di `cromo`:
 | `~/.cromo/versions/<version>` | le versioni installate |
 | `lib/` accanto a `bin/` | la libreria standard e il runtime, che `cromo` legge |
 | `extension/` accanto a `bin/` | l'estensione per Visual Studio Code |
+| `~/.cromo/packages` | le versioni dei pacchetti scaricati, per tutti i progetti, e le librerie native di quelli che ne hanno |
 | `~/.cromo/android` | la chiave con cui `cromo` firma gli APK per il debug, creata la prima volta |
 
 | Variabile | Uso |
 |---|---|
 | `ANDROID_HOME`, `ANDROID_SDK_ROOT` | dove `cromo run --target android` cerca `adb` |
 | `ANDROID_SERIAL` | il dispositivo di `cromo run --target android`, quando ce n'è più d'uno |
+| `CROMO_PACKAGES` | un'altra cartella per i pacchetti scaricati |
 | `CROMO_SITE` | un altro sito per `cromo update` e per l'installazione |
 
 Su Windows, `~` è `%USERPROFILE%`.

@@ -1,0 +1,22 @@
+// callC (D552): what it refuses.
+// expect-error: 'callC' takes 1 type argument, the type of its result: callC<i32>(address, ...)
+// expect-error: the first argument of 'callC' is the address of the function, an addr, found i64
+// expect-error: an argument of a C function is a number, a bool, an addr, or 'ref' and a variable, found string
+// expect-error: the result of a C function is a number, a bool, an addr or void, found string
+// expect-error: only a variable or a field can be passed with 'ref'
+// expect-error: 'ref' to a C function is a pointer to a number or to a struct of numbers, not addr
+import unsafe
+
+void wrong(addr f, i64 n) {
+    callC(f)
+    callC<i32>(n)
+    callC<i32>(f, "text")
+    callC<string>(f)
+    callC<void>(f, ref 3)
+    addr slot
+    callC<void>(f, ref slot)
+}
+
+i32 main() {
+    ret 0
+}

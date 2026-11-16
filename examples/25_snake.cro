@@ -6,7 +6,7 @@
 // Decided: the canvas and its drawing (D483), the handler of each frame (D543), the
 //          keys that repeat (D544), the fingers (D545), the whole screen and the
 //          orientation of a phone (D546), the state of the handlers in a
-//          thread.Shared (D485), the sounds and their player (D547)
+//          thread.Shared (D485), the points (D549), the sounds and their player (D547)
 // Draft:   the names of the handlers, of the fingers and of the orientation (P79),
 //          the names of the sounds and of the player (P80)
 //
@@ -77,8 +77,7 @@ struct Game {
     f32 ended  // the seconds since the game ended
     list<Spark> sparks
     u64 seed
-    f32 fingerX  // where the finger that swipes came down
-    f32 fingerY
+    gui.Point touched  // where the finger that swipes came down
     i64 finger = -1
     list<i32> heard  // what happened in this frame, for its sounds: 1 an apple, 2 a gem, 3 the end, 4 the start
     bool muted
@@ -421,38 +420,36 @@ gui.Drawing drawingOf(ref Game g, f32 width, f32 height) {
     f32 gone = over ? 1 : g.clock / pace(ref g)
     gone = gone > 1 ? 1 : gone
     i64 count = g.xs.len()
-    list<f32> px
-    list<f32> py
-    px.add(left + (f32(g.xs[1]) + f32(g.xs[0] - g.xs[1]) * gone + 0.5) * cell)
-    py.add(top + (f32(g.ys[1]) + f32(g.ys[0] - g.ys[1]) * gone + 0.5) * cell)
+    list<gui.Point> at
+    at.add(gui.Point(left + (f32(g.xs[1]) + f32(g.xs[0] - g.xs[1]) * gone + 0.5) * cell,
+        top + (f32(g.ys[1]) + f32(g.ys[0] - g.ys[1]) * gone + 0.5) * cell))
     for (i64 i = 1; i < count; i++) {
-        px.add(left + (f32(g.xs[i]) + 0.5) * cell)
-        py.add(top + (f32(g.ys[i]) + 0.5) * cell)
+        at.add(gui.Point(left + (f32(g.xs[i]) + 0.5) * cell, top + (f32(g.ys[i]) + 0.5) * cell))
     }
-    px.add(left + (f32(g.lastX) + f32(g.xs[count - 1] - g.lastX) * gone + 0.5) * cell)
-    py.add(top + (f32(g.lastY) + f32(g.ys[count - 1] - g.lastY) * gone + 0.5) * cell)
+    at.add(gui.Point(left + (f32(g.lastX) + f32(g.xs[count - 1] - g.lastX) * gone + 0.5) * cell,
+        top + (f32(g.lastY) + f32(g.ys[count - 1] - g.lastY) * gone + 0.5) * cell))
     f32 thick = cell * 0.78
     u32 light = over ? 0x9AA7B8 : skin
     u32 deep = over ? 0x6E7C8F : skinDark
-    i64 ends = px.len() - 1
+    i64 ends = at.len() - 1
     for (i64 i = ends; i >= 0; i--) {
         if (i > 0) {
-            d.line(px[i], py[i] + cell * 0.14, px[i - 1], py[i - 1] + cell * 0.14, thick, gui.rgba(0x000000, 30))
+            d.line(at[i].x, at[i].y + cell * 0.14, at[i - 1].x, at[i - 1].y + cell * 0.14, thick, gui.rgba(0x000000, 30))
         }
-        d.circle(px[i], py[i] + cell * 0.14, thick / 2, gui.rgba(0x000000, 30))
+        d.circle(at[i].x, at[i].y + cell * 0.14, thick / 2, gui.rgba(0x000000, 30))
     }
     for (i64 i = ends; i >= 0; i--) {
         gui.Color shade = mix(light, deep, f32(i) / f32(ends))
         f32 slim = i == ends ? 0.8 : 1  // the end of the tail is thinner
         if (i > 0) {
-            d.line(px[i], py[i], px[i - 1], py[i - 1], thick * slim, shade)
+            d.line(at[i].x, at[i].y, at[i - 1].x, at[i - 1].y, thick * slim, shade)
         }
-        d.circle(px[i], py[i], thick * slim / 2, shade)
+        d.circle(at[i].x, at[i].y, thick * slim / 2, shade)
         if (i > 0 && i < ends && i % 2 == 0) {
-            d.circle(px[i], py[i], thick * 0.2, gui.rgba(belly, 130))
+            d.circle(at[i].x, at[i].y, thick * 0.2, gui.rgba(belly, 130))
         }
     }
-    face(ref d, px[0], py[0], f32(g.dx), f32(g.dy), cell, light, g.age, over)
+    face(ref d, at[0].x, at[0].y, f32(g.dx), f32(g.dy), cell, light, g.age, over)
 
     for (ref Spark s in g.sparks) {
         f32 fade = 1 - s.age / 0.7
@@ -496,6 +493,7 @@ i32 main() {
     gui.Window w = gui.Window("Snake", 420, 700)
     w.setOrientation(gui.Orientation.Portrait)
     w.setTheme(gui.Theme.Dark)
+    w.setVsync(true)  // each frame at a refresh of the display
     gui.Canvas canvas = w.add(gui.Canvas(0, 0, 420, 665))
     canvas.setAnchor(gui.Horizontal.Stretch, gui.Vertical.Stretch)
 
@@ -599,8 +597,7 @@ i32 main() {
         game.lock([t](ref Game g) {
             if (g.finger < 0) {
                 g.finger = t.finger
-                g.fingerX = t.x
-                g.fingerY = t.y
+                g.touched = gui.Point(t.x, t.y)
             }
         })
     })
@@ -609,8 +606,8 @@ i32 main() {
             if (t.finger != g.finger) {
                 ret
             }
-            f32 across = t.x - g.fingerX
-            f32 down = t.y - g.fingerY
+            f32 across = t.x - g.touched.x
+            f32 down = t.y - g.touched.y
             f32 far = (across < 0 ? -across : across) > (down < 0 ? -down : down) ? across : down
             if (far > -20 && far < 20) {
                 ret
@@ -620,8 +617,7 @@ i32 main() {
             } else {
                 turn(ref g, down > 0 ? 1 : 3)
             }
-            g.fingerX = t.x
-            g.fingerY = t.y
+            g.touched = gui.Point(t.x, t.y)
         })
     })
     w.onTouchUp([game](gui.Touch t) {

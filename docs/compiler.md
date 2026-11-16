@@ -590,7 +590,10 @@ Each milestone lists the decisions still open that are needed **before** writing
 | **M84** | The designer, the properties of each kind of component, of several together, and the preview of the themes | none: D541 |
 | **M85** | What a game asks of `std.gui`: the handler of each frame, the keys released, the fingers, the whole screen and the orientation; the example of Snake | none: D543-D546, P79 |
 | **M86** | `std.audio`: sounds from WAV and Ogg Vorbis, a player with its voices; the sounds of Snake | none: D547, P80 |
-| **Later** | Packages: `cromo.mod`, `cromo.sum`, `cromo get`, the archives of the tags over HTTPS, a reader of tar (D376–D391) | none: D376–D391 |
+| **M87** | `callC`: a C function called through its address, in `unsafe` | none: D552 |
+| **M88** | The packages: `require` in `cromo.mod`, `cromo get`, the archives of the tags over HTTPS, the selection of the versions, `cromo.sum`, the cache | none: D376-D391, P81 |
+| **M89** | The native libraries of a package, by its lines `native`, and the shared libraries of Linux | none: D551, D554, P82 |
+| **M90** | The package of ONNX Runtime, the pilot of the native packages, for Windows and Linux | none: D550, D553, P83 |
 | **Last** | Compiler written in Cromo that compiles itself and makes the same archives, when the language is mature (§2, D147, D290, D291) | |
 
 Generics come before containers because `list<T>` is written in Cromo as a generic struct (D37, D39). After M9 the order is D152: the tools come first, because they help to write the library. `cromo update` (D153) downloads the versions from the manifests and the archives of cromolang.org (D285–D289): it came in M28, once the archives were published and the library could download and open them (D403).

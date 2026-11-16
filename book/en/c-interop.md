@@ -147,8 +147,10 @@ lld-link: error: undefined symbol: callThrice
 
 When compiling for Linux, `extern "name"` is the static library `libname.a`, looked for in the folders of the modules that declare the library, in the order in which they are loaded, as on Windows. Its code goes into the executable, which needs nothing next to it. When it is not found, the compiler says so:
 
+Without a `libname.a`, the library can be shared: `libname.so` next to the modules, or `libname.so.1` as it names itself for the loader. The executable is then linked with it and with glibc, `cromo` copies the library next to the executable, as a DLL on Windows, and the program looks for it there when it starts. The static library comes first when both are there: it leaves one file to give to others.
+
 ```text
-error: cannot find the library 'maths': there is no libmaths.a next to the modules that use it
+error: cannot find the library 'maths': there is no libmaths.a or libmaths.so next to the modules that use it
 ```
 
 `cromo` does not read the names of a static library: a missing function is reported by the linker, which often suggests the right one:

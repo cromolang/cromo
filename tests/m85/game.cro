@@ -1,6 +1,6 @@
 // What a game asks of a window: the handler of each frame with the seconds since the
 // one before (D543), the keys released and those that repeat (D544), the fingers with
-// their numbers and their places (D545), the whole screen and the orientation (D546).
+// their numbers and their places (D545), the whole screen and the orientation (D546), the step of the display (D548).
 // The events are those of SDL, made by the test.
 // target: windows linux-x86_64
 // program-env: SDL_VIDEO_DRIVER=offscreen
@@ -16,6 +16,7 @@
 // expect-output: whole screen false true false
 // expect-output: the content is under the title bar again: true
 // expect-output: orientation Any Landscape
+// expect-output: in step with the display false true
 import std.gui
 import std.thread
 import std.time
@@ -104,6 +105,10 @@ i32 main() {
     w.setOrientation(gui.Orientation.Landscape)
     time.msleep(100)
     println("orientation {:?} {:?}", first, w.orientation())
+    bool unpaced = w.vsync()
+    w.setVsync(true)
+    time.msleep(200)
+    println("in step with the display {} {}", unpaced, w.vsync())
     w.close()
     ret 0
 }

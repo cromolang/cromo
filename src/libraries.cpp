@@ -143,6 +143,14 @@ Libraries findLibraries(const Module& module, const std::deque<SourceFile>& sour
         if (std::find(use->folders.begin(), use->folders.end(), folder) == use->folders.end()) {
             use->folders.push_back(folder);
         }
+        // Then where the native libraries of its package are, in the cache (D551).
+        if (static_cast<size_t>(function.loc.file) < module.files.size()) {
+            for (const std::string& native : module.files[function.loc.file].libraryFolders) {
+                if (std::find(use->folders.begin(), use->folders.end(), fs::path(native)) == use->folders.end()) {
+                    use->folders.push_back(native);
+                }
+            }
+        }
     }
 
     Libraries libraries;
@@ -155,7 +163,23 @@ Libraries findLibraries(const Module& module, const std::deque<SourceFile>& sour
             std::string shared = "lib" + use.name + ".so";
             auto sharedFolder = std::find_if(use.folders.begin(), use.folders.end(),
                                              [&](const fs::path& f) { return isFile(f / shared); });
-            if (folder == use.folders.end() && isAndroid(target) && sharedFolder != use.folders.end()) {
+            // D554: libname.so, or libname.so.1 as the library names itself for the loader.
+            fs::path found;
+            if (folder == use.folders.end() && !isAndroid(target)) {
+                for (const fs::path& f : use.folders) {
+                    std::error_code ec;
+                    for (const fs::directory_entry& entry : fs::directory_iterator(f, ec)) {
+                        std::string name = entry.path().filename().string();
+                        if (found.empty() && entry.is_regular_file() && (name == shared || name.rfind(shared + ".", 0) == 0)) {
+                            found = entry.path();
+                        }
+                    }
+                }
+            }
+            if (!found.empty()) {
+                libraries.shared.push_back(found.string());
+                libraries.copies.push_back(found.string());
+            } else if (folder == use.folders.end() && isAndroid(target) && sharedFolder != use.folders.end()) {
                 libraries.archives.push_back((*sharedFolder / shared).string());
             } else if (folder != use.folders.end()) {
                 libraries.archives.push_back((*folder / file).string());
@@ -164,8 +188,8 @@ Libraries findLibraries(const Module& module, const std::deque<SourceFile>& sour
                 diag.error(use.functions[0]->loc, "the library has no " + file + " for this system, in " +
                                                       use.folders[0].string() + "");
             } else {
-                diag.error(use.functions[0]->loc, "cannot find the library '" + use.name + "': there is no " + file +
-                                                      " next to the modules that use it");
+                diag.error(use.functions[0]->loc, "cannot find the library '" + use.name + "': there is no " + file + " or " +
+                                                      shared + " next to the modules that use it");
             }
         }
         return libraries;

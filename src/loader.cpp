@@ -2,6 +2,7 @@
 
 #include "installation.h"
 #include "lexer.h"
+#include "packages.h"
 #include "parser.h"
 
 #include <algorithm>
@@ -114,6 +115,16 @@ public:
         inProject_ = !project.empty();
         loaded_[fs::weakly_canonical(main)] = 0;
         names_ = {main.stem().string(), "std"};
+        contexts_ = {0, 0};
+        if (inProject_) {
+            // D376-D391: the packages of cromo.mod, already in the cache: cromo build
+            // downloads those that are missing before it comes here.
+            std::string error;
+            if (!resolvePackages(project, resolution_, error, nullptr)) {
+                diag_.error(SourceLocation{1, 1, 0}, "the packages of cromo.mod: " + error);
+                resolution_.packages.clear();
+            }
+        }
     }
 
     Module load() {
@@ -132,7 +143,7 @@ public:
         // The list of files grows while their imports are loaded.
         for (size_t i = 0; i < sources_.size(); ++i) {
             for (size_t k = 0; k < program_.files[i].imports.size(); ++k) {
-                std::vector<int> files = resolve(program_.files[i].imports[k], isLibraryFile(sources_[i].path));
+                std::vector<int> files = resolve(program_.files[i].imports[k], isLibraryFile(sources_[i].path), contexts_[i]);
                 program_.files[i].imports[k].files = std::move(files);
             }
             checkQualifiers(program_.files[i]);
@@ -147,36 +158,67 @@ private:
         module.files[index].name = names_[index];
         module.files[index].part = part;
         module.files[index].isLibrary = isLibraryFile(sources_[index].path);
+        size_t context = static_cast<size_t>(contexts_[index]);
+        if (context < resolution_.packages.size()) {
+            module.files[index].libraryFolders = nativeFolders(resolution_.packages[context], target_);
+        }
         program_.append(std::move(module));
     }
 
-    std::vector<int> resolve(const ImportDecl& import, bool fromLibrary) {
+    // `context` is the package of the file that imports: 0 for the project (D383).
+    std::vector<int> resolve(const ImportDecl& import, bool fromLibrary, int context) {
         std::string dotted;
-        fs::path relative;
-        for (const std::string& part : import.path) {
-            dotted += (dotted.empty() ? "" : ".") + part;
-            relative /= part;
-        }
+        for (const std::string& part : import.path) dotted += (dotted.empty() ? "" : ".") + part;
         if (import.path[0] == "std") return resolveLibrary(import, dotted, fromLibrary);
-        fs::path file = root_ / relative;
-        file += ".cro";
-        fs::path folder = root_ / relative;
+        // The first name is a package of the cromo.mod of the one that imports, or a
+        // module of its own; the modules of a package have its address in front (D391).
+        std::vector<std::string> path = import.path;
+        fs::path root = root_;
+        std::string front;
+        int target = context;
         std::error_code ec;
-        bool isFile = fs::is_regular_file(file, ec) || (overlay_ && overlay_->count(sourceKey(file.string())));
+        if (context < static_cast<int>(resolution_.packages.size())) {
+            const Package& from = resolution_.packages[context];
+            if (context != 0) {
+                root = from.folder;
+                front = packageModuleName(from);
+            }
+            auto found = from.requires_.find(path[0]);
+            if (found != from.requires_.end()) {
+                if (fs::exists(root / path[0], ec) || fs::exists(root / (path[0] + ".cro"), ec)) {
+                    diag_.error(import.loc, path[0] + " is a package of cromo.mod and also a module next to it: rename one of them");
+                    return {};
+                }
+                target = found->second;
+                root = resolution_.packages[target].folder;
+                front = packageModuleName(resolution_.packages[target]);
+                path.erase(path.begin());
+            }
+        }
+        fs::path relative;
+        for (const std::string& part : path) relative /= part;
+        if (!front.empty()) {
+            dotted = front;
+            for (const std::string& part : path) dotted += "." + part;
+        }
+        fs::path file = root / relative;
+        file += ".cro";
+        fs::path folder = root / relative;
+        bool isFile = !path.empty() && (fs::is_regular_file(file, ec) || (overlay_ && overlay_->count(sourceKey(file.string()))));
         bool isFolder = fs::is_directory(folder, ec);
-        std::string shown = relative.generic_string();
+        std::string shown = path.empty() ? import.path[0] : relative.generic_string();
         if (isFile && isFolder) {
             diag_.error(import.loc, "both " + shown + ".cro and the folder " + shown + " exist: rename one of them");
             return {};
         }
         if (isFile) {
-            int index = loadFile(file, dotted, import.loc);
+            int index = loadFile(file, dotted, import.loc, -1, target);
             for (const std::string& suffix : ownSuffixes(target_)) {
-                fs::path own = root_ / relative;
+                fs::path own = root / relative;
                 own += suffix + ".cro";
-                if (fs::is_regular_file(own, ec)) loadFile(own, dotted, import.loc, index);
+                if (fs::is_regular_file(own, ec)) loadFile(own, dotted, import.loc, index, target);
             }
-            loadTests(file, dotted, index);
+            if (target == 0) loadTests(file, dotted, index);  // the tests of a package are its own
             return {index};
         }
         if (isFolder) {
@@ -202,10 +244,10 @@ private:
             auto byName = [](const fs::path& a, const fs::path& b) { return a.filename().string() < b.filename().string(); };
             std::sort(paths.begin(), paths.end(), byName);
             std::sort(tests.begin(), tests.end(), byName);
-            int first = loadFile(paths[0], dotted, import.loc);
-            for (size_t i = 1; i < paths.size(); ++i) loadFile(paths[i], dotted, import.loc, first);
-            if (tests_) {
-                for (const fs::path& test : tests) loadFile(test, dotted, import.loc, first);
+            int first = loadFile(paths[0], dotted, import.loc, -1, target);
+            for (size_t i = 1; i < paths.size(); ++i) loadFile(paths[i], dotted, import.loc, first, target);
+            if (tests_ && target == 0) {
+                for (const fs::path& test : tests) loadFile(test, dotted, import.loc, first, target);
             }
             return {first};
         }
@@ -232,7 +274,7 @@ private:
         }
     }
 
-    int loadFile(const fs::path& path, const std::string& name, SourceLocation at, int part = -1) {
+    int loadFile(const fs::path& path, const std::string& name, SourceLocation at, int part = -1, int context = 0) {
         fs::path key = fs::weakly_canonical(path);
         auto found = loaded_.find(key);
         if (found != loaded_.end()) {
@@ -252,6 +294,7 @@ private:
         int index = diag_.addFile(sources_.back());
         loaded_[key] = index;
         names_.push_back(name);
+        contexts_.push_back(context);
         parseFile(index, part);
         return index;
     }
@@ -317,6 +360,8 @@ private:
     bool inProject_ = false;  // the root is the folder of cromo.mod (D516)
     std::map<fs::path, int> loaded_;
     std::vector<std::string> names_;  // of the modules, by file
+    std::vector<int> contexts_;       // the package of each file: 0 for the project and for the library
+    Resolution resolution_;           // the packages of cromo.mod (D376-D391)
     Module program_;
 };
 

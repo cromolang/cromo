@@ -148,7 +148,7 @@ The names of the types convert, and so do two methods of the floating-point numb
 | `T()` | the default value of `T`, or its constructor | [Structs](structs.md) |
 | `x.bits()`, `f64.fromBits(b)`, `f32.fromBits(b)` | the bits of a floating-point number, and back | [Numbers and operators](operators.md) |
 
-The dialect of `import unsafe` has its own: `alloc`, `resize`, `free`, `sizeOf`, `offset`, `take`, `put`, `destroy`, `copyAt`, `copyMemory`, `compareMemory`, `checkIndex`, `variableAddress`, `addr(n)`, `s.cstring()` and `string(data, length)`; see [The unsafe dialect](unsafe.md).
+The dialect of `import unsafe` has its own: `alloc`, `resize`, `free`, `sizeOf`, `offset`, `take`, `put`, `destroy`, `copyAt`, `copyMemory`, `compareMemory`, `checkIndex`, `variableAddress`, `callC`, `addr(n)`, `s.cstring()` and `string(data, length)`; see [The unsafe dialect](unsafe.md).
 
 ## The core of the library
 

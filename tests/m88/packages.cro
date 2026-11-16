@@ -1,0 +1,266 @@
+// The packages (D376-D391): cromo get writes cromo.mod and downloads, cromo run
+// downloads what a package requires, the highest of the versions required is chosen,
+// two major versions are two packages, cromo.sum has the hashes and refuses a tag
+// that was moved, a folder stands for a version. A server in this program is the
+// forge: it gives the tags and the archives of three repositories.
+// target: windows
+// program-env: CROMO={cromo}
+// program-env: OUT={dir}/../out/packages
+// expect-output: get v1: 0 geometry: example.org/anna/geometry v1.2.0
+// expect-output: cromo.mod: require geometry example.org/anna/geometry v1.2.0
+// expect-output: run: 0 area 12 in units 1.1
+// expect-output: cromo.sum: example.org/anna/geometry v1.2.0 sha256, example.org/bob/units v1.1.0 sha256
+// expect-output: get units: 0 units: example.org/bob/units v1.3.0
+// expect-output: run: 0 area 12 in units 1.3
+// expect-output: get again: 0 geometry is already at v1.2.0
+// expect-output: get v2: 0 geometry2: example.org/anna/geometry v2.0.0
+// expect-output: run both: 0 area 12 in units 1.3, volume 24
+// expect-output: no such version: 1 cromo get: example.org/anna/geometry has no version v3: it has v1.0.0, v1.2.0, v2.0.0
+// expect-output: a module of a package: 0 rectangle 30
+// expect-output: moved tag: 1 the files of example.org/anna/geometry v1.2.0 are not those of cromo.sum
+// expect-output: a folder: 0 from the folder 7
+// expect-output: a name twice: 1 cromo.mod:3: error: another package is called geometry
+import std.fs
+import std.gzip
+import std.http
+import std.os
+import std.process
+import std.thread
+
+// ---- An archive of tar, as a forge gives it: its files in a folder ----
+
+void field(ref list<u8> block, i64 at, string text) {
+    for (i64 i = 0; i < text.len(); i++) {
+        block[at + i] = text[i]
+    }
+}
+
+string octal(i64 value, i64 digits) {
+    list<u8> made
+    i64 left = value
+    for (i64 i = 0; i < digits; i++) {
+        made.insert(0, u8('0' + u8(left % 8)))
+        left = left / 8
+    }
+    ret string(made)
+}
+
+void addFile(ref list<u8> archive, string name, string text) {
+    list<u8> block
+    for (i64 i = 0; i < 512; i++) {
+        block.add(0)
+    }
+    field(ref block, 0, name)
+    field(ref block, 100, "0000644")
+    field(ref block, 108, "0000000")
+    field(ref block, 116, "0000000")
+    field(ref block, 124, octal(text.len(), 11))
+    field(ref block, 136, "00000000000")
+    field(ref block, 148, "        ")
+    block[156] = '0'
+    field(ref block, 257, "ustar")
+    field(ref block, 263, "00")
+    i64 sum = 0
+    for (u8 b in block) {
+        sum += i64(b)
+    }
+    field(ref block, 148, octal(sum, 6))
+    block[154] = 0
+    block[155] = ' '
+    for (u8 b in block) {
+        archive.add(b)
+    }
+    for (i64 i = 0; i < text.len(); i++) {
+        archive.add(text[i])
+    }
+    for (archive.len() % 512 != 0) {
+        archive.add(0)
+    }
+}
+
+list<u8> archiveOf(string folder, list<string> names, list<string> texts) {
+    list<u8> archive
+    for (i64 i = 0; i < names.len(); i++) {
+        addFile(ref archive, folder + "/" + names[i], texts[i])
+    }
+    for (i64 i = 0; i < 1024; i++) {
+        archive.add(0)
+    }
+    ret gzip.compress(archive)
+}
+
+// ---- The forge ----
+
+// The files of a version of a repository; none when it has no such version.
+bool filesOf(string repository, string version, bool moved, ref list<string> names, ref list<string> texts) {
+    if (repository == "example.org/bob/units" && (version == "v1.0.0" || version == "v1.1.0" || version == "v1.3.0")) {
+        names = ["cromo.mod", "units.cro"]
+        texts = ["module example.org/bob/units\n",
+            format("public string name() {{\n    ret \"units {}\"\n}}\n", version.slice(1, 4))]
+        ret true
+    }
+    if (repository == "example.org/anna/geometry" && (version == "v1.0.0" || version == "v1.2.0")) {
+        names = ["cromo.mod", "geometry.cro", "shapes/rectangles.cro"]  // the root is a module, the folder another
+        texts = [format("module example.org/anna/geometry\nrequire units example.org/bob/units {}\n", version == "v1.0.0" ? "v1.0.0" : "v1.1.0"),
+            "import shapes\nimport units\n\npublic string area(i64 w, i64 h) {\n    ret format(\"area {} in {}\", shapes.rectangle(w, h), units.name())\n}\n",
+            format("public i64 rectangle(i64 w, i64 h) {{\n    ret w * h{}\n}}\n", moved ? " + 1" : "")]
+        ret true
+    }
+    if (repository == "example.org/anna/geometry" && version == "v2.0.0") {
+        names = ["cromo.mod", "geometry.cro"]
+        texts = ["module example.org/anna/geometry\n", "public i64 volume(i64 w, i64 h, i64 d) {\n    ret w * h * d\n}\n"]
+        ret true
+    }
+    ret false
+}
+
+string tagsOf(string repository) {
+    list<string> versions = repository == "example.org/bob/units" ? ["v1.0.0", "v1.1.0", "v1.3.0"] : ["v1.0.0", "v1.2.0", "v2.0.0"]
+    string text = "001e# service=git-upload-pack\n0000"
+    for (string version in versions) {
+        text += format("003f0123456789012345678901234567890123456789 refs/tags/{}\n", version)
+        text += format("00420123456789012345678901234567890123456789 refs/tags/{}^{{}}\n", version)
+    }
+    text += "003f0123456789012345678901234567890123456789 refs/tags/nightly\n0000"
+    ret text
+}
+
+void answer(ref http.Request req, ref http.Response res, bool moved) {
+    string path = req.path.slice(1, req.path.len())
+    if (path.endsWith("/info/refs")) {
+        res.writeBytes(tagsOf(path.slice(0, path.len() - 10)).bytes(), "application/x-git-upload-pack-advertisement")
+        ret
+    }
+    i64 at = path.find("/archive/")
+    list<string> names
+    list<string> texts
+    if (at > 0 && path.endsWith(".tar.gz")) {
+        string repository = path.slice(0, at)
+        string version = path.slice(at + 9, path.len() - 7)
+        if (filesOf(repository, version, moved, ref names, ref texts)) {
+            res.writeBytes(archiveOf(format("{}-{}", fs.fileName(repository), version.slice(1, version.len())), names, texts),
+                "application/gzip")
+            ret
+        }
+    }
+    res.status = 404
+    res.write("not found")
+}
+
+// ---- cromo, in a folder, with the forge and a cache of its own ----
+
+struct Ran {
+    i32 code
+    string text
+}
+
+Ran cromo(string forge, string folder, string arguments) {
+    string cache = fs.joinPath(os.env("OUT"), "cache")
+    process.Output r
+    if (os.name() == "windows") {  // a batch file: cmd does not read the quotes of an argument as a program does
+        string batch = fs.joinPath(os.env("OUT"), "run.cmd")
+        fs.writeText(batch, format("@echo off\r\nset CROMO_FORGE={}\r\nset CROMO_PACKAGES={}\r\ncd /d \"{}\"\r\n\"{}\" {}\r\n", forge, cache,
+            folder, os.env("CROMO"), arguments))
+        r = process.run("cmd", ["/d", "/c", batch])
+    } else {
+        string line = format("cd '{}' && CROMO_FORGE='{}' CROMO_PACKAGES='{}' '{}' {}", folder, forge, cache, os.env("CROMO"), arguments)
+        r = process.run("sh", ["-c", line])
+    }
+    Ran ran
+    ran.code = r.code
+    list<string> kept
+    for (string line in (r.out + r.err).replace("\r", "").split("\n")) {
+        if (line.len() > 0 && !line.startsWith("Downloading ")) {
+            kept.add(line.copy())
+        }
+    }
+    ran.text = join(kept, " | ")
+    ret ran
+}
+
+void show(string what, Ran ran) {
+    println("{}: {} {}", what, ran.code, ran.text)
+}
+
+string requires(string folder) {
+    list<string> found
+    for (string line in fs.readText(fs.joinPath(folder, "cromo.mod")).split("\n")) {
+        if (line.startsWith("require ")) {
+            found.add(line.copy())
+        }
+    }
+    ret join(found, ", ")
+}
+
+i32 main() {
+    thread.Shared<bool> moved = thread.Shared<bool>(false)
+    http.Server server = http.listen("127.0.0.1", 0)
+    string forge = format("http://127.0.0.1:{}", server.port())
+    thread.Thread web = thread.Thread([server, moved]() {
+        server.serve([moved](ref http.Request req, ref http.Response res) {
+            bool now = false
+            moved.lock([ref now](ref bool m) { now = m })
+            answer(ref req, ref res, now)
+        })
+    })
+    web.start()
+
+    string out = os.env("OUT")
+    fs.removeAll(out)
+    string app = fs.joinPath(out, "app")
+    fs.createFolders(app)
+    fs.writeText(fs.joinPath(app, "cromo.mod"), "module example.org/app\n")
+    fs.writeText(fs.joinPath(app, "main.cro"), "import geometry\n\ni32 main() {\n    println(\"{}\", geometry.area(3, 4))\n    ret 0\n}\n")
+
+    show("get v1", cromo(forge, app, "get example.org/anna/geometry@v1"))
+    println("cromo.mod: {}", requires(app))
+    show("run", cromo(forge, app, "run main.cro"))
+    list<string> sums
+    string written = fs.isFile(fs.joinPath(app, "cromo.sum")) ? fs.readText(fs.joinPath(app, "cromo.sum")) : "none:"
+    for (string line in written.split("\n")) {
+        if (line.len() > 0) {
+            sums.add(line.slice(0, line.find(":")))
+        }
+    }
+    println("cromo.sum: {}", join(sums, ", "))
+
+    show("get units", cromo(forge, app, "get example.org/bob/units"))
+    show("run", cromo(forge, app, "run main.cro"))
+    show("get again", cromo(forge, app, "get example.org/anna/geometry"))
+
+    show("get v2", cromo(forge, app, "get example.org/anna/geometry@v2 geometry2"))
+    fs.writeText(fs.joinPath(app, "main.cro"),
+        "import geometry\nimport geometry2\n\ni32 main() {\n    println(\"{}, volume {}\", geometry.area(3, 4), geometry2.volume(2, 3, 4))\n    ret 0\n}\n")
+    show("run both", cromo(forge, app, "run main.cro"))
+    show("no such version", cromo(forge, app, "get example.org/anna/geometry@v3 geometry3"))
+
+    // A module of a package, by its path from the name of the package (D383).
+    string inner = fs.joinPath(out, "inner")
+    fs.createFolders(inner)
+    fs.writeText(fs.joinPath(inner, "cromo.mod"), "module example.org/inner\nrequire geo example.org/anna/geometry v1.2.0\n")
+    fs.writeText(fs.joinPath(inner, "main.cro"), "import geo.shapes\n\ni32 main() {\n    println(\"rectangle {}\", shapes.rectangle(5, 6))\n    ret 0\n}\n")
+    show("a module of a package", cromo(forge, inner, "run main.cro"))
+
+    // The forge gives other files for a version whose hash is in cromo.sum.
+    moved.lock([](ref bool m) { m = true })
+    fs.removeAll(fs.joinPath(out, "cache"))
+    Ran refused = cromo(forge, app, "run main.cro")
+    i64 cut = refused.text.find(": its tag")
+    println("moved tag: {} {}", refused.code, refused.text.slice(refused.text.find("the files"), cut))
+    moved.lock([](ref bool m) { m = false })
+
+    // A folder in place of a version (D390).
+    string local = fs.joinPath(out, "local")
+    fs.createFolders(fs.joinPath(local, "tools"))
+    fs.writeText(fs.joinPath(local, "tools/tools.cro"), "public i64 seven() {\n    ret 7\n}\n")
+    fs.createFolders(fs.joinPath(local, "app"))
+    fs.writeText(fs.joinPath(local, "app/cromo.mod"), "module example.org/second\nrequire tools ../tools\n")
+    fs.writeText(fs.joinPath(local, "app/main.cro"), "import tools\n\ni32 main() {\n    println(\"from the folder {}\", tools.seven())\n    ret 0\n}\n")
+    show("a folder", cromo(forge, fs.joinPath(local, "app"), "run main.cro"))
+
+    fs.writeText(fs.joinPath(local, "app/cromo.mod"), "module example.org/second\nrequire geometry ../tools\nrequire geometry ../tools\n")
+    Ran twice = cromo(forge, fs.joinPath(local, "app"), "run main.cro")
+    println("a name twice: {} {}", twice.code, twice.text.slice(twice.text.find("cromo.mod:3"), twice.text.len()))
+    os.exit(0)
+    ret 0
+}

@@ -608,7 +608,6 @@ bin areas cmd/areas.cro
 bin areas cmd/report.cro
 bin tool cmd/tool.cro
 bin broken
-require github.com/someone/lib v1.2.0
 library shapes
 ```
 
@@ -619,8 +618,7 @@ cromo.mod:2: error: the line module comes first, once
 cromo.mod:4: error: another executable is called areas
 cromo.mod:5: error: there is no file cmd/tool.cro
 cromo.mod:6: error: bin takes the name of an executable and its main file, as bin server cmd/server.cro
-cromo.mod:7: error: the packages are not available yet: require comes later
-cromo.mod:8: error: unknown line library: cromo.mod has the lines module and bin
+cromo.mod:7: error: unknown line library: cromo.mod has the lines module, bin, require and native
 ```
 
 Un `cromo.mod` che non inizia con `module`, o che è vuoto, dà `cromo.mod:1: error: cromo.mod starts with the line module, with the name of the project, as module example.com/app`.
@@ -631,7 +629,57 @@ Una libreria di un progetto è un modulo, di un file o di una cartella, che i su
 
 ## Pacchetti
 
-Le librerie scritte da altri saranno **pacchetti**: repository Git identificati dal loro URL, con le versioni date dai loro tag, elencati in `cromo.mod` con righe `require` e scaricati da `cromo`. Non sono ancora disponibili: oggi una riga `require` è un errore che lo dice. Fino ad allora, una libreria di un altro progetto si può copiare nel progetto come cartella, e importare come qualsiasi modulo.
+Le librerie scritte da altri sono **pacchetti**: repository Git, identificati dal loro indirizzo, con le versioni date dai loro tag. `cromo get` ne aggiunge uno al progetto:
+
+```sh
+cromo get github.com/anna/geometry
+```
+
+Legge i tag del repository, prende l'ultima versione, la scarica, e scrive una riga in `cromo.mod`:
+
+```text
+module example.com/app
+require geometry github.com/anna/geometry v1.2.0
+```
+
+La prima parola dopo `require` è il nome del pacchetto negli import del progetto: `import geometry` è il modulo dei file nella radice del repository, e `import geometry.shapes` il suo file `shapes.cro` o la sua cartella `shapes`. Il nome è l'ultimo dell'indirizzo, oppure quello scritto dopo, come `cromo get github.com/anna/geometry maps`, quando due pacchetti avrebbero lo stesso.
+
+- **Le versioni.** Una versione è un tag come `v1.2.0`. `cromo get github.com/anna/geometry@v1.4.0` prende quella, e `@v2` l'ultima delle versioni `v2`; senza, prende l'ultima, o l'ultima della versione maggiore già richiesta. `v1` e `v2` dello stesso repository sono due pacchetti: un programma può usarli entrambi, con due nomi.
+- **Quale viene scelta.** Quando il progetto e i suoi pacchetti richiedono versioni diverse dello stesso pacchetto, si usa la più alta fra quelle richieste, e mai una più nuova che nessuno ha chiesto: lo stesso programma si costruisce dagli stessi sorgenti ogni volta, senza un file che blocchi le versioni.
+- **cromo.sum.** Accanto a `cromo.mod`, `cromo` scrive `cromo.sum`, con l'hash dei file di ogni versione usata. Un tag spostato in seguito sul server dà altri file, ed è un errore. Entrambi i file vanno nel repository del progetto.
+- **I download.** `cromo build`, `cromo run` e `cromo test` scaricano da soli ciò che manca, una volta: le versioni restano in `~/.cromo/packages`, per tutti i progetti. `cromo` chiede a GitHub, GitLab e Codeberg l'archivio del tag via HTTPS, e non ha bisogno di `git`; per un altro host esegue `git`.
+- **Una cartella al posto di una versione.** `require geometry ../geometry` usa il pacchetto di una cartella, per lavorare insieme su un programma e sul suo pacchetto. Vale solo nel progetto che si sta costruendo.
+
+Un pacchetto si scrive come qualsiasi progetto: un repository con i suoi moduli, un `cromo.mod` la cui riga `module` è il suo indirizzo, e un tag per ogni versione. Non c'è un registro dove pubblicarlo.
+
+### Pacchetti con una libreria nativa
+
+Un pacchetto può portare una libreria scritta in C o C++, come una DLL, insieme ai moduli che la chiamano ([Chiamare il C](c-interop.md)). Una piccola sta nel repository, accanto ai suoi moduli. Una grande, come quella di ONNX Runtime, resta dove la pubblicano i suoi autori, e il `cromo.mod` del pacchetto dice dove, con una riga per ogni sistema:
+
+```text
+module github.com/cromolang/onnxruntime
+native windows-x86_64 https://example.org/runtime-win-x64.zip sha256:aaa1...d127 runtime/lib/onnxruntime.dll
+native linux-x86_64 https://example.org/runtime-linux-x64.tgz sha256:bb16...b503 runtime/lib/libonnxruntime.so.1.32.0=libonnxruntime.so.1
+```
+
+Una riga ha il sistema, l'indirizzo di un archivio, il suo SHA-256, e i file da prenderne; `percorso=nome` dà a un file un altro nome. `cromo` scarica l'archivio del sistema per cui compila, lo controlla, e mette la libreria accanto all'eseguibile, dove il programma la trova all'avvio. Chi usa il pacchetto scrive `cromo get` e nient'altro:
+
+```sh
+cromo get github.com/cromolang/onnxruntime
+```
+
+```cromo ignore
+import onnxruntime
+
+i32 main() {
+    onnxruntime.Session model = onnxruntime.load("digits.onnx")
+    list<onnxruntime.Tensor> scores = model.run([onnxruntime.Tensor([1, 1, 28, 28], pixels())])
+    println("{:?}", scores[0].data)
+    ret 0
+}
+```
+
+I pacchetti del progetto Cromo sono i repository di [github.com/cromolang](https://github.com/cromolang).
 
 ## Riepilogo
 

@@ -63,8 +63,8 @@ i32 main() {
     process.Output nobody = cromo(work, "build nobody")
     println("nobody: {}, {}", nobody.code, said(nobody, "cromo.mod has the executables server and client"))
 
-    // without module, a bin twice, one without its file, and require
-    fs.writeText(work + "/cromo.mod", "bin server cmd/server.cro\nbin server cmd/none.cro\nrequire x y\n")
+    // without module, a bin twice, one without its file, and a line that it does not have
+    fs.writeText(work + "/cromo.mod", "bin server cmd/server.cro\nbin server cmd/none.cro\nlibrary x\n")
     process.Output wrong = cromo(work, "build")
     i64 lines = 0
     for (string line in wrong.err.split("\n")) {
