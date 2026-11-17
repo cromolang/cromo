@@ -1,7 +1,7 @@
 // fs.createLink, fs.readLink and fs.makeExecutable (P18): a link to a folder, a
 // symbolic link on Linux and a junction on Windows (D288), read through, read back
 // and removed without what it points to.
-// program-env: OUT={dir}/../out/fs_links
+// program-env: OUT={dir}/../out2/fs_links
 // expect-output: a link: true, a folder: true
 // expect-output: it points to target: true
 // expect-output: through the link: file.txt

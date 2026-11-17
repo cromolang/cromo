@@ -59,7 +59,7 @@ $ErrorActionPreference = 'Stop'
 
 if (-not (Test-Path $Cromo)) { throw "cromo not found: $Cromo (run build.ps1 first)" }
 $Cromo = (Resolve-Path $Cromo).Path
-$out = Join-Path $PSScriptRoot 'out'
+$out = Join-Path $PSScriptRoot 'out2'
 New-Item -ItemType Directory -Force $out | Out-Null
 
 # A program that cannot find a DLL ends with an error code, instead of opening a
@@ -259,7 +259,7 @@ foreach ($test in Get-ChildItem $PSScriptRoot -Recurse -Filter *.cro | Sort-Obje
     $name = $test.FullName.Substring($PSScriptRoot.Length + 1)
     $folders = $name -split '\\'
     if ($folders -contains 'modules' -or $folders -contains 'formatting' -or $folders -contains 'lsp') { continue }
-    if ($folders[0] -eq 'out') { continue }  # what the tests write, as the module of a form
+    if ($folders[0] -eq 'out2') { continue }  # what the tests write, as the module of a form
     if ($test.BaseName.EndsWith('_test')) { continue }
     if ($Filter -and -not $name.Contains($Filter)) { continue }
 

@@ -632,6 +632,70 @@ true 8000000000000000
 
 The bits that follow those of 1.0 are the next `f64`, and the difference is the precision of the type around 1. -0.0 is equal to 0.0, but its bits are not. The integers have no `bits()`: they are their bits already.
 
+### A product and a sum rounded once
+
+Every operation on floating-point numbers rounds its result, so `a * b + c` rounds twice: the product, then the sum. `fma(a, b, c)` computes the same value with the product kept exact and one rounding at the end. The three numbers are all `f64` or all `f32`, and a literal among them takes the type of the others. Three [vectors](collections.md#vectors) of them, as `f32x8`, are computed number by number.
+
+```cromo
+i32 main() {
+    f64 a = 1.0 + 1.0 / 134217728.0  // 1 + 2^-27
+    f64 square = a * a               // rounded: the last part of the product is lost
+    println("{} {}", a * a - square, fma(a, a, -square))
+    ret 0
+}
+```
+
+```output
+0 5.551115123125783e-17
+```
+
+The second number is what the product lost when it was rounded: with `fma` a program can compute its own rounding errors. It also gives, bit for bit, the results of the programs written in C that use the `fma` of C, as the code of a neural network.
+
+On ARM64, and on x86-64 in a program compiled with `--cpu x86-64-v3`, `fma` is one instruction of the processor, faster than a product and a sum. A program for every x86-64 calls a function that gives the same result, some tens of times slower. The compiler never turns `a * b + c` into `fma` by itself: the result of a program does not depend on the processor it is compiled for.
+
+## Mathematics
+
+The square root, the powers, the logarithms and the functions of trigonometry are in the module [std.math](std.math.html). They take and give `f64`; an integer and an `f32` are converted on the way in.
+
+```cromo
+import std.math
+
+i32 main() {
+    println("{} {}", math.sqrt(2.0), math.hypot(3.0, 4.0))
+    println("{} {} {}", math.pow(2.0, 10.0), math.exp(2.0), math.log2(1024.0))
+    println("{:.4f} {:.4f}", math.sin(math.pi() / 6.0), math.atan2(1.0, 1.0) * 4.0)
+    println("{} {} {} {}", math.floor(-2.5), math.ceil(-2.5), math.trunc(-2.5), math.round(-2.5))
+    println("{} {}", math.mod(7.5, 2.0), math.min(3.0, -1.0))
+    f64 none = math.sqrt(-1.0)
+    println("{} {} {}", none, math.isNaN(none), math.isInfinite(1.0 / 0.0))
+    f32 side = 3.0
+    println("{}", f32(math.sqrt(side)))
+    ret 0
+}
+```
+
+```output
+1.4142135623730951 5
+1024 7.38905609893065 10
+0.5000 3.1416
+-3 -2 -2 -3
+1.5 -1
+nan true true
+1.7320508
+```
+
+| Functions | What they give |
+|---|---|
+| `sqrt(x)`, `hypot(x, y)` | the square root, and that of `x * x + y * y` |
+| `exp(x)`, `log(x)`, `log2(x)`, `log10(x)`, `pow(x, y)` | `e` to the `x`, the logarithms, `x` to the `y` |
+| `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2(y, x)` | trigonometry, with the angles in radians |
+| `floor`, `ceil`, `trunc`, `round` | the whole number under, over, towards zero, and the nearest, with the halves away from zero |
+| `abs(x)`, `mod(x, y)`, `min(a, b)`, `max(a, b)` | without the sign, the remainder with the sign of `x`, the smaller and the larger |
+| `isNaN(x)`, `isInfinite(x)` | whether `x` is not a number, or an infinity |
+| `pi()`, `e()`, `infinity()`, `nan()` | the constants, written as functions |
+
+The module is written in Cromo and does not call the C library of the system, so a program gives the same numbers on Windows, Linux and Android, on x86-64 and on ARM64, bit for bit. The square root and the roundings are exact; the others are within one unit of the last digit of the true result, as in the C libraries. A function without a result, as the square root of a negative number, gives a value that is not a number: `isNaN` recognizes it, while `==` is false also with itself.
+
 ## Conversions
 
 A conversion that can change the value is written as a call with the name of the type: `i32(x)`, `f64(n)`, `u8(c)`. The compiler asks for it wherever the conversion is not implicit:
@@ -759,5 +823,6 @@ The message of the exception says which of the two errors it is: `'abc' is not a
 - The bitwise operators bind more than the comparisons; `c ? a : b` binds least and groups from the right; assignments, `++` and `--` are statements.
 - Integer division truncates toward zero, and `%` has the sign of the dividend.
 - Integer overflow, an integer division by zero and a shift count out of the width are panics in debug builds; with `--release` overflow wraps around, the count is taken modulo the width, and the division by zero is still a panic. Floats give `inf` and `nan`.
-- `wrapAdd`, `wrapSub` and `wrapMul` wrap around on purpose; `countOnes`, `trailingZeros`, `leadingZeros`, `rotateLeft` and `rotateRight` work on bits; `x.bits()` and `f64.fromBits(b)` give and take the bits of a float.
+- `wrapAdd`, `wrapSub` and `wrapMul` wrap around on purpose; `countOnes`, `trailingZeros`, `leadingZeros`, `rotateLeft` and `rotateRight` work on bits; `x.bits()` and `f64.fromBits(b)` give and take the bits of a float; `fma(a, b, c)` is `a * b + c` rounded once.
+- `std.math` has the square root, the powers, the logarithms, trigonometry and the roundings, of `f64`, with the same results on every system.
 - Conversions are written as `i32(x)`: integers keep their low bits, floats are truncated, and `bool` is not a number. `i32("42")` reads a number from a text and throws an `Error` when it cannot.

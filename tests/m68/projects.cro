@@ -1,10 +1,10 @@
 // The executables of cromo.mod (D517): in the folder of a project, cromo build without
 // a file builds them all, cromo run runs one by its name, and cromo.mod with errors
-// has them with their lines. The project is written by the test in tests/out. On
+// has them with their lines. The project is written by the test in tests/out2. On
 // Windows only: the cromo of the tests is the one of Windows.
 // target: windows
 // program-env: CROMO={cromo}
-// program-env: WORK={dir}/../out/m68_project
+// program-env: WORK={dir}/../out2/m68_project
 // expect-output: built: 0, server.exe true, client.exe true
 // expect-output: == server == 7
 // expect-output: run client: 0, == client == 7

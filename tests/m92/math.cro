@@ -1,0 +1,128 @@
+// std.math (D556): the functions of mathematics on f64, the same bit for bit on
+// every system; their special values, and some results with all their digits.
+// expect-output: constants 3.141592653589793 2.718281828459045 inf -inf
+// expect-output: tests true false false true true false
+// expect-output: abs 3.5 3.5 0 inf
+// expect-output: floor 2 -3 -1 5 -inf
+// expect-output: ceil 3 -2 -0 5 1e+300
+// expect-output: trunc 2 -2 0 -0 4503599627370497
+// expect-output: round 3 -3 2 0 -0 4
+// expect-output: mod 1.5 -1.5 1.5 1 3 true
+// expect-output: min 1 -inf -0 -0 true
+// expect-output: max 2 inf 0 0 true
+// expect-output: sqrt 1.4142135623730951 1e+50 0 -0 inf true
+// expect-output: hypot 5 1.4142135623730952e+300 1.414e-320 inf 5
+// expect-output: exp 2.7182818284590455 0x4005bf0a8b14576a
+// expect-output: exp 5e-324 0x1
+// expect-output: exp 1.3549863193146328e+308 0x7fe81e9b4b52d0c9
+// expect-output: exp 1 inf 0 0 1.0000000001
+// expect-output: log 2.302585092994046 0x40026bb1bbb55516
+// expect-output: log -744.4400719213812 0xc0874385446d71c3
+// expect-output: log 0 -inf inf true 1
+// expect-output: log2 3.321928094887362 0x400a934f0979a371
+// expect-output: log2 3 -3 0 -1074
+// expect-output: log10 0.3010299956639812 0x3fd34413509f79ff
+// expect-output: log10 3 -5 0 -inf
+// expect-output: pow 1.4142135623730951 0x3ff6a09e667f3bcd
+// expect-output: pow 9.999999999999999e-06 0x3ee4f8b588e368f0
+// expect-output: pow 2.6881038582144647e+43 0x48f349445c228792
+// expect-output: pow 5e-324 0x1
+// expect-output: pow 1024 -8 4 1 1 1
+// expect-output: pow true inf -inf inf 0 0
+// expect-output: sin 0.8414709848078965 0x3feaed548f090cee
+// expect-output: sin -0.8522008497671888 0xbfeb453ab76bf397
+// expect-output: sin 1.2246467991473532e-16 0x3ca1a62633145c07
+// expect-output: cos 0.5403023058681398 0x3fe14a280fb5068c
+// expect-output: cos 0.523214785395139 0x3fe0be2cef01c8f4
+// expect-output: cos 6.123233995736766e-17 0x3c91a62633145c07
+// expect-output: tan 1.5574077246549023 0x3ff8eb245cbee3a6
+// expect-output: tan -1.628778225606899 0xbffa0f79c1b6b258
+// expect-output: tan 16331239353195370 0x434d02967c31cdb5
+// expect-output: trig 0 -0 1 0 true true
+// expect-output: asin 0.5235987755982989 0x3fe0c152382d7366
+// expect-output: acos 1.0471975511965979 0x3ff0c152382d7366
+// expect-output: atan 0.4636476090008061 0x3fddac670561bb4f
+// expect-output: asin 1.5707963267948966 -1.5707963267948966 0 true
+// expect-output: acos 0 3.141592653589793 1.5707963267948966 true
+// expect-output: atan 0.7853981633974483 1.5707963267948966 -1.5707963267948966 -0
+// expect-output: atan2 0.7853981633974483 2.356194490192345 -2.356194490192345 3.141592653589793 -3.141592653589793
+// expect-output: atan2 1.5707963267948966 0 2.356194490192345 0 true
+// expect-output: converted 1.5 4
+import std.math
+
+void show(string name, f64 value) {
+    println("{} {} {:#x}", name, value, value.bits())
+}
+
+i32 main() {
+    f64 inf = math.infinity()
+    f64 none = math.nan()
+    println("constants {} {} {} {}", math.pi(), math.e(), inf, -inf)
+    println("tests {} {} {} {} {} {}", math.isNaN(none), math.isNaN(1.0), math.isNaN(inf), math.isInfinite(inf), math.isInfinite(-inf),
+        math.isInfinite(none))
+
+    println("abs {} {} {} {}", math.abs(-3.5), math.abs(3.5), math.abs(-0.0), math.abs(-inf))
+    println("floor {} {} {} {} {}", math.floor(2.7), math.floor(-2.5), math.floor(-0.2), math.floor(5.0), math.floor(-inf))
+    println("ceil {} {} {} {} {}", math.ceil(2.1), math.ceil(-2.5), math.ceil(-0.2), math.ceil(5.0), math.ceil(1e300))
+    println("trunc {} {} {} {} {}", math.trunc(2.7), math.trunc(-2.7), math.trunc(0.9), math.trunc(-0.9), math.trunc(4503599627370497.0))
+    println("round {} {} {} {} {} {}", math.round(2.5), math.round(-2.5), math.round(2.4), math.round(0.49999999999999994), math.round(-0.4),
+        math.round(3.5))
+    println("mod {} {} {} {} {} {}", math.mod(7.5, 2.0), math.mod(-7.5, 2.0), math.mod(7.5, -2.0), math.mod(1e300, 7.0), math.mod(3.0, inf),
+        math.isNaN(math.mod(3.0, 0.0)))
+    println("min {} {} {} {} {}", math.min(1.0, 2.0), math.min(-inf, 3.0), math.min(0.0, -0.0), math.min(-0.0, 0.0), math.isNaN(math.min(1.0, none)))
+    println("max {} {} {} {} {}", math.max(1.0, 2.0), math.max(inf, 3.0), math.max(0.0, -0.0), math.max(-0.0, 0.0), math.isNaN(math.max(none, 1.0)))
+
+    println("sqrt {} {} {} {} {} {}", math.sqrt(2.0), math.sqrt(1e100), math.sqrt(0.0), math.sqrt(-0.0), math.sqrt(inf), math.isNaN(math.sqrt(-1.0)))
+    println("hypot {} {} {} {} {}", math.hypot(3.0, 4.0), math.hypot(1e300, 1e300), math.hypot(1e-320, 1e-320), math.hypot(inf, none),
+        math.hypot(-5.0, 0.0))
+
+    show("exp", math.exp(1.0))
+    show("exp", math.exp(-745.0))
+    show("exp", math.exp(709.5))
+    println("exp {} {} {} {} {}", math.exp(0.0), math.exp(710.0), math.exp(-746.0), math.exp(-inf), math.exp(1e-10))
+    show("log", math.log(10.0))
+    show("log", math.log(5e-324))
+    println("log {} {} {} {} {}", math.log(1.0), math.log(0.0), math.log(inf), math.isNaN(math.log(-1.0)), math.log(math.e()))
+    show("log2", math.log2(10.0))
+    println("log2 {} {} {} {}", math.log2(8.0), math.log2(0.125), math.log2(1.0), math.log2(5e-324))
+    show("log10", math.log10(2.0))
+    println("log10 {} {} {} {}", math.log10(1000.0), math.log10(1e-5), math.log10(1.0), math.log10(0.0))
+
+    show("pow", math.pow(2.0, 0.5))
+    show("pow", math.pow(10.0, -5.0))
+    show("pow", math.pow(1.0000001, 1e9))
+    show("pow", math.pow(2.0, -1074.0))
+    println("pow {} {} {} {} {} {}", math.pow(2.0, 10.0), math.pow(-2.0, 3.0), math.pow(-2.0, 2.0), math.pow(5.0, 0.0), math.pow(none, 0.0),
+        math.pow(1.0, none))
+    println("pow {} {} {} {} {} {}", math.isNaN(math.pow(-8.0, 0.5)), math.pow(0.0, -1.0), math.pow(-0.0, -1.0), math.pow(2.0, 2000.0),
+        math.pow(2.0, -2000.0), math.pow(0.5, inf))
+
+    show("sin", math.sin(1.0))
+    show("sin", math.sin(1e22))
+    show("sin", math.sin(math.pi()))
+    show("cos", math.cos(1.0))
+    show("cos", math.cos(1e22))
+    show("cos", math.cos(math.pi() / 2.0))
+    show("tan", math.tan(1.0))
+    show("tan", math.tan(1e22))
+    show("tan", math.tan(math.pi() / 2.0))
+    println("trig {} {} {} {} {} {}", math.sin(0.0), math.sin(-0.0), math.cos(0.0), math.tan(0.0), math.isNaN(math.sin(inf)),
+        math.isNaN(math.cos(none)))
+
+    show("asin", math.asin(0.5))
+    show("acos", math.acos(0.5))
+    show("atan", math.atan(0.5))
+    println("asin {} {} {} {}", math.asin(1.0), math.asin(-1.0), math.asin(0.0), math.isNaN(math.asin(1.5)))
+    println("acos {} {} {} {}", math.acos(1.0), math.acos(-1.0), math.acos(0.0), math.isNaN(math.acos(-1.5)))
+    println("atan {} {} {} {}", math.atan(1.0), math.atan(inf), math.atan(-inf), math.atan(-0.0))
+    println("atan2 {} {} {} {} {}", math.atan2(1.0, 1.0), math.atan2(1.0, -1.0), math.atan2(-1.0, -1.0), math.atan2(0.0, -1.0),
+        math.atan2(-0.0, -1.0))
+    println("atan2 {} {} {} {} {}", math.atan2(1.0, 0.0), math.atan2(0.0, 0.0), math.atan2(inf, -inf), math.atan2(1.0, inf),
+        math.isNaN(math.atan2(none, 1.0)))
+
+    // An f32 and a whole number become an f64 by themselves.
+    f32 small = 2.25
+    i32 count = 16
+    println("converted {} {}", math.sqrt(small), math.sqrt(count))
+    ret 0
+}

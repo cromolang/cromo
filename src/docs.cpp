@@ -222,6 +222,10 @@ const std::vector<BuiltinDoc>& builtinDocs() {
         {"rotateRight", "T rotateRight(T x, n)",
          "The bits of an integer turned to the right by n: those that go out on the right come in on the left. n is "
          "an integer of any type, taken modulo the bits of the type."},
+        {"fma", "T fma(T a, T b, T c)",
+         "a * b + c with one rounding at the end, where the product and the sum by themselves round twice: for three "
+         "f64 or three f32, or three vectors of them as f32x8. It is one instruction of the processor with '--cpu x86-64-v3' and on ARM64, and a slower "
+         "function with the same result elsewhere."},
         {"embed", "list<u8> embed(string path)",
          "The bytes of a file that the compiler reads and puts in the program: images and data that the program "
          "carries with it, also in the APK of Android. 'path' is a string literal, from the folder of the source file "

@@ -197,6 +197,68 @@ bool readProjectFile(const fs::path& file, ProjectFile& out, std::string& error)
             native.sha256 = words[3].substr(7);
             native.files.assign(words.begin() + 4, words.end());
             out.natives.push_back(native);
+        } else if (words[0] == "version") {  // D557
+            bool valid = words.size() == 2 && out.version.empty();
+            int parts = 1;
+            size_t digits = 0;
+            for (size_t i = 0; valid && i < words[1].size(); ++i) {
+                char c = words[1][i];
+                if (c == '.') {
+                    valid = digits > 0 && ++parts <= 4;
+                    digits = 0;
+                } else {
+                    valid = std::isdigit(static_cast<unsigned char>(c)) && ++digits <= 5;
+                    size_t start = i + 1 - digits;
+                    if (valid && std::stoi(words[1].substr(start, digits)) > 65535) valid = false;
+                }
+            }
+            if (valid && digits > 0) {
+                out.version = words[1];
+            } else {
+                fail(out.version.empty() ? "version takes up to four numbers, each up to 65535, as version 1.2.0"
+                                         : "the line version is written once");
+            }
+        } else if (words[0] == "company" || words[0] == "description" || words[0] == "copyright") {  // D557
+            std::string& field = words[0] == "company" ? out.company : words[0] == "description" ? out.description : out.copyright;
+            size_t start = line.find(words[0]) + words[0].size();
+            start = line.find_first_not_of(" \t", start);
+            size_t end = line.find_last_not_of(" \t\r");
+            if (start == std::string::npos) {
+                fail(words[0] + " takes a text, to the end of the line");
+            } else if (!field.empty()) {
+                fail("the line " + words[0] + " is written once");
+            } else {
+                field = line.substr(start, end - start + 1);
+            }
+        } else if (words[0] == "sign") {  // D558: words, and "words with spaces"
+            std::vector<std::string> command;
+            size_t at = line.find("sign") + 4;
+            bool closed = true;
+            while (true) {
+                at = line.find_first_not_of(" \t\r", at);
+                if (at == std::string::npos) break;
+                std::string word;
+                if (line[at] == '"') {
+                    size_t end = line.find('"', at + 1);
+                    closed = end != std::string::npos;
+                    if (!closed) break;
+                    word = line.substr(at + 1, end - at - 1);
+                    at = end + 1;
+                } else {
+                    size_t end = line.find_first_of(" \t\r", at);
+                    word = line.substr(at, end == std::string::npos ? end : end - at);
+                    at = end;
+                }
+                command.push_back(word);
+                if (at == std::string::npos) break;
+            }
+            if (!closed || command.empty()) {
+                fail("sign takes the command that signs an executable, as sign signtool sign /fd SHA256 /a");
+            } else if (!out.sign.empty()) {
+                fail("the line sign is written once");
+            } else {
+                out.sign = command;
+            }
         }
     }
     return good;

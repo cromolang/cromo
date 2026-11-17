@@ -1,0 +1,118 @@
+// fma(a, b, c) (D555): a * b + c rounded once, for f64 and f32. Without `--cpu` the
+// first x86-64 has no instruction for it, and it is the function of the runtime.
+// expect-output: 0x0 0x3c90000000000000
+// expect-output: 0x0 0x33800000
+// expect-output: 7 7 2.5 3.5
+// expect-output: inf -inf nan nan -inf
+// expect-output: 0x8000000000000000 0x0 0x0 0x8000000000000000
+// expect-output: 0x2 0x8000000000000000 0x10000000000000 0x7ff0000000000000 0x7fefffffffffffff
+// expect-output: 0x1 0x800000 0x7f800000 0x7f7fffff
+// expect-output: vectors 2 72 240, 2.5 16.5, 0 15, 0x33800000
+// expect-output: sums 0xf6da8d5981cb80af 0x4751fd5b
+u64 next(ref u64 state) {
+    state ^= state << 13
+    state ^= state >> 7
+    state ^= state << 17
+    ret state
+}
+
+// A number with an exponent near that of 1, near the smallest or near the largest.
+f64 wide(ref u64 state) {
+    u64 bits = next(ref state)
+    u64 kind = next(ref state) % 4
+    if (kind == 1) {
+        bits = (bits & 0x800FFFFFFFFFFFFF) | ((963 + next(ref state) % 120) << 52)
+    } else if (kind == 2) {
+        bits = (bits & 0x800FFFFFFFFFFFFF) | ((next(ref state) % 60) << 52)
+    } else if (kind == 3) {
+        bits = (bits & 0x800FFFFFFFFFFFFF) | ((2046 - next(ref state) % 60) << 52)
+    }
+    ret f64.fromBits(bits)
+}
+
+f32 narrow(ref u64 state) {
+    u32 bits = u32(next(ref state) >> 32)
+    u64 kind = next(ref state) % 4
+    if (kind == 1) {
+        bits = (bits & 0x807FFFFF) | (u32(107 + next(ref state) % 40) << 23)
+    } else if (kind == 2) {
+        bits = (bits & 0x807FFFFF) | (u32(next(ref state) % 30) << 23)
+    } else if (kind == 3) {
+        bits = (bits & 0x807FFFFF) | (u32(254 - next(ref state) % 30) << 23)
+    }
+    ret f32.fromBits(bits)
+}
+
+const f32[8] values = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]
+const f64[4] doubles = [1.0, 2.0, 3.0, 4.0]
+
+i32 main() {
+    // The square of 1 + 2^-27 is 1 + 2^-26 + 2^-54: the product alone loses the last part.
+    f64 a = f64.fromBits(0x3FF0000002000000)
+    f64 c = f64.fromBits(0x3FF0000004000000)
+    println("{:#x} {:#x}", (a * a - c).bits(), fma(a, a, -c).bits())
+    f32 b = f32.fromBits(0x3F800800)
+    f32 d = f32.fromBits(0x3F801000)
+    println("{:#x} {:#x}", (b * b - d).bits(), fma(b, b, -d).bits())
+
+    // A literal takes the type of the others, or the type expected, or f64.
+    f32 small = fma(2, 3, 1)
+    f64 half = 0.5
+    println("{} {} {} {}", small, fma(2.0, 3.0, 1.0), fma(half, 2, 1.5), fma(b, 2, 1.5) - b - b + 2)
+
+    f64 infinity = f64.fromBits(0x7FF0000000000000)
+    f64 huge = 1e200
+    f64 zero = 0.0
+    println("{} {} {} {} {}", fma(infinity, 2.0, 1.0), fma(huge, 2.0, -infinity), fma(infinity, zero, 1.0),
+        fma(infinity, 1.0, -infinity), fma(huge, huge, -infinity))
+    f64 negative = -0.0
+    f64 tiny = f64.fromBits(1)
+    println("{:#x} {:#x} {:#x} {:#x}", fma(negative, 1.0, negative).bits(), fma(negative, 1.0, zero).bits(),
+        fma(half, 2.0, -1.0).bits(), fma(-tiny, tiny, zero).bits())
+    f64 largest = f64.fromBits(0x7FEFFFFFFFFFFFFF)
+    println("{:#x} {:#x} {:#x} {:#x} {:#x}", fma(tiny, half, tiny).bits(), fma(tiny, -half, zero).bits(),
+        fma(f64.fromBits(0x000FFFFFFFFFFFFF), 1.0, tiny).bits(), fma(largest, 2.0, -largest * 0.5).bits(),
+        fma(largest, 2.0, -largest).bits())
+    f32 least = f32.fromBits(1)
+    f32 most = f32.fromBits(0x7F7FFFFF)
+    f32 one = 1.0
+    println("{:#x} {:#x} {:#x} {:#x}", fma(least, one, zero32()).bits(), fma(f32.fromBits(0x007FFFFF), one, least).bits(),
+        fma(most, most, most).bits(), fma(most, 2, -most).bits())
+
+    // The vectors of them, number by number; a literal is in each number.
+    f32x8 v = f32x8.load(values, 0)
+    f32x8 squares = fma(v, v, v)
+    f32x8 scaled = fma(v, 2, 0.5)
+    f64x4 w = f64x4.load(doubles, 0)
+    f64x4 less = fma(w, w, f64x4(-1.0))
+    f32x4 lost = fma(f32x4(b), f32x4(b), f32x4(-d))
+    println("vectors {} {} {}, {} {}, {} {}, {:#x}", squares[0], squares[7], squares.sum(), scaled[0], scaled[7], less[0], less[3],
+        lost[2].bits())
+
+    // Many numbers: the same sums with the instruction of the processor (fma_cpu.cro).
+    u64 state = 88172645463325252
+    u64 sum = 0
+    u32 sum32 = 0
+    for (i64 i = 0; i < 200000; i++) {
+        f64 x = wide(ref state)
+        f64 y = wide(ref state)
+        f64 z = i % 5 == 0 ? -(x * y) : wide(ref state)
+        f64 r = fma(x, y, z)
+        if (r == r) {
+            sum = rotateLeft(sum, 1) ^ r.bits()
+        }
+        f32 p = narrow(ref state)
+        f32 q = narrow(ref state)
+        f32 s = i % 5 == 0 ? -(p * q) : narrow(ref state)
+        f32 t = fma(p, q, s)
+        if (t == t) {
+            sum32 = rotateLeft(sum32, 1) ^ t.bits()
+        }
+    }
+    println("sums {:#x} {:#x}", sum, sum32)
+    ret 0
+}
+
+f32 zero32() {
+    ret 0.0
+}

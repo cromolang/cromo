@@ -114,6 +114,7 @@ struct Compilation {
     bool network = false;  // the program uses std.net: the permission INTERNET (D463)
     bool camera = false;   // the program makes a gui.Camera: the permission CAMERA (D537)
     std::vector<Executable> executables;  // D517: those of cromo.mod, without a file
+    bool sign = false;  // cromo build: with --release, the line sign of cromo.mod is run (D558)
 };
 
 // D517: a name of cromo.mod, of letters, digits and the characters of `others`.
@@ -172,14 +173,24 @@ bool readProject(std::vector<Executable>& executables) {
                 if (other.name == words[1]) fail("another executable is called " + words[1]);
             }
             executables.push_back({words[1], words[2]});
-        } else if (words[0] != "require" && words[0] != "native") {  // those are read with the packages (D377, D551)
-            fail("unknown line " + words[0] + ": cromo.mod has the lines module, bin, require and native");
+        } else if (words[0] != "require" && words[0] != "native" && words[0] != "version" && words[0] != "company" &&
+                   words[0] != "description" && words[0] != "copyright" && words[0] != "sign") {
+            // Those are read with the packages (D377, D551, D557, D558).
+            fail("unknown line " + words[0] + ": cromo.mod has the lines module, bin, require, native, version, company, "
+                                             "description, copyright and sign");
         }
     }
     if (first) {
         std::fputs("cromo.mod:1: error: cromo.mod starts with the line module, with the name of the project, as module "
                    "example.com/app\n",
                    stderr);
+        good = false;
+    }
+    // The lines of the packages, of the version and of the signature (D377, D551, D557, D558).
+    cromo::ProjectFile file;
+    std::string problems;
+    if (!cromo::readProjectFile("cromo.mod", file, problems)) {
+        std::fprintf(stderr, "%s\n", problems.c_str());
         good = false;
     }
     return good;
@@ -204,6 +215,7 @@ std::string runSuffix() {
 
 // Compiles a program of the library, as tools/get.cro, and runs it with these arguments.
 int runTool(const char* file, const std::vector<std::string>& args);
+int runAndWait(const std::vector<std::string>& args);
 
 // The packages of the cromo.mod of a folder (D376-D391): those that are not in the cache
 // are downloaded, by tools/get.cro, and cromo.sum has the hash of each. False, after
@@ -244,6 +256,7 @@ int build(Compilation& compilation) {
     codegen.target = options.target;
 
     std::deque<cromo::SourceFile> sources;
+    cromo::ProjectFile projectFile;
     // The standard library is compiled together with the program (D97), from lib/ (D237).
     if (cromo::libraryFolder().empty()) {
         std::fputs("cromo: cannot find the library: lib/ is missing next to the folder of cromo\n", stderr);
@@ -278,6 +291,10 @@ int build(Compilation& compilation) {
         std::error_code ec;
         std::string project = cromo::projectFolder(fs::absolute(inputPath, ec).parent_path().string());
         if (!project.empty() && !preparePackages(project, options.target)) return 1;
+        if (!project.empty()) {  // D557, D558: read and checked with the packages, just now
+            std::string ignored;
+            cromo::readProjectFile(fs::path(project) / "cromo.mod", projectFile, ignored);
+        }
     }
     cromo::Diagnostics diag(sources[0]);
     diag.addFile(sources[1]);
@@ -329,6 +346,11 @@ int build(Compilation& compilation) {
         for (const cromo::FunctionDecl& function : module.functions) {
             if (function.isWindow) options.window = true;  // D426
         }
+        // D557: what the executable says of itself.
+        options.version = projectFile.version;
+        options.company = projectFile.company;
+        options.description = projectFile.description;
+        options.copyright = projectFile.copyright;
         // D425: the icon next to the file with main, with its name or main.ico.
         fs::path source(inputPath);
         std::error_code ec;
@@ -376,6 +398,18 @@ int build(Compilation& compilation) {
         !cromo::copyLibraries(libraries.copies, options.outputPath, error)) {
         std::fprintf(stderr, "cromo: %s\n", error.c_str());
         return 1;
+    }
+    // D558: an executable of --release for Windows is signed by the command of cromo.mod,
+    // which takes its path as its last argument.
+    if (compilation.sign && codegen.release && options.target == cromo::Target::Windows && !tests && !projectFile.sign.empty()) {
+        std::vector<std::string> command = projectFile.sign;
+        command.push_back(options.outputPath);
+        int code = runAndWait(command);
+        if (code != 0) {
+            std::fprintf(stderr, "cromo: the command of the line sign of cromo.mod, %s, did not sign %s: it ended with %d\n",
+                         projectFile.sign[0].c_str(), options.outputPath.c_str(), code);
+            return 1;
+        }
     }
     return 0;
 }
@@ -1304,6 +1338,7 @@ int main(int argc, char** argv) {
     Compilation compilation;
     compilation.codegen.tests = command == "test";
     if (!readOptions(args, 2, separator, isRun, compilation)) return 2;
+    compilation.sign = command == "build";
     // D517: each executable of cromo.mod, with the same options.
     std::vector<Executable> executables = std::move(compilation.executables);
     compilation.executables.clear();

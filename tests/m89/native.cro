@@ -4,7 +4,7 @@
 // A server in this program gives the archive.
 // target: windows
 // program-env: CROMO={cromo}
-// program-env: OUT={dir}/../out/native
+// program-env: OUT={dir}/../out2/native
 // expect-output: build: 0
 // expect-output: taken: true true, the rest left: false
 // expect-output: its text: a library

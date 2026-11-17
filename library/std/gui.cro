@@ -11845,7 +11845,17 @@ void drawTitleParts(ref WindowData window, ref list<PartData> parts, ref Colors 
         }
         if (parts[i].clipRight > parts[i].clipLeft && parts[i].clipBottom > parts[i].clipTop) {
             clipPart(r, ref parts[i])
-            drawPart(ref window, ref parts[i], ref c, ref images)
+            if (parts[i].hasFill || parts[i].hasInk || parts[i].hasEdge) {  // a look of its own (D540), as in the content
+                Colors own = lookOf(ref parts[i], ref c)
+                if (parts[i].hasFill && bare(parts[i].kind)) {
+                    u32 edge = parts[i].hasEdge ? solid(own.rule, true) : 0
+                    cromo_gui_box(r, parts[i].left, parts[i].top, f32(parts[i].width), f32(parts[i].height), rounded(ref parts[i], corner),
+                        parts[i].hasEdge ? 1 : 0, window.density, u32(parts[i].ownFill.alpha) << 24 | own.surface, edge)
+                }
+                drawPart(ref window, ref parts[i], ref own, ref images)
+            } else {
+                drawPart(ref window, ref parts[i], ref c, ref images)
+            }
         }
         if (!parts[i].titleBar) {
             cromo_gui_chrome_hole(window.chrome, holes, parts[i].left * scale, parts[i].top * scale, f32(parts[i].width) * scale,

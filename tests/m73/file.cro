@@ -3,7 +3,7 @@
 // the errors of the database are exceptions, and a backup is a database.
 // Not on ARM64 here: the old qemu of the tests refuses the locks of the open files (F_OFD_SETLK).
 // target: windows linux-x86_64
-// program-env: OUT={dir}/../out/db
+// program-env: OUT={dir}/../out2/db
 // expect-output: kept 2
 // expect-output: the other waits: cannot run the statement: database is locked
 // expect-output: after the commit 3

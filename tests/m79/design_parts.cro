@@ -3,7 +3,7 @@
 // group, the pages of a tab view and the panels of a split; and the forms that cannot be.
 // target: windows
 // program-env: CROMO={cromo}
-// program-env: OUT={dir}/../out/design_parts
+// program-env: OUT={dir}/../out2/design_parts
 // expect-output: made 0
 // expect-output:     public gui.AppBar appBar
 // expect-output:     public gui.Camera camera

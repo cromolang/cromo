@@ -96,7 +96,7 @@ KEYWORDS = set('''struct interface enum import extern unsafe const void if else 
 continue ret switch case default try catch finally throw ref move public true false func'''.split())
 TYPES = set('i8 i16 i32 i64 u8 u16 u32 u64 f32 f64 bool char string list map addr Self'.split())
 BUILTINS = set('''print println eprint eprintln format panic assert wrapAdd wrapSub wrapMul embed countOnes trailingZeros
-leadingZeros rotateLeft rotateRight'''.split())
+leadingZeros rotateLeft rotateRight fma'''.split())
 
 
 # ---- Highlighting ----

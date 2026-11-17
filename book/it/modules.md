@@ -618,10 +618,36 @@ cromo.mod:2: error: the line module comes first, once
 cromo.mod:4: error: another executable is called areas
 cromo.mod:5: error: there is no file cmd/tool.cro
 cromo.mod:6: error: bin takes the name of an executable and its main file, as bin server cmd/server.cro
-cromo.mod:7: error: unknown line library: cromo.mod has the lines module, bin, require and native
+cromo.mod:7: error: unknown line library: cromo.mod has the lines module, bin, require, native, version, company, description, copyright and sign
 ```
 
 Un `cromo.mod` che non inizia con `module`, o che è vuoto, dà `cromo.mod:1: error: cromo.mod starts with the line module, with the name of the project, as module example.com/app`.
+
+### La versione e la firma di un eseguibile
+
+Un eseguibile per Windows dice che cos'è: Explorer mostra la sua versione, la sua descrizione e chi l'ha fatto nelle proprietà del file. Sono righe di `cromo.mod`, per tutti gli eseguibili del progetto:
+
+```text
+module example.com/project
+version 1.2.0
+company Anna Rossi
+description The areas of the shapes
+copyright (c) 2026 Anna Rossi
+bin areas cmd/areas.cro
+```
+
+`version` prende fino a quattro numeri; le altre tre prendono un testo, fino alla fine della riga. Senza nessuna di esse, e per un file senza progetto, l'eseguibile non ha una versione. Ogni eseguibile per Windows ha anche un manifest, che `cromo` scrive da solo: il programma parte con i diritti di chi lo avvia, i percorsi possono essere lunghi, le librerie C collegate ricevono i testi in UTF-8, e un programma con finestre è nitido su ogni schermo. Su Linux queste righe non sono usate.
+
+Un eseguibile che altri scaricano dovrebbe essere **firmato**: senza firma Windows avvisa chi lo avvia, e un antivirus può prendere per pericoloso un programma che nessuno conosce. `cromo` non firma da solo, perché la chiave di un certificato sta in un token o in un servizio di chi lo emette: la riga `sign` contiene il comando che firma, e `cromo build --release` lo esegue su ogni eseguibile che scrive, con il percorso dell'eseguibile come ultimo argomento:
+
+```text
+sign signtool sign /fd SHA256 /a /tr http://timestamp.digicert.com /td SHA256
+```
+
+- Un argomento con spazi va fra `"`.
+- Un comando che fallisce ferma la build con un errore.
+- `cromo run`, `cromo test` e una build senza `--release` non firmano, così il certificato è chiesto solo per ciò che si pubblica.
+- Viene eseguito solo il `sign` del progetto che si compila, mai quello di un pacchetto. Compilare con `--release` un progetto di altri esegue il suo comando: prima leggi il suo `cromo.mod`.
 
 ### Librerie
 
@@ -691,4 +717,4 @@ I pacchetti del progetto Cromo sono i repository di [github.com/cromolang](https
 - `import a.b` è `a/b.cro` o la cartella `a/b`, a partire dalla cartella del file principale o di `cromo.mod`.
 - I file che terminano con `_windows`, `_linux`, `_x86_64` e `_arm64` sono le parti di un modulo per un solo sistema o una sola architettura.
 - `std.x` sono i moduli della libreria; il suo nucleo è visibile ovunque.
-- `cromo.mod` segna la cima di un progetto: gli import partono dalla sua cartella, e le sue righe `bin` sono gli eseguibili che prendono `cromo build`, `cromo run name` e `cromo test`. I pacchetti verranno più avanti.
+- `cromo.mod` segna la cima di un progetto: gli import partono dalla sua cartella, e le sue righe `bin` sono gli eseguibili che prendono `cromo build`, `cromo run name` e `cromo test`. Le sue righe `version`, `company`, `description` e `copyright` vanno negli eseguibili per Windows, e `sign` è il comando che li firma dopo `cromo build --release`. I pacchetti verranno più avanti.

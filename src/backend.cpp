@@ -18,6 +18,7 @@
 #include <llvm/Object/COFFImportFile.h>
 #include <llvm/Object/ObjectFile.h>
 #include <llvm/Passes/PassBuilder.h>
+#include <llvm/Support/ConvertUTF.h>
 #include <llvm/Support/Error.h>
 #include <llvm/Support/FileSystem.h>
 #include <llvm/Support/MemoryBuffer.h>
@@ -434,22 +435,141 @@ bool writeImportLibrary(const ImportLibrary& import, const std::string& path, st
     return true;
 }
 
-// The icon of the executable (D425): each image of the .ico is an RT_ICON resource,
-// and their list an RT_GROUP_ICON, in a .res file as rc writes it, which lld-link
-// converts and links.
-bool writeIconResources(const std::string& iconPath, const std::string& resPath, std::string& error) {
-    llvm::ErrorOr<std::unique_ptr<llvm::MemoryBuffer>> file = llvm::MemoryBuffer::getFile(iconPath);
-    if (!file) {
-        error = "cannot read the icon " + iconPath + ": " + file.getError().message() + "";
-        return false;
+// A text of UTF-8 in UTF-16, ended by a zero, as the resources of Windows keep it.
+std::string wideText(const std::string& text) {
+    llvm::SmallVector<llvm::UTF16, 64> wide;
+    if (!llvm::convertUTF8ToUTF16String(text, wide)) wide.clear();
+    std::string out;
+    for (llvm::UTF16 unit : wide) {
+        out.push_back(char(unit));
+        out.push_back(char(unit >> 8));
     }
-    llvm::StringRef data = (*file)->getBuffer();
+    out.append(2, '\0');
+    return out;
+}
+
+// A block of the version of an executable: its length, the length of its value, 1 for
+// a text and 0 for bytes, its name, its value and the blocks inside it, each
+// starting at a multiple of 4 bytes.
+std::string versionBlock(const std::string& name, const std::string& value, bool text, const std::vector<std::string>& inside) {
+    std::string out(6, '\0');
+    out += wideText(name);
+    auto align = [&] {
+        while (out.size() % 4 != 0) out.push_back('\0');
+    };
+    align();
+    out += value;
+    for (const std::string& block : inside) {
+        align();
+        out += block;
+    }
+    size_t valueLength = text ? value.size() / 2 : value.size();
+    out[0] = char(out.size());
+    out[1] = char(out.size() >> 8);
+    out[2] = char(valueLength);
+    out[3] = char(valueLength >> 8);
+    out[4] = text ? 1 : 0;
+    return out;
+}
+
+// D557: the resource of the version, as rc writes a VERSIONINFO: the numbers, and
+// the texts that Explorer shows in the properties of the file.
+std::string versionResource(const BackendOptions& options) {
+    uint16_t numbers[4] = {0, 0, 0, 0};
+    std::string version = options.version.empty() ? "0.0.0" : options.version;
+    size_t part = 0;
+    for (char c : version) {
+        if (c == '.') {
+            ++part;
+        } else if (part < 4) {
+            numbers[part] = uint16_t(numbers[part] * 10 + (c - '0'));
+        }
+    }
+    std::string fixed;
+    auto put32 = [&](uint32_t value) {
+        for (int i = 0; i < 4; ++i) fixed.push_back(char(value >> (8 * i)));
+    };
+    uint32_t high = uint32_t(numbers[0]) << 16 | numbers[1];
+    uint32_t low = uint32_t(numbers[2]) << 16 | numbers[3];
+    // VS_FIXEDFILEINFO: its mark and its version, the version of the file and of the
+    // product, no flags, for Windows NT, an application.
+    for (uint32_t value : {0xFEEF04BDu, 0x00010000u, high, low, high, low, 0x3Fu, 0u, 0x00040004u, 1u, 0u, 0u, 0u}) put32(value);
+
+    std::string file = std::filesystem::path(options.outputPath).filename().string();
+    std::string name = std::filesystem::path(options.outputPath).stem().string();
+    std::vector<std::pair<std::string, std::string>> texts;
+    if (!options.company.empty()) texts.emplace_back("CompanyName", options.company);
+    texts.emplace_back("FileDescription", options.description.empty() ? name : options.description);
+    texts.emplace_back("FileVersion", version);
+    texts.emplace_back("InternalName", name);
+    if (!options.copyright.empty()) texts.emplace_back("LegalCopyright", options.copyright);
+    texts.emplace_back("OriginalFilename", file);
+    texts.emplace_back("ProductName", name);
+    texts.emplace_back("ProductVersion", version);
+    std::vector<std::string> strings;
+    for (const auto& [key, value] : texts) strings.push_back(versionBlock(key, wideText(value), true, {}));
+    // The texts are in English of the United States, in Unicode: 0409 and 04B0.
+    std::string table = versionBlock("040904B0", "", true, strings);
+    std::string translation = versionBlock("Translation", std::string("\x09\x04\xB0\x04", 4), false, {});
+    return versionBlock("VS_VERSION_INFO", fixed, false,
+                        {versionBlock("StringFileInfo", "", true, {table}), versionBlock("VarFileInfo", "", true, {translation})});
+}
+
+// D557: the manifest of every executable: started with the rights of who starts it,
+// made for Windows 10 and 11, with the texts of the system in UTF-8 and the long
+// paths; a program of the windows draws its pixels on every screen by itself.
+std::string manifestResource(bool window) {
+    std::string text =
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n"
+        "<assembly xmlns=\"urn:schemas-microsoft-com:asm.v1\" manifestVersion=\"1.0\">\r\n"
+        "  <trustInfo xmlns=\"urn:schemas-microsoft-com:asm.v3\">\r\n"
+        "    <security>\r\n"
+        "      <requestedPrivileges>\r\n"
+        "        <requestedExecutionLevel level=\"asInvoker\" uiAccess=\"false\"/>\r\n"
+        "      </requestedPrivileges>\r\n"
+        "    </security>\r\n"
+        "  </trustInfo>\r\n"
+        "  <compatibility xmlns=\"urn:schemas-microsoft-com:compatibility.v1\">\r\n"
+        "    <application>\r\n"
+        "      <supportedOS Id=\"{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}\"/>\r\n"
+        "    </application>\r\n"
+        "  </compatibility>\r\n"
+        "  <application xmlns=\"urn:schemas-microsoft-com:asm.v3\">\r\n"
+        "    <windowsSettings>\r\n"
+        "      <activeCodePage xmlns=\"http://schemas.microsoft.com/SMI/2019/WindowsSettings\">UTF-8</activeCodePage>\r\n"
+        "      <longPathAware xmlns=\"http://schemas.microsoft.com/SMI/2016/WindowsSettings\">true</longPathAware>\r\n";
+    if (window) {
+        text += "      <dpiAware xmlns=\"http://schemas.microsoft.com/SMI/2005/WindowsSettings\">true/pm</dpiAware>\r\n"
+                "      <dpiAwareness xmlns=\"http://schemas.microsoft.com/SMI/2016/WindowsSettings\">PerMonitorV2</dpiAwareness>\r\n";
+    }
+    text += "    </windowsSettings>\r\n"
+            "  </application>\r\n"
+            "</assembly>\r\n";
+    return text;
+}
+
+// The resources of the executable, in a .res file as rc writes it, which lld-link
+// converts and links: its manifest and its version (D557), and its icon (D425),
+// where each image of the .ico is an RT_ICON resource, and their list an
+// RT_GROUP_ICON.
+bool writeResources(const BackendOptions& options, const std::string& resPath, std::string& error) {
+    const std::string& iconPath = options.icon;
+    std::unique_ptr<llvm::MemoryBuffer> iconFile;
+    if (!iconPath.empty()) {
+        llvm::ErrorOr<std::unique_ptr<llvm::MemoryBuffer>> file = llvm::MemoryBuffer::getFile(iconPath);
+        if (!file) {
+            error = "cannot read the icon " + iconPath + ": " + file.getError().message() + "";
+            return false;
+        }
+        iconFile = std::move(*file);
+    }
+    llvm::StringRef data = iconFile ? iconFile->getBuffer() : llvm::StringRef();
     auto u16At = [&](size_t at) { return uint16_t(uint8_t(data[at]) | uint8_t(data[at + 1]) << 8); };
     auto u32At = [&](size_t at) { return uint32_t(u16At(at)) | uint32_t(u16At(at + 2)) << 16; };
     // The header: 0, 1 for an icon and the number of images, then 16 bytes for each,
     // with the size of its data and where it starts.
     size_t count = data.size() >= 6 && u16At(0) == 0 && u16At(2) == 1 ? u16At(4) : 0;
-    bool valid = count > 0 && data.size() >= 6 + 16 * count;
+    bool valid = iconPath.empty() || (count > 0 && data.size() >= 6 + 16 * count);
     for (size_t i = 0; valid && i < count; ++i) {
         uint32_t size = u32At(6 + 16 * i + 8);
         uint32_t start = u32At(6 + 16 * i + 12);
@@ -487,6 +607,14 @@ bool writeIconResources(const std::string& iconPath, const std::string& resPath,
         while (out.size() % 4 != 0) out.push_back(0);
     };
     resource(0, 0, 0, {});  // a .res file starts with an empty resource
+    std::string version = versionResource(options);
+    std::string manifest = manifestResource(options.window);
+    // The version only when cromo.mod says something of the program: one with the name
+    // of the file alone and 0.0.0 says nothing, and Bitdefender takes a small
+    // executable of --release that has it for malware.
+    bool described = !options.version.empty() || !options.company.empty() || !options.description.empty() || !options.copyright.empty();
+    if (described) resource(16, 1, 0x30, version);  // RT_VERSION
+    resource(24, 1, 0x30, manifest);                // RT_MANIFEST, the one of the process
     std::string group;
     for (uint16_t value : {uint16_t(0), uint16_t(1), uint16_t(count)}) {
         group.push_back(char(value));
@@ -500,7 +628,7 @@ bool writeIconResources(const std::string& iconPath, const std::string& resPath,
         group.push_back(char(i + 1));
         group.push_back(char((i + 1) >> 8));
     }
-    resource(14, 1, 0x1030, group);  // RT_GROUP_ICON, pure too
+    if (!iconPath.empty()) resource(14, 1, 0x1030, group);  // RT_GROUP_ICON, pure too
 
     std::error_code ec;
     llvm::raw_fd_ostream stream(resPath, ec, llvm::sys::fs::OF_None);
@@ -563,12 +691,10 @@ bool linkWindows(const std::string& objectPath, const std::string& tablePath, co
         args.push_back("/opt:ref");
     }
     for (const std::string& archive : options.archives) args.push_back(archive);
-    if (!options.icon.empty()) {
-        std::string path = options.outputPath + ".res";
-        temporaries.push_back(path);
-        if (!writeIconResources(options.icon, path, error)) return false;
-        args.push_back(path);
-    }
+    std::string resources = options.outputPath + ".res";
+    temporaries.push_back(resources);
+    if (!writeResources(options, resources, error)) return false;
+    args.push_back(resources);
     for (const ImportLibrary& import : imports) {
         std::string path = options.outputPath + "." + import.dll.substr(0, import.dll.size() - 4) + ".lib";
         temporaries.push_back(path);

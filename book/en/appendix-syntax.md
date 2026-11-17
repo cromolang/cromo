@@ -136,6 +136,7 @@ An integer literal takes the type that the context asks for, and must fit in it.
 | `wrapAdd(a, b)`, `wrapSub(a, b)`, `wrapMul(a, b)` | arithmetic of integers that wraps around, without the overflow check | [Numbers and operators](operators.md) |
 | `countOnes(x)`, `trailingZeros(x)`, `leadingZeros(x)` | count the bits of an integer, as an `i32` | [Numbers and operators](operators.md) |
 | `rotateLeft(x, n)`, `rotateRight(x, n)` | turn the bits of an integer | [Numbers and operators](operators.md) |
+| `fma(a, b, c)` | `a * b + c` of floating-point numbers, rounded once | [Numbers and operators](operators.md) |
 | `embed(path)` | the bytes of a file, read by the compiler and put in the program, as a `list<u8>` | [Windows and apps](gui.md) |
 
 The names of the types convert, and so do two methods of the floating-point numbers:

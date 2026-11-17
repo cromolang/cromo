@@ -4,7 +4,7 @@
 // is not a color, left out.
 // target: windows
 // program-env: CROMO={cromo}
-// program-env: OUT={dir}/../out/design_look
+// program-env: OUT={dir}/../out2/design_look
 // expect-output: made 0
 // expect-output:         window = gui.Window("Look", 420, 300)
 // expect-output:         window.setPalette(gui.palette(0xF3EFE6, 0xFFFFFF, 0x18212A, 0x2E7D5B, 0x2F6E8F, 0xB0453C), gui.darkPalette())

@@ -1,7 +1,7 @@
 // std.zip (D404, P21): an archive made by the zipfile of Python, with a folder, a
 // file with deflate, a file stored with the permissions 0755, an empty file and a
 // symbolic link; one with the records of Zip64; and the archives that are refused.
-// program-env: OUT={dir}/../out/zip_test
+// program-env: OUT={dir}/../out2/zip_test
 // expect-output: dir: folder
 // expect-output: hello.txt: 240 bytes, hello, zip! hello, zip!
 // expect-output: dir/run.sh: 19 bytes, executable

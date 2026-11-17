@@ -26,6 +26,11 @@ struct BackendOptions {
     bool debugInfo = true;  // D338: a PDB next to the executable on Windows, DWARF kept in it on Linux
     bool window = false;    // D426: on Windows, an executable of the windows, without a console
     std::string icon;       // D425: on Windows, the .ico of the executable, or nothing
+    // D557: on Windows, what the executable says of itself, from the cromo.mod of its project.
+    std::string version;      // "1.2.0", or "" for 0.0.0.0
+    std::string company;
+    std::string description;
+    std::string copyright;
     bool glibc = false;     // D428: on Linux, linked with glibc, for the C libraries that call it
     std::vector<std::string> shared;  // D554: on Linux, the shared libraries of the extern blocks, found next to the executable
     bool sharedLibrary = false;  // P44: on Android, libmain.so of an app, whose SDL_main the activity of SDL calls

@@ -6,7 +6,7 @@
 // target: windows
 // program-env: CROMO={cromo}
 // program-env: APP={dir}/modules/mail.cro
-// program-env: OUT={dir}/../out/mail.apk
+// program-env: OUT={dir}/../out2/mail.apk
 // expect-output: built: 0
 // expect-output: AndroidManifest.xml
 // expect-output: resources.arsc

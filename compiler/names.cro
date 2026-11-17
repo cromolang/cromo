@@ -151,11 +151,11 @@ bool isVectorType(string name) {
     ret total == 128 || total == 256
 }
 
-// The functions that every program calls without declaring them (D38, D102, D396, D470, D502).
+// The functions that every program calls without declaring them (D38, D102, D396, D470, D502, D555).
 public bool isBuiltinFunction(string name) {
     switch (name) {
         case "print", "println", "eprint", "eprintln", "format", "panic", "assert", "wrapAdd", "wrapSub", "wrapMul", "embed",
-            "countOnes", "trailingZeros", "leadingZeros", "rotateLeft", "rotateRight" {
+            "countOnes", "trailingZeros", "leadingZeros", "rotateLeft", "rotateRight", "fma" {
             ret true
         }
         default {

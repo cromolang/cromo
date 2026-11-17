@@ -20,7 +20,7 @@ $count = 0
 foreach ($side in 'cpp', 'cromo') {
     foreach ($folder in $folders) {
         foreach ($file in Get-ChildItem (Join-Path $root $folder) -Recurse -Filter *.cro) {
-            if ($file.FullName -match '\\tests\\out\\') { continue }
+            if ($file.FullName -match '\\tests\\out2\\') { continue }
             $target = Join-Path (Join-Path $work $side) $file.FullName.Substring($root.Length + 1)
             New-Item -ItemType Directory -Force (Split-Path $target) | Out-Null
             Copy-Item $file.FullName $target
@@ -72,7 +72,7 @@ foreach ($folder in 'library', 'examples', 'tests\m11') {
 $programs = 0
 Push-Location $root
 foreach ($file in Get-ChildItem 'tests', 'examples', 'bench' -Recurse -Filter *.cro) {
-    if ($file.FullName -match '\\out\\|\\modules\\|\\formatting\\|\\lsp\\|\\project\\' -or $file.Name -match '_test\.cro$') { continue }
+    if ($file.FullName -match '\\out2\\|\\modules\\|\\formatting\\|\\lsp\\|\\project\\' -or $file.Name -match '_test\.cro$') { continue }
     $programs++
     $relative = $file.FullName.Substring($root.Length + 1)
     $results = @()

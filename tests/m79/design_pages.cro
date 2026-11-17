@@ -3,7 +3,7 @@
 // and the forms whose pages or components cannot be.
 // target: windows
 // program-env: CROMO={cromo}
-// program-env: OUT={dir}/../out/design_pages
+// program-env: OUT={dir}/../out2/design_pages
 // expect-output: made 0
 // expect-output:     public gui.Window window
 // expect-output:     public gui.NavigationBar bar

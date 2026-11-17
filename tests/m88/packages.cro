@@ -5,7 +5,7 @@
 // forge: it gives the tags and the archives of three repositories.
 // target: windows
 // program-env: CROMO={cromo}
-// program-env: OUT={dir}/../out/packages
+// program-env: OUT={dir}/../out2/packages
 // expect-output: get v1: 0 geometry: example.org/anna/geometry v1.2.0
 // expect-output: cromo.mod: require geometry example.org/anna/geometry v1.2.0
 // expect-output: run: 0 area 12 in units 1.1

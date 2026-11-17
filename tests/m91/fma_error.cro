@@ -1,0 +1,24 @@
+// fma() takes three f32 or three f64, or three vectors of them (D555).
+// expect-error: fma() takes three numbers: fma(a, b, c) is a * b + c
+// expect-error: fma() works on f32 or f64, not on i32
+// expect-error: the numbers of fma() have the same type: this is f32, not f64
+// expect-error: fma() works on f32 or f64, not on i32x4
+// expect-error: the numbers of fma() have the same type: this is f32, not f32x4
+// expect-error: 'fma' is a built-in name
+i32 main() {
+    f64 x = 1.5
+    f32 y = 2.5
+    i32 n = 3
+    f64 a = fma(x, x)
+    f64 b = fma(n, n, n)
+    f64 c = fma(x, y, x)
+    i32x4 whole = i32x4(1)
+    f32x4 lanes = f32x4(1.0)
+    i32x4 d = fma(whole, whole, whole)
+    f32x4 e = fma(lanes, lanes, y)
+    ret 0
+}
+
+f64 fma(f64 a, f64 b) {
+    ret a * b
+}

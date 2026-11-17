@@ -4,7 +4,7 @@
 // into the database.
 // Not on ARM64 here: the old qemu of the tests refuses the locks of the open files (F_OFD_SETLK).
 // target: windows linux-x86_64
-// program-env: OUT={dir}/../out/db
+// program-env: OUT={dir}/../out2/db
 // expect-output: mode wal
 // expect-output: files true true
 // expect-output: the reader sees 2 while the writer has 3

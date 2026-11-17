@@ -6,7 +6,7 @@
 // program-env: CROMO={cromo}
 // program-env: CROMO_SITE=http://127.0.0.1:{port}
 // program-env: PORT={port}
-// program-env: USERPROFILE={dir}/../out/update_home
+// program-env: USERPROFILE={dir}/../out2/update_home
 // expect-output: latest: 1, the signature is not valid
 // expect-output: 1.2.3: 1, no signature
 // expect-output: 9.9.9: 1, no such version

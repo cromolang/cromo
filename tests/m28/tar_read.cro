@@ -3,7 +3,7 @@
 // permissions 0755, a hard link, a symbolic link and a pipe, which is left out;
 // the long names of GNU, of pax and of the prefix of ustar; a size in base 256;
 // and the archives that are refused.
-// program-env: OUT={dir}/../out/tar_test
+// program-env: OUT={dir}/../out2/tar_test
 // expect-output: bin: folder
 // expect-output: bin/run.sh: 19 bytes, executable
 // expect-output: hello.txt: 12 bytes, hello, tar!

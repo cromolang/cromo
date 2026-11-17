@@ -160,7 +160,7 @@ struct ConditionalExpr : Expr {
 // only, the `unsafe` dialect (D37, D98).
 enum class Intrinsic {
     None, Panic, Alloc, Resize, Free, SizeOf, Offset, Take, Put, Destroy, CopyAt, CopyMemory, CompareMemory, CheckIndex,
-    ArgumentCount, ArgumentLength, ArgumentData, DecimalToFloat, HashBytes, SystemCall, Environment, ExitProcess,
+    ArgumentCount, ArgumentLength, ArgumentData, DecimalToFloat, SquareRoot, HashBytes, SystemCall, Environment, ExitProcess,
     ThreadStart, ThreadWait, ThreadRethrow, ThreadUncaught, ThreadFree, MutexLock, MutexUnlock, SelfAddress, EqualAt,
     TaskStart, GroupStart,  // D269, D273
     CallC,                  // D552: a C function called through its address
@@ -174,6 +174,7 @@ enum class Intrinsic {
     FloatFromBits,  // `f64.fromBits(b)`, `f32.fromBits(b)` (D397): the type in typeArg
     VariableAddress,  // `variableAddress(x)`: the addr of a module variable, or of a part of it (D394)
     CountOnes, TrailingZeros, LeadingZeros, RotateLeft, RotateRight,  // the bits (D502)
+    Fma,  // `fma(a, b, c)` (D555)
     AtomicLoadRelaxed, AtomicStoreRelaxed, AtomicAddRelaxed,          // D503
     // The vectors (D505): load and store from a list or an array, the reductions,
     // the numbers two by two, the masks and the halves.

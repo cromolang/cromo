@@ -1,5 +1,9 @@
 # Changes
 
+## 0.15.0
+
+- The color of `fma`.
+
 ## 0.14.0
 
 - The colors of the vectors of SIMD, as `i16x16` and `f32x8`.

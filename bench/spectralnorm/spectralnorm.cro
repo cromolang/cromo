@@ -1,7 +1,7 @@
 // Benchmark spectralnorm: floating point, calls and lists of f64.
 // The spectral norm of the infinite matrix A(i, j) = 1 / ((i + j)(i + j + 1) / 2 + i + 1),
 // cut to 3500 x 3500, with 10 steps of the power method, as in the Benchmarks Game.
-// Cromo has no sqrt yet: every version prints the square of the norm.
+// Written before std.math had sqrt: every version prints the square of the norm.
 f64 element(i64 i, i64 j) {
     ret 1.0 / f64((i + j) * (i + j + 1) / 2 + i + 1)
 }

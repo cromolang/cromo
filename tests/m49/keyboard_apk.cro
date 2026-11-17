@@ -3,7 +3,7 @@
 // target: windows
 // program-env: CROMO={cromo}
 // program-env: DIR={dir}/modules
-// program-env: OUT={dir}/../out
+// program-env: OUT={dir}/../out2
 // expect-output: built 0, adjustResize true, CromoSurface true
 import std.fs
 import std.os

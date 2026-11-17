@@ -3,7 +3,7 @@
 // target: windows
 // program-env: CROMO={cromo}
 // program-env: DIR={dir}/modules
-// program-env: OUT={dir}/../out
+// program-env: OUT={dir}/../out2
 // expect-output: online: built 0, INTERNET true, package org.cromo.online true
 // expect-output: offline: built 0, INTERNET false, package org.cromo.offline true
 import std.fs

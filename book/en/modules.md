@@ -618,10 +618,36 @@ cromo.mod:2: error: the line module comes first, once
 cromo.mod:4: error: another executable is called areas
 cromo.mod:5: error: there is no file cmd/tool.cro
 cromo.mod:6: error: bin takes the name of an executable and its main file, as bin server cmd/server.cro
-cromo.mod:7: error: unknown line library: cromo.mod has the lines module, bin, require and native
+cromo.mod:7: error: unknown line library: cromo.mod has the lines module, bin, require, native, version, company, description, copyright and sign
 ```
 
 A `cromo.mod` that does not start with `module`, or is empty, is `cromo.mod:1: error: cromo.mod starts with the line module, with the name of the project, as module example.com/app`.
+
+### The version and the signature of an executable
+
+An executable for Windows says what it is: Explorer shows its version, its description and who made it in the properties of the file. They are lines of `cromo.mod`, for all the executables of the project:
+
+```text
+module example.com/project
+version 1.2.0
+company Anna Rossi
+description The areas of the shapes
+copyright (c) 2026 Anna Rossi
+bin areas cmd/areas.cro
+```
+
+`version` takes up to four numbers; the other three take a text, to the end of the line. Without any of them, and for a file without a project, the executable has no version. Every executable for Windows has also a manifest, which `cromo` writes by itself: the program starts with the rights of who starts it, the paths can be long, the C libraries linked with it take the texts in UTF-8, and a program with windows is sharp on every screen. On Linux these lines are not used.
+
+An executable that other people download should be **signed**: without a signature Windows warns who starts it, and an antivirus can take a program that nobody knows for a dangerous one. `cromo` does not sign by itself, because the key of a certificate is in a token or in a service of its issuer: the line `sign` has the command that signs, and `cromo build --release` runs it on each executable it writes, with the path of the executable as its last argument:
+
+```text
+sign signtool sign /fd SHA256 /a /tr http://timestamp.digicert.com /td SHA256
+```
+
+- An argument with spaces goes between `"`.
+- A command that fails stops the build with an error.
+- `cromo run`, `cromo test` and a build without `--release` do not sign, so the certificate is asked only for what is published.
+- Only the `sign` of the project that is built is run, never that of a package. Building with `--release` a project of someone else runs its command: read its `cromo.mod` first.
 
 ### Libraries
 
@@ -691,4 +717,4 @@ The packages of the project of Cromo are the repositories of [github.com/cromola
 - `import a.b` is `a/b.cro` or the folder `a/b`, from the folder of the main file or of `cromo.mod`.
 - Files ending in `_windows`, `_linux`, `_x86_64` and `_arm64` are the parts of a module for one system or architecture.
 - `std.x` are the modules of the library; its core is visible everywhere.
-- `cromo.mod` marks the top of a project: the imports start from its folder, and its `bin` lines are the executables that `cromo build`, `cromo run name` and `cromo test` take. Packages come later.
+- `cromo.mod` marks the top of a project: the imports start from its folder, and its `bin` lines are the executables that `cromo build`, `cromo run name` and `cromo test` take. Its lines `version`, `company`, `description` and `copyright` go in the executables for Windows, and `sign` is the command that signs them after `cromo build --release`. Packages come later.

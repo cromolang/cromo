@@ -2,7 +2,7 @@
 // the fields of a logger, the lines of JSON, a message of more lines kept on one,
 // the file and the standard error, a copy of a logger, and the lines of many tasks,
 // never mixed.
-// program-env: OUT={dir}/../out/logs
+// program-env: OUT={dir}/../out2/logs
 // expect-stderr: INFO  to the standard error
 // expect-stderr: WARN  again there user=7
 // expect-output: INFO  started

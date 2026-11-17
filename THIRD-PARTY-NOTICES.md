@@ -80,6 +80,22 @@ The programs that use the windows of the library contain the font JetBrains Mono
 
 The programs that use the windows of the library contain a part of the icons of Lucide 1.68.0, by Lucide Icons and Contributors: <https://lucide.dev>. Licensed under the ISC license, and the icons derived from Feather under the MIT license. Its license is in `licenses/lucide.txt` (`third_party/lucide/LICENSE` in the repository).
 
+## FreeBSD msun (fdlibm)
+
+The programs that use `std.math` contain functions ported to Cromo from msun, the mathematical library of FreeBSD, which comes from fdlibm of Sun Microsystems: <https://github.com/freebsd/freebsd-src/tree/main/lib/msun>. Its notice, which is also at the top of `lib/std/math.cro`:
+
+```
+Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+Copyright (C) 2004 by Sun Microsystems, Inc. All rights reserved.
+
+Developed at SunPro/SunSoft, a Sun Microsystems, Inc. business.
+Permission to use, copy, modify, and distribute this
+software is freely granted, provided that this notice
+is preserved.
+```
+
+One function follows `scalbn` of musl (<https://musl.libc.org>, MIT license, Copyright 2005-2020 Rich Felker, et al.).
+
 ## zlib and zstd
 
 `cromo` links statically zlib (<https://zlib.net>, zlib license) and zstd (<https://github.com/facebook/zstd>, BSD license), which LLVM uses.

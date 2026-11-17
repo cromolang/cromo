@@ -3233,3 +3233,143 @@ i64 cromo_arg_length(i64 index) {
 }
 
 #endif
+
+#if defined(__x86_64__)
+
+// ---- fma(a, b, c) (D555) ----
+// a * b + c rounded once. With `--cpu x86-64-v3` it is one instruction; for the
+// first x86-64, which has none, LLVM calls `fma` and `fmaf`, the names of C, and
+// these are the two: the product in 128 bits, exact, the sum with what is lost
+// under it kept as one bit, and one rounding to the nearest, ties to even. On
+// ARM64 it is always an instruction. Weak on Linux, where a C library linked with
+// the program can have its own.
+
+typedef unsigned __int128 u128;
+
+#ifdef _WIN32
+#define FMA_WEAK
+#else
+#define FMA_WEAK __attribute__((weak))
+#endif
+
+static int fma_high_zeros(u128 value) {
+    u64 high = (u64)(value >> 64);
+    return high ? __builtin_clzll(high) : 64 + __builtin_clzll((u64)value);
+}
+
+// (-1)^negative * mantissa * 2^exponent, the mantissa with its highest bit at 63 and
+// its lowest telling if something was lost under it; a mantissa of 0 is the zero of
+// two numbers that cancel.
+typedef struct {
+    u64 mantissa;
+    int exponent;
+    int negative;
+} FmaSum;
+
+// x * y * 2^productExponent + z * 2^zExponent, none of the three 0.
+static FmaSum fma_sum(u64 x, u64 y, int productExponent, int productNegative, u64 z, int zExponent, int zNegative) {
+    // Both with the highest bit at 125: room for a carry, and zeros under them.
+    u128 product = (u128)x * y;
+    int shift = fma_high_zeros(product) - 2;
+    product <<= shift;
+    productExponent -= shift;
+    u128 addend = z;
+    shift = fma_high_zeros(addend) - 2;
+    addend <<= shift;
+    zExponent -= shift;
+
+    u128 large = product, small = addend;
+    int exponent = productExponent, distance = productExponent - zExponent;
+    int largeNegative = productNegative, smallNegative = zNegative;
+    if (distance < 0) {
+        large = addend, small = product;
+        exponent = zExponent, distance = -distance;
+        largeNegative = zNegative, smallNegative = productNegative;
+    }
+    if (distance >= 128) {
+        small = 1;
+    } else if (distance > 0) {
+        u128 lost = small & (((u128)1 << distance) - 1);
+        small = (small >> distance) | (lost != 0);
+    }
+    FmaSum sum;
+    sum.negative = largeNegative;
+    u128 total;
+    if (largeNegative == smallNegative) {
+        total = large + small;
+    } else if (large >= small) {
+        total = large - small;
+    } else {
+        total = small - large;
+        sum.negative = smallNegative;
+    }
+    if (total == 0) {
+        sum.mantissa = 0;
+        sum.exponent = 0;
+        sum.negative = 0;
+        return sum;
+    }
+    shift = fma_high_zeros(total);
+    total <<= shift;
+    sum.mantissa = (u64)(total >> 64) | ((u64)total != 0);
+    sum.exponent = exponent - shift + 64;
+    return sum;
+}
+
+// The bits of a number of `width` bits, with `fraction` of them after the point,
+// from a sum: rounded once, also when it is too small for a whole mantissa.
+static u64 fma_round(FmaSum sum, int width, int fraction) {
+    int top = (1 << (width - 1 - fraction)) - 1;  // the exponent of the infinities
+    u64 sign = (u64)sum.negative << (width - 1);
+    if (sum.mantissa == 0) return 0;
+    int exponent = sum.exponent + 63 + top / 2;
+    if (exponent >= top) return sign | ((u64)top << fraction);
+    u64 mantissa = sum.mantissa;
+    if (exponent < 1) {
+        int more = 1 - exponent;
+        mantissa = more > 63 ? 1 : (mantissa >> more) | ((mantissa & (((u64)1 << more) - 1)) != 0);
+        exponent = 1;
+    }
+    int under = 63 - fraction;
+    u64 kept = mantissa >> under;
+    u64 rest = mantissa & (((u64)1 << under) - 1);
+    u64 half = (u64)1 << (under - 1);
+    if (rest > half || (rest == half && (kept & 1))) ++kept;
+    // A mantissa without its first bit is a number too small, with the exponent 0;
+    // one that the rounding made longer goes into the exponent by itself.
+    return sign | ((((u64)(exponent - 1)) << fraction) + kept);
+}
+
+FMA_WEAK double fma(double x, double y, double z) {
+    union { double number; u64 bits; } a = {x}, b = {y}, c = {z}, result;
+    int ea = (int)(a.bits >> 52) & 0x7FF, eb = (int)(b.bits >> 52) & 0x7FF, ec = (int)(c.bits >> 52) & 0x7FF;
+    u64 ma = a.bits & 0xFFFFFFFFFFFFFull, mb = b.bits & 0xFFFFFFFFFFFFFull, mc = c.bits & 0xFFFFFFFFFFFFFull;
+    // Infinities, NaN and a product that is 0: the sum of C says the same. But not for
+    // an infinite c alone: a product too large would be an infinity too.
+    if (ea == 0x7FF || eb == 0x7FF || (ea == 0 && ma == 0) || (eb == 0 && mb == 0)) return x * y + z;
+    if (ec == 0x7FF) return z;
+    if (ec == 0 && mc == 0) return x * y;  // one rounding, and the sign of a product that becomes 0
+    if (ea) ma |= 1ull << 52; else ea = 1;
+    if (eb) mb |= 1ull << 52; else eb = 1;
+    if (ec) mc |= 1ull << 52; else ec = 1;
+    FmaSum sum = fma_sum(ma, mb, ea + eb - 2150, (int)((a.bits ^ b.bits) >> 63), mc, ec - 1075, (int)(c.bits >> 63));
+    result.bits = fma_round(sum, 64, 52);
+    return result.number;
+}
+
+FMA_WEAK float fmaf(float x, float y, float z) {
+    union { float number; u32 bits; } a = {x}, b = {y}, c = {z}, result;
+    int ea = (int)(a.bits >> 23) & 0xFF, eb = (int)(b.bits >> 23) & 0xFF, ec = (int)(c.bits >> 23) & 0xFF;
+    u32 ma = a.bits & 0x7FFFFF, mb = b.bits & 0x7FFFFF, mc = c.bits & 0x7FFFFF;
+    if (ea == 0xFF || eb == 0xFF || (ea == 0 && ma == 0) || (eb == 0 && mb == 0)) return x * y + z;
+    if (ec == 0xFF) return z;
+    if (ec == 0 && mc == 0) return x * y;
+    if (ea) ma |= 1u << 23; else ea = 1;
+    if (eb) mb |= 1u << 23; else eb = 1;
+    if (ec) mc |= 1u << 23; else ec = 1;
+    FmaSum sum = fma_sum(ma, mb, ea + eb - 300, (int)((a.bits ^ b.bits) >> 31), mc, ec - 150, (int)(c.bits >> 31));
+    result.bits = (u32)fma_round(sum, 32, 23);
+    return result.number;
+}
+
+#endif

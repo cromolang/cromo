@@ -632,6 +632,70 @@ true 8000000000000000
 
 I bit che seguono quelli di 1,0 sono quelli dell'`f64` successivo, e la differenza è la precisione del tipo intorno a 1. -0,0 è uguale a 0,0, ma i suoi bit no. Gli interi non hanno `bits()`: sono già i loro bit.
 
+### Un prodotto e una somma arrotondati una volta sola
+
+Ogni operazione sui numeri in virgola mobile arrotonda il suo risultato, quindi `a * b + c` arrotonda due volte: il prodotto, poi la somma. `fma(a, b, c)` calcola lo stesso valore tenendo il prodotto esatto e arrotondando una volta sola, alla fine. I tre numeri sono tutti `f64` o tutti `f32`, e un letterale fra loro prende il tipo degli altri. Tre [vettori](collections.md#vettori) di questi numeri, come `f32x8`, sono calcolati numero per numero.
+
+```cromo
+i32 main() {
+    f64 a = 1.0 + 1.0 / 134217728.0  // 1 + 2^-27
+    f64 square = a * a               // arrotondato: l'ultima parte del prodotto si perde
+    println("{} {}", a * a - square, fma(a, a, -square))
+    ret 0
+}
+```
+
+```output
+0 5.551115123125783e-17
+```
+
+Il secondo numero è ciò che il prodotto ha perso quando è stato arrotondato: con `fma` un programma può calcolare i propri errori di arrotondamento. Dà anche, bit per bit, i risultati dei programmi scritti in C che usano la `fma` del C, come il codice di una rete neurale.
+
+Su ARM64, e su x86-64 in un programma compilato con `--cpu x86-64-v3`, `fma` è una sola istruzione del processore, più veloce di un prodotto e una somma. Un programma per ogni x86-64 chiama una funzione che dà lo stesso risultato, alcune decine di volte più lenta. Il compilatore non trasforma mai da solo `a * b + c` in `fma`: il risultato di un programma non dipende dal processore per cui è compilato.
+
+## Matematica
+
+La radice quadrata, le potenze, i logaritmi e le funzioni trigonometriche sono nel modulo [std.math](std.math.html). Prendono e danno `f64`; un intero e un `f32` sono convertiti all'ingresso.
+
+```cromo
+import std.math
+
+i32 main() {
+    println("{} {}", math.sqrt(2.0), math.hypot(3.0, 4.0))
+    println("{} {} {}", math.pow(2.0, 10.0), math.exp(2.0), math.log2(1024.0))
+    println("{:.4f} {:.4f}", math.sin(math.pi() / 6.0), math.atan2(1.0, 1.0) * 4.0)
+    println("{} {} {} {}", math.floor(-2.5), math.ceil(-2.5), math.trunc(-2.5), math.round(-2.5))
+    println("{} {}", math.mod(7.5, 2.0), math.min(3.0, -1.0))
+    f64 none = math.sqrt(-1.0)
+    println("{} {} {}", none, math.isNaN(none), math.isInfinite(1.0 / 0.0))
+    f32 side = 3.0
+    println("{}", f32(math.sqrt(side)))
+    ret 0
+}
+```
+
+```output
+1.4142135623730951 5
+1024 7.38905609893065 10
+0.5000 3.1416
+-3 -2 -2 -3
+1.5 -1
+nan true true
+1.7320508
+```
+
+| Funzioni | Cosa danno |
+|---|---|
+| `sqrt(x)`, `hypot(x, y)` | la radice quadrata, e quella di `x * x + y * y` |
+| `exp(x)`, `log(x)`, `log2(x)`, `log10(x)`, `pow(x, y)` | `e` alla `x`, i logaritmi, `x` alla `y` |
+| `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2(y, x)` | la trigonometria, con gli angoli in radianti |
+| `floor`, `ceil`, `trunc`, `round` | l'intero sotto, sopra, verso lo zero, e il più vicino, con le metà lontano dallo zero |
+| `abs(x)`, `mod(x, y)`, `min(a, b)`, `max(a, b)` | senza il segno, il resto con il segno di `x`, il minore e il maggiore |
+| `isNaN(x)`, `isInfinite(x)` | se `x` non è un numero, o è un infinito |
+| `pi()`, `e()`, `infinity()`, `nan()` | le costanti, scritte come funzioni |
+
+Il modulo è scritto in Cromo e non chiama la libreria C del sistema, quindi un programma dà gli stessi numeri su Windows, Linux e Android, su x86-64 e su ARM64, bit per bit. La radice quadrata e gli arrotondamenti sono esatti; le altre sono entro un'unità dell'ultima cifra del risultato vero, come nelle librerie C. Una funzione senza risultato, come la radice quadrata di un numero negativo, dà un valore che non è un numero: `isNaN` lo riconosce, mentre `==` è falso anche con se stesso.
+
 ## Conversioni
 
 Una conversione che può cambiare il valore si scrive come una chiamata con il nome del tipo: `i32(x)`, `f64(n)`, `u8(c)`. Il compilatore la chiede ovunque la conversione non sia implicita:
@@ -759,5 +823,6 @@ Il messaggio dell'eccezione dice quale dei due errori è: `'abc' is not a valid 
 - Gli operatori bit a bit legano più dei confronti; `c ? a : b` lega meno di tutti e raggruppa da destra; gli assegnamenti, `++` e `--` sono istruzioni.
 - La divisione intera tronca verso lo zero, e `%` ha il segno del dividendo.
 - L'overflow degli interi, la divisione intera per zero e uno shift di un numero di posizioni fuori dalla larghezza sono panic nelle build di debug; con `--release` l'overflow ricomincia dall'estremo opposto, il numero di posizioni viene preso modulo la larghezza, e la divisione per zero resta un panic. I numeri in virgola mobile danno `inf` e `nan`.
-- `wrapAdd`, `wrapSub` e `wrapMul` fanno il wrap-around di proposito; `countOnes`, `trailingZeros`, `leadingZeros`, `rotateLeft` e `rotateRight` lavorano sui bit; `x.bits()` e `f64.fromBits(b)` danno e prendono i bit di un numero in virgola mobile.
+- `wrapAdd`, `wrapSub` e `wrapMul` fanno il wrap-around di proposito; `countOnes`, `trailingZeros`, `leadingZeros`, `rotateLeft` e `rotateRight` lavorano sui bit; `x.bits()` e `f64.fromBits(b)` danno e prendono i bit di un numero in virgola mobile; `fma(a, b, c)` è `a * b + c` arrotondato una volta sola.
+- `std.math` ha la radice quadrata, le potenze, i logaritmi, la trigonometria e gli arrotondamenti, di `f64`, con gli stessi risultati su ogni sistema.
 - Le conversioni si scrivono come `i32(x)`: gli interi tengono i bit più bassi, i numeri in virgola mobile vengono troncati, e `bool` non è un numero. `i32("42")` legge un numero da un testo e lancia un `Error` quando non ci riesce.

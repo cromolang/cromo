@@ -136,6 +136,7 @@ Un letterale intero prende il tipo richiesto dal contesto, e deve starci dentro.
 | `wrapAdd(a, b)`, `wrapSub(a, b)`, `wrapMul(a, b)` | aritmetica degli interi che ricomincia dall'estremo opposto, senza il controllo di overflow | [Numeri e operatori](operators.md) |
 | `countOnes(x)`, `trailingZeros(x)`, `leadingZeros(x)` | contano i bit di un intero, come `i32` | [Numeri e operatori](operators.md) |
 | `rotateLeft(x, n)`, `rotateRight(x, n)` | ruotano i bit di un intero | [Numeri e operatori](operators.md) |
+| `fma(a, b, c)` | `a * b + c` di numeri in virgola mobile, arrotondato una volta sola | [Numeri e operatori](operators.md) |
 | `embed(path)` | i byte di un file, letti dal compilatore e messi nel programma, come `list<u8>` | [Finestre e app](gui.md) |
 
 I nomi dei tipi convertono, e così due metodi dei numeri in virgola mobile:

@@ -5,7 +5,7 @@ out/
 CMakeUserPresets.json
 
 # Test output
-tests/out/
+tests/out2/
 
 # Packaged VS Code extension
 tools/vscode-cromo/dist/

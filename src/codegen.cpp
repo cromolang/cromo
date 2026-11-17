@@ -2809,6 +2809,18 @@ private:
                  type + " " + by + ")");
             return {result, value.type};
         }
+        case Intrinsic::Fma: {  // D555: one instruction where the processor has it, `fma` of the runtime where not
+            Value a = generateExpr(*call.args[0]);
+            Value b = generateExpr(*call.args[1]);
+            Value c = generateExpr(*call.args[2]);
+            if (a.type.isVector()) return {vectorCall("fma", a.type, {a, b, c}), a.type};
+            std::string type = llvmType(a.type);
+            std::string fn = std::string("@llvm.fma.") + (a.type.bits == 32 ? "f32" : "f64");
+            intrinsic("declare " + type + " " + fn + "(" + type + ", " + type + ", " + type + ")", fn);
+            inst(result + " = call " + type + " " + fn + "(" + type + " " + a.ref + ", " + type + " " + b.ref + ", " + type +
+                 " " + c.ref + ")");
+            return {result, a.type};
+        }
         case Intrinsic::AtomicCompareExchange: {
             std::string place = arg(0);
             std::string type = atomicType(element);
@@ -2875,6 +2887,12 @@ private:
             Value value = generateExpr(*call.args[0]);
             inst(result + " = bitcast " + llvmType(value.type) + " " + value.ref + " to " + llvmType(call.typeArg));
             return {result, call.typeArg};
+        }
+        case Intrinsic::SquareRoot: {  // D556: the instruction of every processor
+            std::string x = arg(0);
+            intrinsic("declare double @llvm.sqrt.f64(double)", "@llvm.sqrt.f64");
+            inst(result + " = call double @llvm.sqrt.f64(double " + x + ")");
+            return {result, Type::floatType(64)};
         }
         case Intrinsic::DecimalToFloat: {  // D199
             std::string data = arg(0);

@@ -1,0 +1,92 @@
+// What an executable for Windows says of itself (D557) and the command that signs it
+// (D558): the manifest of every executable, here seen by its code page of UTF-8, the
+// version and the texts of the lines of cromo.mod, and the line sign, run after a build
+// with --release only. The project is written by the test in tests/out2.
+// target: windows
+// program-env: CROMO={cromo}
+// program-env: WORK={dir}/../out2/m93_resources
+// expect-output: built: 0, signed false
+// expect-output: code page 65001
+// expect-output: texts true true true true true
+// expect-output: release: 0, signed true: demo.exe
+// expect-output: alone: 0, code page 65001, texts false false
+// expect-output: failed: 1, did not sign demo.exe: it ended with 3
+// expect-output: errors: 2
+// expect-output: cromo.mod:6: error: unknown line author: cromo.mod has the lines module, bin, require, native, version, company, description, copyright and sign
+// expect-output: cromo.mod:2: error: version takes up to four numbers, each up to 65535, as version 1.2.0
+// expect-output: cromo.mod:4: error: the line company is written once
+// expect-output: cromo.mod:5: error: sign takes the command that signs an executable, as sign signtool sign /fd SHA256 /a
+import std.fs
+import std.os
+import std.process
+
+// cromo with its arguments, in the folder of the project: cmd changes the folder.
+process.Output cromo(string work, string args) {
+    string command = os.env("CROMO").replace("/", "\\")
+    ret process.run("cmd", ["/c", "cd /d " + work.replace("/", "\\") + " && " + command + " " + args])
+}
+
+// Whether the bytes have this text in UTF-16, as the resources keep it.
+bool has(list<u8> bytes, string text) {
+    list<u8> wanted
+    for (u8 c in text.bytes()) {
+        wanted.add(c)
+        wanted.add(0)
+    }
+    for (i64 i = 0; i + wanted.len() <= bytes.len(); i++) {
+        if (bytes[i] != wanted[0]) {
+            continue
+        }
+        bool same = true
+        for (i64 k = 1; k < wanted.len() && same; k++) {
+            same = bytes[i + k] == wanted[k]
+        }
+        if (same) {
+            ret true
+        }
+    }
+    ret false
+}
+
+i32 main() {
+    string work = os.env("WORK").replace("\\", "/")
+    fs.removeAll(work)
+    fs.removeAll(work + "_alone")
+    fs.createFolders(work)
+    fs.createFolders(work + "_alone")
+    string program = "import unsafe\n\nextern \"kernel32\" {\n    u32 GetACP()\n}\n\ni32 main() {\n    println(\"code page {}\", GetACP())\n    ret 0\n}\n"
+    fs.writeText(work + "/main.cro", program)
+    fs.writeText(work + "_alone/one.cro", program)
+    string lines = "module example.com/demo\nversion 1.2.3\ncompany Anna Rossi and sons  // who makes it\ndescription A small demo\ncopyright (c) 2026 Anna Rossi\n"
+    fs.writeText(work + "/cromo.mod", lines + "sign cmd /c echo>signed.txt\nbin demo main.cro\n")
+
+    process.Output result = cromo(work, "build")
+    println("built: {}, signed {}", result.code, fs.exists(work + "/signed.txt"))
+    print("{}", process.run(work + "/demo.exe", []).out)
+    list<u8> bytes = fs.readBytes(work + "/demo.exe")
+    println("texts {} {} {} {} {}", has(bytes, "Anna Rossi and sons"), has(bytes, "A small demo"), has(bytes, "1.2.3"),
+        has(bytes, "(c) 2026 Anna Rossi"), has(bytes, "OriginalFilename"))
+
+    result = cromo(work, "build --release")
+    println("release: {}, signed {}: {}", result.code, fs.exists(work + "/signed.txt"), fs.readText(work + "/signed.txt").trim())
+
+    // A file without a project: the manifest, and no version.
+    result = cromo(work + "_alone", "build one.cro")
+    bytes = fs.readBytes(work + "_alone/one.exe")
+    println("alone: {}, {}, texts {} {}", result.code, process.run(work + "_alone/one.exe", []).out.trim(), has(bytes, "OriginalFilename"),
+        has(bytes, "CompanyName"))
+
+    // A command that fails stops the build.
+    fs.writeText(work + "/cromo.mod", lines + "sign cmd /c exit 3 &rem\nbin demo main.cro\n")
+    result = cromo(work, "build --release")
+    string said = result.err.trim()
+    println("failed: {}, {}", result.code, said.slice(said.find("did not sign"), said.len()))
+
+    fs.writeText(work + "/cromo.mod", "module example.com/demo\nversion 1.2.70000\ncompany One\ncompany Two\nsign \"signtool sign\nauthor Anna\nbin demo main.cro\n")
+    result = cromo(work, "build")
+    println("errors: {}", result.code)
+    for (string line in result.err.trim().split("\n")) {
+        println("{}", line.trim())
+    }
+    ret 0
+}

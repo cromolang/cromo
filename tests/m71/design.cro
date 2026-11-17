@@ -3,7 +3,7 @@
 // errors of the command line.
 // target: windows
 // program-env: CROMO={cromo}
-// program-env: OUT={dir}/../out/design
+// program-env: OUT={dir}/../out2/design
 // expect-output: made 0 notes_form.cro
 // expect-output: // Made by cromo design from notes.form: change the form with cromo design, not this file.
 // expect-output: import std.gui

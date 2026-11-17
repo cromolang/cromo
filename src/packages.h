@@ -35,6 +35,13 @@ struct ProjectFile {
     std::string module;
     std::vector<Require> requires_;
     std::vector<Native> natives;
+    // D557: what the executables for Windows say of themselves, and D558, the command
+    // that signs them. Only those of the project that is built are used.
+    std::string version;      // "1.2.0", up to four numbers, or ""
+    std::string company;
+    std::string description;
+    std::string copyright;
+    std::vector<std::string> sign;  // the command and its arguments, or nothing
 };
 
 // A package of a program, in the version that the selection chose (D378).

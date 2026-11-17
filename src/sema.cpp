@@ -33,7 +33,7 @@ bool isPrintFunction(const std::string& name) {
     return name == "print" || name == "println" || name == "eprint" || name == "eprintln" || name == "format";
 }
 
-// The functions that every program can call without declaring them (D38, D102, D470, D502).
+// The functions that every program can call without declaring them (D38, D102, D470, D502, D555).
 bool isWrapFunction(const std::string& name) { return name == "wrapAdd" || name == "wrapSub" || name == "wrapMul"; }
 
 // The functions of the bits (D502).
@@ -47,7 +47,7 @@ std::optional<Intrinsic> findBitFunction(const std::string& name) {
 }
 
 bool isBuiltinFunction(const std::string& name) {
-    return isPrintFunction(name) || name == "panic" || name == "assert" || isWrapFunction(name) || name == "embed" ||
+    return isPrintFunction(name) || name == "panic" || name == "assert" || isWrapFunction(name) || name == "embed" || name == "fma" ||
            findBitFunction(name).has_value();
 }
 
@@ -72,7 +72,7 @@ std::optional<Intrinsic> findIntrinsic(const std::string& name) {
         {"copyMemory", Intrinsic::CopyMemory}, {"compareMemory", Intrinsic::CompareMemory},
         {"checkIndex", Intrinsic::CheckIndex}, {"argumentCount", Intrinsic::ArgumentCount},
         {"argumentLength", Intrinsic::ArgumentLength}, {"argumentData", Intrinsic::ArgumentData},
-        {"decimalToFloat", Intrinsic::DecimalToFloat}, {"hashBytes", Intrinsic::HashBytes},
+        {"decimalToFloat", Intrinsic::DecimalToFloat}, {"squareRoot", Intrinsic::SquareRoot}, {"hashBytes", Intrinsic::HashBytes},
         {"callC", Intrinsic::CallC}, {"systemCall", Intrinsic::SystemCall}, {"environment", Intrinsic::Environment},
         {"exitProcess", Intrinsic::ExitProcess}, {"threadStart", Intrinsic::ThreadStart},
         {"threadWait", Intrinsic::ThreadWait}, {"threadRethrow", Intrinsic::ThreadRethrow},
@@ -4241,6 +4241,42 @@ private:
         return value;
     }
 
+    // `fma(a, b, c)` (D555): a * b + c rounded once, three f32 or three f64, or three
+    // vectors of them, number by number. A literal takes the type of the others, or
+    // the type expected, or f64.
+    Type checkFma(CallExpr& call, std::optional<Type> expected) {
+        if (call.args.size() != 3) {
+            diag_->error(call.loc, "fma() takes three numbers: fma(a, b, c) is a * b + c");
+            checkIgnored(call.args);
+            return Type::error();
+        }
+        call.intrinsic = Intrinsic::Fma;
+        Type types[3];
+        Type type = Type::error();
+        bool failed = false;
+        for (size_t i = 0; i < 3; ++i) {
+            types[i] = checkExpr(call.args[i], std::nullopt);
+            if (types[i].isError()) failed = true;
+            if (type.isError() && !types[i].isError() && !types[i].isUntyped()) type = types[i];
+        }
+        if (failed) return Type::error();
+        if (type.isError()) type = expected && expected->isFloat() ? *expected : Type::floatType(64);
+        if (!type.isFloat() && !(type.isVector() && type.array->element.isFloat())) {  // P85: the vectors of them too
+            diag_->error(call.loc, "fma() works on f32 or f64, not on " + type.name() + "");
+            return Type::error();
+        }
+        for (size_t i = 0; i < 3; ++i) {
+            if (types[i].isUntyped()) {
+                if (!(type.isVector() ? splatInto(call.args[i], type) : coerce(call.args[i], type))) return Type::error();
+            } else if (types[i] != type) {
+                diag_->error(call.args[i]->loc, "the numbers of fma() have the same type: this is " + types[i].name() +
+                                                    ", not " + type.name() + "");
+                return Type::error();
+            }
+        }
+        return type;
+    }
+
     Type checkBinary(ExprPtr& expr, std::optional<Type> expected) {
         auto& binary = static_cast<BinaryExpr&>(*expr);
         if (binary.op == BinaryOp::And || binary.op == BinaryOp::Or) {
@@ -5041,6 +5077,10 @@ private:
             params = {{ParamMode::Read, "data", addr}, {ParamMode::Read, "length", i64}, {ParamMode::Read, "bits", i64}};
             result = Type::floatType(64);
             break;
+        case Intrinsic::SquareRoot:  // for std.math (D556)
+            params = {{ParamMode::Read, "x", Type::floatType(64)}};
+            result = Type::floatType(64);
+            break;
         case Intrinsic::HashBytes:
             params = {{ParamMode::Read, "data", addr}, {ParamMode::Read, "length", i64}};
             result = Type::intType(64, false);
@@ -5122,6 +5162,7 @@ private:
         case Intrinsic::LeadingZeros:
         case Intrinsic::RotateLeft:
         case Intrinsic::RotateRight:
+        case Intrinsic::Fma:  // made by checkFma (D555)
         case Intrinsic::None: break;
         }
         if (atomic && !element.isParam() && !element.isInt() && !element.isBool()) {
@@ -5533,6 +5574,7 @@ private:
             if (call.callee == "assert") return checkAssert(call);
             if (isWrapFunction(call.callee)) return checkWrap(expr);
             if (std::optional<Intrinsic> bits = findBitFunction(call.callee)) return checkBitFunction(call, *bits, expected);
+            if (call.callee == "fma") return checkFma(call, expected);
             if (call.callee == "embed") return checkEmbed(expr);
         }
         if (!qualified && isUnsafe(call.loc)) {
