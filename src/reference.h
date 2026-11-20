@@ -16,4 +16,9 @@ namespace cromo {
 bool writeReference(const Module& module, const std::deque<SourceFile>& sources, const std::vector<std::string>& modules,
                     const std::string& path, std::string& error);
 
+// D559: the public declarations of one module of the library, `name` as it is imported
+// or "std" for the core, as Markdown: what `cromo ai std.fs` prints. False for a
+// module that is not among those loaded.
+bool moduleReference(const Module& module, const std::deque<SourceFile>& sources, const std::string& name, std::string& out);
+
 }  // namespace cromo

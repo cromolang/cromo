@@ -128,15 +128,67 @@ public:
     Reference(const Module& module, const std::deque<SourceFile>& sources, const std::vector<std::string>& modules)
         : module_(module), sources_(sources), modules_(modules) {}
 
-    std::string run() {
-        // The modules of the library, by the first of their files (D202).
+    // D559: the declarations of one module as Markdown, for `cromo ai`: each with its
+    // signature in a block of code and its documentation. False for a module that is
+    // not there.
+    bool text(const std::string& wanted, std::string& out) {
         std::map<std::string, int> firsts;
+        std::map<std::string, std::vector<Item>> items;
+        collect(firsts, items);
+        auto found = firsts.find(wanted);
+        if (found == firsts.end()) return false;
+        std::vector<Item>& list = items[wanted];
+        std::stable_sort(list.begin(), list.end(), [](const Item& a, const Item& b) { return a.order < b.order; });
+        out = "# " + std::string(wanted == "std" ? "The core: what every program sees without an import" : wanted) + "\n\n";
+        std::string about = markdownOf(docs(found->second).module());
+        if (!about.empty()) out += about + "\n\n";
+        for (const Item& item : list) {
+            out += "## " + item.name + "\n\n```cromo\n" + item.signature + "\n```\n\n";
+            if (!item.doc.empty()) out += item.doc + "\n\n";
+            for (const Item& member : item.members) {
+                out += "- `" + member.signature + "`";
+                if (!member.doc.empty()) {
+                    // On one line: the first paragraph says what it does, and the rest follows it.
+                    std::string doc = member.doc;
+                    for (char& c : doc) {
+                        if (c == '\n') c = ' ';
+                    }
+                    out += ": " + doc;
+                }
+                out += "\n";
+            }
+            if (!item.members.empty()) out += "\n";
+        }
+        return true;
+    }
+
+    std::string run() {
+        std::map<std::string, int> firsts;
+        std::map<std::string, std::vector<Item>> items;
+        collect(firsts, items);
+        std::string out = "{\"modules\":[";
+        bool firstModule = true;
+        for (const auto& [name, file] : firsts) {
+            std::vector<Item>& list = items[name];
+            std::stable_sort(list.begin(), list.end(), [](const Item& a, const Item& b) { return a.order < b.order; });
+            out += std::string(firstModule ? "" : ",") + "{\"name\":" + json(name) + ",\"doc\":" + json(markdownOf(docs(file).module())) +
+                   ",\"items\":[";
+            for (size_t i = 0; i < list.size(); ++i) out += (i ? "," : "") + itemJson(list[i]);
+            out += "]}";
+            firstModule = false;
+        }
+        return out + "]}\n";
+    }
+
+private:
+    // The public declarations of each module shown, and the first file of each.
+    void collect(std::map<std::string, int>& firsts, std::map<std::string, std::vector<Item>>& items) {
+        // The modules of the library, by the first of their files (D202).
         for (size_t i = 1; i < module_.files.size(); ++i) {  // 0 is the program that imports them
             const ModuleFile& file = module_.files[i];
             bool shown = file.name == "std" || std::find(modules_.begin(), modules_.end(), file.name) != modules_.end();
             if (file.isLibrary && file.part < 0 && shown) firsts.emplace(file.name, int(i));
         }
-        std::map<std::string, std::vector<Item>> items;
         // The functions and the types that the compiler knows, in the core (D475).
         for (const BuiltinDoc& builtin : builtinDocs()) {
             Item item;
@@ -185,21 +237,8 @@ public:
             items[moduleOf(decl.loc.file)].push_back(std::move(item));
         }
 
-        std::string out = "{\"modules\":[";
-        bool firstModule = true;
-        for (const auto& [name, file] : firsts) {
-            std::vector<Item>& list = items[name];
-            std::stable_sort(list.begin(), list.end(), [](const Item& a, const Item& b) { return a.order < b.order; });
-            out += std::string(firstModule ? "" : ",") + "{\"name\":" + json(name) + ",\"doc\":" + json(markdownOf(docs(file).module())) +
-                   ",\"items\":[";
-            for (size_t i = 0; i < list.size(); ++i) out += (i ? "," : "") + itemJson(list[i]);
-            out += "]}";
-            firstModule = false;
-        }
-        return out + "]}\n";
     }
 
-private:
     bool library(int file) const {
         return file >= 0 && size_t(file) < module_.files.size() && module_.files[file].isLibrary && !moduleOf(file).empty();
     }
@@ -243,6 +282,11 @@ bool writeReference(const Module& module, const std::deque<SourceFile>& sources,
     }
     out << text;
     return true;
+}
+
+bool moduleReference(const Module& module, const std::deque<SourceFile>& sources, const std::string& name, std::string& out) {
+    std::vector<std::string> modules = {name};
+    return Reference(module, sources, modules).text(name, out);
 }
 
 }  // namespace cromo

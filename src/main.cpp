@@ -63,6 +63,8 @@ void printUsage(FILE* out) {
         "  fmt        formats the .cro files, by default of this folder and its subfolders;\n"
         "             --check only lists the ones to format, - formats the standard input\n"
         "  lsp        the language server for editors, on the standard input and output\n"
+        "  ai         what an AI needs to write Cromo: the rules, the syntax and examples; with\n"
+        "             the name of a module, as cromo ai std.fs or cromo ai core, its reference\n"
         "  get        adds a package to the cromo.mod of this folder, or raises its version: cromo get\n"
         "             github.com/anna/geometry, with @v2 or @v1.4.0 for a version, and a name after\n"
         "             it for its imports; build, run and test download what is missing\n"
@@ -106,6 +108,7 @@ struct Compilation {
     bool runtime = false;  // --runtime: the object of std.runtime, for the archive of the runtime (D393)
     bool checkNames = false;  // --check-names: only the names of the modules, for the pilot (D423)
     std::string reference;    // --reference <file>: the documentation of the library, for the site (D519)
+    std::string aiModule;     // cromo ai <module>: its reference on the standard output (D559)
     std::vector<std::string> filters;  // cromo test: the names of the tests to run (D352)
     std::vector<std::string> tests;    // cromo test: the names of the tests, by their number
     bool apk = false;  // --target android: the APK with both architectures (D453)
@@ -270,6 +273,10 @@ int build(Compilation& compilation) {
         codegen.release = true;
         codegen.runtime = true;
         options.objectOnly = true;
+    } else if (!compilation.aiModule.empty()) {
+        // D559: a program that imports the module asked for, never compiled; the core needs none.
+        std::string imports = compilation.aiModule == "std" ? "" : "import " + compilation.aiModule + "\n";
+        sources.push_back({cromo::libraryFile("reference.cro").string(), imports});
     } else if (!compilation.reference.empty()) {
         // D519: a program that imports every module of the library, never compiled.
         std::string imports;
@@ -287,7 +294,7 @@ int build(Compilation& compilation) {
         std::fprintf(stderr, "cromo: cannot read %s\n", sources[1].path.c_str());
         return 2;
     }
-    if (compilation.reference.empty() && !compilation.runtime && !cromo::isLibraryFile(inputPath)) {
+    if (compilation.reference.empty() && compilation.aiModule.empty() && !compilation.runtime && !cromo::isLibraryFile(inputPath)) {
         std::error_code ec;
         std::string project = cromo::projectFolder(fs::absolute(inputPath, ec).parent_path().string());
         if (!project.empty() && !preparePackages(project, options.target)) return 1;
@@ -301,6 +308,13 @@ int build(Compilation& compilation) {
     bool tests = codegen.tests;
     cromo::Module module = cromo::loadProgram(sources, diag, options.target, nullptr, tests);
     for (const cromo::ModuleFile& file : module.files) compilation.network = compilation.network || file.name == "std.net";
+    if (!compilation.aiModule.empty()) {
+        if (diag.hasErrors()) return 1;
+        std::string text;
+        if (!cromo::moduleReference(module, sources, compilation.aiModule, text)) return 1;
+        std::fwrite(text.data(), 1, text.size(), stdout);
+        return 0;
+    }
     if (!compilation.reference.empty()) {
         if (diag.hasErrors()) return 1;
         std::string error;
@@ -412,6 +426,44 @@ int build(Compilation& compilation) {
         }
     }
     return 0;
+}
+
+// D559: `cromo ai` prints lib/ai.md, what an AI needs to write Cromo, and the names of
+// the modules; `cromo ai std.fs` the reference of a module, and `cromo ai core` that of
+// the core, from the declarations and the documentation of the library itself.
+int aiCommand(const std::vector<std::string>& args) {
+    if (cromo::libraryFolder().empty()) {
+        std::fputs("cromo: cannot find the library: lib/ is missing next to the folder of cromo\n", stderr);
+        return 2;
+    }
+    std::vector<std::string> names = cromo::libraryModuleNames();
+    std::string listed = "core";
+    for (const std::string& name : names) {
+        if (name != "std.runtime") listed += ", " + name;
+    }
+    if (args.size() == 2) {
+        std::string text;
+        if (!cromo::readSourceFile(cromo::libraryFile("ai.md").string(), text)) {
+            std::fputs("cromo: cannot read ai.md in the library\n", stderr);
+            return 2;
+        }
+        std::fwrite(text.data(), 1, text.size(), stdout);
+        std::printf("\n## The modules\n\n`cromo ai <module>` prints the reference of one of them: %s.\n", listed.c_str());
+        return 0;
+    }
+    if (args.size() != 3) {
+        std::fputs("cromo: ai takes nothing, or the name of one module, as cromo ai std.fs\n", stderr);
+        return 2;
+    }
+    std::string wanted = args[2] == "core" ? "std" : args[2];
+    if (wanted != "std" && wanted.rfind("std.", 0) != 0) wanted = "std." + wanted;  // cromo ai fs
+    if (wanted == "std.runtime" || (wanted != "std" && std::find(names.begin(), names.end(), wanted) == names.end())) {
+        std::fprintf(stderr, "cromo: the library has no module %s: it has %s\n", args[2].c_str(), listed.c_str());
+        return 2;
+    }
+    Compilation compilation;
+    compilation.aiModule = wanted;
+    return build(compilation);
 }
 
 // Reads the options of build and run, from `args[first]` to `args[last]`
@@ -1313,6 +1365,7 @@ int main(int argc, char** argv) {
 #endif
         return run(compilation, programArgs);
     }
+    if (command == "ai") return aiCommand(args);
     if (command == "fmt") return formatCommand(args);
     if (command == "lsp") return cromo::runLanguageServer();  // D170
     if (command == "rls") {

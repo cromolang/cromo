@@ -2597,6 +2597,9 @@ i32 total = sum.sum()
 ### D558. The signature of an executable: a command of `cromo.mod`
 *2026-11-17.* Chosen by the author. `cromo` does not sign: as with Cargo and Go, an executable for Windows is signed by the tool of who has the certificate, `signtool` or that of a service, since the keys of the certificates of today are in a token or in the cloud and not in a file. A line `sign` of `cromo.mod` has that command, which `cromo build --release` runs on each executable it writes, so that the signature is a part of the build and `cromo` touches no key. Writing the signature in `cromo`, as for the APK (D453), would work only with the certificates of the store of Windows and not with the services.
 
+### D559. `cromo ai`: what an AI needs to write Cromo
+*2026-11-20.* Chosen by the author. Much code is written today with an AI, and an AI that has never seen Cromo writes C++ with other keywords: `return`, a variable called `move`, a block alone, a literal without a type. `cromo ai` prints what it needs to write Cromo that compiles: the rules that are easy to get wrong, the syntax with whole programs as examples, and the commands; `cromo ai std.fs` prints the reference of a module, and `cromo ai core` that of the core. It is in `cromo` and not only on the site, so that the text is of the version installed, and is there without a network: an AI that works in a terminal asks the compiler it is about to use.
+
 ---
 
 ## Proposed
@@ -3056,6 +3059,11 @@ A component keeps the distances from the edges of its parent, the content of the
 - `sign` takes a command and its arguments, with `"` around one that has spaces, and `//` of an address as `http://...` is not a comment. `cromo build --release` for Windows runs it after the link, with the path of the executable as one more argument at the end, as `signtool` wants it; a command that does not end with 0 stops the build with an error. `cromo run`, `cromo test` and a build without `--release` do not sign. The command is that of the project built, never of a package: but who builds with `--release` a project taken from others runs its command, as with a `build.rs` of Cargo.
 - The wrong lines are errors of `cromo.mod` with their numbers, reported with those of the other lines.
 - Not done: a product name different from that of the executable, the texts in more languages, and the same lines for the version of an APK (D455).
+### P88. `cromo ai` (D559)
+- `cromo ai` prints `lib/ai.md`, the file `library/ai.md` of the sources, written by hand, and after it the names of the modules of the library. It is Markdown for a model, not for a person: short rules, tables, programs. The site serves the same text as `llms.txt`.
+- Every block of Cromo in the text is a whole program, and a test builds them all (`tests/m94`): a rule that the compiler refuses is found when the tests run, not by who trusts the text.
+- `cromo ai std.fs`, or `cromo ai fs`, prints the public declarations of that module with their signatures and their documentation, read from the library as the reference of the site is (D519), so it never falls behind; `cromo ai core` those of the core, with the built-in functions and types. A name that is not a module is an error that lists them.
+- The text is in English only, as the messages of the compiler.
 
 ## Open
 

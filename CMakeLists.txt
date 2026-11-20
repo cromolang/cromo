@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16...3.20)  # 3.16 in WSL for cromo for Linux, without the runtime
-project(cromo VERSION 0.90.0 LANGUAGES CXX)  # 0.milestone.fix (D157)
+project(cromo VERSION 0.94.0 LANGUAGES CXX)  # 0.milestone.fix (D157)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -492,11 +492,11 @@ add_custom_command(
   COMMAND "${CMAKE_COMMAND}" -E rm -rf "${CROMO_LIB_DIR}/std" "${CROMO_LIB_DIR}/tools"
   COMMAND "${CMAKE_COMMAND}" -E make_directory "${CROMO_LIB_DIR}/std" "${CROMO_LIB_DIR}/tools" "${CROMO_LIB_DIR}/windows"
           "${CROMO_LIB_DIR}/linux" "${CROMO_LIB_DIR}/linux/glibc" "${CROMO_LIB_DIR}/linux_arm64"
-  COMMAND "${CMAKE_COMMAND}" -E copy "${CMAKE_SOURCE_DIR}/library/core.cro" "${CROMO_LIB_DIR}"
+  COMMAND "${CMAKE_COMMAND}" -E copy "${CMAKE_SOURCE_DIR}/library/core.cro" "${CMAKE_SOURCE_DIR}/library/ai.md" "${CROMO_LIB_DIR}"
   COMMAND "${CMAKE_COMMAND}" -E copy ${CROMO_STD_MODULES} "${CROMO_LIB_DIR}/std"
   COMMAND "${CMAKE_COMMAND}" -E copy ${CROMO_TOOLS} "${CROMO_LIB_DIR}/tools"
   COMMAND "${CMAKE_COMMAND}" -E touch "${CROMO_RT_DIR}/library.stamp"
-  DEPENDS library/core.cro ${CROMO_STD_MODULES} ${CROMO_TOOLS}
+  DEPENDS library/core.cro library/ai.md ${CROMO_STD_MODULES} ${CROMO_TOOLS}
   COMMENT "Placing the library in lib/")
 add_custom_target(cromo_library ALL DEPENDS "${CROMO_RT_DIR}/library.stamp")
 

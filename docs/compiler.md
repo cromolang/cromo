@@ -597,6 +597,7 @@ Each milestone lists the decisions still open that are needed **before** writing
 | **M91** | `fma(a, b, c)`, also of vectors, with its function in the runtime for the processors without the instruction | none: D555, P85 |
 | **M92** | `std.math`: the square root, the powers, the logarithms, trigonometry and the roundings, of `f64` | none: D556, P86 |
 | **M93** | The manifest and the version of an executable for Windows, from `cromo.mod`, and its line `sign` | none: D557, D558, P87 |
+| **M94** | `cromo ai`: the text for an AI and the reference of a module, from the library | none: D559, P88 |
 | **Last** | Compiler written in Cromo that compiles itself and makes the same archives, when the language is mature (§2, D147, D290, D291) | |
 
 Generics come before containers because `list<T>` is written in Cromo as a generic struct (D37, D39). After M9 the order is D152: the tools come first, because they help to write the library. `cromo update` (D153) downloads the versions from the manifests and the archives of cromolang.org (D285–D289): it came in M28, once the archives were published and the library could download and open them (D403).

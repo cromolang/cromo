@@ -17,6 +17,8 @@ New-Item -ItemType Directory -Force $out | Out-Null
 # The pages, with the version of the archives they link, and the size and the
 # SHA-256 of each archive for the download page.
 Copy-Item (Join-Path $root 'site\*') $out -Recurse
+# What cromo ai prints, for the assistants that read a site: llms.txt (D559).
+Copy-Item (Join-Path $root 'library\ai.md') (Join-Path $out 'llms.txt')
 $values = @{ '@VERSION@' = $version }
 foreach ($archive in @(@('WIN', "win_x86_64-$version.zip"), @('LINUX', "linux_x86_64-$version.tar.gz"))) {
     $path = Join-Path $dist "package\$($archive[1])"

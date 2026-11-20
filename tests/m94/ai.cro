@@ -1,0 +1,59 @@
+// cromo ai (D559): what an AI needs to write Cromo, the reference of a module from
+// the library itself, and the examples of the text, which must all compile: a text
+// that teaches what the compiler refuses would be worse than none. On Windows only:
+// the cromo of the tests is the one of Windows.
+// target: windows
+// program-env: CROMO={cromo}
+// program-env: WORK={dir}/../out2/m94_ai
+// expect-output: text: 0, true true true true
+// expect-output: examples: 13, refused 0
+// expect-output: module: 0, true true true, short name true
+// expect-output: core: 0, true true true true
+// expect-output: unknown: 2, the library has no module nothing: it has core, std.audio
+// expect-output: more: 2, ai takes nothing, or the name of one module, as cromo ai std.fs
+import std.fs
+import std.os
+import std.process
+
+process.Output cromo(string work, string args) {
+    string command = os.env("CROMO").replace("/", "\\")
+    ret process.run("cmd", ["/c", "cd /d " + work.replace("/", "\\") + " && " + command + " " + args])
+}
+
+i32 main() {
+    string work = os.env("WORK").replace("\\", "/")
+    fs.removeAll(work)
+    fs.createFolders(work)
+    process.Output text = cromo(work, "ai")
+    println("text: {}, {} {} {} {}", text.code, text.out.startsWith("# Cromo for an AI"), text.out.contains("## The rules that are easy to get wrong"),
+        text.out.contains("## The modules"), text.out.contains("std.fs, std.gui"))
+
+    // Each block of Cromo of the text is a whole program: it is built, or tested.
+    list<string> parts = text.out.replace("\r\n", "\n").split("```cromo\n")
+    i64 refused = 0
+    for (i64 i = 1; i < parts.len(); i++) {
+        string program = parts[i].slice(0, parts[i].find("```"))
+        string name = format("example{}.cro", i)
+        fs.writeText(work + "/" + name, program)
+        process.Output built = cromo(work, (program.contains("[[test]]") ? "test " : "build ") + name)
+        if (built.code != 0) {
+            refused++
+            println("{}: {}", name, built.err.trim())
+        }
+    }
+    println("examples: {}, refused {}", parts.len() - 1, refused)
+
+    process.Output module = cromo(work, "ai std.fs")
+    process.Output short = cromo(work, "ai fs")
+    println("module: {}, {} {} {}, short name {}", module.code, module.out.startsWith("# std.fs"), module.out.contains("string readText(string path)"),
+        module.out.contains("## File"), short.out == module.out)
+    process.Output core = cromo(work, "ai core")
+    println("core: {}, {} {} {} {}", core.code, core.out.contains("## println"), core.out.contains("sortBy"), core.out.contains("## string"),
+        core.out.contains("list<string> split(string separator) const"))
+    process.Output unknown = cromo(work, "ai nothing")
+    string said = unknown.err.trim()
+    println("unknown: {}, {}", unknown.code, said.slice(said.find("the library"), said.find(", std.cmdline")))
+    process.Output more = cromo(work, "ai std.fs std.os")
+    println("more: {}, {}", more.code, more.err.trim().slice(7, more.err.trim().len()))
+    ret 0
+}
