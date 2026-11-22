@@ -9,6 +9,7 @@
 - [Structs](structs.md)
 - [Enums and switch](enums.md)
 - [Lists, maps and text](collections.md)
+- [Ids and handles: pointing to another object](ids.md)
 - [Formatting text](formatting.md)
 - [Errors](errors.md)
 - [Interfaces and generics](interfaces-generics.md)

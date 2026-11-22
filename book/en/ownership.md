@@ -857,7 +857,7 @@ i32 main() {
 error: expected a type, found 'ref'
 ```
 
-When a program needs to point to another object, as in a graph, it keeps an index into a list instead of a pointer.
+When a program needs to point to another object, as a folder to its parent or the nodes of a graph to each other, it keeps an index into a list instead of a pointer: its id. [Ids and handles: pointing to another object](ids.md) shows how, and what it costs.
 
 ## Exclusivity
 
@@ -993,5 +993,5 @@ A method marked `const` does not modify its object, as [Structs](structs.md) sho
 - `move` is written only in an initialization, an assignment, the argument of a `move` parameter and after `ret`; a read parameter cannot be moved.
 - A parameter is read, modified with `ref`, or taken with `move`, and the call says which; `move const` takes a value without modifying it.
 - `ref` is written on a variable, a field or an element that can be modified, with exactly the type of the parameter.
-- References exist only during a call: no lifetimes to write, no dangling pointers.
+- References exist only during a call: no lifetimes to write, no dangling pointers. An object that points to another keeps its id, an index into a list ([Ids and handles](ids.md)).
 - Two arguments of a call that modifies them are never the same object, nor one part of the other.

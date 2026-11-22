@@ -23,7 +23,7 @@ A panic stops the program with a message and a stack trace. It never goes on wit
 
 - **Deadlocks.** Two threads that wait for each other wait for ever, and so does a `Shared` locked again inside its own `lock`.
 - **Memory that is kept.** There are no leaks from forgetting to free, but a program can keep what it no longer needs: a list that only grows, and the value of a `thread.Shared`, which stays until the end of the program.
-- **An index that is no longer the right one.** Where another language keeps a pointer, a Cromo program keeps an index into a list, or a handle, as the windows and the components of `std.gui`. After the element was removed, the index gives another element or a panic, and the handle a panic: a mistake in the logic of the program, not a corruption of its memory, but the compiler does not find it.
+- **An index that is no longer the right one.** Where another language keeps a pointer, a Cromo program keeps an index into a list, or a handle, as the windows and the components of `std.gui`. After the element was removed, the index gives another element or a panic, and the handle a panic: a mistake in the logic of the program, not a corruption of its memory, but the compiler does not find it ([Ids and handles](ids.md)).
 - **The logic.** A wrong result, a file not flushed, a lock held too long.
 
 ## The unsafe dialect and C
@@ -37,7 +37,7 @@ A program that does not write `import unsafe` itself trusts only these.
 
 ## What simplicity costs
 
-- **No references in fields or in variables.** A graph, a tree with links to the parents and an observer are written with indexes or handles, which are looked up, and checked, each time. In Rust they would be references with lifetimes, or `Rc` and `RefCell`.
+- **No references in fields or in variables.** A graph, a tree with links to the parents and an observer are written with indexes or handles, which are looked up, and checked, each time. In Rust they would be references with lifetimes, or `Rc` and `RefCell`. [Ids and handles](ids.md) shows how they are written, and what they cost.
 - **Copies.** A value that owns memory is copied where it is given without `move`, as in C++. The program is right, and may be slower than it needs to be: `move`, and read and `ref` parameters, avoid the copies.
 - **Checks when the program runs.** The bounds of the indexes are checked also in release builds. The integer overflow is checked only in debug builds: a program released with `--release` wraps around where its tests panicked.
 

@@ -857,7 +857,7 @@ i32 main() {
 error: expected a type, found 'ref'
 ```
 
-Quando un programma deve puntare a un altro oggetto, come in un grafo, tiene un indice in una lista al posto di un puntatore.
+Quando un programma deve puntare a un altro oggetto, come una cartella a quella che la contiene o i nodi di un grafo tra loro, tiene un indice in una lista al posto di un puntatore: il suo id. [Id e handle: puntare a un altro oggetto](ids.md) mostra come, e quanto costa.
 
 ## Esclusività
 
@@ -993,5 +993,5 @@ Un metodo marcato `const` non modifica il suo oggetto, come mostra [Struct](stru
 - `move` si scrive solo in un'inizializzazione, in un assegnamento, come argomento di un parametro `move` e dopo `ret`; un parametro in lettura non si può spostare.
 - Un parametro viene letto, modificato con `ref` o preso con `move`, e la chiamata dice quale dei tre; `move const` prende un valore senza modificarlo.
 - `ref` si scrive su una variabile, un campo o un elemento modificabile, esattamente del tipo del parametro.
-- I riferimenti esistono solo durante una chiamata: nessun lifetime da scrivere, nessun puntatore pendente.
+- I riferimenti esistono solo durante una chiamata: nessun lifetime da scrivere, nessun puntatore pendente. Un oggetto che punta a un altro tiene il suo id, un indice in una lista ([Id e handle](ids.md)).
 - Due argomenti di una chiamata che li modifica non sono mai lo stesso oggetto, né uno parte dell'altro.

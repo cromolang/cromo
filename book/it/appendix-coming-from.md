@@ -12,7 +12,7 @@ Cromo prende qualcosa da ciascuno di questi linguaggi. Questa appendice elenca, 
 |---|---|
 | `return` | `ret` |
 | `;` alla fine delle istruzioni | la fine della riga; un'istruzione per riga ([Concetti comuni](common-concepts.md)) |
-| puntatori, `nullptr`, `new`, `delete` | niente puntatori e niente `null`; l'heap solo attraverso i contenitori. Gli indirizzi grezzi esistono solo nel dialetto unsafe ([Il dialetto unsafe](unsafe.md)) |
+| puntatori, `nullptr`, `new`, `delete` | niente puntatori e niente `null`; l'heap solo attraverso i contenitori. Gli indirizzi grezzi esistono solo nel dialetto unsafe ([Il dialetto unsafe](unsafe.md)). Un oggetto che punta a un altro tiene il suo id, un indice in una lista ([Id e handle](ids.md)) |
 | `T&`, `const T&` | un parametro è in lettura per default; `ref` modifica; un riferimento vive solo durante una chiamata o un ciclo, mai in un campo ([Possesso](ownership.md)) |
 | costruttori di copia, copie implicite | copie implicite anche qui, fatte da `copy()`, generato o scritto a mano ([Struct](structs.md)) |
 | `std::move` | `move`, controllato: una variabile spostata non può più essere usata ([Possesso](ownership.md)) |

@@ -552,7 +552,7 @@ i32 main() {
 opened, saved
 ```
 
-Gli handler delle finestre tengono così il loro stato, come mostra [Finestre e app](gui.md); thread e task catturano uno `Shared` come qualunque altro valore semplice, e un thread che cattura solo handle `Shared` e valori semplici è libero.
+Gli handler delle finestre tengono così il loro stato, come mostra [Finestre e app](gui.md); thread e task catturano uno `Shared` come qualunque altro valore semplice, e un thread che cattura solo handle `Shared` e valori semplici è libero. [Id e handle](ids.md) ha un oggetto modificato da due thread attraverso uno `Shared`, e dice che cosa viene copiato e che cosa viene passato per riferimento.
 
 - `thread.Shared<T>(value)` sposta il valore in una memoria propria, che resta fino alla fine del programma: il distruttore del valore non viene mai eseguito.
 - `lock` funziona come quello di `Mutex`: uno alla volta, rilasciato anche quando lo attraversa un'eccezione; bloccarlo di nuovo dentro la sua lambda attende per sempre.

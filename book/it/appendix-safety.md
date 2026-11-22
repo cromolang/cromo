@@ -23,7 +23,7 @@ Un panic ferma il programma con un messaggio e la traccia dello stack. Il progra
 
 - **I deadlock.** Due thread che si aspettano a vicenda aspettano per sempre, e così uno `Shared` bloccato di nuovo dentro il suo stesso `lock`.
 - **La memoria trattenuta.** Non ci sono perdite per aver dimenticato di liberare, ma un programma può tenere ciò che non gli serve più: una lista che cresce soltanto, e il valore di un `thread.Shared`, che resta fino alla fine del programma.
-- **Un indice che non è più quello giusto.** Dove un altro linguaggio tiene un puntatore, un programma Cromo tiene un indice in una lista, o un handle, come le finestre e i componenti di `std.gui`. Dopo che l'elemento è stato tolto, l'indice dà un altro elemento o un panic, e l'handle un panic: un errore nella logica del programma, non una corruzione della sua memoria, ma il compilatore non lo trova.
+- **Un indice che non è più quello giusto.** Dove un altro linguaggio tiene un puntatore, un programma Cromo tiene un indice in una lista, o un handle, come le finestre e i componenti di `std.gui`. Dopo che l'elemento è stato tolto, l'indice dà un altro elemento o un panic, e l'handle un panic: un errore nella logica del programma, non una corruzione della sua memoria, ma il compilatore non lo trova ([Id e handle](ids.md)).
 - **La logica.** Un risultato sbagliato, un file non scritto fino in fondo, un lock tenuto troppo a lungo.
 
 ## Il dialetto unsafe e il C
@@ -37,7 +37,7 @@ Un programma che non scrive `import unsafe` si fida solo di queste.
 
 ## Quanto costa la semplicità
 
-- **Niente riferimenti nei campi o nelle variabili.** Un grafo, un albero con i collegamenti ai genitori e un observer si scrivono con indici o handle, che vengono cercati, e controllati, ogni volta. In Rust sarebbero riferimenti con lifetime, oppure `Rc` e `RefCell`.
+- **Niente riferimenti nei campi o nelle variabili.** Un grafo, un albero con i collegamenti ai genitori e un observer si scrivono con indici o handle, che vengono cercati, e controllati, ogni volta. In Rust sarebbero riferimenti con lifetime, oppure `Rc` e `RefCell`. [Id e handle](ids.md) mostra come si scrivono, e quanto costano.
 - **Le copie.** Un valore che possiede memoria viene copiato dove è dato senza `move`, come in C++. Il programma è giusto, e può essere più lento del necessario: `move`, e i parametri letti e `ref`, evitano le copie.
 - **I controlli in esecuzione.** I limiti degli indici sono controllati anche nelle build di release. L'overflow degli interi è controllato solo nelle build di debug: un programma rilasciato con `--release` riparte da capo dove i suoi test davano un panic.
 

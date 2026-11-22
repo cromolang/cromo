@@ -552,7 +552,7 @@ i32 main() {
 opened, saved
 ```
 
-The handlers of the windows keep their state so, as [Windows and apps](gui.md) shows; threads and tasks capture a `Shared` as any other simple value, and a thread that captures only `Shared` handles and simple values is free.
+The handlers of the windows keep their state so, as [Windows and apps](gui.md) shows; threads and tasks capture a `Shared` as any other simple value, and a thread that captures only `Shared` handles and simple values is free. [Ids and handles](ids.md) has an object changed by two threads through a `Shared`, and says what is copied and what is passed by reference.
 
 - `thread.Shared<T>(value)` moves the value into memory of its own, which stays until the end of the program: the destructor of the value never runs.
 - `lock` works as that of `Mutex`: one at a time, released also when an exception goes through; locking it again inside its lambda waits for ever.

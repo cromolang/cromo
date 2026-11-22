@@ -12,7 +12,7 @@ Cromo borrows from each of these languages. This appendix lists, for each, what 
 |---|---|
 | `return` | `ret` |
 | `;` at the end of statements | the end of the line; one statement per line ([Common concepts](common-concepts.md)) |
-| pointers, `nullptr`, `new`, `delete` | no pointers and no `null`; the heap only through containers. Raw addresses exist only in the unsafe dialect ([The unsafe dialect](unsafe.md)) |
+| pointers, `nullptr`, `new`, `delete` | no pointers and no `null`; the heap only through containers. Raw addresses exist only in the unsafe dialect ([The unsafe dialect](unsafe.md)). An object that points to another keeps its id, an index into a list ([Ids and handles](ids.md)) |
 | `T&`, `const T&` | a parameter is read by default; `ref` modifies; a reference lives only during a call or a loop, never in a field ([Ownership](ownership.md)) |
 | copy constructors, implicit copies | implicit copies too, made by `copy()`, generated or written by hand ([Structs](structs.md)) |
 | `std::move` | `move`, checked: a moved variable cannot be used ([Ownership](ownership.md)) |
