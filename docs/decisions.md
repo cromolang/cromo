@@ -2694,6 +2694,13 @@ A branch whose type is not simple, as a `string`, gives a new value, also a copy
 ### D571. The heap of Linux has a cache for each thread
 *2026-11-23.* Chosen by the author. The heap of Linux (D98) had one lock: with two threads that allocate, a program took ten times the time of the same in C++, and with sixteen threads sixty times, since each allocation waited for the others. Now each thread of the runtime has lists of free blocks of its own in front of the shared ones, as tcmalloc and the allocator of Go: an empty list takes a batch of blocks at once, 32 of the small sizes, and one that grows beyond two batches gives one back, so the lock is taken once every many allocations. A block is freed in the cache of the thread that frees it, also when another allocated it; a thread that ends gives its blocks back. The cache is in the block of the thread of the runtime in C; the main thread with glibc or with Bionic, and a thread that the runtime did not start, have none and use the shared lists. Measured with 20 million rounds of a list and a string in each thread, on a Ryzen 9 5950X: 475 ms instead of 5,255 with 2 threads, 849 instead of 19,563 with 8, and 1,102 instead of 52,550 with 16. Windows keeps the heap of the process, which has its own locks.
 
+### D572. The generation of the code in Cromo, checked on the text of the IR
+*2026-11-23.* Chosen by the author. It follows D423 and D291: after the analysis, `compiler/codegen.cro` writes the IR of LLVM as text from the tree that the analysis in Cromo leaves, as `src/codegen.cpp` does. Version 1.0, with the language declared stable, comes after the compiler in Cromo compiles itself, since writing it shows what the language lacks, as M34 did.
+- It is checked as the parser and the analysis were: `cromo build --emit-ir` and `cromo-check --emit-ir` must print the same text, byte for byte, on every program of the tests, so a difference is found at once and at its line. The pilot `cromo-check` gets the option; no new executable.
+- It comes in parts: the frame, with the types, the functions and the simple statements; ownership; the control flow; the exceptions; the interfaces and the lambdas; the lists, the maps, the strings and `print`; the `unsafe` dialect; the debug information; the tests, the runtime and the systems. What a part does not do yet is said by the generator, `not generated yet`, and the script counts the programs whose text is the same.
+- The debug information comes among the last parts: until then the two texts are compared without the `!dbg` of the instructions and without the lines of the metadata.
+- It is the milestone M97, and the version 0.97.0 at its end. LLVM is not touched: the way to it is D291.
+
 ---
 
 ## Proposed

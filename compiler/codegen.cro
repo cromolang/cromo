@@ -1,0 +1,306 @@
+// The generation of the code in Cromo (D572), as src/codegen.cpp: from the tree
+// that the analysis leaves to the IR of LLVM as text, the same text as the C++. It
+// comes in parts: what is not generated yet ends the text with a line that says so.
+import ast
+import sema
+import types
+
+// A name of LLVM: as it is when it has only letters, digits, `_`, `.`, `$` and `-`
+// and does not start with a digit, otherwise between quotes, with the other bytes
+// written in hexadecimal.
+public string llvmName(string sigil, string name) {
+    bool plain = name.len() > 0 && !(name[0] >= '0' && name[0] <= '9')
+    for (i64 i = 0; i < name.len(); i++) {
+        u8 c = name[i]
+        bool allowed = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '.' ||
+            c == '$' || c == '-'
+        plain = plain && allowed
+    }
+    if (plain) {
+        ret sigil + name
+    }
+    ret sigil + quoted(name)
+}
+
+// A text between quotes, as LLVM reads it.
+public string quoted(string text) {
+    list<u8> out = ['"']
+    string hex = "0123456789ABCDEF"
+    for (i64 i = 0; i < text.len(); i++) {
+        u8 c = text[i]
+        if (c == '"' || c == '\\' || c < 0x20 || c >= 0x7F) {
+            out.add('\\')
+            out.add(hex[i64(c >> 4)])
+            out.add(hex[i64(c & 0xF)])
+        } else {
+            out.add(c)
+        }
+    }
+    out.add('"')
+    ret textOf(out)
+}
+
+// The bytes as a text: those of a name of LLVM are of ASCII, or already escaped.
+string textOf(list<u8> bytes) {
+    ret string(bytes)
+}
+
+// What the generator is asked for.
+public struct Options {
+    public string sourcePath  // of the main file, as given to cromo
+    public string triple = "x86_64-pc-windows-msvc"
+    public bool runtime
+}
+
+public struct Generator {
+    Checker checked
+    Options options
+    string out
+    public bool complete = true  // false when a part is not generated yet
+
+    public Generator(move Checker result, move Options asked) {
+        checked = move result
+        options = move asked
+    }
+
+    // The module of a file and a dot, in front of the names of its declarations.
+    string moduleOf(i32 file) const {
+        ret checked.tree.files[file].name
+    }
+
+    string symbolFor(i32 file, string name) const {
+        string module = moduleOf(file)
+        ret module.len() == 0 ? name : module + "." + name
+    }
+
+    // The symbol of a struct (D134): its module and its name, and for an instance
+    // of a generic the symbols of its type arguments.
+    string recordSymbol(i32 record) const {
+        const ref Record decl = checked.tree.records[record]
+        if (decl.generic < 0) {
+            ret symbolFor(decl.file, decl.name)
+        }
+        string result = recordSymbol(decl.generic) + "<"
+        for (i64 i = 0; i < decl.typeArgs.len(); i++) {
+            if (i > 0) {
+                result += ", "
+            }
+            result += typeSymbol(decl.typeArgs[i])
+        }
+        ret result + ">"
+    }
+
+    string typeSymbol(i32 type) const {
+        TypeKind kind = checked.types.items[type].kind
+        if (kind == TypeKind.Struct) {
+            ret recordSymbol(checked.types.items[type].decl)
+        }
+        if (kind == TypeKind.Interface) {
+            const ref Interface decl = checked.tree.interfaces[checked.types.items[type].decl]
+            ret symbolFor(decl.file, decl.name)
+        }
+        ret typeName(checked.tree, checked.types, type)
+    }
+
+    string structName(i32 record) const {
+        ret llvmName("%", "struct." + recordSymbol(record))
+    }
+
+    string llvmType(i32 type) const {
+        const ref TypeInfo info = checked.types.items[type]
+        switch (info.kind) {
+            case Void {
+                ret "void"
+            }
+            case Bool {
+                ret "i1"
+            }
+            case Int {
+                ret format("i{}", info.bits)
+            }
+            case Float {
+                ret info.bits == 32 ? "float" : "double"
+            }
+            case String, Addr {
+                ret "ptr"
+            }
+            case Struct {
+                ret structName(info.decl)
+            }
+            case Interface, Function {
+                ret "{ ptr, ptr }"
+            }
+            case Array {
+                ret format("[{} x {}]", info.count, llvmType(info.element))
+            }
+            case Vector {
+                ret format("<{} x {}>", info.count, llvmType(info.element))
+            }
+            default {
+                ret "<invalid>"
+            }
+        }
+    }
+
+    // An enum in memory (D104): a field of size zero that gives it the alignment of
+    // its most aligned case, the tag, padding up to where the data start, the data
+    // of the first case, and padding up to the size of the largest case.
+    string alignmentType(i32 align) const {
+        ret align >= 8 ? "i64" : "i32"
+    }
+
+    string enumTypeBody(i32 record) const {
+        const ref Record decl = checked.tree.records[record]
+        string body = format("{{ [0 x {}], i32, [{} x i8]", alignmentType(decl.align), decl.payloadOffset - 4)
+        for (Field field in decl.cases[0].fields) {
+            body += ", " + llvmType(field.resolved)
+        }
+        ret body + format(", [{} x i8] }}", decl.size - decl.payloadOffset - decl.cases[0].size)
+    }
+
+    string fieldTypes(list<Field> fields) const {
+        string body = "{ "
+        for (i64 i = 0; i < fields.len(); i++) {
+            if (i > 0) {
+                body += ", "
+            }
+            body += llvmType(fields[i].resolved)
+        }
+        ret body + (fields.len() == 0 ? "}\n" : " }\n")
+    }
+
+    // An integer constant as a signed value of the given width, as LLVM expects:
+    // 255 in a u8 is -1.
+    string intConstant(u64 magnitude, bool negative, i32 bits) const {
+        u64 pattern = negative ? wrapAdd(!magnitude, 1) : magnitude
+        if (bits < 64) {
+            u64 mask = (u64(1) << u64(bits)) - 1
+            pattern &= mask
+            if ((pattern & (u64(1) << u64(bits - 1))) != 0) {
+                ret format("-{}", wrapAdd(!pattern, 1) & mask)
+            }
+            ret format("{}", pattern)
+        }
+        if ((pattern & (u64(1) << 63)) != 0) {
+            ret format("-{}", wrapAdd(!pattern, 1))
+        }
+        ret format("{}", pattern)
+    }
+
+    // LLVM writes a floating-point constant as the bits of a double, in hexadecimal;
+    // for a float the value is the one a float holds.
+    string floatConstant(f64 value, i32 bits) const {
+        f64 exact = bits == 32 ? f64(f32(value)) : value
+        ret format("0x{:016X}", exact.bits())
+    }
+
+    // The constant of a literal of a type (D73): the initial value of a field, of a
+    // variable or of a constant of a module.
+    string literalConstant(i32 expr, i32 type) const {
+        const ref Expr node = checked.tree.exprs[expr]
+        const ref TypeInfo info = checked.types.items[type]
+        switch (node.kind) {
+            case IntLiteral {
+                if (info.kind == TypeKind.Float) {
+                    f64 value = f64(node.value)
+                    ret floatConstant(node.negative ? -value : value, info.bits)
+                }
+                ret intConstant(node.value, node.negative, info.bits)
+            }
+            case FloatLiteral {
+                f64 value = f64(node.text)
+                ret floatConstant(node.negative ? -value : value, info.bits)
+            }
+            case BoolLiteral {
+                ret node.flag ? "true" : "false"
+            }
+            case Conversion {
+                if (info.kind == TypeKind.Addr) {
+                    ret "inttoptr (i64 " + literalConstant(node.left, intType(64, true)) + " to ptr)"
+                }
+                ret literalConstant(node.left, type)
+            }
+            default {
+                ret "undef"
+            }
+        }
+    }
+
+    // The variables and the constants of the modules (D394, D414): their default
+    // value, or the literal they start from.
+    void writeGlobals() {
+        for (Global global in checked.tree.globals) {
+            if (global.variable < 0) {
+                continue
+            }
+            i32 type = checked.tree.variables[global.variable].type
+            if (checked.types.items[type].kind == TypeKind.Error) {
+                continue
+            }
+            string value = global.init >= 0 ? literalConstant(global.init, type) : "zeroinitializer"
+            if (global.isConst && checked.types.items[type].kind == TypeKind.Array) {
+                i32 element = checked.types.items[type].element
+                value = "["
+                for (i64 i = 0; i < checked.tree.exprs[global.init].items.len(); i++) {
+                    if (i > 0) {
+                        value += ", "
+                    }
+                    value += llvmType(element) + " " + literalConstant(checked.tree.exprs[global.init].items[i], element)
+                }
+                value += "]"
+            }
+            out += llvmName("@", symbolFor(global.file, global.name)) + (global.isConst ? " = internal constant " : " = internal global ") +
+                llvmType(type) + " " + value + "\n"
+        }
+        if (checked.tree.globals.len() > 0) {
+            out += "\n"
+        }
+    }
+
+    // The structs that are emitted: generics only through their instances with
+    // real types (D39).
+    list<i32> emittedRecords() const {
+        list<i32> records
+        for (i64 i = 0; i < checked.tree.records.len(); i++) {
+            const ref Record decl = checked.tree.records[i]
+            if (decl.generic < 0 && decl.typeParams.len() == 0) {
+                records.add(i32(i))
+            }
+        }
+        for (i64 i = 0; i < checked.tree.records.len(); i++) {
+            const ref Record decl = checked.tree.records[i]
+            if (decl.generic >= 0 && !decl.isAbstract) {
+                records.add(i32(i))
+            }
+        }
+        ret records
+    }
+
+    public string run() {
+        out = "; Generated by cromo\n"
+        out += "source_filename = " + quoted(options.sourcePath) + "\n"
+        out += "target triple = \"" + options.triple + "\"\n"
+        if (!options.runtime) {
+            out += "module asm \".text\"\nmodule asm \".globl cromo_code\"\nmodule asm \"cromo_code:\"\n\n"
+        }
+        list<i32> records = emittedRecords()
+        for (i32 record in records) {
+            const ref Record decl = checked.tree.records[record]
+            if (decl.isEnum) {
+                out += structName(record) + " = type " + enumTypeBody(record) + "\n"
+                for (Case item in decl.cases) {
+                    out += llvmName("%", "case." + recordSymbol(record) + "." + item.name) + " = type " + fieldTypes(item.fields)
+                }
+                continue
+            }
+            out += structName(record) + " = type " + fieldTypes(decl.fields)
+        }
+        if (records.len() > 0) {
+            out += "\n"
+        }
+        writeGlobals()
+        complete = false
+        out += "; not generated yet: the functions\n"
+        ret out
+    }
+}

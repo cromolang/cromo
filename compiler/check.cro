@@ -5,8 +5,10 @@
 // declarations, as `cromo build --check-declarations`; with `--list`, the same, and
 // it prints what it knows of them, as `cromo build --list-declarations`; with
 // `--list-types`, up to the types of the expressions, and what it wrote on the bodies
-// of the functions, as `cromo build --list-types`.
+// of the functions, as `cromo build --list-types`; with `--emit-ir`, the IR of LLVM
+// that `cromo build --emit-ir` prints (D572), as far as the generator goes.
 import ast
+import codegen
 import diagnostics
 import loader
 import moves
@@ -16,9 +18,10 @@ import std.fs
 
 i32 main(list<string> args) {
     string option = args.len() == 3 ? args[1] : ""
-    bool known = option == "--names" || option == "--declarations" || option == "--list" || option == "--list-types"
+    bool known = option == "--names" || option == "--declarations" || option == "--list" || option == "--list-types" ||
+        option == "--emit-ir"
     if (args.len() < 2 || args.len() > 3 || (args.len() == 3 && !known)) {
-        eprintln("usage: cromo-check [--names | --declarations | --list | --list-types] file.cro")
+        eprintln("usage: cromo-check [--names | --declarations | --list | --list-types | --emit-ir] file.cro")
         ret 2
     }
     string path = args[args.len() - 1]
@@ -39,6 +42,20 @@ i32 main(list<string> args) {
     if (option == "--names") {
         declareNames(ref program.tree, ref program.diag)
         ret program.diag.hasErrors() ? 1 : 0
+    }
+    if (option == "--emit-ir") {
+        Checker checked = checkProgram(move program.tree, move program.diag)
+        if (!checked.diag.hasErrors()) {
+            checkMoves(ref checked)
+        }
+        if (checked.diag.hasErrors()) {
+            ret 1
+        }
+        Options options
+        options.sourcePath = path
+        Generator generator = Generator(move checked, move options)
+        print("{}", generator.run())
+        ret 0
     }
     if (option == "" || option == "--list-types") {
         Checker checked = checkProgram(move program.tree, move program.diag)
