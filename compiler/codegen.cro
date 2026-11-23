@@ -63,7 +63,8 @@ public struct Options {
     public bool release         // no overflow checks (D30)
     public bool windows = true  // the system of the executable
     public bool arm64
-    public string library  // the folder of the library, whose files are shown as cromo:...
+    public string library         // the folder of the library, whose files are shown as cromo:...
+    public bool optimized = true  // -O1 or more
 }
 
 public struct Generator {
@@ -101,6 +102,18 @@ public struct Generator {
     list<Caught> catches
     bool freesExceptions
     i32 exceptionInterface = -1
+    // Debug information (D338).
+    string metaText
+    i64 nextMeta
+    string compileUnit
+    string subroutineType
+    list<string> fileNodes    // the DIFile of each source file
+    string subprogram         // of the function being generated, or none
+    list<string> debugScopes  // its open blocks
+    i32 locLine               // of the code being generated
+    i32 locColumn
+    map<string, string> locations  // the DILocation already made
+    map<i32, string> debugTypes
 
     public Generator(move Options asked) {
         options = move asked
@@ -726,6 +739,9 @@ extend Generator {
             string number = line.slice(from, line.findFrom(">", from))
             i64 size = number == "float" ? 4 : number == "double" ? 8 : i64(number.slice(1, number.len())) / 8
             bodyText += format(", align {}", size)
+        }
+        if (subprogram.len() > 0) {
+            bodyText += ", !dbg " + locationNode()
         }
         bodyText += "\n"
     }
@@ -1364,10 +1380,18 @@ extend Generator {
         localRaised = ""
         list<Caught> noCatches
         catches = move noCatches
+        subprogram = ""
+        list<string> noBlocks
+        debugScopes = move noBlocks
+        if (function >= 0) {
+            locLine = c.tree.functions[function].line
+            locColumn = c.tree.functions[function].column
+            subprogram = subprogramNode(c, debugName(c, function), c.tree.functions[function].file, c.tree.functions[function].line)
+        }
     }
 
     string finishFunction(string head) {
-        ret head + " {\nentry:\n" + allocas + bodyText + "}\n\n"
+        ret head + (subprogram.len() > 0 ? " !dbg " + subprogram : "") + " {\nentry:\n" + allocas + bodyText + "}\n\n"
     }
 
     // The place of a variable among those of its function.
@@ -1453,6 +1477,17 @@ extend Generator {
                 continue
             }
             inst("store " + llvmType(c, decl.paramTypes[i]) + format(" %arg.{}, ptr ", i) + addresses[idOf(c, decl.variables[i])])
+        }
+        if (decl.owner >= 0) {
+            declareSelf(c, decl.owner)
+        }
+        for (i64 i = 0; i < decl.variables.len(); i++) {
+            string place = addresses[idOf(c, decl.variables[i])]
+            if (i < decl.paramTypes.len()) {
+                declareVariable(c, decl.variables[i], place, i + (decl.owner >= 0 ? 2 : 1))
+            } else if (c.tree.variables[decl.variables[i]].kind == VariableKind.Captured) {
+                declareVariable(c, decl.variables[i], place, 0)
+            }
         }
 
         // The function owns its `move` parameters and destroys them (D22).
@@ -1587,6 +1622,12 @@ extend Generator {
     // ---- Statements ----
 
     void generateBlock(Checker c, i32 body) {
+        bool scoped = subprogram.len() > 0 && !options.release
+        if (scoped) {  // the variables of a block, for a debugger (D338)
+            string file = fileNode(c, c.tree.functions[fnNow].file)
+            debugScopes.add(metadata("distinct !DILexicalBlock(scope: " + debugScope() + ", file: " + file +
+                format(", line: {}, column: {})", c.tree.blocks[body].openLine, c.tree.blocks[body].openColumn)))
+        }
         Scope scope
         scopes.add(move scope)
         for (i32 statement in c.tree.blocks[body].statements) {
@@ -1597,6 +1638,9 @@ extend Generator {
             dropObjects(c, objects, -1)
         }
         scopes.remove(scopes.len() - 1)
+        if (scoped) {
+            debugScopes.remove(debugScopes.len() - 1)
+        }
     }
 
     i32 nameVariable(Checker c, i32 expr) const {
@@ -1606,6 +1650,8 @@ extend Generator {
     void generateStatement(Checker c, i32 statement) {
         i64 mark = temporaries.len()
         const ref Stmt node = c.tree.stmts[statement]
+        locLine = node.line
+        locColumn = node.column
         switch (node.kind) {
             case VarDecl {
                 generateVarDecl(c, statement)
@@ -1665,10 +1711,12 @@ extend Generator {
         if (variable.reference) {  // D562: the place it names, found once
             string place = addressOf(c, decl.value)
             addresses[id] = place
+            declareVariable(c, decl.variable, place, 0)
             ret
         }
         string address = addresses[id]
         i32 type = variable.type
+        declareVariable(c, decl.variable, address, 0)
         if (isAggregate(c, type)) {
             if (decl.value >= 0) {
                 generateStructInto(c, decl.value, address)
@@ -1894,7 +1942,9 @@ extend Generator {
                 string payload = enumPayload(c, address, record)
                 for (i64 i = 0; i < pattern.bindings.len(); i++) {
                     if (pattern.bindings[i].variable >= 0) {
-                        addresses[idOf(c, pattern.bindings[i].variable)] = caseField(c, payload, record, i64(pattern.caseIndex), i)
+                        string place = caseField(c, payload, record, i64(pattern.caseIndex), i)
+                        addresses[idOf(c, pattern.bindings[i].variable)] = place
+                        declareVariable(c, pattern.bindings[i].variable, place, 0)
                     }
                 }
             }
@@ -1958,6 +2008,7 @@ extend Generator {
         string address = temp()
         inst(address + " = getelementptr inbounds " + llvmType(c, element) + ", ptr " + data + ", i64 " + current.text)
         addresses[idOf(c, node.variable)] = address
+        declareVariable(c, node.variable, address, 0)
         loops.add(loopOf(stepLabel, endLabel))
         generateBlock(c, node.body)
         loops.remove(loops.len() - 1)
@@ -2014,6 +2065,8 @@ extend Generator {
         inst(value + " = getelementptr inbounds i8, ptr " + slotAddress + ", i64 " + num(valueOffset))
         addresses[idOf(c, node.variable)] = key
         addresses[idOf(c, node.valueVariable)] = value
+        declareVariable(c, node.variable, key, 0)
+        declareVariable(c, node.valueVariable, value, 0)
         loops.add(loopOf(stepLabel, endLabel))
         generateBlock(c, node.body)
         loops.remove(loops.len() - 1)
@@ -2189,6 +2242,7 @@ extend Generator {
                 } else {
                     addresses[idOf(c, clause.variable)] = object
                 }
+                declareVariable(c, clause.variable, addresses[idOf(c, clause.variable)], 0)
             }
             Caught caught
             caught.box = box
@@ -2831,6 +2885,10 @@ extend Generator {
     Value generateExpr(Checker c, i32 expr) {
         const ref Expr node = c.tree.exprs[expr]
         i32 type = node.resolved
+        if (node.kind == ExprKind.Call || node.kind == ExprKind.MethodCall || node.kind == ExprKind.CallValue) {
+            locLine = node.line  // a call on a line of its own, for the stack traces (D339)
+            locColumn = node.column
+        }
         switch (node.kind) {
             case IntLiteral, FloatLiteral, BoolLiteral {
                 ret valueOf(literalConstant(c, expr, type), type)
@@ -4114,16 +4172,21 @@ extend Generator {
         ret text + ") nounwind\n"
     }
 
-    string entryPoint(Checker c, i32 mainFunction) const {
+    string entryPoint(Checker c, i32 mainFunction) {
         const ref Function decl = c.tree.functions[mainFunction]
-        string text = "define void @cromo_start() noreturn nounwind uwtable {\nentry:\n  call void @cromo_runtime_start()\n"
+        // A subprogram of its own, so that main keeps its lines when it is inlined
+        // here; the stack traces leave it out.
+        string start = subprogramNode(c, "cromo_start", decl.file, decl.line)
+        string dbg = ", !dbg " + metadata(format("!DILocation(line: {}, scope: ", decl.line) + start + ")")
+        string text = "define void @cromo_start() noreturn nounwind uwtable !dbg " + start +
+            " {\nentry:\n  call void @cromo_runtime_start()" + dbg + "\n"
         list<string> args
         if (decl.params.len() > 0) {
             // D154: the arguments of the program, made by the standard library.
             string type = llvmType(c, c.tree.functions[programArguments].resolvedReturn)
             text += "  %args = alloca " + type + "\n"
             text += "  call void " + symbolOf(c, programArguments) + "(ptr sret(" + type + ") %args" +
-                (tracksCaller(c, programArguments) ? ", ptr null" : "") + ")\n"
+                (tracksCaller(c, programArguments) ? ", ptr null" : "") + ")" + dbg + "\n"
             args.add("ptr %args")
         }
         if (decl.canThrow) {
@@ -4132,13 +4195,13 @@ extend Generator {
         }
         bool returnsNothing = c.types.isVoid(decl.resolvedReturn)
         if (returnsNothing) {
-            text += "  call void " + symbolOf(c, mainFunction) + "(" + join(args, ", ") + ")\n"
+            text += "  call void " + symbolOf(c, mainFunction) + "(" + join(args, ", ") + ")" + dbg + "\n"
         } else {
-            text += "  %code = call i32 " + symbolOf(c, mainFunction) + "(" + join(args, ", ") + ")\n"
+            text += "  %code = call i32 " + symbolOf(c, mainFunction) + "(" + join(args, ", ") + ")" + dbg + "\n"
         }
         if (decl.canThrow && exceptionInterface >= 0) {
             // D121: an exception that leaves main stops the program with its message.
-            text += uncaughtText(c, "done")
+            text += uncaughtText(c, "done", dbg)
         }
         text += "  call void @cromo_main_end(i32 " + (returnsNothing ? "0" : "%code") + ")\n"  // D442: it waits for the windows
         ret text + "  unreachable\n}\n\n"
@@ -4146,7 +4209,7 @@ extend Generator {
 
     // An exception in %raised stops the program with its message (D121); without one
     // the code goes on at the label.
-    string uncaughtText(Checker c, string after) const {
+    string uncaughtText(Checker c, string after, string dbg) const {
         i32 message = c.tree.interfaces[exceptionInterface].methods[0]
         i32 record = recordOf(c, c.tree.functions[message].resolvedReturn)
         string name = structName(c, record)
@@ -4155,10 +4218,10 @@ extend Generator {
             "  %descriptor = load ptr, ptr %descriptorAddress\n" +
             "  %tableAddress = getelementptr inbounds { ptr, ptr }, ptr %descriptor, i32 0, i32 1\n" +
             "  %table = load ptr, ptr %tableAddress\n  %method = load ptr, ptr %table\n  %text = alloca " + name + "\n" +
-            "  call void %method(ptr sret(" + name + ") %text, ptr %object)\n  %dataAddress = getelementptr inbounds " + name +
+            "  call void %method(ptr sret(" + name + ") %text, ptr %object)" + dbg + "\n  %dataAddress = getelementptr inbounds " + name +
             ", ptr %text, i32 0, i32 " + num(fieldIndexOf(c, record, "data")) + "\n  %data = load ptr, ptr %dataAddress\n" +
             "  %lengthAddress = getelementptr inbounds " + name + ", ptr %text, i32 0, i32 " + num(fieldIndexOf(c, record, "length")) +
-            "\n  %length = load i64, ptr %lengthAddress\n  call void @cromo_uncaught(ptr %data, i64 %length, ptr %object)\n" +
+            "\n  %length = load i64, ptr %lengthAddress\n  call void @cromo_uncaught(ptr %data, i64 %length, ptr %object)" + dbg + "\n" +
             "  unreachable\n" + after + ":\n"
     }
 
@@ -4182,6 +4245,7 @@ extend Generator {
         if (!options.runtime) {
             moduleText += "module asm \".text\"\nmodule asm \".globl cromo_code\"\nmodule asm \"cromo_code:\"\n\n"
         }
+        startDebug()
         for (i64 i = 0; i < c.tree.interfaces.len(); i++) {
             if (c.tree.interfaces[i].name == "Exception" && c.tree.interfaces[i].file == 1) {
                 exceptionInterface = i32(i)
@@ -4331,6 +4395,252 @@ extend Generator {
         for (string declaration in declarations) {
             moduleText += declaration + "\n"
         }
+        moduleText += finishDebug(c)
         ret moduleText
+    }
+}
+
+extend Generator {
+    // ---- Debug information (D338, D339) ----
+    //
+    // Always the lines, from which the table of the stack traces is made; without
+    // --release also the variables and their types, for a debugger. The nodes are
+    // written after the code, numbered as they are made: where the C++ computes
+    // two of them in one expression, the last written is made first, and so here.
+
+    string metadata(string node) {
+        string id = format("!{}", nextMeta)
+        nextMeta++
+        metaText += id + " = " + node + "\n"
+        ret id
+    }
+
+    string reserveMetadata() {
+        nextMeta++
+        ret format("!{}", nextMeta - 1)
+    }
+
+    void defineMetadata(string id, string node) {
+        metaText += id + " = " + node + "\n"
+    }
+
+    void startDebug() {
+        compileUnit = reserveMetadata()
+        subroutineType = metadata("!DISubroutineType(types: !{null})")
+    }
+
+    string finishDebug(Checker c) {
+        string file = fileNode(c, 0)
+        defineMetadata(compileUnit, "distinct !DICompileUnit(language: DW_LANG_C_plus_plus, file: " + file +
+            ", producer: \"cromo\", isOptimized: " + (options.optimized ? "true" : "false") +
+            ", runtimeVersion: 0, emissionKind: " +
+            // With only the lines LLVM leaves out the functions that inline nothing,
+            // unless the information is for profiling: the stack traces need them.
+            (options.release ? "LineTablesOnly, debugInfoForProfiling: true" : "FullDebug") + ", nameTableKind: None)")
+        // DWARF on both systems, for the table of the stack traces; on Windows also
+        // CodeView, for the PDB of a debugger.
+        string flags = metadata("!{i32 2, !\"Debug Info Version\", i32 3}")
+        flags += ", " + metadata("!{i32 2, !\"Dwarf Version\", i32 " + (options.windows ? "4" : "5") + "}")
+        if (options.windows && !options.release) {
+            flags += ", " + metadata("!{i32 2, !\"CodeView\", i32 1}")
+        }
+        ret "\n!llvm.dbg.cu = !{" + compileUnit + "}\n!llvm.module.flags = !{" + flags + "}\n" + metaText
+    }
+
+    // The file of a debugger: its whole path, so that it is found from anywhere (D338).
+    string fileNode(Checker c, i32 file) {
+        for (fileNodes.len() <= i64(file)) {
+            fileNodes.add("")
+        }
+        if (fileNodes[i64(file)].len() == 0) {
+            fileNodes[i64(file)] = metadata("!DIFile(filename: " + quoted(absolute(c.diag.path(file))) + ", directory: \"\")")
+        }
+        ret fileNodes[i64(file)]
+    }
+
+    string subprogramNode(Checker c, string name, i32 file, i32 line) {
+        string node = fileNode(c, file)
+        ret metadata("distinct !DISubprogram(name: " + quoted(name) + ", scope: " + node + ", file: " + node + ", line: " + num(i64(line)) +
+            ", type: " + subroutineType + ", scopeLine: " + num(i64(line)) +
+            ", flags: DIFlagPrototyped, spFlags: DISPFlagLocalToUnit | DISPFlagDefinition" +
+            (options.optimized ? " | DISPFlagOptimized" : "") + ", unit: " + compileUnit + ")")
+    }
+
+    // The name of a function in a debugger and in a stack trace: `main`,
+    // `Point.area`, `list<i64>.add`, `main.lambda`.
+    string debugName(Checker c, i32 function) const {
+        if (lambdaOf.contains(function)) {
+            i32 outer = c.tree.exprs[lambdaOf[function]].enclosing
+            ret (outer >= 0 ? debugName(c, outer) : "?") + ".lambda"
+        }
+        const ref Function decl = c.tree.functions[function]
+        if (decl.owner < 0) {  // `deep`, `fs.copy`: the module of the program is not written
+            string symbol = c.functionSymbol(function)
+            string program = c.tree.files[0].name.len() > 0 ? c.tree.files[0].name + "." : ""
+            ret program.len() > 0 && symbol.startsWith(program) ? symbol.slice(program.len(), symbol.len()) : symbol
+        }
+        const ref Record owner = c.tree.records[decl.owner]
+        string base = owner.generic >= 0 ? c.tree.records[owner.generic].name : owner.name
+        if (decl.kind == FunctionKind.Constructor) {
+            ret owner.name + "." + base
+        }
+        if (decl.kind == FunctionKind.Destructor) {
+            ret owner.name + ".~" + base
+        }
+        ret owner.name + "." + decl.name
+    }
+
+    string debugScope() const {
+        ret debugScopes.len() == 0 ? subprogram : debugScopes[debugScopes.len() - 1]
+    }
+
+    string locationNode() {
+        string scope = debugScope()
+        string key = format("{}:{}:{}", locLine, locColumn, scope)
+        if (locations.contains(key)) {
+            ret locations[key]
+        }
+        string id = metadata(format("!DILocation(line: {}, column: {}, scope: ", locLine, locColumn) + scope + ")")
+        locations[key] = id
+        ret id
+    }
+
+    // A variable for a debugger, at its address (D338). `arg` numbers a parameter.
+    void declareVariable(Checker c, i32 variable, string address, i64 arg) {
+        if (options.release || subprogram.len() == 0 || address.len() == 0) {
+            ret
+        }
+        const ref Variable decl = c.tree.variables[variable]
+        string type = debugType(c, decl.type)
+        string file = fileNode(c, decl.file)
+        string node = metadata("!DILocalVariable(name: " + quoted(decl.name) + (arg > 0 ? ", arg: " + num(arg) : "") + ", scope: " +
+            debugScope() + ", file: " + file + ", line: " + num(i64(decl.line)) + ", type: " + type + ")")
+        ensureLive()
+        bodyText += "    #dbg_declare(ptr " + address + ", " + node + ", !DIExpression(), " + locationNode() + ")\n"
+    }
+
+    // The object of a method, as `this` of C++ for a debugger.
+    void declareSelf(Checker c, i32 owner) {
+        if (options.release || subprogram.len() == 0) {
+            ret
+        }
+        string pointer = metadata("!DIDerivedType(tag: DW_TAG_pointer_type, baseType: " + debugType(c, c.types.knownStruct(owner)) +
+            ", size: 64)")
+        string file = fileNode(c, c.tree.functions[fnNow].file)
+        string node = metadata("!DILocalVariable(name: \"this\", arg: 1, scope: " + subprogram + ", file: " + file + ", line: " +
+            num(i64(c.tree.functions[fnNow].line)) + ", type: " + pointer +
+            ", flags: DIFlagArtificial | DIFlagObjectPointer)")
+        ensureLive()
+        bodyText += "    #dbg_value(ptr %self, " + node + ", !DIExpression(), " + locationNode() + ")\n"
+    }
+
+    i64 alignOf(Checker c, i32 type) const {
+        if (c.types.isStruct(type)) {
+            ret i64(c.tree.records[recordOf(c, type)].align)
+        }
+        if (isOwned(c, type)) {
+            ret 8
+        }
+        if (c.types.isArray(type)) {
+            ret alignOf(c, elementOf(c, type))
+        }
+        i64 size = sizeOf(c, type)  // a vector as LLVM aligns it: at its size (D505)
+        ret size > 0 ? size : 1
+    }
+
+    // The types of Cromo for a debugger: numbers and bools as in C, a struct with
+    // its fields, an enum with its case and the data of its cases.
+    string debugType(Checker c, i32 type) {
+        if (debugTypes.contains(type)) {
+            ret debugTypes[type]
+        }
+        string id = reserveMetadata()  // first: a field can name it again
+        debugTypes[type] = id
+        string bits = num(sizeOf(c, type) * 8)
+        string name = quoted(typeName(c.tree, c.types, type))
+        switch (kindOf(c, type)) {
+            case Bool {
+                defineMetadata(id, "!DIBasicType(name: \"bool\", size: 8, encoding: DW_ATE_boolean)")
+            }
+            case Int {
+                defineMetadata(id, "!DIBasicType(name: " + name + ", size: " + bits + ", encoding: " +
+                    (signedOf(c, type) ? "DW_ATE_signed" : "DW_ATE_unsigned") + ")")
+            }
+            case Float {
+                defineMetadata(id, "!DIBasicType(name: " + name + ", size: " + bits + ", encoding: DW_ATE_float)")
+            }
+            case Array, Vector {
+                string range = metadata(format("!DISubrange(count: {})", countOf(c, type)))
+                string element = debugType(c, elementOf(c, type))
+                defineMetadata(id, "!DICompositeType(tag: DW_TAG_array_type, baseType: " + element + ", size: " + bits +
+                    (kindOf(c, type) == TypeKind.Vector ? ", flags: DIFlagVector" : "") + ", elements: !{" + range + "})")
+            }
+            case Struct {
+                debugStruct(c, id, recordOf(c, type))
+            }
+            case Function, Interface {  // two addresses: the code and its data, the object and its table
+                bool function = c.types.isFunction(type)
+                string second = debugMember(c, id, function ? "data" : "table", addrType(), 8, 0, 1)
+                string first = debugMember(c, id, function ? "code" : "object", addrType(), 0, 0, 1)
+                defineMetadata(id, "!DICompositeType(tag: DW_TAG_structure_type, name: " + name + ", size: 128, elements: !{" + first +
+                    ", " + second + "})")
+            }
+            default {  // an address
+                defineMetadata(id, "!DIDerivedType(tag: DW_TAG_pointer_type, name: \"addr\", baseType: null, size: 64)")
+            }
+        }
+        ret id
+    }
+
+    string debugMember(Checker c, string scope, string name, i32 type, i64 offset, i32 file, i32 line) {
+        string base = debugType(c, type)
+        string node = fileNode(c, file)
+        ret metadata("!DIDerivedType(tag: DW_TAG_member, name: " + quoted(name) + ", scope: " + scope + ", file: " + node + ", line: " +
+            num(i64(line)) + ", baseType: " + base + ", size: " + num(sizeOf(c, type) * 8) + ", offset: " + num(offset * 8) + ")")
+    }
+
+    // The fields one after the other, each where its alignment puts it.
+    void debugFields(Checker c, string id, list<Field> fields, i32 file, i64 start, string prefix, ref list<string> members) {
+        i64 offset = start
+        for (Field field in fields) {
+            i64 align = alignOf(c, field.resolved)
+            offset = (offset + align - 1) / align * align
+            members.add(debugMember(c, id, prefix + field.name, field.resolved, offset, file, field.line))
+            offset += sizeOf(c, field.resolved)
+        }
+    }
+
+    void debugStruct(Checker c, string id, i32 record) {
+        const ref Record decl = c.tree.records[record]
+        list<string> members
+        if (decl.isEnum) {
+            string enumerators
+            bool data = false
+            for (Case item in decl.cases) {
+                string one = metadata("!DIEnumerator(name: " + quoted(item.name) + ", value: " + num(item.number) + ")")
+                enumerators += (enumerators.len() == 0 ? "" : ", ") + one
+                data = data || item.fields.len() > 0
+            }
+            string base = debugType(c, intType(32, true))
+            string file = fileNode(c, decl.file)
+            string tagType = "!DICompositeType(tag: DW_TAG_enumeration_type, name: " + quoted(decl.name) + ", file: " + file + ", line: " +
+                num(i64(decl.line)) + ", baseType: " + base + ", size: 32, elements: !{" + enumerators + "})"
+            if (!data && decl.size == 4) {
+                defineMetadata(id, tagType)
+                ret
+            }
+            string tag = metadata(tagType)
+            members.add(metadata("!DIDerivedType(tag: DW_TAG_member, name: \"case\", scope: " + id + ", baseType: " + tag +
+                ", size: 32, offset: 0)"))
+            for (Case item in decl.cases) {
+                debugFields(c, id, item.fields, decl.file, i64(decl.payloadOffset), item.name + ".", ref members)
+            }
+        } else {
+            debugFields(c, id, decl.fields, decl.file, 0, "", ref members)
+        }
+        string file = fileNode(c, decl.file)
+        defineMetadata(id, "distinct !DICompositeType(tag: DW_TAG_structure_type, name: " + quoted(decl.name) + ", file: " + file +
+            ", line: " + num(i64(decl.line)) + ", size: " + num(i64(decl.size) * 8) + ", align: " + num(i64(decl.align) * 8) +
+            ", elements: !{" + join(members, ", ") + "}, identifier: " + quoted(recordSymbol(c, record)) + ")")
     }
 }

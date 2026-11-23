@@ -4,7 +4,8 @@
 # endings of the output, which the runtime of Cromo writes as \n; and
 # build\cromo-check.exe the same errors as cromo build --check-names and as cromo build
 # --list-declarations, --list-types and --check-moves on every program, and the same
-# lists (P30, P89, P90).
+# lists (P30, P89, P90); and the same IR of LLVM as cromo build --emit-ir, byte for
+# byte, with and without --release (D572).
 # Usage: powershell -ExecutionPolicy Bypass -File tests\run-pilot.ps1
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
@@ -74,6 +75,7 @@ foreach ($folder in 'library', 'examples', 'tests\m11') {
 # the analysis knows: the structs with their layout, their instances and the
 # signatures, then every function checked with its variables and its expressions.
 $programs = 0
+$libraries = 0
 Push-Location $root
 foreach ($file in Get-ChildItem 'tests', 'examples', 'bench' -Recurse -Filter *.cro) {
     if ($file.FullName -match '\\out2\\|\\modules\\|\\formatting\\|\\lsp\\|\\project\\' -or $file.Name -match '_test\.cro$') { continue }
@@ -82,7 +84,8 @@ foreach ($file in Get-ChildItem 'tests', 'examples', 'bench' -Recurse -Filter *.
     $results = @()
     foreach ($program in "`"$cromo`" build --check-names", "`"$check`" --names", "`"$cromo`" build --list-declarations",
         "`"$check`" --list", "`"$cromo`" build --list-types", "`"$check`" --list-types",
-        "`"$cromo`" build --check-moves", "`"$check`"") {
+        "`"$cromo`" build --check-moves", "`"$check`"", "`"$cromo`" build --emit-ir", "`"$check`" --emit-ir",
+        "`"$cromo`" build --emit-ir --release", "`"$check`" --emit-ir --release") {
         cmd /c "$program `"$relative`" > `"$work\names.out`" 2> `"$work\names.err`""
         $results += "$LASTEXITCODE " + [IO.File]::ReadAllText("$work\names.err").Replace("`r`n", "`n") +
             [IO.File]::ReadAllText("$work\names.out").Replace("`r`n", "`n")
@@ -91,11 +94,19 @@ foreach ($file in Get-ChildItem 'tests', 'examples', 'bench' -Recurse -Filter *.
     if ($results[2] -ne $results[3]) { $problems += "the declarations differ: $relative" }
     if ($results[4] -ne $results[5]) { $problems += "the types differ: $relative" }
     if ($results[6] -ne $results[7]) { $problems += "the moves differ: $relative" }
+    # A program that passes the analysis and stops at its C libraries (D136, D137), which
+    # cromo looks for before it generates the code: the pilot does not look for them yet.
+    if ($results[6].StartsWith('0 ') -and -not $results[8].StartsWith('0 ')) {
+        $libraries++
+        continue
+    }
+    if ($results[8] -ne $results[9]) { $problems += "the IR differs: $relative" }
+    if ($results[10] -ne $results[11]) { $problems += "the IR of --release differs: $relative" }
 }
 Pop-Location
 Remove-Item -Recurse -Force $work
 
-'{0} files, C++ {1:N0} ms, Cromo {2:N0} ms; {3} through the standard input; {4} programs for the analysis' -f $count, $times['cpp'], $times['cromo'], $piped, $programs
+'{0} files, C++ {1:N0} ms, Cromo {2:N0} ms; {3} through the standard input; {4} programs for the analysis and the IR, {5} without the IR for their C libraries' -f $count, $times['cpp'], $times['cromo'], $piped, $programs, $libraries
 if ($problems.Count -gt 0) {
     $problems | Select-Object -First 20
     'pilot: FAILED'

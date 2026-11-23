@@ -16,7 +16,17 @@ import names
 import sema
 import std.fs
 
-i32 main(list<string> args) {
+i32 main(list<string> given) {
+    // `--emit-ir --release`: without the checks of overflow, as cromo build --release.
+    list<string> args
+    bool release = false
+    for (string arg in given) {
+        if (arg == "--release") {
+            release = true
+        } else {
+            args.add(arg)
+        }
+    }
     string option = args.len() == 3 ? args[1] : ""
     bool known = option == "--names" || option == "--declarations" || option == "--list" || option == "--list-types" ||
         option == "--emit-ir"
@@ -53,6 +63,7 @@ i32 main(list<string> args) {
         }
         Options options
         options.sourcePath = path
+        options.release = release
         options.library = library
         Generator generator = Generator(move options)
         print("{}", generator.run(checked))
