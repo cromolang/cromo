@@ -31,7 +31,7 @@ if(WIN32)
 else()
   # cromo for Linux depends only on glibc (D292): the libraries that LLVM uses are
   # linked statically, defined before LLVM looks for them. libxml2, for the
-  # manifests of LLD, would bring ICU with it: src/llvm_trims.cpp takes its place.
+  # manifests of LLD, would bring ICU with it: compiler/shim/llvm_trims.cpp takes its place.
   set(CROMO_SYSTEM_LIBS "/usr/lib/x86_64-linux-gnu" CACHE PATH "The static libraries of the system")
   set(ZLIB_LIBRARY "${CROMO_SYSTEM_LIBS}/libz.a" CACHE FILEPATH "" FORCE)
   set(LIBXML2_LIBRARY "${CROMO_SYSTEM_LIBS}/libz.a" CACHE FILEPATH "" FORCE)
@@ -564,7 +564,7 @@ add_executable(cromo
   src/reference.cpp
   src/lsp.cpp
   src/installation.cpp
-  src/llvm_trims.cpp
+  compiler/shim/llvm_trims.cpp
 )
 if(CROMO_BUILD_LIBRARY)
   add_dependencies(cromo cromo_library)

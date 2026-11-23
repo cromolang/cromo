@@ -17,3 +17,9 @@ cmake -S "$root" -B "$build" -G Ninja \
 cmake --build "$build"
 # The library of the build of Windows, as lib/ inside the folder of cromo (D237).
 ln -sfn ../build/lib "$build/lib"
+
+# cromo written in Cromo (D291, P92), with LLVM and LLD inside it: compiled by the
+# cromo in C++ into build-linux/stage1/cromo, which finds build-linux/lib as that one.
+sh "$root/tools/llvm-archive.sh"
+mkdir -p "$build/stage1"
+"$build/cromo" build --release "$root/compiler/cromo.cro" -o "$build/stage1/cromo"

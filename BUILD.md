@@ -110,6 +110,20 @@ build-linux/cromo version
 powershell -ExecutionPolicy Bypass -File tests\run-pilot.ps1
 ```
 
+## cromo written in Cromo
+
+`compiler/cromo.cro` is `cromo` itself written in Cromo, with LLVM and LLD inside it (D291, P92): the analysis and the generation of the code of the pilot, then `compiler/backend.cro`, which calls the C API of LLVM, and `compiler/shim/shim.cpp`, the few functions of C++ for what that API does not give. `build.ps1` makes `compiler\cromollvm.lib` with `tools\llvm-archive.ps1`, one archive with the shim, the libraries of LLVM and of LLD and the static runtime of C++, and compiles `compiler\cromo.cro` with the `cromo` in C++ into `build\stage1\cromo.exe`; `build-linux.sh` does the same in WSL, with `tools/llvm-archive.sh`, into `build-linux/stage1/cromo`. Neither is in the archives yet.
+
+`tests\run-stage.ps1` builds every program of the repository with both and checks that the executables have the same bytes; `tests/run-stage.sh` does it in WSL. The behavior tests run with it too:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tests\run-stage.ps1                       # -Flags '--release', -Flags '--target linux'
+powershell -ExecutionPolicy Bypass -File tests\run-tests.ps1 -Cromo build\stage1\cromo.exe
+wsl -e sh tests/run-stage.sh
+```
+
+It compiles itself: `build\stage1\cromo.exe build --release compiler\cromo.cro -o build\stage2\cromo.exe` gives the executable it was built from, apart from the time of the build.
+
 ## The extension for Visual Studio Code
 
 ```powershell

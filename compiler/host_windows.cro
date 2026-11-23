@@ -52,6 +52,11 @@ public string programPath() {
     ret path
 }
 
+// A path without its symbolic links: on Windows, as it is.
+public string canonical(string path) {
+    ret path
+}
+
 // The folder of the temporary files, without a separator at its end.
 public string tempFolder() {
     addr buffer = alloc(1040)

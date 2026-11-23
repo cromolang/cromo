@@ -709,7 +709,9 @@ public i32 runAndroid(ref Compilation compilation) {
 
 // Whether a file is in the library of cromo.
 bool inLibrary(string library, string path) {
-    ret absolute(path).lower().startsWith(absolute(library).lower() + "\\")
+    bool windows = fs.separator() == "\\"  // where the names have no case
+    string file = windows ? absolute(path).lower() : absolute(path)
+    ret file.startsWith((windows ? absolute(library).lower() : absolute(library)) + fs.separator())
 }
 
 // Reads the options of build, run and test, from `args[first]` to `args[last]`
@@ -914,7 +916,7 @@ public i32 command(list<string> args) {
         printUsage(true)
         ret 2
     }
-    string library = libraryFolder(programPath())
+    string library = canonical(libraryFolder(programPath()))
     string name = args[1]
     if (name == "help" || name == "-h" || name == "--help") {
         printUsage(false)

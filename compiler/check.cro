@@ -46,7 +46,7 @@ i32 main(list<string> given) {
     targetOf(target, ref system)
     string library = libraryFolder(given[0])
     if (runtime) {  // D393: a file of the library that imports std.runtime, never written
-        args.add(library + "\\runtime-object.cro")
+        args.add(fs.joinPath(library, "runtime-object.cro"))
         release = true
     }
     string option = args.len() == 3 ? args[1] : ""
@@ -61,7 +61,7 @@ i32 main(list<string> given) {
         eprintln("cromo: cannot read {}", path)
         ret 2
     }
-    string core = library + "\\core.cro"
+    string core = fs.joinPath(library, "core.cro")
     if (library.len() == 0 || !fs.isFile(core)) {
         eprintln("cromo: cannot read {}", core)
         ret 2

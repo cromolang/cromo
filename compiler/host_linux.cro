@@ -1,0 +1,183 @@
+// What cromo asks of Linux and the library does not give: where its executable is,
+// the temporary folder, a program started with the terminal of cromo or with its
+// output in a file, and the wait for the first of several to end. cromo for Linux is
+// linked with glibc, as every program with LLVM inside it (D428): these are its
+// functions, found by the linker with those that `cromollvm` calls.
+import std.fs
+import std.os
+import unsafe
+
+extern "cromollvm" {
+    i32 fork()
+    i32 execvp(addr file, addr arguments)
+    i32 waitpid(i32 process, ref i32 status, i32 options)
+    void _exit(i32 code)
+    i32 open(addr path, i32 flags, i32 mode)
+    i32 dup2(i32 from, i32 to)
+    i32 setenv(addr name, addr value, i32 overwrite)
+    i64 sysconf(i32 name)
+    addr signal(i32 number, addr handler)
+    addr realpath(addr path, addr resolved)
+}
+
+// The path of the executable of cromo.
+public string programPath() {
+    try {
+        ret fs.readLink("/proc/self/exe")
+    } catch (Exception e) {
+    }
+    ret ""
+}
+
+// A path without its symbolic links, as the library of cromo in a build is one.
+public string canonical(string path) {
+    addr buffer = alloc(4097)  // PATH_MAX and its zero
+    string result = path
+    if (realpath(path.cstring(), buffer) != addr(0)) {
+        i64 length = 0
+        for (copyAt<u8>(offset(buffer, length)) != 0) {
+            length++
+        }
+        result = string(buffer, length)
+    }
+    free(buffer)
+    ret result
+}
+
+// The folder of the temporary files, without a separator at its end.
+public string tempFolder() {
+    for (string name in ["TMPDIR", "TMP", "TEMP", "TEMPDIR"]) {
+        string folder = os.env(name)
+        if (folder.len() > 0) {
+            ret folder.len() > 1 && folder.endsWith("/") ? folder.slice(0, folder.len() - 1) : folder
+        }
+    }
+    ret "/tmp"
+}
+
+public void setEnv(string name, string value) {
+    setenv(name.cstring(), value.cstring(), 1)
+}
+
+// How many programs run at a time: the processors.
+public i64 processors() {
+    i64 count = sysconf(84)  // _SC_NPROCESSORS_ONLN
+    ret count < 1 ? 1 : count
+}
+
+// A text of C, to free.
+addr cText(string text) {
+    addr copy = alloc(text.len() + 1)
+    list<u8> bytes = text.bytes()
+    for (i64 i = 0; i < bytes.len(); i++) {
+        put<u8>(offset(copy, i), bytes[i])
+    }
+    put<u8>(offset(copy, bytes.len()), 0)
+    ret copy
+}
+
+// The program and its arguments as the array that execvp takes, made before the
+// fork: the child only calls the system until the program starts.
+addr argumentsOf(string program, list<string> args) {
+    addr argv = alloc((args.len() + 2) * 8)
+    put<addr>(argv, cText(program))
+    for (i64 i = 0; i < args.len(); i++) {
+        put<addr>(offset(argv, (i + 1) * 8), cText(args[i]))
+    }
+    put<addr>(offset(argv, (args.len() + 1) * 8), addr(0))
+    ret argv
+}
+
+void freeArguments(addr argv, i64 count) {
+    for (i64 i = 0; i <= count; i++) {
+        free(copyAt<addr>(offset(argv, i * 8)))
+    }
+    free(argv)
+}
+
+// The exit code of a status of waitpid: 128 and its number for a signal, as the shells.
+i32 exitCode(i32 status) {
+    ret status & 0x7F == 0 ? (status >> 8) & 0xFF : 128 + (status & 0x7F)
+}
+
+// Starts a program with its arguments: its process, or 0. With `outputPath`, it has
+// nothing to read, and its output and its errors go to that file; without, it has
+// the terminal of cromo.
+i64 startProcess(string program, list<string> args, string outputPath) {
+    addr argv = argumentsOf(program, args)
+    addr output = cText(outputPath)
+    addr nothing = cText("/dev/null")
+    bool quiet = outputPath.len() > 0
+    i32 child = fork()
+    if (child == 0) {
+        if (quiet) {
+            i32 file = open(output, 0x241, 0x1A4)  // O_WRONLY | O_CREAT | O_TRUNC, 0644
+            i32 input = open(nothing, 0, 0)
+            dup2(input, 0)
+            dup2(file, 1)
+            dup2(file, 2)
+        }
+        execvp(copyAt<addr>(argv), argv)
+        _exit(127)
+    }
+    freeArguments(argv, args.len())
+    free(output)
+    free(nothing)
+    ret child > 0 ? i64(child) : 0
+}
+
+// Runs a program to its end, with the terminal of cromo. Its exit code; when it does
+// not start, -1, with 1 in `problem`.
+public i32 runProgram(string program, list<string> args, ref u32 problem) {
+    i64 process = startProcess(program, args, "")
+    i32 status = 0
+    if (process == 0 || waitpid(i32(process), ref status, 0) < 0) {
+        problem = 1
+        ret -1
+    }
+    ret exitCode(status)
+}
+
+// Runs a program to its end as runProgram does, while cromo ignores Ctrl+C, which
+// ends the program alone: `interrupted` says whether it did. The program is started
+// first, since what cromo ignores its programs would ignore too.
+public i32 runInterruptible(string program, list<string> args, ref bool interrupted) {
+    i64 process = startProcess(program, args, "")
+    if (process == 0) {
+        ret 1
+    }
+    signal(2, addr(1))  // SIGINT, SIG_IGN
+    i32 status = 0
+    i32 waited = waitpid(i32(process), ref status, 0)
+    signal(2, addr(0))  // SIG_DFL
+    if (waited < 0) {
+        ret 1
+    }
+    interrupted = status & 0x7F == 2
+    ret exitCode(status)
+}
+
+// Starts a program with nothing to read, and its output and its errors in a file.
+// Its process, or 0.
+public i64 startQuiet(string program, list<string> args, string outputPath) {
+    ret startProcess(program, args, outputPath)
+}
+
+// Waits for the first of the processes to end: its place in the list, and its exit
+// code in `code`; -1 when the wait fails.
+public i64 waitAny(list<i64> processes, ref i32 code) {
+    for (true) {
+        i32 status = 0
+        i32 ended = waitpid(-1, ref status, 0)
+        if (ended < 0) {
+            ret -1
+        }
+        for (i64 i = 0; i < processes.len(); i++) {
+            if (processes[i] == i64(ended)) {
+                code = exitCode(status)
+                ret i
+            }
+        }
+    }
+    ret -1
+}

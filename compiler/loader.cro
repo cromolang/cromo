@@ -22,8 +22,8 @@ public struct Program {
 // lib/ is next to it or next to the folder above, as for cromo (D237).
 public string libraryFolder(string program) {
     string bin = parentOf(absolute(program))
-    for (string candidate in [parentOf(bin) + "\\lib", bin + "\\lib"]) {
-        if (fs.isFile(candidate + "\\core.cro")) {
+    for (string candidate in [parentOf(bin) + sep() + "lib", bin + sep() + "lib"]) {
+        if (fs.isFile(candidate + sep() + "core.cro")) {
             ret candidate
         }
     }
@@ -39,7 +39,7 @@ public Program load(string path, string text, string library, Target system, boo
     loader.linux = isLinux(system)
     loader.arm64 = isArm64(system)
     loader.program.diag = Diagnostics(path, text)
-    string core = library + "\\core.cro"
+    string core = library + sep() + "core.cro"
     string coreText = readSource(core)
     loader.program.diag.addFile(core, coreText)
     string main = absolute(path)
@@ -106,7 +106,7 @@ struct Loader {
         parseFile(0, -1)
         // D202: the files of the system of the main file join it, as for a module.
         string main = program.diag.path(0)
-        string base = parentOf(absolute(main)) + "\\" + stemOf(main)
+        string base = parentOf(absolute(main)) + sep() + stemOf(main)
         for (string suffix in ownSuffixes(linux, arm64)) {
             if (fs.isFile(base + suffix + ".cro")) {
                 loadFile(base + suffix + ".cro", names[0].copy(), 0, 1, 1, 0, 0)
@@ -163,7 +163,7 @@ struct Loader {
                 front = packageModuleName(resolution.packages[context])
             }
             if (resolution.packages[context].requires.contains(path[0])) {
-                if (fs.exists(home + "\\" + path[0]) || fs.exists(home + "\\" + path[0] + ".cro")) {
+                if (fs.exists(home + sep() + path[0]) || fs.exists(home + sep() + path[0] + ".cro")) {
                     program.diag.errorIn(from, line, column, path[0] +
                         " is a package of cromo.mod and also a module next to it: rename one of them")
                     ret files
@@ -174,7 +174,7 @@ struct Loader {
                 path.remove(0)
             }
         }
-        string relative = join(path, "\\")
+        string relative = join(path, sep())
         string shown = path.len() == 0 ? program.tree.files[from].imports[k].path[0] : join(path, "/")
         if (front.len() > 0) {
             dotted = front
@@ -182,8 +182,8 @@ struct Loader {
                 dotted += "." + part
             }
         }
-        string file = home + "\\" + relative + ".cro"
-        string folder = path.len() == 0 ? home : home + "\\" + relative
+        string file = home + sep() + relative + ".cro"
+        string folder = path.len() == 0 ? home : home + sep() + relative
         bool isFile = path.len() > 0 && fs.isFile(file)
         bool isFolder = fs.isFolder(folder)
         if (isFile && isFolder) {
@@ -194,7 +194,7 @@ struct Loader {
         if (isFile) {
             i32 index = loadFile(file, dotted, from, line, column, -1, target)
             for (string suffix in ownSuffixes(linux, arm64)) {
-                string own = home + "\\" + relative + suffix + ".cro"
+                string own = home + sep() + relative + suffix + ".cro"
                 if (fs.isFile(own)) {
                     loadFile(own, dotted, from, line, column, index, target)
                 }
@@ -213,7 +213,7 @@ struct Loader {
             list<string> testEntries
             for (string entry in fs.listFolder(folder)) {
                 string stem = stemOf(entry)
-                if (fs.extension(entry) != ".cro" || !fs.isFile(folder + "\\" + entry)) {
+                if (fs.extension(entry) != ".cro" || !fs.isFile(folder + sep() + entry)) {
                     continue
                 }
                 if (isTestFile(entry)) {
@@ -230,14 +230,14 @@ struct Loader {
                 ret files
             }
             sort(ref entries)
-            i32 first = loadFile(folder + "\\" + entries[0], dotted, from, line, column, -1, target)
+            i32 first = loadFile(folder + sep() + entries[0], dotted, from, line, column, -1, target)
             for (i64 i = 1; i < entries.len(); i++) {
-                loadFile(folder + "\\" + entries[i], dotted, from, line, column, first, target)
+                loadFile(folder + sep() + entries[i], dotted, from, line, column, first, target)
             }
             if (tests && target == 0) {
                 sort(ref testEntries)
                 for (string entry in testEntries) {
-                    loadFile(folder + "\\" + entry, dotted, from, line, column, first, target)
+                    loadFile(folder + sep() + entry, dotted, from, line, column, first, target)
                 }
             }
             files.add(first)
@@ -255,7 +255,7 @@ struct Loader {
         if (!tests || isTestFile(file)) {
             ret
         }
-        string path = parentOf(file) + "\\" + stemOf(file) + "_test.cro"
+        string path = parentOf(file) + sep() + stemOf(file) + "_test.cro"
         if (fs.isFile(path)) {
             loadFile(path, name, index, 1, 1, index, 0)
         }
@@ -301,7 +301,7 @@ struct Loader {
         list<i32> files
         string base = "std/" + dotted.slice(4, dotted.len())
         bool hidden = dotted == "std.winsock" || dotted == "std.runtime"
-        string path = library + "\\" + base + ".cro"
+        string path = library + sep() + base + ".cro"
         if (parts != 2 || !fs.isFile(path) || (hidden && !fromLibrary)) {
             program.diag.errorIn(from, line, column, "the standard library has no module " + dotted + ": it has " +
                 libraryModules() + ", and its core is visible without import")
@@ -309,7 +309,7 @@ struct Loader {
         }
         i32 first = loadFile(path, dotted, from, line, column, -1, 0)
         for (string suffix in ownSuffixes(linux, arm64)) {
-            string own = library + "\\" + base + suffix + ".cro"
+            string own = library + sep() + base + suffix + ".cro"
             if (fs.isFile(own)) {
                 loadFile(own, dotted, from, line, column, first, 0)
             }
@@ -321,7 +321,7 @@ struct Loader {
     // "std.crypto, std.fs and std.http": the modules of lib/std for the programs.
     string libraryModules() const {
         list<string> modules
-        for (string entry in fs.listFolder(library + "\\std")) {
+        for (string entry in fs.listFolder(library + sep() + "std")) {
             if (fs.extension(entry) != ".cro") {
                 continue
             }
@@ -353,7 +353,9 @@ struct Loader {
     }
 
     bool isLibraryFile(string path) const {
-        ret key(path).lower().startsWith(key(library).lower() + "\\")
+        bool windows = sep() == "\\"  // where the names have no case
+        string file = windows ? key(path).lower() : key(path)
+        ret file.startsWith((windows ? key(library).lower() : key(library)) + sep())
     }
 }
 
@@ -409,7 +411,7 @@ bool isTestFile(string path) {
 public string projectFolder(string folder) {
     string at = folder
     for (true) {
-        if (fs.isFile(at + "\\cromo.mod")) {
+        if (fs.isFile(at + sep() + "cromo.mod")) {
             ret at
         }
         string up = parentOf(at)
@@ -440,13 +442,15 @@ public string parentOf(string path) {
 // The path from the root, with the separators of Windows and without `.` and `..`,
 // as GetFullPathName gives it.
 public string absolute(string path) {
+    // On Windows a path has both separators and a drive.
+    bool windows = sep() == "\\"
     string full = path
-    bool rooted = (path.len() >= 2 && path[1] == ':') || path.startsWith("\\") || path.startsWith("/")
+    bool rooted = path.startsWith("/") || (windows && ((path.len() >= 2 && path[1] == ':') || path.startsWith("\\")))
     if (!rooted) {
-        full = os.currentFolder() + "\\" + path
+        full = os.currentFolder() + sep() + path
     }
     list<string> parts
-    for (string part in full.replace("/", "\\").split("\\")) {
+    for (string part in (windows ? full.replace("/", "\\") : full).split(sep())) {
         if (part == "." || (part.len() == 0 && parts.len() > 0)) {
             continue
         }
@@ -456,7 +460,12 @@ public string absolute(string path) {
         }
         parts.add(part)
     }
-    ret join(parts, "\\")
+    ret join(parts, sep())
+}
+
+// The separator of the folders of the system that cromo runs on.
+string sep() {
+    ret fs.separator()
 }
 
 // The path that identifies a file: two imports of the same file read it once.

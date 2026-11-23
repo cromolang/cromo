@@ -1,0 +1,5 @@
+// The system folder of Windows, where its DLLs are (D137): none on Linux, where the
+// functions of a DLL are taken as they are declared.
+string windowsSystemFolder() {
+    ret ""
+}

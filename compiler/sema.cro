@@ -9380,10 +9380,14 @@ Intrinsic intrinsicOf(string name) {
 
 // The file that a source file embeds (D470): from its folder.
 string embedFile(string source, string name) {
-    i64 slash = source.replace("/", "\\").findLast("\\")
+    // On Windows a path has both separators, and the file is named with its own.
+    string separator = fs.separator()
+    string from = separator == "/" ? source : source.replace("/", "\\")
+    i64 slash = from.findLast(separator)
     string folder = slash < 0 ? "" : source.slice(0, slash)
+    string joined = folder.len() == 0 ? name : folder + separator + name
     list<string> parts
-    for (string part in (folder.len() == 0 ? name : folder + "\\" + name).replace("/", "\\").split("\\")) {
+    for (string part in (separator == "/" ? joined : joined.replace("/", "\\")).split(separator)) {
         if (part == ".") {
             continue
         }
@@ -9393,7 +9397,7 @@ string embedFile(string source, string name) {
         }
         parts.add(part)
     }
-    ret join(parts, "\\")
+    ret join(parts, separator)
 }
 
 // Why a file cannot be embedded (D470), or "": it is read from the folder of the

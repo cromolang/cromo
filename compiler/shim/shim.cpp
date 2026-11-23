@@ -348,3 +348,7 @@ char* shim_import_library(const char* dll, const char* names, int64_t size, cons
 }
 
 }  // extern "C"
+
+// What cromo leaves out of LLVM, in this object, which every program with LLVM has:
+// the linker has its names before it meets those of the libraries.
+#include "llvm_trims.cpp"

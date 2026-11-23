@@ -835,20 +835,23 @@ extend Generator {
             ret "cromo:" + path.slice(options.library.len() + 1, path.len()).replace("\\", "/")
         }
         string main = options.sourcePath
-        bool rooted = main.startsWith("/") || main.startsWith("\\") || (main.len() > 1 && main[1] == ':')
+        // On Windows a path has both separators, a drive, and names without a case.
+        bool windows = fs.separator() == "\\"
+        bool rooted = main.startsWith("/") || (windows && (main.startsWith("\\") || (main.len() > 1 && main[1] == ':')))
         if (file == 0 || rooted) {
             ret path
         }
         // From the folder of the main file, as that one was given: tests/m14/main.cro
         // shows its module as tests/m14/modules/kit/tool.cro.
-        list<string> folder = absolute(main).split("\\")
+        list<string> folder = absolute(main).split(fs.separator())
         folder.remove(folder.len() - 1)
-        list<string> full = absolute(path).split("\\")
+        list<string> full = absolute(path).split(fs.separator())
         i64 common = 0
-        for (common < folder.len() && common < full.len() && folder[common].lower() == full[common].lower()) {
+        for (common < folder.len() && common < full.len() &&
+            (windows ? folder[common].lower() == full[common].lower() : folder[common] == full[common])) {
             common++
         }
-        list<string> parts = main.replace("/", "\\").split("\\")
+        list<string> parts = (windows ? main.replace("/", "\\") : main).split(fs.separator())
         parts.remove(parts.len() - 1)
         for (i64 i = common; i < folder.len(); i++) {
             parts.add("..")
@@ -867,7 +870,7 @@ extend Generator {
             }
             kept.add(part)
         }
-        ret join(kept, main.contains("/") ? "/" : "\\")
+        ret join(kept, main.contains("/") || !windows ? "/" : "\\")
     }
 
     void panicAt(Checker c, string reason, Place place) {
