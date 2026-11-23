@@ -1,6 +1,6 @@
-# Cromo: specification
+# Cromo: draft specification
 
-> **Status: stable since 2026-11-23.** The language is the one of the choices marked *Decided* in [decisions.md](decisions.md): what is added from now on does not change the meaning of a program that compiles today. Next to each part is the decision it comes from (D1, D2, …).
+> **Status: draft.** The final choices are only those marked *Decided* in [decisions.md](decisions.md); the language can still change before version 1.0, which comes with the compiler written in Cromo. Next to each part is the decision it comes from (D1, D2, …); the parts marked as a proposal are not decided yet.
 
 ## 1. Principles
 

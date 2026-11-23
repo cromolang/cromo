@@ -2654,7 +2654,7 @@ extend Checker {
 *2026-11-23.* Chosen by the author. `cromo build`, `run` and `test` write a line for each step, as the `make` of CMake and Ninja: `[ 20%] Checking 14 files`, `[100%] Linking server.exe`, and at the end `Built server.exe in 0.84 s`. The lines go to the standard error, as those of Cargo, so the output of a program started by `cromo run` stays its own; they have colors on a terminal, and none when the output goes to a file or the variable `NO_COLOR` is set. `--quiet`, or `-q`, leaves only the errors, for the scripts. The other way kept `cromo` silent, with the steps only on request: the author wants to see them without asking.
 
 ### D569. The reserved words
-*2026-11-23.* Chosen by the author, before the language is declared stable: a word reserved later would break the programs that use it as a name, as C++ and Rust found, so the words that the language may need are kept now. They cannot be names of variables, fields, parameters, functions, methods or types: `'class' is a reserved word: choose another name`.
+*2026-11-23.* Chosen by the author, towards a language that no longer changes, with version 1.0: a word reserved later would break the programs that use it as a name, as C++ and Rust found, so the words that the language may need are kept now. They cannot be names of variables, fields, parameters, functions, methods or types: `'class' is a reserved word: choose another name`.
 - The words of the language are 30: `struct interface enum extend import extern unsafe const void func if else for in break continue ret switch case default try catch finally throw ref move public true false`, with `Self`, the type that implements an interface (D84). `extend` (D567) and `Self` were names where they had no meaning: now they are not. `extend` is the word of its block before the name of a type, and `Self` is a type.
 - The words kept for later are 30: `while`, `do`, `goto`, `return`, `yield`, `defer`, `class`, `trait`, `impl`, `typedef`, `namespace`, `using`, `operator`, `static`, `virtual`, `override`, `null`, `this`, `delete`, `as`, `is`, `auto`, `let`, `var`, `mut`, `async`, `await`, `private`, `protected`, `macro`. They have no meaning today. `while (` keeps the error that says to write `for` (D15).
 - The names of the built-in types and functions were already refused as names (`'string' is a type name`, `'println' is a built-in name`), and stay so.
@@ -2662,7 +2662,7 @@ extend Checker {
 - A word inside a longer name, as `classes` or `nullable`, in a string or in a comment, is not the word.
 
 ### D570. The proposals on the language are confirmed
-*2026-11-23.* Confirmed by the author, with the language declared stable: the choices of detail on the language that were *Proposed*, as they were written.
+*2026-11-23.* Confirmed by the author: the choices of detail on the language that were *Proposed*, as they were written.
 
 **P10. How a module variable is written (D394)**
 As a local variable, outside the functions: `i64 count`, `bool ready = true`. It is private to its module, which sees it in all its files, also those of a system (D202); `public` and the attributes are errors.

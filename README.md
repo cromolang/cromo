@@ -143,7 +143,7 @@ Help is welcome, and the most useful kind now is criticism: of the rules of owne
 | | |
 |---|---|
 | [The Cromo Guide](https://cromolang.org/book/) | The language, from the first program to tasks and networking |
-| [docs/language.md](docs/language.md) | The specification |
+| [docs/language.md](docs/language.md) | The draft specification |
 | [docs/decisions.md](docs/decisions.md) | The design decisions and their reasons |
 | [docs/compiler.md](docs/compiler.md) | The architecture of the compiler and of the runtime, and the milestones |
 | [BUILD.md](BUILD.md) | Building the compiler, running the tests, making a release |
