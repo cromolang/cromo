@@ -53,6 +53,7 @@ i32 main(list<string> args) {
         }
         Options options
         options.sourcePath = path
+        options.library = library
         Generator generator = Generator(move options)
         print("{}", generator.run(checked))
         ret 0

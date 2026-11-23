@@ -178,6 +178,10 @@ public struct Types {
         ret intern(format("V{}:{}", element, count), move info)
     }
 
+    public i32 knownVector(i32 element, i64 count) const {
+        ret known[format("V{}:{}", element, count)]
+    }
+
     public i32 functionType(list<i32> parameters, list<ParamMode> modes, i32 result) {
         string key = "F"
         for (i64 i = 0; i < parameters.len(); i++) {

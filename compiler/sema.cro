@@ -3510,6 +3510,8 @@ public struct Checker {
         }
         // The bytes are read again when the code is generated: here the literal is empty.
         Expr literal = nodeAt(ExprKind.StringLiteral, loc.line, loc.column)
+        literal.flag = true  // its bytes are those of the file in `module`
+        literal.module = embedFile(diag.path(curFile), fileName)
         tree.exprs.add(move literal)
         Expr call = nodeAt(ExprKind.MethodCall, loc.line, loc.column)
         call.left = i32(tree.exprs.len() - 1)
@@ -9371,9 +9373,8 @@ Intrinsic intrinsicOf(string name) {
     }
 }
 
-// Why a file cannot be embedded (D470), or "": it is read from the folder of the
-// source file that names it.
-string embedProblem(string source, string name) {
+// The file that a source file embeds (D470): from its folder.
+string embedFile(string source, string name) {
     i64 slash = source.replace("/", "\\").findLast("\\")
     string folder = slash < 0 ? "" : source.slice(0, slash)
     list<string> parts
@@ -9387,7 +9388,13 @@ string embedProblem(string source, string name) {
         }
         parts.add(part)
     }
-    string file = join(parts, "\\")
+    ret join(parts, "\\")
+}
+
+// Why a file cannot be embedded (D470), or "": it is read from the folder of the
+// source file that names it.
+string embedProblem(string source, string name) {
+    string file = embedFile(source, name)
     if (fs.isFolder(file)) {
         ret file + " is a folder"
     }

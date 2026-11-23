@@ -339,7 +339,7 @@ string parentOf(string path) {
 
 // The path from the root, with the separators of Windows and without `.` and `..`,
 // as GetFullPathName gives it.
-string absolute(string path) {
+public string absolute(string path) {
     string full = path
     bool rooted = (path.len() >= 2 && path[1] == ':') || path.startsWith("\\") || path.startsWith("/")
     if (!rooted) {

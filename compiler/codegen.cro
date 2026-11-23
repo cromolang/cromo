@@ -5,7 +5,9 @@
 // The generator holds what it writes; the program it reads, with its types, is the
 // parameter `c` of its methods, so that a method writes while it reads the tree.
 import ast
+import loader
 import sema
+import std.fs
 import types
 
 // A name of LLVM: as it is when it has only letters, digits, `_`, `.`, `$` and `-`
@@ -27,6 +29,11 @@ public string llvmName(string sigil, string name) {
 
 // A text between quotes, as LLVM reads it.
 public string quoted(string text) {
+    ret quotedBytes(text.bytes())
+}
+
+// The same from bytes that are not a text, as those of a file.
+public string quotedBytes(list<u8> text) {
     list<u8> out = ['"']
     string hex = "0123456789ABCDEF"
     for (i64 i = 0; i < text.len(); i++) {
@@ -53,12 +60,47 @@ public struct Options {
     public string sourcePath  // of the main file, as given to cromo
     public string triple = "x86_64-pc-windows-msvc"
     public bool runtime
+    public bool release         // no overflow checks (D30)
+    public bool windows = true  // the system of the executable
+    public bool arm64
+    public string library  // the folder of the library, whose files are shown as cromo:...
 }
 
 public struct Generator {
     Options options
-    string out
-    public bool complete = true  // false when a part is not generated yet
+    string moduleText  // the whole text
+    string bodyText    // the instructions of the function being generated
+    string allocas     // its stack slots, in its entry block
+    string globalText  // the constants made by the functions
+    map<string, string> strings
+    map<string, string> wheres  // panic locations already emitted
+    map<string, bool> intrinsics
+    map<string, bool> tables    // method tables already emitted
+    map<string, bool> releases  // the releases of the objects of interfaces (D357)
+    string releaseBodies
+    map<i32, bool> computed       // D360
+    map<i32, i32> lambdaOf        // the lambda of each function of a lambda
+    map<i32, i64> embedded        // the size of each file embedded (D470)
+    i32 fnNow = -1                // the function being generated, or none
+    i32 fileNow                   // the file of a function that the generator makes
+    list<string> addresses        // by the id of the variable
+    list<string> dropFlags        // drop flags (D77), by the id of the variable
+    list<Scope> scopes            // variables to destroy, one list per open block
+    list<LiveObject> temporaries  // to destroy at the end of the statement
+    list<Loop> loops
+    string dropFields  // in a destructor: the block that destroys the fields
+    string currentBlock
+    i64 nextTemp
+    i64 nextLabel
+    i64 nextSlot
+    i64 nextSpec
+    bool terminated
+    bool callerTracked         // in the core of the library: panics report the caller (D102)
+    i32 programArguments = -1  // of the standard library, for main (D154)
+    string localRaised         // the slot for exceptions of a function that cannot throw
+    list<Caught> catches
+    bool freesExceptions
+    i32 exceptionInterface = -1
 
     public Generator(move Options asked) {
         options = move asked
@@ -215,11 +257,11 @@ public struct Generator {
                 }
                 value += "]"
             }
-            out += llvmName("@", c.symbolFor(global.file, global.name)) + (global.isConst ? " = internal constant " : " = internal global ") +
+            moduleText += llvmName("@", c.symbolFor(global.file, global.name)) + (global.isConst ? " = internal constant " : " = internal global ") +
                 llvmType(c, type) + " " + value + "\n"
         }
         if (c.tree.globals.len() > 0) {
-            out += "\n"
+            moduleText += "\n"
         }
     }
 
@@ -380,53 +422,6 @@ public struct Generator {
             (cold ? " cold" : "")
     }
 
-    void notYet(string head) {
-        complete = false
-        out += head + " {\n; not generated yet\n}\n\n"
-    }
-
-    void writeFunctions(Checker c, list<i32> records) {
-        for (i32 record in records) {
-            const ref Record decl = c.tree.records[record]
-            for (i32 member in decl.members) {
-                if (c.tree.functions[member].bodyChecked) {  // D103: only the methods used
-                    notYet(signature(c, member))
-                }
-            }
-            // Without a destructor of its own, a struct still destroys its fields.
-            if (decl.needsDestruction && decl.destructor < 0) {
-                list<string> self = ["ptr noalias %self"]
-                notYet(define("void", dropSymbol(c, record), self, false, false))
-            }
-            if (decl.generatedCopy >= 0) {
-                i32 type = c.types.knownStruct(record)
-                list<string> params
-                if (byPointer(c, type)) {
-                    params.add("ptr noalias sret(" + llvmType(c, type) + ") %ret")
-                }
-                params.add("ptr noalias readonly %self")
-                notYet(define(byPointer(c, type) ? "void" : llvmType(c, type), methodSymbol(c, record, "copy"), params, false, false))
-            }
-        }
-        for (i32 function in c.tree.topFunctions) {
-            const ref Function decl = c.tree.functions[function]
-            if (!decl.isExtern && decl.typeParams.len() == 0) {
-                notYet(signature(c, function))
-            }
-        }
-        for (i32 function in c.made) {
-            if (!c.tree.functions[function].isAbstract) {
-                notYet(signature(c, function))
-            }
-        }
-        for (i32 lambda in c.tree.lambdas) {
-            i32 function = c.tree.exprs[lambda].function
-            if (!c.tree.functions[function].isAbstract && c.tree.functions[function].bodyChecked) {
-                notYet(signature(c, function))
-            }
-        }
-    }
-
     // The structs that are emitted: generics only through their instances with
     // real types (D39).
     list<i32> emittedRecords(Checker c) const {
@@ -445,32 +440,3897 @@ public struct Generator {
         }
         ret records
     }
+}
+
+// ---- The state of a function being generated ----
+
+// A value computed: its text in the IR, "%t3", "42", "true", and its type.
+struct Value {
+    string text
+    i32 type
+}
+
+// An object that must be destroyed when its scope or statement ends (D68).
+struct LiveObject {
+    string address
+    i32 type
+    i32 variable = -1  // -1 for temporaries
+    string flag        // an i1 that says if it is still alive, when it can be given away
+    bool isException   // the exception of a `catch`: `address` holds { object, descriptor }
+}
+
+// The objects of a block, and what leaving it means: a `try` with `finally` runs
+// it (D16), and the body of a `try` sends its exceptions to `handler` (D36).
+struct Scope {
+    list<LiveObject> objects
+    i32 finallyBlock = -1
+    string handler
+    i64 temporaries  // of the statements around it, as a `for` over a new list
+}
+
+// The exception that a `catch` owns, for `throw` alone (D114).
+struct Caught {
+    string box  // { object, descriptor }
+    string flag
+}
+
+struct Loop {
+    string continueLabel
+    string breakLabel
+    i64 scopeDepth  // scopes opened inside the loop are above this index
+}
+
+// Where a piece of code is, for the panics.
+struct Place {
+    i32 file
+    i32 line
+    i32 column
+}
+
+// A loop over the elements of an array, open: its body goes between beginElements
+// and endElements.
+struct ElementLoop {
+    string counter
+    string again
+    string done
+    string index
+    string address
+    bool reverse
+    i64 count
+}
+
+// The jump on the case of an enum, open: the blocks of the cases with data follow.
+struct CaseLoop {
+    list<string> labels
+    string done
+}
+
+// The `move` arguments of a call, given to the callee only when it is called.
+struct Handover {
+    list<i64> owned       // temporaries that the callee will own
+    list<i32> moves       // whole variables handed over in place: the move
+    list<string> sources  // and where the variable is
+}
+
+// An argument as the callee expects it, and the address of the place passed.
+struct Argument {
+    string text
+    string address
+}
+
+string num(i64 value) {
+    ret format("{}", value)
+}
+
+extend Generator {
+    // ---- What the types need ----
+
+    TypeKind kindOf(Checker c, i32 type) const {
+        ret c.types.items[type].kind
+    }
+
+    i32 recordOf(Checker c, i32 type) const {
+        ret c.types.items[type].decl
+    }
+
+    i32 elementOf(Checker c, i32 type) const {
+        ret c.types.items[type].element
+    }
+
+    i64 countOf(Checker c, i32 type) const {
+        ret c.types.items[type].count
+    }
+
+    i32 bitsOf(Checker c, i32 type) const {
+        ret c.types.items[type].bits
+    }
+
+    bool signedOf(Checker c, i32 type) const {
+        ret c.types.items[type].isSigned
+    }
+
+    bool isOwned(Checker c, i32 type) const {
+        ret c.types.isFunction(type) || c.types.isInterface(type)
+    }
+
+    bool needsDestruction(Checker c, i32 type) const {
+        if (c.types.isArray(type)) {
+            ret needsDestruction(c, elementOf(c, type))
+        }
+        ret c.types.isParam(type) || c.types.isFunction(type) || c.types.isInterface(type) ||
+            (c.types.isStruct(type) && c.tree.records[recordOf(c, type)].needsDestruction)
+    }
+
+    i64 fieldIndexOf(Checker c, i32 record, string name) const {
+        for (i64 i = 0; i < c.tree.records[record].fields.len(); i++) {
+            if (c.tree.records[record].fields[i].name == name) {
+                ret i
+            }
+        }
+        ret -1
+    }
+
+    string caseTypeName(Checker c, i32 record, i64 item) const {
+        ret llvmName("%", "case." + recordSymbol(c, record) + "." + c.tree.records[record].cases[item].name)
+    }
+
+    // The data captured by a lambda: the function that destroys them, then the captures (D183).
+    string environmentType(Checker c, i32 function) const {
+        ret llvmName("%", c.tree.functions[function].symbol + ".env")
+    }
+
+    // A C function (D128, D129): a `ref` is a pointer, and a bool is a byte, as in C.
+    string cType(Checker c, i32 type) const {
+        ret c.types.isBool(type) ? "i8" : llvmType(c, type)
+    }
+
+    // The C of Linux on x86-64 wants the integers smaller than 32 bits extended by the
+    // caller, and clang relies on it.
+    string cExtension(Checker c, i32 type) const {
+        if (c.types.isBool(type) || (c.types.isInt(type) && bitsOf(c, type) < 32 && !signedOf(c, type))) {
+            ret " zeroext"
+        }
+        if (c.types.isInt(type) && bitsOf(c, type) < 32) {
+            ret " signext"
+        }
+        ret ""
+    }
+
+    // True when the default value of the type is all zero bytes: it can be written
+    // with memset, and an array of it is a zeroinitializer.
+    bool zeroDefault(Checker c, i32 type) const {
+        if (c.types.isArray(type)) {
+            ret zeroDefault(c, elementOf(c, type))
+        }
+        if (!c.types.isStruct(type)) {
+            ret true  // 0, false, null, a function without code
+        }
+        const ref Record decl = c.tree.records[recordOf(c, type)]
+        if (decl.isEnum) {
+            if (decl.cases[0].number != 0) {
+                ret false
+            }
+            for (Field field in decl.cases[0].fields) {
+                if (field.init >= 0 || !zeroDefault(c, field.resolved)) {
+                    ret false
+                }
+            }
+            ret true
+        }
+        for (Field field in decl.fields) {
+            if (field.init >= 0 || !zeroDefault(c, field.resolved)) {
+                ret false
+            }
+        }
+        ret true
+    }
+
+    // The default value of an enum is its first case, with the defaults of its data (D111).
+    string enumDefault(Checker c, i32 record) const {
+        const ref Record decl = c.tree.records[record]
+        string text = "{ [0 x " + alignmentType(decl.align) + "] zeroinitializer, i32 " + num(decl.cases[0].number) + ", [" +
+            num(i64(decl.payloadOffset - 4)) + " x i8] zeroinitializer"
+        for (Field field in decl.cases[0].fields) {
+            text += ", " + llvmType(c, field.resolved) + " " + defaultConstant(c, field.resolved)
+        }
+        ret text + ", [" + num(i64(decl.size - decl.payloadOffset - decl.cases[0].size)) + " x i8] zeroinitializer }"
+    }
+
+    // The default value of a type (D31, D48): zero, or the initial values of the fields.
+    string defaultConstant(Checker c, i32 type) const {
+        if (c.types.isFunction(type) || c.types.isVector(type) || c.types.isInterface(type)) {
+            ret "zeroinitializer"
+        }
+        if (c.types.isArray(type)) {  // D196: every element has its default value
+            if (zeroDefault(c, type)) {
+                ret "zeroinitializer"
+            }
+            string element = llvmType(c, elementOf(c, type)) + " " + defaultConstant(c, elementOf(c, type))
+            string text = "["
+            for (i64 i = 0; i < countOf(c, type); i++) {
+                text += (i > 0 ? ", " : "") + element
+            }
+            ret text + "]"
+        }
+        if (c.types.isBool(type)) {
+            ret "false"
+        }
+        if (c.types.isFloat(type)) {
+            ret floatConstant(0.0, bitsOf(c, type))
+        }
+        if (kindOf(c, type) == TypeKind.Addr) {
+            ret "null"
+        }
+        if (!c.types.isStruct(type)) {
+            ret "0"
+        }
+        const ref Record decl = c.tree.records[recordOf(c, type)]
+        if (decl.isEnum) {
+            ret enumDefault(c, recordOf(c, type))
+        }
+        if (decl.fields.len() == 0) {
+            ret "zeroinitializer"
+        }
+        string text = "{ "
+        for (i64 i = 0; i < decl.fields.len(); i++) {
+            if (i > 0) {
+                text += ", "
+            }
+            // Only the literals are left in the fields: the analysis moves the other
+            // initial values into the default function of the struct (D360).
+            text += llvmType(c, decl.fields[i].resolved) + " " +
+                (decl.fields[i].init >= 0 ? literalConstant(c, decl.fields[i].init, decl.fields[i].resolved) :
+                    defaultConstant(c, decl.fields[i].resolved))
+        }
+        ret text + " }"
+    }
+
+    // ---- The text of a function ----
+
+    string temp() {
+        nextTemp++
+        ret format("%t{}", nextTemp - 1)
+    }
+
+    string label(string base) {
+        nextLabel++
+        ret format("{}.{}", base, nextLabel - 1)
+    }
+
+    // A stack slot in the entry block, where mem2reg and SROA can find it.
+    string slot(Checker c, i32 type) {
+        string name = format("%slot.{}", nextSlot)
+        nextSlot++
+        allocas += "  " + name + " = alloca " + llvmType(c, type) + "\n"
+        ret name
+    }
+
+    // Code after a terminator (ret, br) is unreachable: give it its own block.
+    void ensureLive() {
+        if (!terminated) {
+            ret
+        }
+        string dead = label("dead")
+        bodyText += dead + ":\n"
+        currentBlock = dead
+        terminated = false
+    }
+
+    void inst(string line) {
+        ensureLive()
+        bodyText += "  " + line
+        // A vector in a list, a struct or an array is aligned as its numbers: its loads
+        // and stores say so, and LLVM makes them unaligned instructions (D505).
+        if (line.startsWith("store <") || line.contains(" = load <")) {
+            i64 from = line.find(" x ") + 3
+            string number = line.slice(from, line.findFrom(">", from))
+            i64 size = number == "float" ? 4 : number == "double" ? 8 : i64(number.slice(1, number.len())) / 8
+            bodyText += format(", align {}", size)
+        }
+        bodyText += "\n"
+    }
+
+    void term(string line) {
+        inst(line)
+        terminated = true
+    }
+
+    // Starts a new block, falling through from the current one if it is still open.
+    void block(string name) {
+        if (!terminated) {
+            bodyText += "  br label %" + name + "\n"
+        }
+        bodyText += name + ":\n"
+        currentBlock = name
+        terminated = false
+    }
+
+    // A global constant with the given bytes, shared when the same text repeats.
+    string stringConstant(string bytes) {
+        ret bytesConstant(quoted(bytes), bytes.len())
+    }
+
+    // The same from the bytes as LLVM reads them, between quotes: those of a file
+    // are not a text (D470).
+    string bytesConstant(string written, i64 size) {
+        if (strings.contains(written)) {
+            ret strings[written]
+        }
+        string name = format("@.str.{}", strings.len())
+        globalText += name + format(" = private unnamed_addr constant [{} x i8] c", size) + written + ", align 1\n"
+        strings[written] = name
+        ret name
+    }
+
+    // The constant with the bytes of a string literal, and how many they are: its
+    // text, or the file that `embed` names (D470).
+    string literalBytes(Checker c, i32 expr) {
+        if (!c.tree.exprs[expr].flag) {
+            ret stringConstant(c.tree.exprs[expr].text)
+        }
+        list<u8> bytes = fs.readBytes(c.tree.exprs[expr].module)
+        embedded[expr] = bytes.len()
+        ret bytesConstant(quotedBytes(bytes), bytes.len())
+    }
+
+    i64 literalSize(Checker c, i32 expr) const {
+        ret c.tree.exprs[expr].flag ? embedded[expr] : c.tree.exprs[expr].text.len()
+    }
+
+    // Constant FmtSpec for the runtime (runtime/cromo_rt.c).
+    string specConstant(FormatSpec spec) {
+        string name = format("@.spec.{}", nextSpec)
+        nextSpec++
+        globalText += name + " = private unnamed_addr constant { i8, i8, i8, i8, i8, i8, [2 x i8], i32, i32 } { " +
+            format("i8 {}, i8 {}, i8 {}, i8 {}, i8 {}, i8 {}", spec.fill, spec.align, spec.sign, spec.alternate ? u8(1) : 0,
+                spec.zeroPad ? u8(1) : 0, spec.type) +
+            format(", [2 x i8] zeroinitializer, i32 {}, i32 {} }}, align 4\n", spec.width, spec.precision)
+        ret name
+    }
+
+    string intrinsic(string declaration, string name) {
+        intrinsics[declaration] = true
+        ret name
+    }
+
+    // Where a panic happens (D62): the line of the code, or, inside the core of the
+    // library, the line of the user's code that called it (D102).
+    string where(Checker c, Place place) {
+        if (callerTracked) {
+            ret "%caller"
+        }
+        string text = format("{}:{}:{}", shownPath(c, place.file), place.line, place.column)
+        if (wheres.contains(text)) {
+            ret wheres[text]
+        }
+        string name = format("@.where.{}", wheres.len())
+        string bytes = stringConstant(text)  // first: it writes a global of its own
+        globalText += name + " = private unnamed_addr constant { ptr, i64 } { ptr " + bytes + format(", i64 {} }}\n", text.len())
+        wheres[text] = name
+        ret name
+    }
+
+    // The path of a file in the messages of the program: as given to cromo, and
+    // `cromo:core.cro` for a file of the library (D345).
+    string shownPath(Checker c, i32 file) const {
+        string path = c.diag.path(file)
+        if (c.tree.files[file].isLibrary && options.library.len() > 0 && path.startsWith(options.library)) {
+            ret "cromo:" + path.slice(options.library.len() + 1, path.len()).replace("\\", "/")
+        }
+        string main = options.sourcePath
+        bool rooted = main.startsWith("/") || main.startsWith("\\") || (main.len() > 1 && main[1] == ':')
+        if (file == 0 || rooted) {
+            ret path
+        }
+        // From the folder of the main file, as that one was given: tests/m14/main.cro
+        // shows its module as tests/m14/modules/kit/tool.cro.
+        list<string> folder = absolute(main).split("\\")
+        folder.remove(folder.len() - 1)
+        list<string> full = absolute(path).split("\\")
+        i64 common = 0
+        for (common < folder.len() && common < full.len() && folder[common].lower() == full[common].lower()) {
+            common++
+        }
+        list<string> parts = main.replace("/", "\\").split("\\")
+        parts.remove(parts.len() - 1)
+        for (i64 i = common; i < folder.len(); i++) {
+            parts.add("..")
+        }
+        for (i64 i = common; i < full.len(); i++) {
+            parts.add(full[i])
+        }
+        list<string> kept
+        for (string part in parts) {
+            if (part == "." || part.len() == 0) {
+                continue
+            }
+            if (part == ".." && kept.len() > 0 && kept[kept.len() - 1] != "..") {
+                kept.remove(kept.len() - 1)
+                continue
+            }
+            kept.add(part)
+        }
+        ret join(kept, main.contains("/") ? "/" : "\\")
+    }
+
+    void panicAt(Checker c, string reason, Place place) {
+        // The place first, then the reason: the order in which the C++ numbers them.
+        string at = where(c, place)
+        string bytes = stringConstant(reason)
+        inst("call void @cromo_panic(ptr " + bytes + ", i64 " + num(reason.len()) + ", ptr " + at + ")")
+        term("unreachable")
+    }
+
+    // Branches to a panic (D62) when `condition` is true.
+    void panicIf(Checker c, string condition, string reason, Place place) {
+        string fail = label("panic")
+        string ok = label("ok")
+        term("br i1 " + condition + ", label %" + fail + ", label %" + ok)
+        block(fail)
+        panicAt(c, reason, place)
+        block(ok)
+    }
+
+    Value load(Checker c, string address, i32 type) {
+        string result = temp()
+        inst(result + " = load " + llvmType(c, type) + ", ptr " + address)
+        Value value
+        value.text = result
+        value.type = type
+        ret value
+    }
+
+    Value valueOf(string text, i32 type) const {
+        Value value
+        value.text = text
+        value.type = type
+        ret value
+    }
+
+    // Writes the default value of a type: its constant, then the initial values of
+    // the fields that are computed (D360).
+    void storeDefault(Checker c, string address, i32 type) {
+        storeConstant(c, address, type)
+        if (computedDefault(c, type)) {
+            fillDefault(c, address, type)
+        }
+    }
+
+    // A large value is not written as one constant, which LLVM would split into a
+    // store for each element.
+    void storeConstant(Checker c, string address, i32 type) {
+        if (sizeOf(c, type) > 64 && zeroDefault(c, type)) {
+            string fn = intrinsic("declare void @llvm.memset.p0.i64(ptr, i8, i64, i1)", "@llvm.memset.p0.i64")
+            inst("call void " + fn + "(ptr " + address + ", i8 0, i64 " + num(sizeOf(c, type)) + ", i1 false)")
+        } else if (c.types.isArray(type) && sizeOf(c, type) > 64) {
+            ElementLoop each = beginElements(c, address, type, false)
+            storeConstant(c, each.address, elementOf(c, type))
+            endElements(each)
+        } else {
+            inst("store " + llvmType(c, type) + " " + defaultConstant(c, type) + ", ptr " + address)
+        }
+    }
+
+    // A struct with initial values that are not literals, or that holds one (D360).
+    bool computedDefault(Checker c, i32 type) {
+        if (c.types.isArray(type)) {
+            ret computedDefault(c, elementOf(c, type))
+        }
+        if (!c.types.isStruct(type)) {
+            ret false
+        }
+        i32 record = recordOf(c, type)
+        if (computed.contains(record)) {
+            ret computed[record]
+        }
+        computed[record] = false  // a struct does not hold itself (D11)
+        bool result = c.tree.records[record].defaultFunction >= 0
+        if (c.tree.records[record].isEnum) {
+            for (Field field in c.tree.records[record].cases[0].fields) {
+                result = computedDefault(c, field.resolved) || result
+            }
+        } else {
+            for (Field field in c.tree.records[record].fields) {
+                result = computedDefault(c, field.resolved) || result
+            }
+        }
+        computed[record] = result
+        ret result
+    }
+
+    // The structs inside first, then the initial values of the struct, in the order
+    // of its fields.
+    void fillDefault(Checker c, string address, i32 type) {
+        if (c.types.isArray(type)) {
+            ElementLoop each = beginElements(c, address, type, false)
+            fillDefault(c, each.address, elementOf(c, type))
+            endElements(each)
+            ret
+        }
+        i32 record = recordOf(c, type)
+        const ref Record decl = c.tree.records[record]
+        if (decl.isEnum) {  // the first case, with the defaults of its data (D111)
+            for (i64 i = 0; i < decl.cases[0].fields.len(); i++) {
+                if (computedDefault(c, decl.cases[0].fields[i].resolved)) {
+                    string payload = enumPayload(c, address, record)
+                    fillDefault(c, caseField(c, payload, record, 0, i), decl.cases[0].fields[i].resolved)
+                }
+            }
+            ret
+        }
+        for (i64 i = 0; i < decl.fields.len(); i++) {
+            if (computedDefault(c, decl.fields[i].resolved)) {
+                fillDefault(c, fieldAddress(c, address, record, i), decl.fields[i].resolved)
+            }
+        }
+        if (decl.defaultFunction >= 0) {
+            inst("call void " + symbolOf(c, decl.defaultFunction) + "(ptr " + address +
+                (tracksCaller(c, decl.defaultFunction) ? ", ptr null" : "") + ")")
+        }
+    }
+
+    // The loop over the elements of the array at `array`: `address` is the address of
+    // the current one.
+    ElementLoop beginElements(Checker c, string array, i32 type, bool reverse) {
+        ElementLoop each
+        each.reverse = reverse
+        each.count = countOf(c, type)
+        each.counter = slot(c, intType(64, true))
+        inst("store i64 " + num(reverse ? each.count - 1 : 0) + ", ptr " + each.counter)
+        each.again = label("elements")
+        each.done = label("elements.end")
+        block(each.again)
+        each.index = load(c, each.counter, intType(64, true)).text
+        each.address = temp()
+        inst(each.address + " = getelementptr inbounds " + llvmType(c, type) + ", ptr " + array + ", i64 0, i64 " + each.index)
+        ret each
+    }
+
+    void endElements(ElementLoop each) {
+        string next = temp()
+        string more = temp()
+        inst(next + " = " + (each.reverse ? "sub" : "add") + " i64 " + each.index + ", 1")
+        inst("store i64 " + next + ", ptr " + each.counter)
+        inst(more + " = icmp " + (each.reverse ? "sge i64 " + next + ", 0" : "slt i64 " + next + ", " + num(each.count)))
+        term("br i1 " + more + ", label %" + each.again + ", label %" + each.done)
+        block(each.done)
+    }
+
+    void copyStruct(Checker c, string dest, string source, i32 type) {
+        string fn = intrinsic("declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1)", "@llvm.memcpy.p0.p0.i64")
+        inst("call void " + fn + "(ptr " + dest + ", ptr " + source + ", i64 " + num(sizeOf(c, type)) + ", i1 false)")
+    }
+
+    string fieldAddress(Checker c, string object, i32 record, i64 index) {
+        string result = temp()
+        inst(result + " = getelementptr inbounds " + structName(c, record) + ", ptr " + object + ", i32 0, i32 " + num(index))
+        ret result
+    }
+
+    string listField(Checker c, string object, i32 record, string name) {
+        ret fieldAddress(c, object, record, fieldIndexOf(c, record, name))
+    }
+
+    string enumTag(Checker c, string address, i32 record) {
+        string result = temp()
+        inst(result + " = getelementptr inbounds " + structName(c, record) + ", ptr " + address + ", i32 0, i32 1")
+        ret result
+    }
+
+    string enumPayload(Checker c, string address, i32 record) {
+        string result = temp()
+        inst(result + " = getelementptr inbounds i8, ptr " + address + ", i64 " + num(i64(c.tree.records[record].payloadOffset)))
+        ret result
+    }
+
+    string caseField(Checker c, string payload, i32 record, i64 item, i64 index) {
+        string result = temp()
+        inst(result + " = getelementptr inbounds " + caseTypeName(c, record, item) + ", ptr " + payload + ", i32 0, i32 " + num(index))
+        ret result
+    }
+
+    // The jump on the current case of the enum at `address`, only to the cases that
+    // have data: who calls it writes the block of each, and the label `done`.
+    CaseLoop beginCases(Checker c, i32 record, string address) {
+        CaseLoop cases
+        Value tag = load(c, enumTag(c, address, record), intType(32, true))
+        cases.done = label("case.done")
+        string table
+        for (i64 i = 0; i < c.tree.records[record].cases.len(); i++) {
+            if (c.tree.records[record].cases[i].fields.len() == 0) {
+                cases.labels.add("")
+                continue
+            }
+            string name = label("case")
+            table += " i32 " + num(c.tree.records[record].cases[i].number) + ", label %" + name
+            cases.labels.add(name)
+        }
+        term("switch i32 " + tag.text + ", label %" + cases.done + " [" + table + " ]")
+        ret cases
+    }
+
+    // ---- Lifetimes (D68) ----
+
+    void drop(Checker c, string address, i32 type) {
+        if (c.types.isArray(type)) {  // the elements, the last first (D68, D196)
+            ElementLoop each = beginElements(c, address, type, true)
+            drop(c, each.address, elementOf(c, type))
+            endElements(each)
+            ret
+        }
+        if (c.types.isFunction(type)) {
+            // The data of a lambda, if it has any, go with the function that the lambda
+            // wrote in them (D184).
+            string value = temp()
+            string env = temp()
+            string owned = temp()
+            string release = label("release")
+            string done = label("released")
+            inst(value + " = load { ptr, ptr }, ptr " + address)
+            inst(env + " = extractvalue { ptr, ptr } " + value + ", 1")
+            inst(owned + " = icmp ne ptr " + env + ", null")
+            term("br i1 " + owned + ", label %" + release + ", label %" + done)
+            block(release)
+            string destroy = temp()
+            string kept = temp()
+            string call = label("release.call")
+            inst(destroy + " = load ptr, ptr " + env)
+            inst(kept + " = icmp eq ptr " + destroy + ", null")  // data in a frame that own nothing (D215)
+            term("br i1 " + kept + ", label %" + done + ", label %" + call)
+            block(call)
+            inst("call void " + destroy + "(ptr " + env + ")")
+            term("br label %" + done)
+            block(done)
+            ret
+        }
+        if (c.types.isInterface(type)) {
+            // D357: the object, if there is one, through the release at the end of its table.
+            string value = temp()
+            string object = temp()
+            string owned = temp()
+            string release = label("release")
+            string done = label("released")
+            inst(value + " = load { ptr, ptr }, ptr " + address)
+            inst(object + " = extractvalue { ptr, ptr } " + value + ", 0")
+            inst(owned + " = icmp ne ptr " + object + ", null")
+            term("br i1 " + owned + ", label %" + release + ", label %" + done)
+            block(release)
+            string table = temp()
+            string entry = temp()
+            string function = temp()
+            inst(table + " = extractvalue { ptr, ptr } " + value + ", 1")
+            inst(entry + " = getelementptr inbounds ptr, ptr " + table + ", i64 " +
+                num(c.tree.interfaces[recordOf(c, type)].methods.len()))
+            inst(function + " = load ptr, ptr " + entry)
+            inst("call void " + function + "(ptr " + object + ")")
+            term("br label %" + done)
+            block(done)
+            ret
+        }
+        inst("call void " + dropSymbol(c, recordOf(c, type)) + "(ptr " + address + ")")
+    }
+
+    LiveObject liveObject(string address, i32 type, i32 variable) const {
+        LiveObject object
+        object.address = address
+        object.type = type
+        object.variable = variable
+        ret object
+    }
+
+    // Destroys a variable, checking its drop flag if it may have been moved (D77).
+    void dropVariable(Checker c, string address, i32 type, i32 variable) {
+        dropObject(c, liveObject(address, type, variable))
+    }
+
+    void dropObject(Checker c, LiveObject object) {
+        string flag = object.flag
+        if (flag.len() == 0 && object.variable >= 0 && c.tree.variables[object.variable].needsDropFlag) {
+            flag = dropFlags[i64(c.tree.variables[object.variable].id)]
+        }
+        string done
+        if (flag.len() > 0) {
+            string alive = temp()
+            string yes = label("drop")
+            done = label("dropped")
+            inst(alive + " = load i1, ptr " + flag)
+            term("br i1 " + alive + ", label %" + yes + ", label %" + done)
+            block(yes)
+        }
+        if (object.isException) {
+            freesExceptions = true
+            inst("call void @cromo.exception.free(ptr " + object.address + ")")
+        } else {
+            drop(c, object.address, object.type)
+        }
+        if (done.len() > 0) {
+            block(done)
+        }
+    }
+
+    void setAlive(Checker c, i32 variable, bool alive) {
+        if (c.tree.variables[variable].needsDropFlag) {
+            inst("store i1 " + (alive ? "true" : "false") + ", ptr " + dropFlags[i64(c.tree.variables[variable].id)])
+        }
+    }
+
+    // Destroys objects in reverse order, except `kept` (moved by `ret`).
+    void dropObjects(Checker c, list<LiveObject> objects, i32 kept) {
+        for (i64 i = objects.len() - 1; i >= 0; i--) {
+            if (objects[i].variable >= 0 && objects[i].variable == kept) {
+                continue
+            }
+            dropObject(c, objects[i])
+        }
+    }
+
+    // Leaves the scope at `index`: destroys its objects and runs its `finally` (D16).
+    void leaveScope(Checker c, i64 index, i32 kept) {
+        Scope scope = scopes[index]  // a copy: running finally opens scopes
+        dropObjects(c, scope.objects, kept)
+        if (scope.finallyBlock >= 0) {
+            generateFinally(c, scope.finallyBlock, index)
+        }
+    }
+
+    // Runs a `finally` block where the code leaves its `try`. It cannot jump out or
+    // let an exception out (D113, D120), so it runs as if the scopes from `index` on
+    // were already closed.
+    void generateFinally(Checker c, i32 finallyBlock, i64 index) {
+        list<Scope> inner
+        for (i64 i = index; i < scopes.len(); i++) {
+            inner.add(scopes[i])
+        }
+        list<LiveObject> saved = move temporaries
+        for (scopes.len() > index) {
+            scopes.remove(scopes.len() - 1)
+        }
+        generateBlock(c, finallyBlock)
+        for (Scope scope in inner) {
+            scopes.add(scope)
+        }
+        temporaries = move saved
+    }
+
+    // Destroys the temporaries created since `mark`.
+    void dropTemporaries(Checker c, i64 mark) {
+        if (temporaries.len() <= mark) {
+            ret
+        }
+        if (!terminated) {
+            for (i64 i = temporaries.len() - 1; i >= mark; i--) {
+                LiveObject object = temporaries[i]
+                dropObject(c, object)
+            }
+        }
+        for (temporaries.len() > mark) {
+            temporaries.remove(temporaries.len() - 1)
+        }
+    }
+
+    // ---- Exceptions (D36) ----
+
+    // Where the exceptions of this function go: the slot of the caller, or one of
+    // its own when nothing can leave it.
+    string raisedSlot(Checker c) {
+        if (fnNow >= 0 && c.tree.functions[fnNow].canThrow) {
+            ret "%raised"
+        }
+        if (localRaised.len() == 0) {
+            localRaised = "%raised.local"
+            allocas += "  %raised.local = alloca { ptr, ptr }\n"
+            allocas += "  store { ptr, ptr } zeroinitializer, ptr %raised.local\n"
+        }
+        ret localRaised
+    }
+
+    // After a call that can throw: an object in the slot is an exception.
+    void checkRaised(Checker c) {
+        string object = temp()
+        string raised = temp()
+        inst(object + " = load ptr, ptr " + raisedSlot(c))
+        inst(raised + " = icmp ne ptr " + object + ", null")
+        string unwind = label("unwind")
+        string ok = label("ok")
+        term("br i1 " + raised + ", label %" + unwind + ", label %" + ok)
+        block(unwind)
+        emitPropagation(c)
+        block(ok)
+    }
+
+    // An exception is in the slot: leave the scopes up to the nearest `try` body,
+    // or out of the function. Nothing is popped: the code goes on after it.
+    void emitPropagation(Checker c) {
+        i64 mark = 0
+        for (i64 i = scopes.len() - 1; i >= 0; i--) {
+            if (scopes[i].handler.len() > 0) {
+                mark = scopes[i].temporaries
+                break
+            }
+        }
+        for (i64 i = temporaries.len() - 1; i >= mark; i--) {
+            LiveObject object = temporaries[i]
+            dropObject(c, object)
+        }
+        for (i64 i = scopes.len() - 1; i >= 0; i--) {
+            if (scopes[i].handler.len() > 0) {
+                term("br label %" + scopes[i].handler)
+                ret
+            }
+            leaveScope(c, i, -1)
+        }
+        // Out of the function, with the exception still in the slot of the caller.
+        // A constructor destroys the fields of its object (D16, D123).
+        if (fnNow >= 0 && c.tree.functions[fnNow].kind == FunctionKind.Constructor) {
+            dropFieldsOf(c, c.tree.functions[fnNow].owner)
+        }
+        i32 result = fnNow >= 0 ? c.tree.functions[fnNow].resolvedReturn : voidType()
+        if (c.types.isVoid(result) || byPointer(c, result)) {
+            term("ret void")
+        } else {
+            term("ret " + llvmType(c, result) + " " + defaultConstant(c, result))
+        }
+    }
+
+    void dropFieldsOf(Checker c, i32 record) {
+        for (i64 i = c.tree.records[record].fields.len() - 1; i >= 0; i--) {
+            i32 type = c.tree.records[record].fields[i].resolved
+            if (needsDestruction(c, type)) {
+                drop(c, fieldAddress(c, "%self", record, i), type)
+            }
+        }
+    }
+
+    // What a thrown struct carries with it: its destructor, to free it, and its
+    // methods of Exception, for `catch (Exception e)`. Its address also tells the
+    // `catch` clauses its type.
+    string exceptionDescriptor(Checker c, i32 record) {
+        string name = llvmName("@", "exception." + recordSymbol(c, record))
+        if (tables.contains(name)) {
+            ret name
+        }
+        tables[name] = true
+        string table = methodTable(c, record, exceptionInterface)  // first: it writes a global of its own
+        string destroy = c.tree.records[record].needsDestruction ? dropSymbol(c, record) : "null"
+        globalText += name + " = private unnamed_addr constant { ptr, ptr } { ptr " + destroy + ", ptr " + table + " }\n"
+        ret name
+    }
+
+    // The method table of a struct for an interface, emitted the first time it is
+    // used: the methods, then the release of an object on the heap (D357).
+    string methodTable(Checker c, i32 record, i32 iface) {
+        string name = llvmName("@", "vtable." + recordSymbol(c, record) + "." + c.interfaceSymbol(iface))
+        if (tables.contains(name)) {
+            ret name
+        }
+        tables[name] = true
+        string text = name + format(" = private unnamed_addr constant [{} x ptr] [", c.tree.interfaces[iface].methods.len() + 1)
+        for (i32 method in c.tree.interfaces[iface].methods) {
+            text += "ptr " + methodSymbol(c, record, c.tree.functions[method].name) + ", "
+        }
+        globalText += text
+        string release = releaseFunction(c, record)
+        globalText += "ptr " + release + "]\n"
+        ret name
+    }
+
+    // Destroys an object on the heap, the value of an interface, and frees it (D357).
+    string releaseFunction(Checker c, i32 record) {
+        string name = llvmName("@", recordSymbol(c, record) + "..release")
+        if (releases.contains(name)) {
+            ret name
+        }
+        releases[name] = true
+        string text = "define private void " + name + "(ptr %object) nounwind uwtable {\nentry:\n"
+        if (c.tree.records[record].needsDestruction) {
+            text += "  call void " + dropSymbol(c, record) + "(ptr %object)\n"
+        }
+        text += "  call void @cromo_free(ptr %object)\n  ret void\n}\n\n"
+        releaseBodies += text
+        ret name
+    }
+}
+
+extend Generator {
+    // ---- Functions ----
+
+    void startFunction(Checker c, i32 function) {
+        bodyText = ""
+        allocas = ""
+        nextTemp = 0
+        nextLabel = 0
+        nextSlot = 0
+        terminated = false
+        currentBlock = "entry"
+        fnNow = function
+        list<Scope> noScopes
+        scopes = move noScopes
+        list<LiveObject> noObjects
+        temporaries = move noObjects
+        list<Loop> noLoops
+        loops = move noLoops
+        list<string> noAddresses
+        list<string> noFlags
+        if (function >= 0) {
+            for (i64 i = 0; i < c.tree.functions[function].variables.len(); i++) {
+                noAddresses.add("")
+                noFlags.add("")
+            }
+        }
+        addresses = move noAddresses
+        dropFlags = move noFlags
+        dropFields = ""
+        callerTracked = false
+        localRaised = ""
+        list<Caught> noCatches
+        catches = move noCatches
+    }
+
+    string finishFunction(string head) {
+        ret head + " {\nentry:\n" + allocas + bodyText + "}\n\n"
+    }
+
+    // The place of a variable among those of its function.
+    i64 idOf(Checker c, i32 variable) const {
+        ret i64(c.tree.variables[variable].id)
+    }
+
+    // The place of a capture in the data of its lambda: among those with a name inside.
+    i64 captureIndex(Checker c, i32 function, i32 variable) const {
+        const ref Expr lambda = c.tree.exprs[lambdaOf[function]]
+        i64 index = 0
+        for (Capture capture in lambda.captures) {
+            if (capture.inner < 0) {
+                continue
+            }
+            if (capture.inner == variable) {
+                ret index
+            }
+            index++
+        }
+        ret -1
+    }
+
+    Place placeOf(Checker c, i32 line, i32 column) const {
+        Place place
+        place.file = fnNow >= 0 ? c.tree.functions[fnNow].file : fileNow
+        place.line = line
+        place.column = column
+        ret place
+    }
+
+    Place exprPlace(Checker c, i32 expr) const {
+        ret placeOf(c, c.tree.exprs[expr].line, c.tree.exprs[expr].column)
+    }
+
+    string generateFunction(Checker c, i32 function) {
+        startFunction(c, function)
+        const ref Function decl = c.tree.functions[function]
+        i32 result = decl.resolvedReturn
+        callerTracked = tracksCaller(c, function)
+
+        // Every variable gets a stack slot; mem2reg turns them into registers.
+        // A parameter passed by address is used through the pointer it arrives with.
+        for (i64 i = 0; i < decl.variables.len(); i++) {
+            const ref Variable variable = c.tree.variables[decl.variables[i]]
+            i64 id = i64(variable.id)
+            // The element of a `for` and the data of a case are where they are in memory.
+            if (variable.kind == VariableKind.Element || variable.kind == VariableKind.Binding) {
+                continue
+            }
+            if (variable.kind == VariableKind.Caught && !c.types.isInterface(variable.type)) {
+                continue  // the thrown object
+            }
+            if (variable.kind == VariableKind.Captured) {
+                // In the data of the lambda: the value, or the address of the variable outside.
+                i64 at = captureIndex(c, function, decl.variables[i])
+                string field = format("%capture.{}", at)
+                inst(field + " = getelementptr inbounds " + environmentType(c, function) + ", ptr %env, i32 0, i32 " + num(at + 1))
+                if (variable.captureByAddress) {
+                    string loaded = temp()
+                    addresses[id] = loaded
+                    inst(loaded + " = load ptr, ptr " + field)
+                } else {
+                    addresses[id] = field
+                }
+                continue
+            }
+            string name = format("%v{}.{}", variable.id, variable.name)
+            if (variable.needsDropFlag) {
+                dropFlags[id] = name + ".alive"
+                allocas += "  " + name + ".alive = alloca i1\n"
+                inst("store i1 " + (variable.kind == VariableKind.MoveParam ? "true" : "false") + ", ptr " + name + ".alive")
+            }
+            if (i < decl.paramTypes.len() && byAddress(c, decl.params[i].mode, variable.type)) {
+                addresses[id] = format("%arg.{}", i)
+                continue
+            }
+            addresses[id] = name
+            allocas += "  " + name + " = alloca " + llvmType(c, variable.type) + "\n"
+        }
+        for (i64 i = 0; i < decl.paramTypes.len(); i++) {
+            if (byAddress(c, decl.params[i].mode, decl.paramTypes[i])) {
+                continue
+            }
+            inst("store " + llvmType(c, decl.paramTypes[i]) + format(" %arg.{}, ptr ", i) + addresses[idOf(c, decl.variables[i])])
+        }
+
+        // The function owns its `move` parameters and destroys them (D22).
+        Scope first
+        scopes.add(move first)
+        for (i64 i = 0; i < decl.paramTypes.len(); i++) {
+            const ref Variable variable = c.tree.variables[decl.variables[i]]
+            if (variable.kind == VariableKind.MoveParam && needsDestruction(c, variable.type)) {
+                scopes[scopes.len() - 1].objects.add(liveObject(addresses[i64(variable.id)], variable.type, decl.variables[i]))
+            }
+        }
+
+        if (decl.kind == FunctionKind.Constructor) {
+            // The constructor starts from the default value (D48).
+            storeDefault(c, "%self", c.types.knownStruct(decl.owner))
+        }
+        if (decl.kind == FunctionKind.Destructor) {
+            dropFields = label("drop.fields")
+        }
+
+        generateBlock(c, decl.body)
+        if (!terminated) {
+            list<LiveObject> objects = scopes[scopes.len() - 1].objects
+            dropObjects(c, objects, -1)
+        }
+
+        if (dropFields.len() > 0) {
+            // D68: after the body of the destructor, the fields are destroyed.
+            block(dropFields)
+            dropFieldsOf(c, decl.owner)
+            term("ret void")
+        } else if (!terminated) {
+            term(c.types.isVoid(result) || byPointer(c, result) ? "ret void" : "unreachable")
+        }
+        ret finishFunction(signature(c, function))
+    }
+
+    // `T..drop` of a struct with no destructor whose fields need destruction.
+    string generateFieldsDrop(Checker c, i32 record) {
+        startFunction(c, -1)
+        fileNow = c.tree.records[record].file
+        if (c.tree.records[record].isEnum) {
+            // The data of the current case (D111).
+            CaseLoop cases = beginCases(c, record, "%self")
+            for (i64 k = 0; k < cases.labels.len(); k++) {
+                if (cases.labels[k].len() == 0) {
+                    continue
+                }
+                block(cases.labels[k])
+                string payload = enumPayload(c, "%self", record)
+                for (i64 i = c.tree.records[record].cases[k].fields.len() - 1; i >= 0; i--) {
+                    i32 type = c.tree.records[record].cases[k].fields[i].resolved
+                    if (needsDestruction(c, type)) {
+                        drop(c, caseField(c, payload, record, k, i), type)
+                    }
+                }
+                term("br label %" + cases.done)
+            }
+            block(cases.done)
+        } else {
+            dropFieldsOf(c, record)
+        }
+        term("ret void")
+        list<string> self = ["ptr noalias %self"]
+        ret finishFunction(define("void", dropSymbol(c, record), self, false, false))
+    }
+
+    // `copy()` generated by the compiler (D35): the simple fields are copied, the
+    // others with their own copy().
+    string generateCopy(Checker c, i32 record) {
+        startFunction(c, -1)
+        fileNow = c.tree.records[record].file
+        const ref Record decl = c.tree.records[record]
+        Place place
+        place.file = decl.file
+        place.line = decl.line
+        place.column = decl.column
+        i32 type = c.types.knownStruct(record)
+        list<i32> none
+        string dest = byPointer(c, type) ? "%ret" : slot(c, type)
+        if (decl.isEnum) {
+            // The tag, then the data of the current case (D111).
+            copyStruct(c, dest, "%self", type)
+            if (decl.needsDestruction) {
+                CaseLoop cases = beginCases(c, record, "%self")
+                for (i64 k = 0; k < cases.labels.len(); k++) {
+                    if (cases.labels[k].len() == 0) {
+                        continue
+                    }
+                    block(cases.labels[k])
+                    string payload = enumPayload(c, "%self", record)
+                    string target = enumPayload(c, dest, record)
+                    for (i64 i = 0; i < decl.cases[k].fields.len(); i++) {
+                        i32 field = decl.cases[k].fields[i].resolved
+                        if (!needsDestruction(c, field)) {
+                            continue
+                        }
+                        // The destination first: the order of the arguments of the C++.
+                        string to = caseField(c, target, record, k, i)
+                        string from = caseField(c, payload, record, k, i)
+                        emitCall(c, c.tree.records[recordOf(c, field)].methods["copy"], from, field, none, to, place, -1, "")
+                    }
+                    term("br label %" + cases.done)
+                }
+                block(cases.done)
+            }
+        }
+        for (i64 i = 0; i < decl.fields.len(); i++) {
+            i32 field = decl.fields[i].resolved
+            string source = fieldAddress(c, "%self", record, i)
+            string target = fieldAddress(c, dest, record, i)
+            if (needsDestruction(c, field)) {
+                emitCall(c, c.tree.records[recordOf(c, field)].methods["copy"], source, field, none, target, place, -1, "")
+            } else if (isAggregate(c, field)) {
+                copyStruct(c, target, source, field)
+            } else {
+                inst("store " + llvmType(c, field) + " " + load(c, source, field).text + ", ptr " + target)
+            }
+        }
+        list<string> params
+        if (byPointer(c, type)) {
+            params.add("ptr noalias sret(" + llvmType(c, type) + ") %ret")
+            params.add("ptr noalias readonly %self")
+            term("ret void")
+            ret finishFunction(define("void", methodSymbol(c, record, "copy"), params, false, false))
+        }
+        params.add("ptr noalias readonly %self")
+        term("ret " + llvmType(c, type) + " " + load(c, dest, type).text)
+        ret finishFunction(define(llvmType(c, type), methodSymbol(c, record, "copy"), params, false, false))
+    }
+
+    // ---- Statements ----
+
+    void generateBlock(Checker c, i32 body) {
+        Scope scope
+        scopes.add(move scope)
+        for (i32 statement in c.tree.blocks[body].statements) {
+            generateStatement(c, statement)
+        }
+        if (!terminated) {
+            list<LiveObject> objects = scopes[scopes.len() - 1].objects
+            dropObjects(c, objects, -1)
+        }
+        scopes.remove(scopes.len() - 1)
+    }
+
+    i32 nameVariable(Checker c, i32 expr) const {
+        ret c.tree.exprs[expr].kind == ExprKind.Name ? c.tree.exprs[expr].variable : -1
+    }
+
+    void generateStatement(Checker c, i32 statement) {
+        i64 mark = temporaries.len()
+        const ref Stmt node = c.tree.stmts[statement]
+        switch (node.kind) {
+            case VarDecl {
+                generateVarDecl(c, statement)
+            }
+            case Assign {
+                generateAssign(c, statement)
+            }
+            case IncDec {
+                string address = addressOf(c, node.target)
+                i32 type = c.tree.exprs[node.target].resolved
+                Value current = load(c, address, type)
+                Value value = arithmetic(c, node.increment ? BinaryOp.Add : BinaryOp.Sub, current, valueOf("1", type),
+                    placeOf(c, node.line, node.column), false)
+                inst("store " + llvmType(c, type) + " " + value.text + ", ptr " + address)
+            }
+            case Expression {
+                i32 type = c.tree.exprs[node.value].resolved
+                if (isAggregate(c, type) || isOwned(c, type)) {
+                    addressOf(c, node.value)  // a temporary, destroyed below
+                } else {
+                    generateExpr(c, node.value)
+                }
+            }
+            case If {
+                generateIf(c, statement)
+            }
+            case For {
+                generateFor(c, statement)
+            }
+            case Break, Continue {
+                Loop loop = loops[loops.len() - 1]
+                for (i64 i = scopes.len() - 1; i >= loop.scopeDepth; i--) {
+                    leaveScope(c, i, -1)
+                }
+                term("br label %" + (node.kind == StmtKind.Break ? loop.breakLabel : loop.continueLabel))
+            }
+            case Return {
+                generateReturn(c, statement)
+            }
+            case Switch {
+                generateSwitch(c, statement)
+            }
+            case Throw {
+                generateThrow(c, statement)
+            }
+            case Try {
+                generateTry(c, statement)
+            }
+        }
+        dropTemporaries(c, mark)
+    }
+
+    void generateVarDecl(Checker c, i32 statement) {
+        const ref Stmt decl = c.tree.stmts[statement]
+        const ref Variable variable = c.tree.variables[decl.variable]
+        i64 id = i64(variable.id)
+        if (variable.reference) {  // D562: the place it names, found once
+            string place = addressOf(c, decl.value)
+            addresses[id] = place
+            ret
+        }
+        string address = addresses[id]
+        i32 type = variable.type
+        if (isAggregate(c, type)) {
+            if (decl.value >= 0) {
+                generateStructInto(c, decl.value, address)
+            } else {
+                storeDefault(c, address, type)
+            }
+            if (needsDestruction(c, type)) {
+                scopes[scopes.len() - 1].objects.add(liveObject(address, type, decl.variable))
+            }
+            setAlive(c, decl.variable, true)
+            ret
+        }
+        string value = decl.value >= 0 ? generateExpr(c, decl.value).text : defaultConstant(c, type)
+        inst("store " + llvmType(c, type) + " " + value + ", ptr " + address)
+        if (needsDestruction(c, type)) {  // a function value owns its data (D184)
+            scopes[scopes.len() - 1].objects.add(liveObject(address, type, decl.variable))
+            setAlive(c, decl.variable, true)
+        }
+    }
+
+    BinaryOp operatorOf(AssignOp op) const {
+        switch (op) {
+            case Assign, Add {
+                ret BinaryOp.Add
+            }
+            case Sub {
+                ret BinaryOp.Sub
+            }
+            case Mul {
+                ret BinaryOp.Mul
+            }
+            case Div {
+                ret BinaryOp.Div
+            }
+            case Rem {
+                ret BinaryOp.Rem
+            }
+            case BitAnd {
+                ret BinaryOp.BitAnd
+            }
+            case BitOr {
+                ret BinaryOp.BitOr
+            }
+            case BitXor {
+                ret BinaryOp.BitXor
+            }
+            case Shl {
+                ret BinaryOp.Shl
+            }
+            case Shr {
+                ret BinaryOp.Shr
+            }
+        }
+    }
+
+    void generateAssign(Checker c, i32 statement) {
+        const ref Stmt assign = c.tree.stmts[statement]
+        if (assign.call >= 0) {  // `s += t` (D95)
+            generateExpr(c, assign.call)
+            ret
+        }
+        i32 type = c.tree.exprs[assign.target].resolved
+        i32 variable = nameVariable(c, assign.target)
+        if (isAggregate(c, type)) {
+            // The new value is built apart: it may read the old one (D75). A moved
+            // variable has no old value to destroy (D81).
+            string fresh = slot(c, type)
+            generateStructInto(c, assign.value, fresh)
+            string address = addressOf(c, assign.target)
+            if (needsDestruction(c, type)) {
+                dropVariable(c, address, type, variable)
+            }
+            copyStruct(c, address, fresh, type)
+            if (variable >= 0) {
+                setAlive(c, variable, true)
+            }
+            ret
+        }
+        Value value = generateExpr(c, assign.value)
+        string address = addressOf(c, assign.target)
+        if (isOwned(c, type)) {  // the old value gives back what it owns (D184, D357)
+            dropVariable(c, address, type, variable)
+            inst("store " + llvmType(c, type) + " " + value.text + ", ptr " + address)
+            if (variable >= 0) {
+                setAlive(c, variable, true)
+            }
+            ret
+        }
+        if (assign.op != AssignOp.Assign) {
+            Value current = load(c, address, type)
+            value = arithmetic(c, operatorOf(assign.op), current, value, placeOf(c, assign.line, assign.column), false)
+        }
+        inst("store " + llvmType(c, type) + " " + value.text + ", ptr " + address)
+    }
+
+    void generateReturn(Checker c, i32 statement) {
+        i32 value = c.tree.stmts[statement].value
+        i32 type = c.tree.functions[fnNow].resolvedReturn
+        i32 moved = -1
+        string result
+        if (value >= 0 && isAggregate(c, type)) {
+            // `ret local` moves the variable out (D23): it is not destroyed.
+            moved = nameVariable(c, value)
+            string dest = byPointer(c, type) ? "%ret" : slot(c, type)
+            generateStructInto(c, value, dest)
+            if (!byPointer(c, type)) {
+                result = dest
+            }
+        } else if (value >= 0) {
+            if (isOwned(c, type)) {
+                moved = nameVariable(c, value)
+            }
+            result = generateExpr(c, value).text
+        }
+
+        dropTemporaries(c, 0)
+        for (i64 i = scopes.len() - 1; i >= 0; i--) {
+            leaveScope(c, i, moved)
+        }
+
+        if (dropFields.len() > 0) {
+            term("br label %" + dropFields)
+        } else if (value < 0 || byPointer(c, type)) {
+            term("ret void")
+        } else if (isAggregate(c, type)) {
+            Value loaded = load(c, result, type)
+            term("ret " + llvmType(c, type) + " " + loaded.text)
+        } else {
+            term("ret " + llvmType(c, type) + " " + result)
+        }
+    }
+
+    // Evaluates a condition, destroying its temporaries before the branch (D68).
+    Value generateCondition(Checker c, i32 condition) {
+        i64 mark = temporaries.len()
+        Value value = generateExpr(c, condition)
+        dropTemporaries(c, mark)
+        ret value
+    }
+
+    void generateIf(Checker c, i32 statement) {
+        const ref Stmt node = c.tree.stmts[statement]
+        Value condition = generateCondition(c, node.value)
+        string thenLabel = label("if.then")
+        string elseLabel = node.elseBody >= 0 ? label("if.else") : ""
+        string endLabel = label("if.end")
+        term("br i1 " + condition.text + ", label %" + thenLabel + ", label %" + (node.elseBody >= 0 ? elseLabel : endLabel))
+        block(thenLabel)
+        generateBlock(c, node.body)
+        if (node.elseBody >= 0) {
+            if (!terminated) {
+                term("br label %" + endLabel)
+            }
+            block(elseLabel)
+            generateBlock(c, node.elseBody)
+        }
+        block(endLabel)
+    }
+
+    // `switch` (D106): on an enum it jumps on the tag, on an integer it is a
+    // `switch` of LLVM, on a string it compares the literals in turn (D109).
+    void generateSwitch(Checker c, i32 statement) {
+        const ref Stmt node = c.tree.stmts[statement]
+        i32 type = c.tree.exprs[node.value].resolved
+        string end = label("switch.end")
+        string otherwise = label("switch.default")
+        list<string> labels
+        for (i64 i = 0; i < node.parts.len(); i++) {
+            labels.add(label("switch.case"))
+        }
+
+        string address
+        i32 record = c.types.isStruct(type) ? recordOf(c, type) : -1
+        if (record >= 0 && c.tree.records[record].isEnum) {
+            address = addressOf(c, node.value)
+            Value tag = load(c, enumTag(c, address, record), intType(32, true))
+            string table
+            for (i64 b = 0; b < node.parts.len(); b++) {
+                for (Pattern pattern in c.tree.branches[node.parts[b]].patterns) {
+                    table += " i32 " + num(c.tree.records[record].cases[pattern.caseIndex].number) + ", label %" + labels[b]
+                }
+            }
+            term("switch i32 " + tag.text + ", label %" + otherwise + " [" + table + " ]")
+        } else if (c.types.isInt(type)) {
+            Value value = generateExpr(c, node.value)
+            string table
+            for (i64 b = 0; b < node.parts.len(); b++) {
+                for (Pattern pattern in c.tree.branches[node.parts[b]].patterns) {
+                    table += " " + llvmType(c, type) + " " + literalConstant(c, pattern.literal, type) + ", label %" + labels[b]
+                }
+            }
+            term("switch " + llvmType(c, type) + " " + value.text + ", label %" + otherwise + " [" + table + " ]")
+        } else {
+            string text = addressOf(c, node.value)
+            i32 equals = c.tree.records[record].methods["equals"]
+            for (i64 b = 0; b < node.parts.len(); b++) {
+                for (Pattern pattern in c.tree.branches[node.parts[b]].patterns) {
+                    // A literal owns no memory: it is not a temporary to destroy, which
+                    // a `ret` in an earlier case would destroy before it exists.
+                    string literal = slot(c, c.tree.exprs[pattern.literal].resolved)
+                    generateStructInto(c, pattern.literal, literal)
+                    string same = temp()
+                    string call = same + " = call i1 " + symbolOf(c, equals) + "(ptr " + text + ", ptr " + literal
+                    if (tracksCaller(c, equals)) {
+                        call += ", ptr " + where(c, placeOf(c, pattern.line, pattern.column))
+                    }
+                    inst(call + ")")
+                    string next = label("switch.next")
+                    term("br i1 " + same + ", label %" + labels[b] + ", label %" + next)
+                    block(next)
+                }
+            }
+            term("br label %" + otherwise)
+        }
+
+        for (i64 b = 0; b < node.parts.len(); b++) {
+            const ref Branch branch = c.tree.branches[node.parts[b]]
+            block(labels[b])
+            for (Pattern pattern in branch.patterns) {
+                if (!pattern.hasBindings) {
+                    continue  // D107: the data of the case, where they are
+                }
+                string payload = enumPayload(c, address, record)
+                for (i64 i = 0; i < pattern.bindings.len(); i++) {
+                    if (pattern.bindings[i].variable >= 0) {
+                        addresses[idOf(c, pattern.bindings[i].variable)] = caseField(c, payload, record, i64(pattern.caseIndex), i)
+                    }
+                }
+            }
+            generateBlock(c, branch.body)
+            if (!terminated) {
+                term("br label %" + end)
+            }
+        }
+        block(otherwise)
+        if (node.defaultBody >= 0) {
+            generateBlock(c, node.defaultBody)
+        } else if (node.exhaustive) {
+            term("unreachable")
+        }
+        block(end)
+    }
+
+    Loop loopOf(string continueLabel, string breakLabel) const {
+        Loop loop
+        loop.continueLabel = continueLabel
+        loop.breakLabel = breakLabel
+        loop.scopeDepth = scopes.len()
+        ret loop
+    }
+
+    // `for ([ref] T x in v)` (D25): `x` is the address of each element in turn.
+    // The list cannot change while the loop runs (D101), so its length and its
+    // buffer are read once.
+    void generateForEach(Checker c, i32 statement) {
+        const ref Stmt node = c.tree.stmts[statement]
+        i32 i64Type = intType(64, true)
+        string items = addressOf(c, node.value)
+        i32 type = c.tree.exprs[node.value].resolved
+        i32 element
+        string length
+        string data
+        if (c.types.isArray(type)) {  // D196: the elements start where the array is
+            element = elementOf(c, type)
+            length = num(countOf(c, type))
+            data = items
+        } else {
+            i32 record = recordOf(c, type)
+            element = c.tree.records[record].typeArgs[0]
+            length = load(c, listField(c, items, record, "length"), i64Type).text
+            data = load(c, listField(c, items, record, "data"), addrType()).text
+        }
+        string counter = slot(c, i64Type)
+        inst("store i64 0, ptr " + counter)
+        string condLabel = label("each.cond")
+        string bodyLabel = label("each.body")
+        string stepLabel = label("each.step")
+        string endLabel = label("each.end")
+
+        block(condLabel)
+        Value index = load(c, counter, i64Type)
+        string more = temp()
+        inst(more + " = icmp slt i64 " + index.text + ", " + length)
+        term("br i1 " + more + ", label %" + bodyLabel + ", label %" + endLabel)
+        block(bodyLabel)
+        Value current = load(c, counter, i64Type)
+        string address = temp()
+        inst(address + " = getelementptr inbounds " + llvmType(c, element) + ", ptr " + data + ", i64 " + current.text)
+        addresses[idOf(c, node.variable)] = address
+        loops.add(loopOf(stepLabel, endLabel))
+        generateBlock(c, node.body)
+        loops.remove(loops.len() - 1)
+        block(stepLabel)
+        Value last = load(c, counter, i64Type)
+        string next = temp()
+        inst(next + " = add i64 " + last.text + ", 1")
+        inst("store i64 " + next + ", ptr " + counter)
+        term("br label %" + condLabel)
+        block(endLabel)
+    }
+
+    // `for (K k, V v in m)` (D197): the slots that are full, in their order. A slot
+    // of the map of the library is its hash, the key at 8 and the value after it,
+    // each at a multiple of 8 bytes.
+    void generateForMap(Checker c, i32 statement) {
+        const ref Stmt node = c.tree.stmts[statement]
+        i32 i64Type = intType(64, true)
+        string table = addressOf(c, node.value)
+        i32 record = recordOf(c, c.tree.exprs[node.value].resolved)
+        i32 keyType = c.tree.records[record].typeArgs[0]
+        i32 valueType = c.tree.records[record].typeArgs[1]
+        i64 valueOffset = 8 + (sizeOf(c, keyType) + 7) / 8 * 8
+        i64 slotSize = valueOffset + (sizeOf(c, valueType) + 7) / 8 * 8
+        Value capacity = load(c, listField(c, table, record, "capacity"), i64Type)
+        Value slots = load(c, listField(c, table, record, "slots"), addrType())
+        string counter = slot(c, i64Type)
+        inst("store i64 0, ptr " + counter)
+        string condLabel = label("map.cond")
+        string testLabel = label("map.test")
+        string bodyLabel = label("map.body")
+        string stepLabel = label("map.step")
+        string endLabel = label("map.end")
+
+        block(condLabel)
+        Value index = load(c, counter, i64Type)
+        string more = temp()
+        inst(more + " = icmp slt i64 " + index.text + ", " + capacity.text)
+        term("br i1 " + more + ", label %" + testLabel + ", label %" + endLabel)
+        block(testLabel)
+        string start = temp()
+        string slotAddress = temp()
+        string hash = temp()
+        string full = temp()
+        inst(start + " = mul i64 " + index.text + ", " + num(slotSize))
+        inst(slotAddress + " = getelementptr inbounds i8, ptr " + slots.text + ", i64 " + start)
+        inst(hash + " = load i64, ptr " + slotAddress)
+        inst(full + " = icmp slt i64 " + hash + ", 0")  // a full slot has the highest bit
+        term("br i1 " + full + ", label %" + bodyLabel + ", label %" + stepLabel)
+        block(bodyLabel)
+        string key = temp()
+        string value = temp()
+        inst(key + " = getelementptr inbounds i8, ptr " + slotAddress + ", i64 8")
+        inst(value + " = getelementptr inbounds i8, ptr " + slotAddress + ", i64 " + num(valueOffset))
+        addresses[idOf(c, node.variable)] = key
+        addresses[idOf(c, node.valueVariable)] = value
+        loops.add(loopOf(stepLabel, endLabel))
+        generateBlock(c, node.body)
+        loops.remove(loops.len() - 1)
+        block(stepLabel)
+        Value last = load(c, counter, i64Type)
+        string next = temp()
+        inst(next + " = add i64 " + last.text + ", 1")
+        inst("store i64 " + next + ", ptr " + counter)
+        term("br label %" + condLabel)
+        block(endLabel)
+    }
+
+    void generateFor(Checker c, i32 statement) {
+        const ref Stmt node = c.tree.stmts[statement]
+        if (node.form == ForForm.Each && node.hasValue) {
+            generateForMap(c, statement)
+            ret
+        }
+        if (node.form == ForForm.Each) {
+            generateForEach(c, statement)
+            ret
+        }
+        Scope scope
+        scopes.add(move scope)  // the variable of the classic form
+        if (node.init >= 0) {
+            generateStatement(c, node.init)
+        }
+        string condLabel = label("for.cond")
+        string bodyLabel = label("for.body")
+        string stepLabel = label("for.step")
+        string endLabel = label("for.end")
+
+        block(condLabel)
+        if (node.value >= 0) {
+            Value condition = generateCondition(c, node.value)
+            term("br i1 " + condition.text + ", label %" + bodyLabel + ", label %" + endLabel)
+        }
+        block(bodyLabel)
+        loops.add(loopOf(stepLabel, endLabel))
+        generateBlock(c, node.body)
+        loops.remove(loops.len() - 1)
+        block(stepLabel)
+        if (node.step >= 0) {
+            generateStatement(c, node.step)
+        }
+        term("br label %" + condLabel)
+        block(endLabel)
+        list<LiveObject> objects = scopes[scopes.len() - 1].objects
+        dropObjects(c, objects, -1)
+        scopes.remove(scopes.len() - 1)
+    }
+
+    // `throw x`: the object goes to the heap, with its descriptor, into the slot.
+    // `throw` alone gives the exception of the `catch` back (D114).
+    void generateThrow(Checker c, i32 statement) {
+        i32 value = c.tree.stmts[statement].value
+        string target = raisedSlot(c)
+        if (value < 0) {
+            Caught caught = catches[catches.len() - 1]
+            string pair = temp()
+            inst(pair + " = load { ptr, ptr }, ptr " + caught.box)
+            inst("store { ptr, ptr } " + pair + ", ptr " + target)
+            inst("store i1 false, ptr " + caught.flag)
+            emitPropagation(c)
+            ret
+        }
+        i32 type = c.tree.exprs[value].resolved
+        string object = temp()
+        i64 size = sizeOf(c, type)
+        inst(object + " = call ptr @cromo_exception_new(i64 " + num(size > 1 ? size : 1) + ")")
+        generateStructInto(c, value, object)
+        string descriptor = exceptionDescriptor(c, recordOf(c, type))
+        string first = temp()
+        string pair = temp()
+        inst(first + " = insertvalue { ptr, ptr } undef, ptr " + object + ", 0")
+        inst(pair + " = insertvalue { ptr, ptr } " + first + ", ptr " + descriptor + ", 1")
+        inst("store { ptr, ptr } " + pair + ", ptr " + target)
+        emitPropagation(c)
+    }
+
+    // `try`, `catch` and `finally` (D16): the exceptions of the body go to a
+    // dispatch that compares their descriptor with the type of each `catch`.
+    void generateTry(Checker c, i32 statement) {
+        const ref Stmt node = c.tree.stmts[statement]
+        i32 finallyBlock = node.elseBody
+        string end = label("try.end")
+        string dispatch = node.parts.len() == 0 ? "" : label("try.dispatch")
+
+        Scope body
+        body.finallyBlock = finallyBlock
+        body.handler = dispatch
+        body.temporaries = temporaries.len()
+        scopes.add(move body)
+        generateBlock(c, node.body)
+        scopes.remove(scopes.len() - 1)
+        if (!terminated) {
+            if (finallyBlock >= 0) {
+                generateFinally(c, finallyBlock, scopes.len())
+            }
+            term("br label %" + end)
+        }
+        if (dispatch.len() == 0) {
+            block(end)
+            ret
+        }
+
+        block(dispatch)
+        i64 frame = scopes.len()
+        Scope handlers
+        handlers.finallyBlock = finallyBlock  // leaving a catch runs finally
+        scopes.add(move handlers)
+        string slotAddress = raisedSlot(c)
+        string descriptorAddress = temp()
+        string descriptor = temp()
+        inst(descriptorAddress + " = getelementptr inbounds { ptr, ptr }, ptr " + slotAddress + ", i32 0, i32 1")
+        inst(descriptor + " = load ptr, ptr " + descriptorAddress)
+        list<string> labels
+        bool catchesAll = false
+        for (i32 part in node.parts) {
+            const ref Catch clause = c.tree.catches[part]
+            labels.add(label("catch"))
+            if (c.types.isInterface(clause.resolved)) {
+                term("br label %" + labels[labels.len() - 1])
+                catchesAll = true
+                break
+            }
+            string match = temp()
+            string next = label("catch.next")
+            inst(match + " = icmp eq ptr " + descriptor + ", " + exceptionDescriptor(c, recordOf(c, clause.resolved)))
+            term("br i1 " + match + ", label %" + labels[labels.len() - 1] + ", label %" + next)
+            block(next)
+        }
+        if (!catchesAll) {
+            emitPropagation(c)  // no catch matches: on, through finally
+        }
+
+        for (i64 i = 0; i < labels.len(); i++) {
+            const ref Catch clause = c.tree.catches[node.parts[i]]
+            block(labels[i])
+            // The catch takes the exception out of the slot, and owns it (D114).
+            string box = format("%caught.{}", nextSlot)
+            nextSlot++
+            string flag = box + ".alive"
+            allocas += "  " + box + " = alloca { ptr, ptr }\n"
+            allocas += "  " + flag + " = alloca i1\n"
+            string pair = temp()
+            inst(pair + " = load { ptr, ptr }, ptr " + slotAddress)
+            inst("store { ptr, ptr } " + pair + ", ptr " + box)
+            inst("store { ptr, ptr } zeroinitializer, ptr " + slotAddress)
+            inst("store i1 true, ptr " + flag)
+            Scope scope
+            LiveObject held = liveObject(box, errorType(), -1)
+            held.flag = flag
+            held.isException = true
+            scope.objects.add(move held)
+            scopes.add(move scope)
+            if (clause.variable >= 0) {
+                string object = temp()
+                inst(object + " = extractvalue { ptr, ptr } " + pair + ", 0")
+                if (c.types.isInterface(clause.resolved)) {
+                    // An interface value: the object with its methods of Exception (D49).
+                    string described = temp()
+                    string tableAddress = temp()
+                    string table = temp()
+                    string first = temp()
+                    string value = temp()
+                    inst(described + " = extractvalue { ptr, ptr } " + pair + ", 1")
+                    inst(tableAddress + " = getelementptr inbounds { ptr, ptr }, ptr " + described + ", i32 0, i32 1")
+                    inst(table + " = load ptr, ptr " + tableAddress)
+                    inst(first + " = insertvalue { ptr, ptr } undef, ptr " + object + ", 0")
+                    inst(value + " = insertvalue { ptr, ptr } " + first + ", ptr " + table + ", 1")
+                    inst("store { ptr, ptr } " + value + ", ptr " + addresses[idOf(c, clause.variable)])
+                } else {
+                    addresses[idOf(c, clause.variable)] = object
+                }
+            }
+            Caught caught
+            caught.box = box
+            caught.flag = flag
+            catches.add(move caught)
+            generateBlock(c, clause.body)
+            catches.remove(catches.len() - 1)
+            if (!terminated) {
+                list<LiveObject> objects = scopes[scopes.len() - 1].objects
+                dropObjects(c, objects, -1)
+            }
+            scopes.remove(scopes.len() - 1)
+            if (!terminated) {
+                if (finallyBlock >= 0) {
+                    generateFinally(c, finallyBlock, frame)
+                }
+                term("br label %" + end)
+            }
+        }
+        scopes.remove(scopes.len() - 1)
+        block(end)
+    }
+}
+
+extend Generator {
+    // ---- Structs ----
+
+    // The address of a struct or of a place. A new object gets a slot and
+    // lives until the end of the statement (D68).
+    string addressOf(Checker c, i32 expr) {
+        const ref Expr node = c.tree.exprs[expr]
+        switch (node.kind) {
+            case Name {
+                const ref Variable variable = c.tree.variables[node.variable]
+                if (variable.kind == VariableKind.Module) {  // D394
+                    ret llvmName("@", c.symbolFor(variable.file, variable.name))
+                }
+                ret addresses[i64(variable.id)]
+            }
+            case Self {
+                ret "%self"
+            }
+            case Field {
+                string object = addressOf(c, node.left)
+                ret fieldAddress(c, object, recordOf(c, c.tree.exprs[node.left].resolved), i64(node.index))
+            }
+            case Index {
+                string items = addressOf(c, node.left)
+                if (node.target >= 0) {
+                    ret mapValue(c, items, expr)
+                }
+                Value index = generateExpr(c, node.right)
+                i32 type = c.tree.exprs[node.left].resolved
+                if (c.types.isArray(type) || c.types.isVector(type)) {  // D196, D505: the size is in the type
+                    if (c.tree.exprs[node.right].kind != ExprKind.IntLiteral) {
+                        checkIndex(c, index.text, num(countOf(c, type)), exprPlace(c, expr))
+                    }
+                    string result = temp()
+                    string layout = c.types.isVector(type) ? format("[{} x {}]", countOf(c, type), llvmType(c, elementOf(c, type))) :
+                        llvmType(c, type)
+                    inst(result + " = getelementptr inbounds " + layout + ", ptr " + items + ", i64 0, i64 " + index.text)
+                    ret result
+                }
+                ret elementAddress(c, items, recordOf(c, type), index.text, exprPlace(c, expr))
+            }
+            default {
+                string address = slot(c, node.resolved)
+                if (c.types.isVector(node.resolved)) {  // a vector computed: its numbers have a place (D505)
+                    Value value = generateExpr(c, expr)
+                    inst("store " + llvmType(c, node.resolved) + " " + value.text + ", ptr " + address)
+                    ret address
+                }
+                generateStructInto(c, expr, address)
+                if (needsDestruction(c, node.resolved)) {
+                    temporaries.add(liveObject(address, node.resolved, -1))
+                }
+                ret address
+            }
+        }
+    }
+
+    // `m[k]` (D197): the address of the value, from the method of the library.
+    string mapValue(Checker c, string table, i32 expr) {
+        const ref Expr node = c.tree.exprs[expr]
+        i32 access = node.target
+        Handover none
+        string args = "ptr " + table + ", " +
+            argument(c, node.right, c.tree.functions[access].params[0].mode, c.tree.functions[access].paramTypes[0], false,
+                ref none).text
+        if (tracksCaller(c, access)) {
+            args += ", ptr " + where(c, exprPlace(c, expr))
+        }
+        if (c.tree.functions[access].canThrow) {
+            args += ", ptr " + raisedSlot(c)
+        }
+        string result = temp()
+        inst(result + " = call ptr " + symbolOf(c, access) + "(" + args + ")")
+        if (c.tree.functions[access].canThrow) {
+            checkRaised(c)
+        }
+        ret result
+    }
+
+    // The bounds check (D30). An index below zero is a huge unsigned number, so
+    // one comparison covers both ends.
+    void checkIndex(Checker c, string index, string length, Place place) {
+        string outside = temp()
+        inst(outside + " = icmp uge i64 " + index + ", " + length)
+        string fail = label("bounds")
+        string ok = label("ok")
+        term("br i1 " + outside + ", label %" + fail + ", label %" + ok)
+        block(fail)
+        inst("call void @cromo_panic_index(i64 " + index + ", i64 " + length + ", ptr " + where(c, place) + ")")
+        term("unreachable")
+        block(ok)
+    }
+
+    // The address of an element of a list, or of a byte of a string (D200), after
+    // the bounds check.
+    string elementAddress(Checker c, string items, i32 record, string index, Place place) {
+        Value length = load(c, listField(c, items, record, "length"), intType(64, true))
+        checkIndex(c, index, length.text, place)
+        Value data = load(c, listField(c, items, record, "data"), addrType())
+        string result = temp()
+        string element = c.tree.records[record].typeArgs.len() == 0 ? "i8" : llvmType(c, c.tree.records[record].typeArgs[0])
+        inst(result + " = getelementptr inbounds " + element + ", ptr " + data.text + ", i64 " + index)
+        ret result
+    }
+
+    // A string literal as a `string` that does not own its bytes: its capacity is 0 (D100).
+    string stringValue(Checker c, i32 expr) {
+        i32 record = recordOf(c, c.tree.exprs[expr].resolved)
+        i64 dataIndex = fieldIndexOf(c, record, "data")
+        i64 lengthIndex = fieldIndexOf(c, record, "length")
+        string bytes = literalBytes(c, expr)
+        string text = "{ "
+        for (i64 i = 0; i < c.tree.records[record].fields.len(); i++) {
+            string value = i == dataIndex ? bytes : i == lengthIndex ? num(literalSize(c, expr)) : "0"
+            text += (i > 0 ? ", " : "") + llvmType(c, c.tree.records[record].fields[i].resolved) + " " + value
+        }
+        ret text + " }"
+    }
+
+    // Builds the value of a struct expression directly in `dest`, which then owns it.
+    void generateStructInto(Checker c, i32 expr, string dest) {
+        const ref Expr node = c.tree.exprs[expr]
+        i32 type = node.resolved
+        if (isOwned(c, type)) {  // a pair of values, not in memory
+            Value value = generateExpr(c, expr)
+            inst("store { ptr, ptr } " + value.text + ", ptr " + dest)
+            ret
+        }
+        switch (node.kind) {
+            case Conditional {
+                conditionalInto(c, expr, dest)
+            }
+            case CallValue {
+                callValue(c, expr, dest)
+            }
+            case Print {  // format (D200)
+                generatePrint(c, expr, dest)
+            }
+            case StringLiteral {
+                inst("store " + llvmType(c, type) + " " + stringValue(c, expr) + ", ptr " + dest)
+            }
+            case EnumCase {
+                // The data are moved in (D124), then the tag says which case it is.
+                i32 record = node.decl
+                i64 item = i64(node.index)
+                string payload = enumPayload(c, dest, record)
+                for (i64 i = 0; i < node.items.len(); i++) {
+                    i32 fieldType = c.tree.records[record].cases[item].fields[i].resolved
+                    string field = caseField(c, payload, record, item, i)
+                    if (isAggregate(c, fieldType)) {
+                        generateStructInto(c, node.items[i], field)
+                    } else {
+                        inst("store " + llvmType(c, fieldType) + " " + generateExpr(c, node.items[i]).text + ", ptr " + field)
+                    }
+                }
+                string number = num(c.tree.records[record].cases[item].number)
+                inst("store i32 " + number + ", ptr " + enumTag(c, dest, record))
+            }
+            case Conversion {
+                // `Color(n)`: the case whose value is n, or a panic (D135).
+                i32 record = recordOf(c, type)
+                Value number = generateExpr(c, node.left)
+                i32 from = number.type
+                i32 bits = bitsOf(c, from)
+                bool fromSigned = signedOf(c, from)
+                string ok = label("case.ok")
+                string bad = label("case.bad")
+                string table
+                for (Case item in c.tree.records[record].cases) {
+                    bool negative = item.number < 0
+                    u64 magnitude = negative ? wrapSub(u64(0), u64(item.number)) : u64(item.number)
+                    if (negative && !fromSigned) {
+                        continue
+                    }
+                    if (bits < 64 && magnitude > (u64(1) << u64(fromSigned ? bits - 1 : bits)) - (negative ? 0 : 1)) {
+                        continue
+                    }
+                    table += " " + llvmType(c, from) + " " + intConstant(magnitude, negative, bits) + ", label %" + ok
+                }
+                term("switch " + llvmType(c, from) + " " + number.text + ", label %" + bad + " [" + table + " ]")
+                block(bad)
+                panicAt(c, "the value is not a case of " + c.tree.records[record].name + "", exprPlace(c, expr))
+                block(ok)
+                Value tag = convert(c, number, intType(32, true), exprPlace(c, expr))
+                inst("store " + structName(c, record) + " " + defaultConstant(c, type) + ", ptr " + dest)
+                inst("store i32 " + tag.text + ", ptr " + enumTag(c, dest, record))
+            }
+            case Construct {
+                i32 record = node.decl
+                if (c.tree.records[record].constructor < 0) {
+                    storeDefault(c, dest, type)
+                    ret
+                }
+                emitCall(c, c.tree.records[record].constructor, dest, type, node.items, "", exprPlace(c, expr), expr, "")
+            }
+            case ListLiteral {
+                // `[a, b, c]` (D308): reserve(), then add() of each element. If an element
+                // throws, the list made so far is destroyed with the temporaries.
+                storeDefault(c, dest, type)
+                i64 made = temporaries.len()
+                temporaries.add(liveObject(dest, type, -1))
+                list<i32> count = [node.count]
+                emitCall(c, node.reserve, dest, type, count, "", exprPlace(c, expr), -1, "")
+                for (i32 element in node.items) {
+                    list<i32> one = [element]
+                    emitCall(c, node.add, dest, type, one, "", exprPlace(c, expr), -1, "")
+                }
+                temporaries.remove(made)
+            }
+            case Call {
+                if (node.intrinsic != Intrinsic.None) {
+                    generateIntrinsic(c, expr, dest)
+                    ret
+                }
+                emitCall(c, node.target, "", errorType(), node.items, dest, exprPlace(c, expr), expr, "")
+            }
+            case MethodCall {
+                emitMethodCall(c, expr, dest)
+            }
+            case Move {
+                string source = addressOf(c, node.left)
+                copyStruct(c, dest, source, type)
+                finishMove(c, expr, source)
+            }
+            case Copy {
+                copyStruct(c, dest, addressOf(c, node.left), type)
+            }
+            default {
+                // A copy of a place: the analysis allows it only for simple structs (D23).
+                copyStruct(c, dest, addressOf(c, expr), type)
+            }
+        }
+    }
+
+    // After its value has been taken, a moved variable is no longer alive (D23),
+    // and a field or a `ref` parameter gets the default value (D78).
+    void finishMove(Checker c, i32 moveExpr, string source) {
+        const ref Expr node = c.tree.exprs[moveExpr]
+        if (node.moveKind == MoveKind.Variable) {
+            setAlive(c, c.tree.exprs[node.left].variable, false)
+        } else if (node.moveKind == MoveKind.Take) {
+            storeDefault(c, source, node.resolved)
+        }
+    }
+
+    // A method call: direct, or through the method table of a parameter of
+    // interface type (D49).
+    Value emitMethodCall(Checker c, i32 expr, string dest) {
+        const ref Expr call = c.tree.exprs[expr]
+        i32 objectType = c.tree.exprs[call.left].resolved
+        if (!c.types.isInterface(objectType)) {
+            string self = addressOf(c, call.left)
+            ret emitCall(c, call.target, self, objectType, call.items, dest, exprPlace(c, expr), expr, "")
+        }
+        i32 iface = recordOf(c, objectType)
+        i64 index = 0
+        for (i64 i = 0; i < c.tree.interfaces[iface].methods.len(); i++) {
+            if (c.tree.interfaces[iface].methods[i] == call.target) {
+                index = i
+            }
+        }
+        Value pair = load(c, addressOf(c, call.left), objectType)
+        string object = temp()
+        string table = temp()
+        string entry = temp()
+        string target = temp()
+        string empty = temp()
+        inst(object + " = extractvalue { ptr, ptr } " + pair.text + ", 0")
+        inst(empty + " = icmp eq ptr " + object + ", null")
+        panicIf(c, empty, "the value of " + c.tree.interfaces[iface].name + " is empty: it was moved, or never given", exprPlace(c, expr))
+        inst(table + " = extractvalue { ptr, ptr } " + pair.text + ", 1")
+        inst(entry + " = getelementptr inbounds ptr, ptr " + table + ", i64 " + num(index))
+        inst(target + " = load ptr, ptr " + entry)
+        ret emitCall(c, call.target, object, errorType(), call.items, dest, exprPlace(c, expr), expr, target)
+    }
+
+    // `Shape s = Circle(2.0)` (D357): the struct moves to the heap, with its table.
+    Value boxValue(Checker c, i32 expr) {
+        const ref Expr conversion = c.tree.exprs[expr]
+        i32 type = c.tree.exprs[conversion.left].resolved
+        string object = temp()
+        i64 size = sizeOf(c, type)
+        inst(object + " = call ptr @cromo_alloc(i64 " + num(size > 1 ? size : 1) + ")")
+        generateStructInto(c, conversion.left, object)
+        string table = methodTable(c, recordOf(c, type), recordOf(c, conversion.resolved))
+        string first = temp()
+        string pair = temp()
+        inst(first + " = insertvalue { ptr, ptr } undef, ptr " + object + ", 0")
+        inst(pair + " = insertvalue { ptr, ptr } " + first + ", ptr " + table + ", 1")
+        ret valueOf(pair, conversion.resolved)
+    }
+
+    // Calls a function, a method (with `self`) or a constructor (with `self` set
+    // to the new object). A struct result is written to `dest`. `checked` is the
+    // expression whose pairs of arguments are compared (D35), or -1.
+    Value emitCall(Checker c, i32 function, string self, i32 selfType, list<i32> args, string dest, Place place, i32 checked,
+        string callee) {
+        const ref Function decl = c.tree.functions[function]
+        i32 result = decl.resolvedReturn
+        list<string> parts
+        // sret at the call too: through a pointer, as for a method of an interface or
+        // a function value, LLVM knows it only from here, and on ARM64 the result goes
+        // in x8, not in the first register of the arguments (D405).
+        if (byPointer(c, result)) {
+            parts.add("ptr sret(" + llvmType(c, result) + ") " + dest)
+        }
+        if (self.len() > 0) {
+            parts.add("ptr " + self)
+        }
+        bool checks = checked >= 0 && c.tree.exprs[checked].overlaps.len() > 0
+        list<string> places
+        Handover handover
+        for (i64 i = 0; i < args.len(); i++) {
+            Argument given = argument(c, args[i], decl.params[i].mode, decl.paramTypes[i], true, ref handover)
+            places.add(checks ? given.address : "")
+            string value = given.text
+            if (decl.isExtern && decl.params[i].mode == ParamMode.Read && c.types.isBool(decl.paramTypes[i])) {
+                string byte = temp()  // a bool of C is a byte (D129)
+                inst(byte + " = zext " + value + " to i8")
+                value = "i8 " + byte
+            }
+            parts.add(value)
+        }
+        if (tracksCaller(c, function)) {
+            parts.add("ptr " + where(c, place))
+        }
+        if (decl.canThrow) {
+            parts.add("ptr " + raisedSlot(c))
+        }
+        if (checks) {
+            checkOverlaps(c, checked, self, selfType, args, places, place)
+        }
+        // From here the callee owns its `move` arguments (D22): until now, an
+        // exception in another argument destroyed them here.
+        for (i64 i = handover.owned.len() - 1; i >= 0; i--) {
+            temporaries.remove(handover.owned[i])
+        }
+        for (i64 i = 0; i < handover.moves.len(); i++) {
+            finishMove(c, handover.moves[i], handover.sources[i])
+        }
+        string joined = join(parts, ", ")
+        string target = callee.len() == 0 ? symbolOf(c, function) : callee
+
+        if (c.types.isVoid(result) || byPointer(c, result)) {
+            inst("call void " + target + "(" + joined + ")")
+            if (decl.canThrow) {
+                checkRaised(c)
+            }
+            ret valueOf("", result)
+        }
+        string out = temp()
+        if (decl.isExtern && c.types.isBool(result)) {
+            string byte = temp()
+            inst(byte + " = call i8 " + symbolOf(c, function) + "(" + joined + ")")
+            inst(out + " = icmp ne i8 " + byte + ", 0")
+            ret valueOf(out, result)
+        }
+        inst(out + " = call " + llvmType(c, result) + " " + target + "(" + joined + ")")
+        if (decl.canThrow) {
+            checkRaised(c)
+        }
+        if (isAggregate(c, result)) {
+            inst("store " + llvmType(c, result) + " " + out + ", ptr " + dest)
+        }
+        ret valueOf(out, result)
+    }
+
+    // D35: two arguments that may be the same element of a list are compared
+    // at runtime, before the call.
+    void checkOverlaps(Checker c, i32 checked, string self, i32 selfType, list<i32> args, list<string> places, Place place) {
+        for (OverlapCheck pair in c.tree.exprs[checked].overlaps) {
+            string first = overlapAddress(self, places, pair.first)
+            string second = overlapAddress(self, places, pair.second)
+            i64 firstSize = overlapSize(c, selfType, args, pair.first)
+            i64 secondSize = overlapSize(c, selfType, args, pair.second)
+            if (first.len() == 0 || second.len() == 0) {
+                continue
+            }
+            string firstEnd = temp()
+            string secondEnd = temp()
+            string before = temp()
+            string after = temp()
+            string overlap = temp()
+            inst(firstEnd + " = getelementptr i8, ptr " + first + ", i64 " + num(firstSize))
+            inst(secondEnd + " = getelementptr i8, ptr " + second + ", i64 " + num(secondSize))
+            inst(before + " = icmp ult ptr " + first + ", " + secondEnd)
+            inst(after + " = icmp ult ptr " + second + ", " + firstEnd)
+            inst(overlap + " = and i1 " + before + ", " + after)
+            panicIf(c, overlap, "the same element is passed twice to a call that modifies it", place)
+        }
+    }
+
+    string overlapAddress(string self, list<string> places, i32 arg) const {
+        ret arg < 0 ? self : places[i64(arg)]
+    }
+
+    i64 overlapSize(Checker c, i32 selfType, list<i32> args, i32 arg) const {
+        if (arg < 0) {
+            ret sizeOf(c, selfType)
+        }
+        const ref Expr node = c.tree.exprs[args[i64(arg)]]
+        ret sizeOf(c, node.kind == ExprKind.Ref ? c.tree.exprs[node.left].resolved : node.resolved)
+    }
+
+    Argument given(string text, string address) const {
+        Argument result
+        result.text = text
+        result.address = address
+        ret result
+    }
+
+    // An argument as the callee expects it (D22): `ref` and large structs by
+    // address, the rest by value, with the address of the place passed, for the
+    // checks of D35. With `later`, a `move` argument is given to the callee only when
+    // it is called, through `handover`.
+    Argument argument(Checker c, i32 expr, ParamMode mode, i32 type, bool later, ref Handover handover) {
+        const ref Expr node = c.tree.exprs[expr]
+        if (c.types.isInterface(type) && mode == ParamMode.Move) {
+            ret given("{ ptr, ptr } " + generateExpr(c, expr).text, "")  // the callee owns it (D357)
+        }
+        if (c.types.isInterface(type)) {
+            // The object by address, with the method table of its struct (D49).
+            i32 value = mode == ParamMode.Ref ? node.left : expr
+            i32 valueType = c.tree.exprs[value].resolved
+            if (c.types.isInterface(valueType)) {
+                ret given("{ ptr, ptr } " + load(c, addressOf(c, value), type).text, "")
+            }
+            string object = addressOf(c, value)
+            string table = methodTable(c, recordOf(c, valueType), recordOf(c, type))
+            string first = temp()
+            string pair = temp()
+            inst(first + " = insertvalue { ptr, ptr } undef, ptr " + object + ", 0")
+            inst(pair + " = insertvalue { ptr, ptr } " + first + ", ptr " + table + ", 1")
+            ret given("{ ptr, ptr } " + pair, object)
+        }
+        if (mode == ParamMode.Ref) {
+            string place = addressOf(c, node.left)
+            ret given("ptr " + place, place)
+        }
+        if (mode == ParamMode.Move && isAggregate(c, type)) {
+            // The callee becomes the owner. A whole variable is handed over where it
+            // is; anything else is built in a slot that nobody else destroys.
+            if (byPointer(c, type) && node.kind == ExprKind.Move && node.moveKind == MoveKind.Variable) {
+                string variable = addressOf(c, node.left)
+                if (later) {
+                    handover.moves.add(expr)
+                    handover.sources.add(variable)
+                } else {
+                    finishMove(c, expr, variable)
+                }
+                ret given("ptr " + variable, "")
+            }
+            string owned = slot(c, type)
+            generateStructInto(c, expr, owned)
+            if (later && needsDestruction(c, type)) {
+                handover.owned.add(temporaries.len())
+                temporaries.add(liveObject(owned, type, -1))
+            }
+            if (byPointer(c, type)) {
+                ret given("ptr " + owned, "")
+            }
+            ret given(llvmType(c, type) + " " + load(c, owned, type).text, "")
+        }
+        if (byPointer(c, type)) {
+            string place = addressOf(c, expr)
+            ret given("ptr " + place, place)
+        }
+        if (isAggregate(c, type)) {
+            string place = addressOf(c, expr)
+            ret given(llvmType(c, type) + " " + load(c, place, type).text, place)
+        }
+        Value value = generateExpr(c, expr)
+        ret given(llvmType(c, value.type) + " " + value.text, "")
+    }
+
+    // ---- Lambdas ----
+
+    // The value of a lambda: its code and its data (D183, D186). As an argument the
+    // data are in the frame of the caller, and what they own goes at the end of the
+    // statement; otherwise they are on the heap, owned by the value.
+    Value createLambda(Checker c, i32 expr) {
+        const ref Expr lambda = c.tree.exprs[expr]
+        i32 function = lambda.function
+        string symbol = c.tree.functions[function].symbol
+        string code = llvmName("@", symbol)
+        i64 captured = 0
+        bool ownsCaptures = false
+        for (Capture capture in lambda.captures) {
+            if (capture.inner >= 0) {
+                captured++
+                if (!capture.byAddress && needsDestruction(c, c.tree.variables[capture.outer].type)) {
+                    ownsCaptures = true
+                }
+            }
+        }
+        if (captured == 0) {
+            ret valueOf("{ ptr " + code + ", ptr null }", lambda.resolved)
+        }
+        string type = environmentType(c, function)
+        string env = temp()
+        if (lambda.onStack) {
+            allocas += "  " + env + " = alloca " + type + "\n"
+        } else {
+            string size = temp()
+            inst(size + " = ptrtoint ptr getelementptr (" + type + ", ptr null, i32 1) to i64")
+            inst(env + " = call ptr @cromo_alloc(i64 " + size + ")")
+        }
+        bool owns = !lambda.onStack || ownsCaptures
+        string destroy = owns ? llvmName("@", symbol + (lambda.onStack ? ".release" : ".drop")) : "null"
+        inst("store ptr " + destroy + ", ptr " + env)
+        i64 index = 0
+        for (Capture capture in lambda.captures) {
+            if (capture.inner < 0) {
+                continue
+            }
+            index++
+            const ref Variable outer = c.tree.variables[capture.outer]
+            string field = temp()
+            inst(field + " = getelementptr inbounds " + type + ", ptr " + env + ", i32 0, i32 " + num(index))
+            string source = addresses[i64(outer.id)]
+            if (capture.byAddress) {
+                inst("store ptr " + source + ", ptr " + field)
+                continue
+            }
+            Value value = load(c, source, outer.type)
+            inst("store " + llvmType(c, outer.type) + " " + value.text + ", ptr " + field)
+            if (capture.mode == ParamMode.Move && needsDestruction(c, outer.type)) {
+                setAlive(c, capture.outer, false)
+            }
+        }
+        string half = temp()
+        string pair = temp()
+        inst(half + " = insertvalue { ptr, ptr } undef, ptr " + code + ", 0")
+        inst(pair + " = insertvalue { ptr, ptr } " + half + ", ptr " + env + ", 1")
+        if (lambda.onStack && owns && !lambda.forThread) {  // the thread owns them (D215)
+            string place = slot(c, lambda.resolved)
+            inst("store { ptr, ptr } " + pair + ", ptr " + place)
+            temporaries.add(liveObject(place, lambda.resolved, -1))
+        }
+        ret valueOf(pair, lambda.resolved)
+    }
+
+    // The type of the data of a lambda: before the code, which takes its size.
+    string lambdaType(Checker c, i32 expr) const {
+        const ref Expr lambda = c.tree.exprs[expr]
+        string text
+        for (Capture capture in lambda.captures) {
+            if (capture.inner >= 0) {
+                text += ", " + (capture.byAddress ? "ptr" : llvmType(c, c.tree.variables[capture.outer].type))
+            }
+        }
+        if (text.len() == 0) {
+            ret ""
+        }
+        ret environmentType(c, lambda.function) + " = type { ptr" + text + " }\n"
+    }
+
+    // The functions that destroy the data of a lambda: .drop also frees them from
+    // the heap, .release leaves them in the frame (D184).
+    string lambdaData(Checker c, i32 expr) {
+        const ref Expr lambda = c.tree.exprs[expr]
+        i32 function = lambda.function
+        if (lambdaType(c, expr).len() == 0) {
+            ret ""
+        }
+        string type = environmentType(c, function)
+        string text
+        for (i64 round = 0; round < 2; round++) {
+            bool frees = round == 0
+            startFunction(c, -1)
+            fileNow = c.tree.functions[function].file
+            i64 index = 0
+            for (Capture capture in lambda.captures) {
+                if (capture.inner < 0) {
+                    continue
+                }
+                index++
+                i32 outerType = c.tree.variables[capture.outer].type
+                if (capture.byAddress || !needsDestruction(c, outerType)) {
+                    continue
+                }
+                string field = temp()
+                inst(field + " = getelementptr inbounds " + type + ", ptr %env, i32 0, i32 " + num(index))
+                drop(c, field, outerType)
+            }
+            if (frees) {
+                inst("call void @cromo_free(ptr %env)")
+            }
+            term("ret void")
+            list<string> params = ["ptr %env"]
+            string symbol = llvmName("@", c.tree.functions[function].symbol + (frees ? ".drop" : ".release"))
+            text += finishFunction(define("void", symbol, params, false, false))
+        }
+        ret text
+    }
+
+    // `less(a, b)`: through the address of the code, with the data of the lambda
+    // where a method has its object (D186).
+    Value callValue(Checker c, i32 expr, string dest) {
+        const ref Expr call = c.tree.exprs[expr]
+        Value callee = generateExpr(c, call.left)
+        string code = temp()
+        string env = temp()
+        string empty = temp()
+        inst(code + " = extractvalue { ptr, ptr } " + callee.text + ", 0")
+        inst(env + " = extractvalue { ptr, ptr } " + callee.text + ", 1")
+        inst(empty + " = icmp eq ptr " + code + ", null")
+        panicIf(c, empty, "the function is empty: no lambda was given to it", exprPlace(c, expr))
+        ret emitCall(c, call.target, env, errorType(), call.items, dest, exprPlace(c, expr), expr, code)
+    }
+}
+
+extend Generator {
+    // ---- Expressions ----
+
+    Value generateExpr(Checker c, i32 expr) {
+        const ref Expr node = c.tree.exprs[expr]
+        i32 type = node.resolved
+        switch (node.kind) {
+            case IntLiteral, FloatLiteral, BoolLiteral {
+                ret valueOf(literalConstant(c, expr, type), type)
+            }
+            case StringLiteral {
+                if (c.types.isStruct(type)) {
+                    ret valueOf(stringValue(c, expr), type)
+                }
+                ret valueOf(literalBytes(c, expr), type)
+            }
+            case Name, Field, Index, Self, Construct, EnumCase, ListLiteral {
+                ret load(c, addressOf(c, expr), type)
+            }
+            case Unary {
+                ret generateUnary(c, expr)
+            }
+            case Binary {
+                ret generateBinary(c, expr)
+            }
+            case Conditional {
+                if (isAggregate(c, type)) {
+                    ret load(c, addressOf(c, expr), type)  // made in a slot
+                }
+                ret conditionalValue(c, expr)
+            }
+            case Call {
+                if (isAggregate(c, type)) {
+                    ret load(c, addressOf(c, expr), type)
+                }
+                if (node.intrinsic != Intrinsic.None) {
+                    ret generateIntrinsic(c, expr, "")
+                }
+                ret emitCall(c, node.target, "", errorType(), node.items, "", exprPlace(c, expr), expr, "")
+            }
+            case MethodCall {
+                if (isAggregate(c, type)) {
+                    ret load(c, addressOf(c, expr), type)
+                }
+                ret emitMethodCall(c, expr, "")
+            }
+            case Conversion {
+                if (c.types.isInterface(type)) {
+                    ret boxValue(c, expr)  // D357
+                }
+                if (c.types.isStruct(type)) {
+                    ret load(c, addressOf(c, expr), type)  // `Color(n)` (D135)
+                }
+                i32 operandType = c.tree.exprs[node.left].resolved
+                if (c.types.isStruct(operandType)) {
+                    // `i32(color)`: the value of the case (D135).
+                    string tagAddress = enumTag(c, addressOf(c, node.left), recordOf(c, operandType))
+                    Value tag = load(c, tagAddress, intType(32, true))
+                    ret convert(c, tag, type, exprPlace(c, expr))
+                }
+                ret convert(c, generateExpr(c, node.left), type, exprPlace(c, expr))
+            }
+            case Print {
+                if (isAggregate(c, type)) {
+                    ret load(c, addressOf(c, expr), type)  // format (D200)
+                }
+                generatePrint(c, expr, "")
+                ret valueOf("", voidType())
+            }
+            case Lambda {
+                ret createLambda(c, expr)
+            }
+            case CallValue {
+                if (isAggregate(c, type)) {
+                    ret load(c, addressOf(c, expr), type)
+                }
+                ret callValue(c, expr, "")
+            }
+            case Move, Copy {
+                if (isAggregate(c, type)) {
+                    ret load(c, addressOf(c, expr), type)
+                }
+                if (node.kind == ExprKind.Move && isOwned(c, type)) {
+                    // The value changes owner (D184, D357).
+                    string address = addressOf(c, node.left)
+                    Value value = load(c, address, type)
+                    finishMove(c, expr, address)
+                    ret value
+                }
+                // A simple value: moving or copying it is reading it (D80).
+                ret generateExpr(c, node.left)
+            }
+            case Ref {
+                ret generateExpr(c, node.left)
+            }
+            case TypeRef {
+                ret valueOf("", errorType())
+            }
+        }
+    }
+
+    Value generateUnary(Checker c, i32 expr) {
+        const ref Expr unary = c.tree.exprs[expr]
+        Value operand = generateExpr(c, unary.left)
+        string result = temp()
+        string t = llvmType(c, operand.type)
+        if (c.types.isVector(operand.type)) {  // D505: on each number, without checks
+            i32 element = elementOf(c, operand.type)
+            if (unary.unary == UnaryOp.Not) {
+                inst(result + " = xor " + t + " " + operand.text + ", splat (" + llvmType(c, element) + " -1)")
+            } else if (c.types.isFloat(element)) {
+                inst(result + " = fneg " + t + " " + operand.text)
+            } else {
+                inst(result + " = sub " + t + " zeroinitializer, " + operand.text)
+            }
+            ret valueOf(result, operand.type)
+        }
+        if (unary.unary == UnaryOp.Not) {  // on an integer it inverts the bits (D194)
+            inst(result + " = xor " + t + " " + operand.text + ", " + (c.types.isBool(operand.type) ? "true" : "-1"))
+            ret valueOf(result, operand.type)
+        }
+        if (c.types.isFloat(operand.type)) {
+            inst(result + " = fneg " + t + " " + operand.text)
+            ret valueOf(result, operand.type)
+        }
+        ret arithmetic(c, BinaryOp.Sub, valueOf("0", operand.type), operand, exprPlace(c, expr), false)
+    }
+
+    bool isComparison(BinaryOp op) const {
+        ret op == BinaryOp.Eq || op == BinaryOp.Ne || op == BinaryOp.Lt || op == BinaryOp.Le || op == BinaryOp.Gt || op == BinaryOp.Ge
+    }
+
+    Value generateBinary(Checker c, i32 expr) {
+        const ref Expr binary = c.tree.exprs[expr]
+        if (binary.binary == BinaryOp.And || binary.binary == BinaryOp.Or) {
+            ret shortCircuit(c, expr)
+        }
+        Value lhs = generateExpr(c, binary.left)
+        Value rhs = generateExpr(c, binary.right)
+        if (!isComparison(binary.binary)) {
+            ret arithmetic(c, binary.binary, lhs, rhs, exprPlace(c, expr), binary.wrap)
+        }
+        ret compare(c, binary.binary, binary.operandType, lhs, rhs)
+    }
+
+    // A comparison of two values already computed.
+    Value compare(Checker c, BinaryOp op, i32 type, Value lhs, Value rhs) {
+        if (c.types.isVector(type)) {  // D505: -1 where true, 0 where false, in the integers of the size of the numbers
+            string flags = temp()
+            inst(flags + " = " + predicateOf(c, op, elementOf(c, type)) + " " + llvmType(c, type) + " " + lhs.text + ", " + rhs.text)
+            string fixed = temp()
+            i32 mask = c.types.knownVector(intType(bitsOf(c, elementOf(c, type)), true), countOf(c, type))
+            inst(fixed + format(" = sext <{} x i1> ", countOf(c, type)) + flags + " to " + llvmType(c, mask))
+            ret valueOf(fixed, mask)
+        }
+        if (c.types.isStruct(type)) {  // enums without data: their tags (D112)
+            string left = temp()
+            string right = temp()
+            string result = temp()
+            inst(left + " = extractvalue " + llvmType(c, type) + " " + lhs.text + ", 1")
+            inst(right + " = extractvalue " + llvmType(c, type) + " " + rhs.text + ", 1")
+            inst(result + " = icmp " + (op == BinaryOp.Eq ? "eq" : "ne") + " i32 " + left + ", " + right)
+            ret valueOf(result, boolType())
+        }
+        string result = temp()
+        inst(result + " = " + predicateOf(c, op, type) + " " + llvmType(c, type) + " " + lhs.text + ", " + rhs.text)
+        ret valueOf(result, boolType())
+    }
+
+    // The instruction of a comparison of numbers of the type: fcmp or icmp, with its predicate.
+    string predicateOf(Checker c, BinaryOp op, i32 type) const {
+        if (c.types.isFloat(type)) {
+            switch (op) {
+                case Eq {
+                    ret "fcmp oeq"
+                }
+                case Ne {
+                    ret "fcmp une"
+                }
+                case Lt {
+                    ret "fcmp olt"
+                }
+                case Le {
+                    ret "fcmp ole"
+                }
+                case Gt {
+                    ret "fcmp ogt"
+                }
+                default {
+                    ret "fcmp oge"
+                }
+            }
+        }
+        string sign = c.types.isInt(type) && signedOf(c, type) ? "s" : "u"
+        switch (op) {
+            case Eq {
+                ret "icmp eq"
+            }
+            case Ne {
+                ret "icmp ne"
+            }
+            case Lt {
+                ret "icmp " + sign + "lt"
+            }
+            case Le {
+                ret "icmp " + sign + "le"
+            }
+            case Gt {
+                ret "icmp " + sign + "gt"
+            }
+            default {
+                ret "icmp " + sign + "ge"
+            }
+        }
+    }
+
+    // `c ? a : b` (D422): only the branch chosen is computed, and its temporaries end
+    // with it, as those of the right side of && and ||.
+    Value conditionalValue(Checker c, i32 expr) {
+        const ref Expr node = c.tree.exprs[expr]
+        Value test = generateCondition(c, node.left)
+        string yes = label("cond.true")
+        string no = label("cond.false")
+        string end = label("cond.end")
+        term("br i1 " + test.text + ", label %" + yes + ", label %" + no)
+        block(yes)
+        Value first = generateCondition(c, node.right)
+        string firstBlock = currentBlock
+        term("br label %" + end)
+        block(no)
+        Value second = generateCondition(c, node.other)
+        string secondBlock = currentBlock
+        term("br label %" + end)
+        block(end)
+        string result = temp()
+        inst(result + " = phi " + llvmType(c, node.resolved) + " [ " + first.text + ", %" + firstBlock + " ], [ " + second.text +
+            ", %" + secondBlock + " ]")
+        ret valueOf(result, node.resolved)
+    }
+
+    // A string or a struct of `?:`: each branch makes its value in `dest` (P28).
+    void conditionalInto(Checker c, i32 expr, string dest) {
+        const ref Expr node = c.tree.exprs[expr]
+        Value test = generateCondition(c, node.left)
+        string yes = label("cond.true")
+        string no = label("cond.false")
+        string end = label("cond.end")
+        term("br i1 " + test.text + ", label %" + yes + ", label %" + no)
+        block(yes)
+        i64 mark = temporaries.len()
+        generateStructInto(c, node.right, dest)
+        dropTemporaries(c, mark)
+        term("br label %" + end)
+        block(no)
+        mark = temporaries.len()
+        generateStructInto(c, node.other, dest)
+        dropTemporaries(c, mark)
+        term("br label %" + end)
+        block(end)
+    }
+
+    // && and || evaluate the right side only when needed (D59). The temporaries
+    // of the right side exist only on that path: they are destroyed there.
+    Value shortCircuit(Checker c, i32 expr) {
+        const ref Expr binary = c.tree.exprs[expr]
+        bool isAnd = binary.binary == BinaryOp.And
+        Value lhs = generateExpr(c, binary.left)
+        string lhsBlock = currentBlock
+        string rhsLabel = label(isAnd ? "and.rhs" : "or.rhs")
+        string endLabel = label(isAnd ? "and.end" : "or.end")
+        if (isAnd) {
+            term("br i1 " + lhs.text + ", label %" + rhsLabel + ", label %" + endLabel)
+        } else {
+            term("br i1 " + lhs.text + ", label %" + endLabel + ", label %" + rhsLabel)
+        }
+        block(rhsLabel)
+        Value rhs = generateCondition(c, binary.right)
+        string rhsBlock = currentBlock
+        term("br label %" + endLabel)
+        block(endLabel)
+        string result = temp()
+        inst(result + " = phi i1 [ " + (isAnd ? "false" : "true") + ", %" + lhsBlock + " ], [ " + rhs.text + ", %" + rhsBlock + " ]")
+        ret valueOf(result, boolType())
+    }
+
+    // D195: a count out of the width is a panic in debug, and taken modulo the
+    // width in release. `>>` keeps the sign of a signed integer.
+    Value shift(Checker c, BinaryOp op, Value lhs, Value rhs, Place place) {
+        i32 type = lhs.type
+        string t = llvmType(c, type)
+        Value masked = shiftCount(c, rhs, type, place)
+        string result = temp()
+        string name = op == BinaryOp.Shl ? "shl" : signedOf(c, type) ? "ashr" : "lshr"
+        inst(result + " = " + name + " " + t + " " + lhs.text + ", " + masked.text)
+        ret valueOf(result, type)
+    }
+
+    // The count of a shift of a value of the type: in debug a panic outside its width,
+    // then of its type and masked with its width (D195).
+    Value shiftCount(Checker c, Value rhs, i32 type, Place place) {
+        string t = llvmType(c, type)
+        string count = rhs.text
+        i32 bits = bitsOf(c, type)
+        i32 countBits = bitsOf(c, rhs.type)
+        if (!options.release) {
+            string wide = count
+            if (countBits < 64) {
+                wide = temp()
+                inst(wide + " = " + (signedOf(c, rhs.type) ? "sext " : "zext ") + llvmType(c, rhs.type) + " " + count + " to i64")
+            } else if (countBits > 64) {
+                wide = temp()
+                inst(wide + " = trunc " + llvmType(c, rhs.type) + " " + count + " to i64")
+            }
+            string outside = temp()
+            inst(outside + " = icmp uge i64 " + wide + ", " + num(i64(bits)))  // a negative count is huge
+            panicIf(c, outside, "shift count out of the width of " + typeName(c.tree, c.types, type) + "", place)
+        }
+        if (countBits != bits) {
+            string fitted = temp()
+            inst(fitted + " = " + (countBits < bits ? (signedOf(c, rhs.type) ? "sext " : "zext ") : "trunc ") + llvmType(c, rhs.type) +
+                " " + count + " to " + t)
+            count = fitted
+        }
+        string masked = temp()
+        inst(masked + " = and " + t + " " + count + ", " + num(i64(bits - 1)))
+        ret valueOf(masked, type)
+    }
+
+    // + - * / % with the checks of D30, D36 and D60.
+    Value arithmetic(Checker c, BinaryOp op, Value lhs, Value rhs, Place place, bool wrap) {
+        i32 type = lhs.type
+        string t = llvmType(c, type)
+        string result = temp()
+        if (c.types.isVector(type)) {
+            ret vectorArithmetic(c, op, lhs, rhs, place)
+        }
+
+        if (c.types.isFloat(type)) {
+            string name = op == BinaryOp.Add ? "fadd" : op == BinaryOp.Sub ? "fsub" : op == BinaryOp.Mul ? "fmul" : "fdiv"
+            inst(result + " = " + name + " " + t + " " + lhs.text + ", " + rhs.text)
+            ret valueOf(result, type)
+        }
+
+        if (op == BinaryOp.BitAnd || op == BinaryOp.BitOr || op == BinaryOp.BitXor) {  // D193
+            string name = op == BinaryOp.BitAnd ? "and" : op == BinaryOp.BitOr ? "or" : "xor"
+            inst(result + " = " + name + " " + t + " " + lhs.text + ", " + rhs.text)
+            ret valueOf(result, type)
+        }
+        if (op == BinaryOp.Shl || op == BinaryOp.Shr) {
+            ret shift(c, op, lhs, rhs, place)
+        }
+        bool isSigned = signedOf(c, type)
+
+        if (op == BinaryOp.Add || op == BinaryOp.Sub || op == BinaryOp.Mul) {
+            string name = op == BinaryOp.Add ? "add" : op == BinaryOp.Sub ? "sub" : "mul"
+            if (options.release || wrap) {  // D57, D396: integers wrap around
+                inst(result + " = " + name + " " + t + " " + lhs.text + ", " + rhs.text)
+                ret valueOf(result, type)
+            }
+            string fn = "@llvm." + (isSigned ? "s" : "u") + name + ".with.overflow." + t
+            intrinsic("declare { " + t + ", i1 } " + fn + "(" + t + ", " + t + ")", fn)
+            string pair = temp()
+            string overflow = temp()
+            inst(pair + " = call { " + t + ", i1 } " + fn + "(" + t + " " + lhs.text + ", " + t + " " + rhs.text + ")")
+            inst(result + " = extractvalue { " + t + ", i1 } " + pair + ", 0")
+            inst(overflow + " = extractvalue { " + t + ", i1 } " + pair + ", 1")
+            panicIf(c, overflow, "integer overflow", place)
+            ret valueOf(result, type)
+        }
+
+        // Division and remainder: dividing by zero always panics (D36).
+        string isZero = temp()
+        inst(isZero + " = icmp eq " + t + " " + rhs.text + ", 0")
+        panicIf(c, isZero, "division by zero", place)
+        if (!isSigned) {
+            inst(result + " = " + (op == BinaryOp.Div ? "udiv " : "urem ") + t + " " + lhs.text + ", " + rhs.text)
+            ret valueOf(result, type)
+        }
+
+        // MIN / -1 overflows, and in LLVM it is undefined: handle -1 apart (D60).
+        string isMinusOne = temp()
+        inst(isMinusOne + " = icmp eq " + t + " " + rhs.text + ", -1")
+        if (op == BinaryOp.Div && !options.release) {
+            string isMin = temp()
+            string overflow = temp()
+            i32 bits = bitsOf(c, type)
+            inst(isMin + " = icmp eq " + t + " " + lhs.text + ", " + intConstant(u64(1) << u64(bits - 1), true, bits))
+            inst(overflow + " = and i1 " + isMinusOne + ", " + isMin)
+            panicIf(c, overflow, "integer overflow", place)
+        }
+        string safeDivisor = temp()
+        string quotient = temp()
+        inst(safeDivisor + " = select i1 " + isMinusOne + ", " + t + " 1, " + t + " " + rhs.text)
+        inst(quotient + " = " + (op == BinaryOp.Div ? "sdiv " : "srem ") + t + " " + lhs.text + ", " + safeDivisor)
+        if (op == BinaryOp.Div) {
+            string negated = temp()
+            inst(negated + " = sub " + t + " 0, " + lhs.text)
+            inst(result + " = select i1 " + isMinusOne + ", " + t + " " + negated + ", " + t + " " + quotient)
+        } else {
+            inst(result + " = select i1 " + isMinusOne + ", " + t + " 0, " + t + " " + quotient)
+        }
+        ret valueOf(result, type)
+    }
+
+    // The operators on vectors (D505): on each number, the integers wrapping around, without
+    // the checks of overflow; a shift by a count of the scalars, checked and masked as for them.
+    Value vectorArithmetic(Checker c, BinaryOp op, Value lhs, Value rhs, Place place) {
+        i32 type = lhs.type
+        i32 element = elementOf(c, type)
+        string t = llvmType(c, type)
+        string result = temp()
+        if (op == BinaryOp.Shl || op == BinaryOp.Shr) {
+            Value count = shiftCount(c, rhs, element, place)
+            string lanes = splat(c, count.text, type)
+            string name = op == BinaryOp.Shl ? "shl" : signedOf(c, element) ? "ashr" : "lshr"
+            inst(result + " = " + name + " " + t + " " + lhs.text + ", " + lanes)
+            ret valueOf(result, type)
+        }
+        string name
+        if (c.types.isFloat(element)) {
+            name = op == BinaryOp.Add ? "fadd" : op == BinaryOp.Sub ? "fsub" : op == BinaryOp.Mul ? "fmul" : "fdiv"
+        } else {
+            name = op == BinaryOp.Add ? "add" : op == BinaryOp.Sub ? "sub" : op == BinaryOp.Mul ? "mul" : op == BinaryOp.BitAnd ? "and" :
+                op == BinaryOp.BitOr ? "or" : "xor"
+        }
+        inst(result + " = " + name + " " + t + " " + lhs.text + ", " + rhs.text)
+        ret valueOf(result, type)
+    }
+
+    // A conversion to a vector (D505): a number in each of its numbers, or the numbers of a
+    // vector with as many converted one by one; from a float to an integer saturated, as
+    // in release for the numbers, without a panic.
+    Value vectorConvert(Checker c, Value value, i32 to, Place place) {
+        i32 element = elementOf(c, to)
+        if (!c.types.isVector(value.type)) {
+            Value number = convert(c, value, element, place)
+            ret valueOf(splat(c, number.text, to), to)
+        }
+        i32 from = elementOf(c, value.type)
+        string source = llvmType(c, value.type) + " " + value.text
+        string target = llvmType(c, to)
+        string result = temp()
+        if (c.types.isInt(from) && c.types.isInt(element)) {
+            if (bitsOf(c, from) == bitsOf(c, element)) {
+                ret valueOf(value.text, to)
+            }
+            string op = bitsOf(c, element) < bitsOf(c, from) ? "trunc" : (signedOf(c, from) ? "sext" : "zext")
+            inst(result + " = " + op + " " + source + " to " + target)
+        } else if (c.types.isInt(from) && c.types.isFloat(element)) {
+            inst(result + " = " + (signedOf(c, from) ? "sitofp " : "uitofp ") + source + " to " + target)
+        } else if (c.types.isFloat(from) && c.types.isFloat(element)) {
+            inst(result + " = " + (bitsOf(c, element) > bitsOf(c, from) ? "fpext " : "fptrunc ") + source + " to " + target)
+        } else {
+            string fn = "@llvm." + (signedOf(c, element) ? "fptosi" : "fptoui") + ".sat." + vectorSuffix(c, to) + "." +
+                vectorSuffix(c, value.type)
+            intrinsic("declare " + target + " " + fn + "(" + llvmType(c, value.type) + ")", fn)
+            inst(result + " = call " + target + " " + fn + "(" + source + ")")
+        }
+        ret valueOf(result, to)
+    }
+
+    // The suffix of the intrinsics of LLVM for a vector: v16i16, v8f32.
+    string vectorSuffix(Checker c, i32 vector) const {
+        i32 element = elementOf(c, vector)
+        ret format("v{}{}{}", countOf(c, vector), c.types.isFloat(element) ? "f" : "i", bitsOf(c, element))
+    }
+
+    // The address of the number at `at` of a list or an array, checked with the `count`
+    // numbers from it (D505).
+    string vectorPlace(Checker c, i32 source, string at, i64 count, Place place) {
+        i32 i64Type = intType(64, true)
+        string where = addressOf(c, source)
+        i32 type = c.tree.exprs[source].resolved
+        string data = where
+        string length
+        i32 element
+        if (c.types.isArray(type)) {
+            element = elementOf(c, type)
+            length = num(countOf(c, type))
+        } else {
+            i32 record = recordOf(c, type)
+            element = c.tree.records[record].typeArgs[0]
+            data = load(c, listField(c, where, record, "data"), addrType()).text
+            length = load(c, listField(c, where, record, "length"), i64Type).text
+        }
+        checkIndex(c, at, length, place)
+        string last = temp()
+        inst(last + " = add i64 " + at + ", " + num(count - 1))
+        checkIndex(c, last, length, place)
+        string result = temp()
+        inst(result + " = getelementptr inbounds " + llvmType(c, element) + ", ptr " + data + ", i64 " + at)
+        ret result
+    }
+
+    // A call of an intrinsic of LLVM on vectors, declared the first time.
+    string vectorCall(Checker c, string name, i32 result, list<Value> args) {
+        string fn = "@llvm." + name + "." + vectorSuffix(c, args[0].type)
+        string params
+        string values
+        for (i64 i = 0; i < args.len(); i++) {
+            params += (i > 0 ? ", " : "") + llvmType(c, args[i].type)
+            values += (i > 0 ? ", " : "") + llvmType(c, args[i].type) + " " + args[i].text
+        }
+        intrinsic("declare " + llvmType(c, result) + " " + fn + "(" + params + ")", fn)
+        string made = temp()
+        inst(made + " = call " + llvmType(c, result) + " " + fn + "(" + values + ")")
+        ret made
+    }
+
+    // The numbers of a mask that are true, as i1.
+    string maskFlags(Checker c, Value mask) {
+        string flags = temp()
+        inst(flags + " = icmp ne " + llvmType(c, mask.type) + " " + mask.text + ", zeroinitializer")
+        ret flags
+    }
+
+    // A vector with the value in each of its numbers.
+    string splat(Checker c, string value, i32 vector) {
+        string element = llvmType(c, elementOf(c, vector))
+        string one = temp()
+        string all = temp()
+        inst(one + " = insertelement " + llvmType(c, vector) + " poison, " + element + " " + value + ", i64 0")
+        inst(all + " = shufflevector " + llvmType(c, vector) + " " + one + ", " + llvmType(c, vector) +
+            format(" poison, <{} x i32> zeroinitializer", countOf(c, vector)))
+        ret all
+    }
+
+    // Conversions between numeric types (D33, D61).
+    Value convert(Checker c, Value value, i32 to, Place place) {
+        i32 from = value.type
+        if (from == to) {
+            ret value
+        }
+        if (c.types.isVector(to)) {
+            ret vectorConvert(c, value, to, place)
+        }
+        string result = temp()
+        string source = llvmType(c, from) + " " + value.text
+        string target = llvmType(c, to)
+
+        if (c.types.isInt(from) && c.types.isInt(to)) {
+            if (bitsOf(c, from) == bitsOf(c, to)) {
+                ret valueOf(value.text, to)
+            }
+            string op = bitsOf(c, to) < bitsOf(c, from) ? "trunc" : (signedOf(c, from) ? "sext" : "zext")
+            inst(result + " = " + op + " " + source + " to " + target)
+        } else if (c.types.isInt(from) && c.types.isFloat(to)) {
+            inst(result + " = " + (signedOf(c, from) ? "sitofp " : "uitofp ") + source + " to " + target)
+        } else if (c.types.isFloat(from) && c.types.isFloat(to)) {
+            inst(result + " = " + (bitsOf(c, to) > bitsOf(c, from) ? "fpext " : "fptrunc ") + source + " to " + target)
+        } else if (c.types.isFloat(from) && c.types.isInt(to)) {
+            ret floatToInt(c, value, to, place)
+        } else if (kindOf(c, from) == TypeKind.Addr && c.types.isInt(to)) {  // P13
+            inst(result + " = ptrtoint " + source + " to " + target)
+        } else if (c.types.isInt(from) && kindOf(c, to) == TypeKind.Addr) {
+            inst(result + " = inttoptr " + source + " to " + target)
+        } else {
+            ret value
+        }
+        ret valueOf(result, to)
+    }
+
+    f64 powerOfTwo(i32 exponent) const {
+        f64 value = 1.0
+        for (i32 i = 0; i < exponent; i++) {
+            value *= 2.0
+        }
+        ret value
+    }
+
+    // Truncates toward zero. Out of range or nan: panic in debug, the nearest
+    // value in release (D61).
+    Value floatToInt(Checker c, Value value, i32 to, Place place) {
+        i32 from = value.type
+        string target = llvmType(c, to)
+        string floatName = bitsOf(c, from) == 32 ? "f32" : "f64"
+        string result = temp()
+        bool toSigned = signedOf(c, to)
+        i32 bits = bitsOf(c, to)
+
+        if (options.release) {
+            string fn = "@llvm." + (toSigned ? "fptosi" : "fptoui") + ".sat." + target + "." + floatName
+            intrinsic("declare " + target + " " + fn + "(" + llvmType(c, from) + ")", fn)
+            inst(result + " = call " + target + " " + fn + "(" + llvmType(c, from) + " " + value.text + ")")
+            ret valueOf(result, to)
+        }
+
+        // The check is done in double precision, where all the bounds are exact.
+        string wide = value.text
+        if (bitsOf(c, from) == 32) {
+            wide = temp()
+            inst(wide + " = fpext float " + value.text + " to double")
+        }
+        f64 lower = -1.0
+        f64 upper = powerOfTwo(bits)
+        bool lowerInclusive = false
+        if (toSigned) {
+            upper = powerOfTwo(bits - 1)
+            lower = bits < 64 ? -upper - 1.0 : -upper
+            lowerInclusive = bits == 64
+        }
+        string aboveLower = temp()
+        string belowUpper = temp()
+        string inRange = temp()
+        string outOfRange = temp()
+        inst(aboveLower + " = fcmp " + (lowerInclusive ? "oge" : "ogt") + " double " + wide + ", " + floatConstant(lower, 64))
+        inst(belowUpper + " = fcmp olt double " + wide + ", " + floatConstant(upper, 64))
+        inst(inRange + " = and i1 " + aboveLower + ", " + belowUpper)
+        inst(outOfRange + " = xor i1 " + inRange + ", true")
+        panicIf(c, outOfRange, "floating-point value out of range for " + typeName(c.tree, c.types, to), place)
+        inst(result + " = " + (toSigned ? "fptosi " : "fptoui ") + llvmType(c, from) + " " + value.text + " to " + target)
+        ret valueOf(result, to)
+    }
+
+    // ---- print and format ----
+
+    // A number or a bool to a stream, or to a string being formatted (D38).
+    void writeNumber(Checker c, string stream, Value value, string spec) {
+        i32 type = value.type
+        if (c.types.isInt(type)) {
+            string wide = value.text
+            if (bitsOf(c, type) < 64) {
+                wide = temp()
+                inst(wide + " = " + (signedOf(c, type) ? "sext " : "zext ") + llvmType(c, type) + " " + value.text + " to i64")
+            }
+            inst("call void @cromo_fmt_int(" + stream + ", i64 " + wide + ", i32 " + (signedOf(c, type) ? "1" : "0") + ", " + spec + ")")
+        } else if (c.types.isFloat(type)) {
+            string fn = bitsOf(c, type) == 32 ? "@cromo_fmt_f32" : "@cromo_fmt_f64"
+            inst("call void " + fn + "(" + stream + ", " + llvmType(c, type) + " " + value.text + ", " + spec + ")")
+        } else {
+            string wide = temp()
+            inst(wide + " = zext i1 " + value.text + " to i32")
+            inst("call void @cromo_fmt_bool(" + stream + ", i32 " + wide + ", " + spec + ")")
+        }
+    }
+
+    void writeText(string stream, string text) {
+        if (text.len() == 0) {
+            ret
+        }
+        string bytes = stringConstant(text)
+        inst("call void @cromo_write(" + stream + ", ptr " + bytes + ", i64 " + num(text.len()) + ")")
+    }
+
+    // `assert(condition)` (D351): on false a panic, "assertion failed: total == 7
+    // (total is 6)", made as a format. The sides of a comparison are computed once.
+    void generateAssert(Checker c, i32 expr) {
+        const ref Expr call = c.tree.exprs[expr]
+        i32 condition = call.items[0]
+        bool comparison = call.leftText.len() > 0 || call.rightText.len() > 0
+        Value holds
+        Value left
+        Value right
+        if (comparison) {
+            left = generateExpr(c, c.tree.exprs[condition].left)
+            right = generateExpr(c, c.tree.exprs[condition].right)
+            holds = compare(c, c.tree.exprs[condition].binary, c.tree.exprs[condition].operandType, left, right)
+        } else {
+            holds = generateCondition(c, condition)
+        }
+        string fail = label("assert.fail")
+        string ok = label("assert.ok")
+        term("br i1 " + holds.text + ", label %" + ok + ", label %" + fail)
+        block(fail)
+        i32 text = call.typeArg
+        string message = slot(c, text)
+        storeDefault(c, message, text)
+        string address = temp()
+        inst(address + " = ptrtoint ptr " + message + " to i64")
+        string stream = "i64 " + address
+        writeText(stream, "assertion failed: " + call.assertText)
+        if (comparison) {
+            writeText(stream, " (")
+            if (call.leftText.len() > 0) {
+                writeText(stream, call.leftText + " is ")
+                writeNumber(c, stream, left, "ptr null")
+            }
+            if (call.leftText.len() > 0 && call.rightText.len() > 0) {
+                writeText(stream, ", ")
+            }
+            if (call.rightText.len() > 0) {
+                writeText(stream, call.rightText + " is ")
+                writeNumber(c, stream, right, "ptr null")
+            }
+            writeText(stream, ")")
+        }
+        i32 record = recordOf(c, text)
+        Value data = load(c, listField(c, message, record, "data"), addrType())
+        Value length = load(c, listField(c, message, record, "length"), intType(64, true))
+        inst("call void @cromo_panic(ptr " + data.text + ", i64 " + length.text + ", ptr " + where(c, exprPlace(c, expr)) + ")")
+        term("unreachable")
+        block(ok)
+    }
+
+    // print and println, or format into `dest` (D200): the format was parsed by
+    // the analysis, so here there are only calls to the runtime, one per piece (D38).
+    // The arguments are computed first: a format inside them is finished before this
+    // one starts writing.
+    void generatePrint(Checker c, i32 expr, string dest) {
+        const ref Expr print = c.tree.exprs[expr]
+        string stream = format("i64 {}", print.stream)
+        list<Value> values
+        for (i32 arg in print.items) {
+            values.add(generateExpr(c, arg))
+        }
+        if (print.stream == 3) {  // the runtime writes into the string itself, which starts empty
+            storeDefault(c, dest, print.resolved)
+            string address = temp()
+            inst(address + " = ptrtoint ptr " + dest + " to i64")
+            stream = "i64 " + address
+        } else {
+            inst("call void @cromo_print_begin()")  // one print at a time among the threads (D214)
+        }
+
+        for (FormatPiece piece in print.pieces) {
+            if (piece.arg < 0) {
+                writeText(stream, piece.text)
+                continue
+            }
+            string spec = "ptr " + (piece.hasSpec ? specConstant(piece.spec) : "null")
+            Value value = values[i64(piece.arg)]
+            i32 type = value.type
+            if (c.types.isNumeric(type) || c.types.isBool(type)) {
+                writeNumber(c, stream, value, spec)
+            } else if (c.types.isStruct(type)) {  // a string (D100)
+                i32 record = recordOf(c, type)
+                string data = temp()
+                string length = temp()
+                inst(data + " = extractvalue " + llvmType(c, type) + " " + value.text + ", " + num(fieldIndexOf(c, record, "data")))
+                inst(length + " = extractvalue " + llvmType(c, type) + " " + value.text + ", " + num(fieldIndexOf(c, record, "length")))
+                inst("call void @cromo_fmt_str(" + stream + ", ptr " + data + ", i64 " + length + ", " + spec + ")")
+            } else {
+                i64 size = literalSize(c, print.items[i64(piece.arg)])
+                inst("call void @cromo_fmt_str(" + stream + ", ptr " + value.text + ", i64 " + num(size) + ", " + spec + ")")
+            }
+        }
+        if (print.stream != 3) {
+            inst("call void @cromo_print_end(" + stream + ", i32 " + (print.newline ? "1" : "0") + ")")
+        }
+    }
+}
+
+extend Generator {
+    // ---- The built-in functions ----
+
+    // The atomic instructions take a bool as the byte it is in memory (D328).
+    string atomicType(Checker c, i32 type) const {
+        ret c.types.isBool(type) ? "i8" : llvmType(c, type)
+    }
+
+    string atomicValue(Checker c, i32 expr, i32 type) {
+        string value = generateExpr(c, expr).text
+        if (!c.types.isBool(type)) {
+            ret value
+        }
+        string wide = temp()
+        inst(wide + " = zext i1 " + value + " to i8")
+        ret wide
+    }
+
+    Value atomicResult(Checker c, string value, i32 type) {
+        if (!c.types.isBool(type)) {
+            ret valueOf(value, type)
+        }
+        string bit = temp()
+        inst(bit + " = trunc i8 " + value + " to i1")
+        ret valueOf(bit, type)
+    }
+
+    string arg(Checker c, i32 call, i64 index) {
+        ret generateExpr(c, c.tree.exprs[call].items[index]).text
+    }
+
+    // The built-in functions: `panic` (D102) and the `unsafe` dialect (D98). A
+    // struct result is written to `dest`.
+    Value generateIntrinsic(Checker c, i32 expr, string dest) {
+        const ref Expr call = c.tree.exprs[expr]
+        i32 i64Type = intType(64, true)
+        i32 addr = addrType()
+        i32 element = call.typeArg
+        Place place = exprPlace(c, expr)
+        Value nothing = valueOf("", voidType())
+        string result = temp()
+        switch (call.intrinsic) {
+            case Assert {
+                generateAssert(c, expr)
+                ret nothing
+            }
+            case Panic {
+                string message = addressOf(c, call.items[0])
+                i32 record = recordOf(c, c.tree.exprs[call.items[0]].resolved)
+                Value data = load(c, listField(c, message, record, "data"), addr)
+                Value length = load(c, listField(c, message, record, "length"), i64Type)
+                inst("call void @cromo_panic(ptr " + data.text + ", i64 " + length.text + ", ptr " + where(c, place) + ")")
+                term("unreachable")
+                ret nothing
+            }
+            case Alloc {
+                inst(result + " = call ptr @cromo_alloc(i64 " + arg(c, expr, 0) + ")")
+                ret valueOf(result, addr)
+            }
+            case Resize {
+                string memory = arg(c, expr, 0)
+                inst(result + " = call ptr @cromo_realloc(ptr " + memory + ", i64 " + arg(c, expr, 1) + ")")
+                ret valueOf(result, addr)
+            }
+            case Free {
+                inst("call void @cromo_free(ptr " + arg(c, expr, 0) + ")")
+                ret nothing
+            }
+            case SizeOf {
+                ret valueOf(num(sizeOf(c, element)), i64Type)
+            }
+            case Offset {
+                string base = arg(c, expr, 0)
+                inst(result + " = getelementptr i8, ptr " + base + ", i64 " + arg(c, expr, 1))
+                ret valueOf(result, addr)
+            }
+            case Take {
+                string from = arg(c, expr, 0)
+                if (isAggregate(c, element)) {
+                    copyStruct(c, dest, from, element)
+                    ret valueOf("", element)
+                }
+                ret load(c, from, element)
+            }
+            case Put {
+                string to = arg(c, expr, 0)
+                if (isAggregate(c, element)) {
+                    generateStructInto(c, call.items[1], to)
+                } else {
+                    inst("store " + llvmType(c, element) + " " + generateExpr(c, call.items[1]).text + ", ptr " + to)
+                }
+                ret nothing
+            }
+            case Destroy {
+                string at = arg(c, expr, 0)
+                if (needsDestruction(c, element)) {
+                    drop(c, at, element)
+                }
+                ret nothing
+            }
+            case CopyAt {
+                string from = arg(c, expr, 0)
+                if (!isAggregate(c, element)) {
+                    ret load(c, from, element)
+                }
+                if (needsDestruction(c, element)) {
+                    list<i32> none
+                    emitCall(c, c.tree.records[recordOf(c, element)].methods["copy"], from, element, none, dest, place, -1, "")
+                } else {
+                    copyStruct(c, dest, from, element)
+                }
+                ret valueOf("", element)
+            }
+            case CopyMemory {
+                string fn = intrinsic("declare void @llvm.memmove.p0.p0.i64(ptr, ptr, i64, i1)", "@llvm.memmove.p0.p0.i64")
+                string target = arg(c, expr, 0)
+                string source = arg(c, expr, 1)
+                inst("call void " + fn + "(ptr " + target + ", ptr " + source + ", i64 " + arg(c, expr, 2) + ", i1 false)")
+                ret nothing
+            }
+            case CompareMemory {
+                string first = arg(c, expr, 0)
+                string second = arg(c, expr, 1)
+                inst(result + " = call i32 @memcmp(ptr " + first + ", ptr " + second + ", i64 " + arg(c, expr, 2) + ")")
+                ret valueOf(result, intType(32, true))
+            }
+            case CheckIndex {
+                string index = arg(c, expr, 0)
+                checkIndex(c, index, arg(c, expr, 1), place)
+                ret nothing
+            }
+            case ArgumentCount {
+                inst(result + " = call i64 @cromo_arg_count()")
+                ret valueOf(result, i64Type)
+            }
+            case ArgumentLength {
+                inst(result + " = call i64 @cromo_arg_length(i64 " + arg(c, expr, 0) + ")")
+                ret valueOf(result, i64Type)
+            }
+            case ArgumentData {
+                inst(result + " = call ptr @cromo_arg_data(i64 " + arg(c, expr, 0) + ")")
+                ret valueOf(result, addr)
+            }
+            case ThreadStart, TaskStart, GroupStart {  // D214, D269, D273: the runtime owns the data of the lambda from here on
+                bool group = call.intrinsic == Intrinsic.GroupStart
+                string record = group ? arg(c, expr, 0) : ""
+                Value body = generateExpr(c, call.items[group ? 1 : 0])
+                string code = temp()
+                string env = temp()
+                string empty = temp()
+                inst(code + " = extractvalue { ptr, ptr } " + body.text + ", 0")
+                inst(env + " = extractvalue { ptr, ptr } " + body.text + ", 1")
+                inst(empty + " = icmp eq ptr " + code + ", null")
+                panicIf(c, empty, "the function is empty: no lambda was given to it", place)
+                if (group) {
+                    string fn = intrinsic("declare void @cromo_group_start(ptr, ptr, ptr) nounwind", "@cromo_group_start")
+                    inst("call void " + fn + "(ptr " + record + ", ptr " + code + ", ptr " + env + ")")
+                    ret nothing
+                }
+                string name = call.intrinsic == Intrinsic.TaskStart ? "@cromo_task_start" : "@cromo_thread_start"
+                string fn = intrinsic("declare ptr " + name + "(ptr, ptr) nounwind", name)
+                inst(result + " = call ptr " + fn + "(ptr " + code + ", ptr " + env + ")")
+                ret valueOf(result, addr)
+            }
+            case ThreadWait {
+                string fn = intrinsic("declare i32 @cromo_thread_wait(ptr) nounwind", "@cromo_thread_wait")
+                string ended = temp()
+                inst(ended + " = call i32 " + fn + "(ptr " + arg(c, expr, 0) + ")")
+                inst(result + " = icmp ne i32 " + ended + ", 0")
+                ret valueOf(result, boolType())
+            }
+            case ThreadRethrow {  // D217: the exception goes on in this thread
+                string fn = intrinsic("declare void @cromo_thread_take(ptr, ptr) nounwind", "@cromo_thread_take")
+                string thread = arg(c, expr, 0)
+                inst("call void " + fn + "(ptr " + thread + ", ptr " + raisedSlot(c) + ")")
+                emitPropagation(c)
+                ret nothing
+            }
+            case ThreadUncaught {
+                string fn = intrinsic("declare void @cromo_thread_uncaught(ptr) noreturn nounwind", "@cromo_thread_uncaught")
+                inst("call void " + fn + "(ptr " + arg(c, expr, 0) + ")")
+                term("unreachable")
+                ret nothing
+            }
+            case ThreadFree, MutexLock, MutexUnlock {
+                string name = call.intrinsic == Intrinsic.ThreadFree ? "@cromo_thread_free" :
+                    call.intrinsic == Intrinsic.MutexLock ? "@cromo_mutex_lock" : "@cromo_mutex_unlock"
+                string fn = intrinsic("declare void " + name + "(ptr) nounwind", name)
+                inst("call void " + fn + "(ptr " + arg(c, expr, 0) + ")")
+                ret nothing
+            }
+            case SelfAddress {
+                ret valueOf("%self", addr)
+            }
+            case EqualAt {  // D198: equals() with the key where it is, without moving it
+                string at = arg(c, expr, 0)
+                if (!c.types.isStruct(element)) {
+                    Value stored = load(c, at, element)
+                    Value other = generateExpr(c, call.items[1])
+                    string compared = c.types.isFloat(element) ? "fcmp oeq " : "icmp eq "
+                    inst(result + " = " + compared + llvmType(c, element) + " " + stored.text + ", " + other.text)
+                    ret valueOf(result, boolType())
+                }
+                i32 equals = c.tree.records[recordOf(c, element)].methods["equals"]
+                Handover none
+                string args = "ptr " + at + ", " +
+                    argument(c, call.items[1], c.tree.functions[equals].params[0].mode, c.tree.functions[equals].paramTypes[0],
+                        false, ref none).text
+                if (tracksCaller(c, equals)) {
+                    args += ", ptr " + where(c, place)
+                }
+                if (c.tree.functions[equals].canThrow) {
+                    args += ", ptr " + raisedSlot(c)
+                }
+                inst(result + " = call i1 " + symbolOf(c, equals) + "(" + args + ")")
+                if (c.tree.functions[equals].canThrow) {
+                    checkRaised(c)
+                }
+                ret valueOf(result, boolType())
+            }
+            case CallC {  // D552: as a call of an extern function, through a pointer
+                string function = arg(c, expr, 0)
+                string args
+                for (i64 i = 1; i < call.items.len(); i++) {
+                    const ref Expr given = c.tree.exprs[call.items[i]]
+                    string value
+                    if (given.kind == ExprKind.Ref) {
+                        value = "ptr " + addressOf(c, given.left)
+                    } else {
+                        Value passed = generateExpr(c, call.items[i])
+                        string text = passed.text
+                        if (c.types.isBool(passed.type)) {  // a bool of C is a byte (D129)
+                            text = temp()
+                            inst(text + " = zext i1 " + passed.text + " to i8")
+                        }
+                        value = cType(c, passed.type) + cExtension(c, passed.type) + " " + text
+                    }
+                    args += (i > 1 ? ", " : "") + value
+                }
+                if (c.types.isVoid(element)) {
+                    inst("call void " + function + "(" + args + ")")
+                    ret valueOf("", element)
+                }
+                if (c.types.isBool(element)) {
+                    string byte = temp()
+                    inst(byte + " = call zeroext i8 " + function + "(" + args + ")")
+                    inst(result + " = icmp ne i8 " + byte + ", 0")
+                    ret valueOf(result, element)
+                }
+                inst(result + " = call" + cExtension(c, element) + " " + llvmType(c, element) + " " + function + "(" + args + ")")
+                ret valueOf(result, element)
+            }
+            case SystemCall {  // Linux (D202): an address is passed as an integer
+                string args
+                for (i64 i = 0; i < 7; i++) {
+                    Value value = generateExpr(c, call.items[i])
+                    string number = value.text
+                    if (kindOf(c, value.type) == TypeKind.Addr) {
+                        number = temp()
+                        inst(number + " = ptrtoint ptr " + value.text + " to i64")
+                    }
+                    args += (i > 0 ? ", i64 " : "i64 ") + number
+                }
+                // The instruction itself, as the C library does: from -4095 to -1 the
+                // result is an error, -errno. Windows has no such function: linking fails.
+                if (options.windows) {
+                    string fn = intrinsic("declare i64 @cromo_system_call(i64, i64, i64, i64, i64, i64, i64) nounwind",
+                        "@cromo_system_call")
+                    inst(result + " = call i64 " + fn + "(" + args + ")")
+                    ret valueOf(result, i64Type)
+                }
+                if (options.arm64) {  // the number in x8, the result in x0 (D405)
+                    inst(result + " = call i64 asm sideeffect \"svc #0\", \"={x0},{x8},{x0},{x1},{x2},{x3},{x4},{x5},~{memory}\"(" +
+                        args + ")")
+                    ret valueOf(result, i64Type)
+                }
+                inst(result + " = call i64 asm sideeffect \"syscall\", \"={rax},{rax},{rdi},{rsi},{rdx},{r10},{r8},{r9}," +
+                    "~{rcx},~{r11},~{memory},~{dirflag},~{fpsr},~{flags}\"(" + args + ")")
+                ret valueOf(result, i64Type)
+            }
+            case Environment {
+                string fn = intrinsic("declare ptr @cromo_environment(i64) nounwind", "@cromo_environment")
+                inst(result + " = call ptr " + fn + "(i64 " + arg(c, expr, 0) + ")")
+                ret valueOf(result, addr)
+            }
+            case ExitProcess {
+                inst("call void @cromo_exit(i32 " + arg(c, expr, 0) + ")")
+                term("unreachable")
+                ret nothing
+            }
+            case AtomicLoad, AtomicLoadRelaxed {  // D328: in the order of the sequence; D503: relaxed, monotonic for LLVM
+                string at = arg(c, expr, 0)
+                string order = call.intrinsic == Intrinsic.AtomicLoad ? " seq_cst" : " monotonic"
+                inst(result + " = load atomic " + atomicType(c, element) + ", ptr " + at + order + ", align " + num(sizeOf(c, element)))
+                ret atomicResult(c, result, element)
+            }
+            case AtomicStore, AtomicStoreRelaxed {
+                string at = arg(c, expr, 0)
+                string value = atomicValue(c, call.items[1], element)
+                string order = call.intrinsic == Intrinsic.AtomicStore ? " seq_cst" : " monotonic"
+                inst("store atomic " + atomicType(c, element) + " " + value + ", ptr " + at + order + ", align " + num(sizeOf(c, element)))
+                ret nothing
+            }
+            case AtomicAdd, AtomicAddRelaxed, AtomicExchange {
+                string at = arg(c, expr, 0)
+                string value = atomicValue(c, call.items[1], element)
+                string operation = call.intrinsic == Intrinsic.AtomicExchange ? "xchg" : "add"
+                string order = call.intrinsic == Intrinsic.AtomicAddRelaxed ? " monotonic" : " seq_cst"
+                inst(result + " = atomicrmw " + operation + " ptr " + at + ", " + atomicType(c, element) + " " + value + order)
+                ret atomicResult(c, result, element)
+            }
+            case VectorLoad {  // D505: `i16x16.load(values, at)`
+                string at = arg(c, expr, 1)
+                string from = vectorPlace(c, call.items[0], at, countOf(c, element), place)
+                ret load(c, from, element)
+            }
+            case VectorStore {  // `v.store(ref values, at)`
+                Value vector = generateExpr(c, call.items[0])
+                string at = arg(c, expr, 2)
+                string to = vectorPlace(c, call.items[1], at, countOf(c, vector.type), place)
+                inst("store " + llvmType(c, vector.type) + " " + vector.text + ", ptr " + to)
+                ret nothing
+            }
+            case VectorSum, VectorSmallest, VectorLargest {
+                Value vector = generateExpr(c, call.items[0])
+                i32 number = elementOf(c, vector.type)
+                list<Value> one = [vector]
+                if (c.types.isFloat(number)) {
+                    if (call.intrinsic == Intrinsic.VectorSum) {  // in any order, as SIMD adds
+                        string fn = "@llvm.vector.reduce.fadd." + vectorSuffix(c, vector.type)
+                        intrinsic("declare " + llvmType(c, number) + " " + fn + "(" + llvmType(c, number) + ", " +
+                            llvmType(c, vector.type) + ")", fn)
+                        inst(result + " = call reassoc " + llvmType(c, number) + " " + fn + "(" + llvmType(c, number) + " -0.0, " +
+                            llvmType(c, vector.type) + " " + vector.text + ")")
+                        ret valueOf(result, number)
+                    }
+                    string name = call.intrinsic == Intrinsic.VectorSmallest ? "vector.reduce.fmin" : "vector.reduce.fmax"
+                    ret valueOf(vectorCall(c, name, number, one), number)
+                }
+                string name = call.intrinsic == Intrinsic.VectorSum ? "vector.reduce.add" :
+                    call.intrinsic == Intrinsic.VectorSmallest ? (signedOf(c, number) ? "vector.reduce.smin" : "vector.reduce.umin") :
+                    (signedOf(c, number) ? "vector.reduce.smax" : "vector.reduce.umax")
+                ret valueOf(vectorCall(c, name, number, one), number)
+            }
+            case VectorMin, VectorMax {
+                Value first = generateExpr(c, call.items[0])
+                Value second = generateExpr(c, call.items[1])
+                i32 number = elementOf(c, first.type)
+                bool smaller = call.intrinsic == Intrinsic.VectorMin
+                string name = c.types.isFloat(number) ? (smaller ? "minnum" : "maxnum") :
+                    (signedOf(c, number) ? "s" : "u") + (smaller ? "min" : "max")
+                list<Value> two = [first, second]
+                ret valueOf(vectorCall(c, name, first.type, two), first.type)
+            }
+            case VectorAbs {
+                Value vector = generateExpr(c, call.items[0])
+                if (c.types.isFloat(elementOf(c, vector.type))) {
+                    list<Value> one = [vector]
+                    ret valueOf(vectorCall(c, "fabs", vector.type, one), vector.type)
+                }
+                list<Value> two = [vector, valueOf("false", boolType())]
+                ret valueOf(vectorCall(c, "abs", vector.type, two), vector.type)
+            }
+            case VectorAll, VectorAny {
+                Value mask = generateExpr(c, call.items[0])
+                string flags = maskFlags(c, mask)
+                string bits = format("<{} x i1>", countOf(c, mask.type))
+                string fn = "@llvm.vector.reduce." + (call.intrinsic == Intrinsic.VectorAll ? "and" : "or") +
+                    format(".v{}i1", countOf(c, mask.type))
+                intrinsic("declare i1 " + fn + "(" + bits + ")", fn)
+                inst(result + " = call i1 " + fn + "(" + bits + " " + flags + ")")
+                ret valueOf(result, boolType())
+            }
+            case VectorSelect {  // `mask.select(a, b)`: a where the mask is true, b where it is false
+                Value mask = generateExpr(c, call.items[0])
+                Value first = generateExpr(c, call.items[1])
+                Value second = generateExpr(c, call.items[2])
+                string flags = maskFlags(c, mask)
+                inst(result + format(" = select <{} x i1> ", countOf(c, mask.type)) + flags + ", " + llvmType(c, first.type) + " " +
+                    first.text + ", " + llvmType(c, second.type) + " " + second.text)
+                ret valueOf(result, first.type)
+            }
+            case VectorLow, VectorHigh {
+                Value vector = generateExpr(c, call.items[0])
+                i64 half = countOf(c, vector.type) / 2
+                string lanes
+                for (i64 i = 0; i < half; i++) {
+                    lanes += (i > 0 ? ", " : "") + "i32 " + num(call.intrinsic == Intrinsic.VectorLow ? i : half + i)
+                }
+                inst(result + " = shufflevector " + llvmType(c, vector.type) + " " + vector.text + ", " + llvmType(c, vector.type) +
+                    format(" poison, <{} x i32> <", half) + lanes + ">")
+                ret valueOf(result, element)
+            }
+            case CountOnes, TrailingZeros, LeadingZeros {  // D502: the instructions of the processor, through those of LLVM
+                Value value = generateExpr(c, call.items[0])
+                i32 width = bitsOf(c, value.type)
+                string type = format("i{}", width)
+                string name = call.intrinsic == Intrinsic.CountOnes ? "ctpop" : call.intrinsic == Intrinsic.TrailingZeros ? "cttz" : "ctlz"
+                string fn = "@llvm." + name + "." + type
+                bool counts = call.intrinsic == Intrinsic.CountOnes
+                intrinsic("declare " + type + " " + fn + "(" + type + (counts ? "" : ", i1") + ")", fn)
+                string bits = temp()
+                inst(bits + " = call " + type + " " + fn + "(" + type + " " + value.text + (counts ? "" : ", i1 false") + ")")
+                if (width == 32) {
+                    ret valueOf(bits, intType(32, true))
+                }
+                inst(result + " = " + (width > 32 ? "trunc " : "zext ") + type + " " + bits + " to i32")
+                ret valueOf(result, intType(32, true))
+            }
+            case RotateLeft, RotateRight {  // D502: a funnel shift of the value with itself, by n modulo its bits
+                Value value = generateExpr(c, call.items[0])
+                Value amount = generateExpr(c, call.items[1])
+                i32 width = bitsOf(c, value.type)
+                i32 amountWidth = bitsOf(c, amount.type)
+                string type = format("i{}", width)
+                string by = amount.text
+                if (amountWidth != width) {
+                    by = temp()
+                    string change = amountWidth > width ? "trunc " : signedOf(c, amount.type) ? "sext " : "zext "
+                    inst(by + " = " + change + llvmType(c, amount.type) + " " + amount.text + " to " + type)
+                }
+                string fn = "@llvm." + (call.intrinsic == Intrinsic.RotateLeft ? "fshl." : "fshr.") + type
+                intrinsic("declare " + type + " " + fn + "(" + type + ", " + type + ", " + type + ")", fn)
+                inst(result + " = call " + type + " " + fn + "(" + type + " " + value.text + ", " + type + " " + value.text + ", " +
+                    type + " " + by + ")")
+                ret valueOf(result, value.type)
+            }
+            case Fma {  // D555: one instruction where the processor has it, `fma` of the runtime where not
+                Value a = generateExpr(c, call.items[0])
+                Value b = generateExpr(c, call.items[1])
+                Value third = generateExpr(c, call.items[2])
+                if (c.types.isVector(a.type)) {
+                    list<Value> three = [a, b, third]
+                    ret valueOf(vectorCall(c, "fma", a.type, three), a.type)
+                }
+                string type = llvmType(c, a.type)
+                string fn = bitsOf(c, a.type) == 32 ? "@llvm.fma.f32" : "@llvm.fma.f64"
+                intrinsic("declare " + type + " " + fn + "(" + type + ", " + type + ", " + type + ")", fn)
+                inst(result + " = call " + type + " " + fn + "(" + type + " " + a.text + ", " + type + " " + b.text + ", " + type + " " +
+                    third.text + ")")
+                ret valueOf(result, a.type)
+            }
+            case AtomicCompareExchange {
+                string at = arg(c, expr, 0)
+                string type = atomicType(c, element)
+                string expected = atomicValue(c, call.items[1], element)
+                string desired = atomicValue(c, call.items[2], element)
+                string pair = temp()
+                inst(pair + " = cmpxchg ptr " + at + ", " + type + " " + expected + ", " + type + " " + desired + " seq_cst seq_cst")
+                inst(result + " = extractvalue { " + type + ", i1 } " + pair + ", 1")
+                ret valueOf(result, boolType())
+            }
+            case HashBytes {  // D198
+                string data = arg(c, expr, 0)
+                inst(result + " = call i64 @cromo_hash_bytes(ptr " + data + ", i64 " + arg(c, expr, 1) + ")")
+                ret valueOf(result, intType(64, false))
+            }
+            case HashNumber {  // the bits of the value; -0.0 is 0.0, as they are equal (D198)
+                Value value = generateExpr(c, call.items[0])
+                i32 type = value.type
+                string bits = value.text
+                if (c.types.isFloat(type)) {
+                    string positive = temp()
+                    inst(positive + " = fadd " + llvmType(c, type) + " " + value.text + ", " + floatConstant(0.0, bitsOf(c, type)))
+                    bits = temp()
+                    inst(bits + " = bitcast " + llvmType(c, type) + " " + positive + format(" to i{}", bitsOf(c, type)))
+                }
+                i32 width = c.types.isBool(type) ? 1 : bitsOf(c, type)
+                if (width < 64) {
+                    string wide = temp()
+                    inst(wide + format(" = zext i{} ", width) + bits + " to i64")
+                    bits = wide
+                }
+                inst(result + " = call i64 @cromo_hash_bits(i64 " + bits + ")")
+                ret valueOf(result, intType(64, false))
+            }
+            case CompareNumbers {  // D421: two comparisons and two selects; NaN gives 0
+                Value first = generateExpr(c, call.items[0])
+                Value second = generateExpr(c, call.items[1])
+                string type = llvmType(c, first.type)
+                string less = temp()
+                string greater = temp()
+                if (c.types.isFloat(first.type)) {
+                    inst(less + " = fcmp olt " + type + " " + first.text + ", " + second.text)
+                    inst(greater + " = fcmp ogt " + type + " " + first.text + ", " + second.text)
+                } else {
+                    string sign = signedOf(c, first.type) ? "s" : "u"
+                    inst(less + " = icmp " + sign + "lt " + type + " " + first.text + ", " + second.text)
+                    inst(greater + " = icmp " + sign + "gt " + type + " " + first.text + ", " + second.text)
+                }
+                string above = temp()
+                inst(above + " = select i1 " + greater + ", i32 1, i32 0")
+                inst(result + " = select i1 " + less + ", i32 -1, i32 " + above)
+                ret valueOf(result, intType(32, true))
+            }
+            case VariableAddress {  // D394: the module variable is a global of the program
+                ret valueOf(addressOf(c, call.items[0]), addr)
+            }
+            case FloatBits {  // D397
+                Value value = generateExpr(c, call.items[0])
+                i32 bits = intType(bitsOf(c, value.type), false)
+                inst(result + " = bitcast " + llvmType(c, value.type) + " " + value.text + " to " + llvmType(c, bits))
+                ret valueOf(result, bits)
+            }
+            case FloatFromBits {
+                Value value = generateExpr(c, call.items[0])
+                inst(result + " = bitcast " + llvmType(c, value.type) + " " + value.text + " to " + llvmType(c, element))
+                ret valueOf(result, element)
+            }
+            case SquareRoot {  // D556: the instruction of every processor
+                string x = arg(c, expr, 0)
+                intrinsic("declare double @llvm.sqrt.f64(double)", "@llvm.sqrt.f64")
+                inst(result + " = call double @llvm.sqrt.f64(double " + x + ")")
+                ret valueOf(result, floatType(64))
+            }
+            case DecimalToFloat {  // D199
+                string data = arg(c, expr, 0)
+                string length = arg(c, expr, 1)
+                inst(result + " = call double @cromo_parse_float(ptr " + data + ", i64 " + length + ", i64 " + arg(c, expr, 2) + ")")
+                ret valueOf(result, floatType(64))
+            }
+            default {
+                ret valueOf("", errorType())
+            }
+        }
+    }
+
+    // ---- The program ----
+
+    string runtimeDeclaration(map<string, bool> exported, string name, string declaration) const {
+        ret exported.contains(name) ? "" : declaration + "\n"
+    }
+
+    // A C function (D128, D129). The runtime written in Cromo declares the functions
+    // of kernel32 with dllimport, as the runtime in C does.
+    string externDeclaration(Checker c, i32 function, bool imported) const {
+        const ref Function decl = c.tree.functions[function]
+        i32 result = decl.resolvedReturn
+        string text = (imported ? "declare dllimport" : "declare") +
+            (c.types.isVoid(result) ? " void" : cExtension(c, result) + " " + cType(c, result)) + " " + symbolOf(c, function) + "("
+        for (i64 i = 0; i < decl.params.len(); i++) {
+            i32 type = decl.paramTypes[i]
+            text += (i > 0 ? ", " : "") + (decl.params[i].mode == ParamMode.Ref ? "ptr" : cType(c, type) + cExtension(c, type))
+        }
+        ret text + ") nounwind\n"
+    }
+
+    string entryPoint(Checker c, i32 mainFunction) const {
+        const ref Function decl = c.tree.functions[mainFunction]
+        string text = "define void @cromo_start() noreturn nounwind uwtable {\nentry:\n  call void @cromo_runtime_start()\n"
+        list<string> args
+        if (decl.params.len() > 0) {
+            // D154: the arguments of the program, made by the standard library.
+            string type = llvmType(c, c.tree.functions[programArguments].resolvedReturn)
+            text += "  %args = alloca " + type + "\n"
+            text += "  call void " + symbolOf(c, programArguments) + "(ptr sret(" + type + ") %args" +
+                (tracksCaller(c, programArguments) ? ", ptr null" : "") + ")\n"
+            args.add("ptr %args")
+        }
+        if (decl.canThrow) {
+            text += "  %raised = alloca { ptr, ptr }\n  store { ptr, ptr } zeroinitializer, ptr %raised\n"
+            args.add("ptr %raised")
+        }
+        bool returnsNothing = c.types.isVoid(decl.resolvedReturn)
+        if (returnsNothing) {
+            text += "  call void " + symbolOf(c, mainFunction) + "(" + join(args, ", ") + ")\n"
+        } else {
+            text += "  %code = call i32 " + symbolOf(c, mainFunction) + "(" + join(args, ", ") + ")\n"
+        }
+        if (decl.canThrow && exceptionInterface >= 0) {
+            // D121: an exception that leaves main stops the program with its message.
+            text += uncaughtText(c, "done")
+        }
+        text += "  call void @cromo_main_end(i32 " + (returnsNothing ? "0" : "%code") + ")\n"  // D442: it waits for the windows
+        ret text + "  unreachable\n}\n\n"
+    }
+
+    // An exception in %raised stops the program with its message (D121); without one
+    // the code goes on at the label.
+    string uncaughtText(Checker c, string after) const {
+        i32 message = c.tree.interfaces[exceptionInterface].methods[0]
+        i32 record = recordOf(c, c.tree.functions[message].resolvedReturn)
+        string name = structName(c, record)
+        ret "  %object = load ptr, ptr %raised\n  %threw = icmp ne ptr %object, null\n  br i1 %threw, label %uncaught, label %" + after +
+            "\nuncaught:\n  %descriptorAddress = getelementptr inbounds { ptr, ptr }, ptr %raised, i32 0, i32 1\n" +
+            "  %descriptor = load ptr, ptr %descriptorAddress\n" +
+            "  %tableAddress = getelementptr inbounds { ptr, ptr }, ptr %descriptor, i32 0, i32 1\n" +
+            "  %table = load ptr, ptr %tableAddress\n  %method = load ptr, ptr %table\n  %text = alloca " + name + "\n" +
+            "  call void %method(ptr sret(" + name + ") %text, ptr %object)\n  %dataAddress = getelementptr inbounds " + name +
+            ", ptr %text, i32 0, i32 " + num(fieldIndexOf(c, record, "data")) + "\n  %data = load ptr, ptr %dataAddress\n" +
+            "  %lengthAddress = getelementptr inbounds " + name + ", ptr %text, i32 0, i32 " + num(fieldIndexOf(c, record, "length")) +
+            "\n  %length = load i64, ptr %lengthAddress\n  call void @cromo_uncaught(ptr %data, i64 %length, ptr %object)\n" +
+            "  unreachable\n" + after + ":\n"
+    }
+
+    // Destroys the object of an exception and frees its memory, through the
+    // descriptor that travels with it.
+    string freeExceptionFunction() const {
+        ret "define private void @cromo.exception.free(ptr %box) nounwind {\nentry:\n  %object = load ptr, ptr %box\n" +
+            "  %descriptorAddress = getelementptr inbounds { ptr, ptr }, ptr %box, i32 0, i32 1\n" +
+            "  %descriptor = load ptr, ptr %descriptorAddress\n  %drop = load ptr, ptr %descriptor\n" +
+            "  %destroy = icmp ne ptr %drop, null\n  br i1 %destroy, label %drop.object, label %free\ndrop.object:\n" +
+            "  call void %drop(ptr %object)\n  br label %free\nfree:\n  call void @cromo_exception_free(ptr %object)\n" +
+            "  ret void\n}\n\n"
+    }
 
     public string run(Checker c) {
-        out = "; Generated by cromo\n"
-        out += "source_filename = " + quoted(options.sourcePath) + "\n"
-        out += "target triple = \"" + options.triple + "\"\n"
+        moduleText = "; Generated by cromo\n"
+        moduleText += "source_filename = " + quoted(options.sourcePath) + "\n"
+        moduleText += "target triple = \"" + options.triple + "\"\n"
+        // Where the code of the program starts: the table of the stack traces
+        // counts from here (D339). The runtime has no table of its own.
         if (!options.runtime) {
-            out += "module asm \".text\"\nmodule asm \".globl cromo_code\"\nmodule asm \"cromo_code:\"\n\n"
+            moduleText += "module asm \".text\"\nmodule asm \".globl cromo_code\"\nmodule asm \"cromo_code:\"\n\n"
         }
+        for (i64 i = 0; i < c.tree.interfaces.len(); i++) {
+            if (c.tree.interfaces[i].name == "Exception" && c.tree.interfaces[i].file == 1) {
+                exceptionInterface = i32(i)
+            }
+        }
+        list<i32> functions
+        list<i32> externs  // the same C function can be declared by several modules
+        map<string, bool> declared
+        for (i32 function in c.tree.topFunctions) {
+            const ref Function decl = c.tree.functions[function]
+            if (decl.name == "programArguments" && decl.file == 1) {
+                programArguments = function
+            }
+            if (decl.isExtern) {
+                if (!declared.contains(decl.name)) {
+                    declared[decl.name] = true
+                    externs.add(function)
+                }
+            } else if (decl.typeParams.len() == 0) {
+                functions.add(function)
+            }
+        }
+        for (i32 function in c.made) {
+            if (!c.tree.functions[function].isAbstract) {
+                functions.add(function)
+            }
+        }
+        for (i32 lambda in c.tree.lambdas) {
+            lambdaOf[c.tree.exprs[lambda].function] = lambda
+        }
+
         list<i32> records = emittedRecords(c)
         for (i32 record in records) {
             const ref Record decl = c.tree.records[record]
             if (decl.isEnum) {
-                out += structName(c, record) + " = type " + enumTypeBody(c, record) + "\n"
-                for (Case item in decl.cases) {
-                    out += llvmName("%", "case." + recordSymbol(c, record) + "." + item.name) + " = type " + fieldTypes(c, item.fields)
+                moduleText += structName(c, record) + " = type " + enumTypeBody(c, record) + "\n"
+                for (i64 k = 0; k < decl.cases.len(); k++) {
+                    moduleText += caseTypeName(c, record, k) + " = type " + fieldTypes(c, decl.cases[k].fields)
                 }
                 continue
             }
-            out += structName(c, record) + " = type " + fieldTypes(c, decl.fields)
+            moduleText += structName(c, record) + " = type " + fieldTypes(c, decl.fields)
         }
         if (records.len() > 0) {
-            out += "\n"
+            moduleText += "\n"
         }
         writeGlobals(c)
-        out += "; not generated yet: the types of the data of the lambdas\n"
-        writeFunctions(c, records)
-        ret out
+        for (i32 lambda in c.tree.lambdas) {
+            i32 function = c.tree.exprs[lambda].function
+            if (!c.tree.functions[function].isAbstract && c.tree.functions[function].bodyChecked) {
+                moduleText += lambdaType(c, lambda)
+            }
+        }
+
+        for (i32 record in records) {
+            const ref Record decl = c.tree.records[record]
+            for (i32 member in decl.members) {
+                if (c.tree.functions[member].bodyChecked) {  // D103: only the methods used
+                    string text = generateFunction(c, member)
+                    moduleText += text
+                }
+            }
+            // Without a destructor of its own, a struct still destroys its fields.
+            if (decl.needsDestruction && decl.destructor < 0) {
+                string text = generateFieldsDrop(c, record)
+                moduleText += text
+            }
+            if (decl.generatedCopy >= 0) {
+                string text = generateCopy(c, record)
+                moduleText += text
+            }
+        }
+        i32 mainFunction = -1
+        for (i32 function in functions) {
+            string text = generateFunction(c, function)
+            moduleText += text
+            const ref Function decl = c.tree.functions[function]
+            if (decl.name == "main" && decl.file == 0 && decl.generic < 0) {
+                mainFunction = function
+            }
+        }
+        if (mainFunction >= 0) {
+            moduleText += entryPoint(c, mainFunction)
+        }
+        for (i32 lambda in c.tree.lambdas) {
+            i32 function = c.tree.exprs[lambda].function
+            if (c.tree.functions[function].isAbstract || !c.tree.functions[function].bodyChecked) {
+                continue
+            }
+            string data = lambdaData(c, lambda)
+            moduleText += data
+            string text = generateFunction(c, function)
+            moduleText += text
+        }
+
+        if (freesExceptions) {
+            moduleText += freeExceptionFunction()
+        }
+        moduleText += releaseBodies
+        moduleText += globalText + "\n"
+        for (i32 function in externs) {
+            bool imported = options.runtime && options.windows && c.tree.functions[function].library != "cromo"
+            moduleText += externDeclaration(c, function, imported)
+        }
+        // The functions of the runtime, but those that a module of the library
+        // defines in Cromo and exports with their name (D393, D395).
+        map<string, bool> exported
+        for (i32 function in functions) {
+            if (c.tree.functions[function].isExported) {
+                exported[c.tree.functions[function].symbol] = true
+            }
+        }
+        moduleText += runtimeDeclaration(exported, "cromo_write", "declare void @cromo_write(i64, ptr, i64) nounwind")
+        moduleText += runtimeDeclaration(exported, "cromo_fmt_int", "declare void @cromo_fmt_int(i64, i64, i32, ptr) nounwind")
+        moduleText += runtimeDeclaration(exported, "cromo_fmt_f64", "declare void @cromo_fmt_f64(i64, double, ptr) nounwind")
+        moduleText += runtimeDeclaration(exported, "cromo_fmt_f32", "declare void @cromo_fmt_f32(i64, float, ptr) nounwind")
+        moduleText += runtimeDeclaration(exported, "cromo_fmt_bool", "declare void @cromo_fmt_bool(i64, i32, ptr) nounwind")
+        moduleText += runtimeDeclaration(exported, "cromo_fmt_str", "declare void @cromo_fmt_str(i64, ptr, i64, ptr) nounwind")
+        moduleText += runtimeDeclaration(exported, "cromo_print_begin", "declare void @cromo_print_begin() nounwind")
+        moduleText += runtimeDeclaration(exported, "cromo_print_end", "declare void @cromo_print_end(i64, i32) nounwind")
+        moduleText += runtimeDeclaration(exported, "cromo_parse_float", "declare double @cromo_parse_float(ptr, i64, i64) nounwind")
+        moduleText += runtimeDeclaration(exported, "cromo_hash_bytes", "declare i64 @cromo_hash_bytes(ptr, i64) nounwind readonly")
+        moduleText += runtimeDeclaration(exported, "cromo_hash_bits", "declare i64 @cromo_hash_bits(i64) nounwind readnone")
+        moduleText += runtimeDeclaration(exported, "cromo_exit", "declare void @cromo_exit(i32) noreturn nounwind")
+        moduleText += runtimeDeclaration(exported, "cromo_main_end", "declare void @cromo_main_end(i32) noreturn nounwind")
+        moduleText += runtimeDeclaration(exported, "cromo_panic", "declare void @cromo_panic(ptr, i64, ptr) noreturn nounwind cold nomerge")
+        moduleText += runtimeDeclaration(exported, "cromo_panic_index",
+            "declare void @cromo_panic_index(i64, i64, ptr) noreturn nounwind cold nomerge")
+        moduleText += runtimeDeclaration(exported, "cromo_alloc", "declare ptr @cromo_alloc(i64) nounwind")
+        moduleText += runtimeDeclaration(exported, "cromo_realloc", "declare ptr @cromo_realloc(ptr, i64) nounwind")
+        moduleText += runtimeDeclaration(exported, "cromo_free", "declare void @cromo_free(ptr) nounwind")
+        if (!declared.contains("memcmp")) {
+            moduleText += "declare i32 @memcmp(ptr, ptr, i64) nounwind\n"
+        }
+        moduleText += runtimeDeclaration(exported, "cromo_uncaught", "declare void @cromo_uncaught(ptr, i64, ptr) noreturn nounwind cold")
+        moduleText += runtimeDeclaration(exported, "cromo_exception_new", "declare ptr @cromo_exception_new(i64) nounwind")
+        moduleText += runtimeDeclaration(exported, "cromo_runtime_start", "declare void @cromo_runtime_start() nounwind")
+        moduleText += runtimeDeclaration(exported, "cromo_exception_free", "declare void @cromo_exception_free(ptr) nounwind")
+        moduleText += runtimeDeclaration(exported, "cromo_arg_count", "declare i64 @cromo_arg_count() nounwind")
+        moduleText += runtimeDeclaration(exported, "cromo_arg_length", "declare i64 @cromo_arg_length(i64) nounwind")
+        moduleText += runtimeDeclaration(exported, "cromo_arg_data", "declare ptr @cromo_arg_data(i64) nounwind")
+        list<string> declarations
+        for (string declaration, bool used in intrinsics) {
+            declarations.add(declaration)
+        }
+        sort(ref declarations)
+        for (string declaration in declarations) {
+            moduleText += declaration + "\n"
+        }
+        ret moduleText
     }
 }
