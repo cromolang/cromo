@@ -488,7 +488,7 @@ i32 main() {
 
 Dentro il blocco i metodi si scrivono come nella struct: vedono i suoi campi, anche quelli privati, e ognuno dice se è `public`. I campi, i casi di un enum, il costruttore, il distruttore e le interfacce restano nella dichiarazione, che da sola dice che cos'è la struct. Una struct generica si estende con il solo nome, `extend Stack { ... }`, e i suoi parametri di tipo sono quelli della dichiarazione.
 
-Solo il modulo di una struct può estenderla: `extend` su una struct di un altro modulo è l'errore `there is no struct or enum 'Account' in this module to extend`. `extend` è una parola del linguaggio solo lì, prima di un nome e di un blocco: altrove è un nome come un altro.
+Solo il modulo di una struct può estenderla: `extend` su una struct di un altro modulo è l'errore `there is no struct or enum 'Account' in this module to extend`. `extend` è una parola del linguaggio: non può essere il nome di una variabile o di una funzione.
 
 ## Dove si trovano i moduli
 

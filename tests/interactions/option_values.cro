@@ -1,0 +1,117 @@
+// Option with values that own resources, of an interface and of a function, in
+// lists, nested, compared and printed (D566, D565, D357).
+// expect-output: true false b none
+// expect-output: true true true 1.5
+// expect-output: 3
+// expect-output: Some([1, 2, 3]) None
+// expect-output: 2
+// expect-output: true false
+// expect-output: 2 4
+// expect-output: end
+// expect-output: drop 1
+// expect-output: drop 20
+// expect-exit: 0
+interface Shape {
+    f64 area() const
+}
+
+struct Square : Shape {
+    f64 side
+
+    f64 area() const {
+        ret side * side
+    }
+}
+
+struct Resource {
+    i64 id
+
+    ~Resource() {
+        println("drop {}", id)
+    }
+}
+
+Option<string> find(list<string> values, string key) {
+    for (string s in values) {
+        if (s == key) {
+            ret Option<string>.Some(s)
+        }
+    }
+    ret Option<string>.None
+}
+
+Option<Resource> open(i64 id) {
+    if (id < 0) {
+        ret Option<Resource>.None
+    }
+    Resource r
+    r.id = id
+    ret Option<Resource>.Some(move r)
+}
+
+i32 main() {
+    list<string> values = ["a", "b"]
+    Option<string> found = find(values, "b")
+    Option<string> none = find(values, "z")
+    println("{} {} {} {}", found.has(), none.has(), found.value(), none.or("none"))
+    Option<f64> half = Option<f64>.Some(1.5)
+    println("{} {} {} {}", found == Option<string>.Some("b"), none == Option<string>.None,
+        half == Option<f64>.Some(1.5), half.or(0.0))
+
+    Option<Option<i64>> nested = Option<Option<i64>>.Some(Option<i64>.Some(3))
+    switch (nested) {
+        case Some(Option<i64> inner) {
+            println("{}", inner.value())
+        }
+        case None {
+            println("none")
+        }
+    }
+    Option<list<i64>> numbers = Option<list<i64>>.Some([1, 2, 3])
+    println("{:?} {:?}", numbers, none)
+
+    list<Option<Resource>> all
+    all.add(open(1))
+    all.add(open(-1))
+    all.add(open(2))
+    i64 count = 0
+    for (Option<Resource> o in all) {
+        if (o.has()) {
+            count++
+        }
+    }
+    println("{}", count)
+    switch (all[2]) {
+        case Some(ref Resource r) {
+            r.id = 20
+        }
+        case None {
+        }
+    }
+    Option<Resource> taken = move all[0]
+    println("{} {}", taken.has(), all[0].has())
+
+    Option<func(i64) i64> next = Option<func(i64) i64>.Some([](i64 x) i64 { ret x + 1 })
+    Square square
+    square.side = 2.0
+    Option<Shape> shape = Option<Shape>.Some(square)
+    i64 two = 0
+    f64 area = 0.0
+    switch (next) {
+        case Some(func(i64) i64 f) {
+            two = f(1)
+        }
+        case None {
+        }
+    }
+    switch (shape) {
+        case Some(Shape s) {
+            area = s.area()
+        }
+        case None {
+        }
+    }
+    println("{} {}", two, area)
+    println("end")
+    ret 0
+}

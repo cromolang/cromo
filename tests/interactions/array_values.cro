@@ -1,0 +1,47 @@
+// Arrays as values: returned, copied, moved when their elements own resources,
+// passed with ref, compared, inside structs and lists (D196, D206, D565).
+// expect-output: 4 15 x 2.5 false 3 false
+// expect-output: [[0, 0, 4]]
+// expect-exit: 0
+struct Matrix {
+    f64[2][2] m
+}
+
+void fill(ref i64[3] a) {
+    for (ref i64 x in a) {
+        x = 5
+    }
+}
+
+i64 total(i64[3] a) {
+    i64 t = 0
+    for (i64 x in a) {
+        t += x
+    }
+    ret t
+}
+
+i64[3] make() {
+    i64[3] a
+    a[2] = 4
+    ret a
+}
+
+i32 main() {
+    i64[3] a = make()
+    i64[3] b = a
+    b[0] = 9
+    string[2] names
+    names[0] = "x"
+    string[2] moved = move names
+    Matrix m
+    m.m[1][0] = 2.5
+    Matrix n = m
+    n.m[1][0] = 1.0
+    fill(ref b)
+    println("{} {} {} {} {} {} {}", a[2], total(b), moved[0], m.m[1][0], a == b, a.len(), m == n)
+    list<i64[3]> rows
+    rows.add(a)
+    println("{:?}", rows)
+    ret 0
+}

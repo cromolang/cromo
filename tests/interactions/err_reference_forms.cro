@@ -1,0 +1,28 @@
+// What a local reference cannot name, and what cannot happen to its variable
+// while it is used (D562).
+// expect-error: a reference names a variable, a field or an element
+// expect-error: 'n' is an i64: write ref i64 wrong
+// expect-error: cannot name 'c' with 'ref': 'c' is const and cannot be modified; 'const ref' reads it
+// expect-error: a reference names a place: write a variable, a field or an element after '='
+// expect-error: 'v' cannot be modified while the reference 'first' names it
+string make() {
+    ret "tmp"
+}
+
+void grow(ref list<i64> v) {
+    v.add(1)
+}
+
+i32 main() {
+    const ref string t = make()
+    i64 n = 1
+    ref i32 wrong = n
+    const i64 c = 2
+    ref i64 rc = c
+    ref i64 unset
+    list<i64> v = [1, 2]
+    ref i64 first = v[0]
+    grow(ref v)
+    first = 5
+    ret 0
+}

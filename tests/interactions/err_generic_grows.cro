@@ -1,0 +1,20 @@
+// A generic function that calls itself with a bigger type each time never ends
+// its instances: an error, not a compiler that hangs (D39).
+// expect-error: the instances of depth are nested too deeply
+struct Wrap<T> {
+    T v
+}
+
+i64 depth<T>(T x, i64 n) {
+    if (n == 0) {
+        ret 0
+    }
+    Wrap<T> w
+    ret 1 + depth(w, n - 1)
+}
+
+i32 main() {
+    i64 one = 1
+    println("{}", depth(one, 3))
+    ret 0
+}

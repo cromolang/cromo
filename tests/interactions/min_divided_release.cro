@@ -1,0 +1,13 @@
+// With --release the smallest i64 divided by -1 wraps around, as the other
+// overflows do, and its remainder is 0: no trap of the processor (D30).
+// cromo-flags: --release
+// expect-output: 0
+// expect-output: -9223372036854775808
+// expect-exit: 0
+i32 main(list<string> args) {
+    i64 min = -9223372036854775807 - 1
+    i64 minusOne = -args.len()
+    println("{}", min % minusOne)
+    println("{}", min / minusOne)
+    ret 0
+}

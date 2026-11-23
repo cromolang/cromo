@@ -1,0 +1,76 @@
+// Where a value that owns resources is copied: an assignment, a move parameter
+// given without move, an argument that overlaps the object, with a copy() written
+// by hand too (D424, D563, D35).
+// expect-output: a b 0
+// expect-output: a
+// expect-output: 100 200
+// expect-output: 4 a 1 2 abab
+// expect-output: x!
+// expect-output: [[2], [2, 3], [2, 3]]
+// expect-exit: 0
+struct S {
+    string name
+    list<i64> values
+}
+
+struct Custom {
+    i64 n
+
+    ~Custom() {
+    }
+
+    Custom copy() const {
+        Custom c
+        c.n = n + 100
+        ret c
+    }
+}
+
+struct Holder {
+    list<string> names
+
+    void rename(string name) {
+        names.clear()
+        names.add(name + "!")
+    }
+}
+
+void take(move S s) {
+}
+
+i32 main() {
+    S a
+    a.name = "a"
+    S b = a
+    b.name = "b"
+    b.values.add(1)
+    println("{} {} {}", a.name, b.name, a.values.len())
+    take(a)
+    println("{}", a.name)
+    Custom c
+    Custom d = c
+    list<Custom> customs
+    customs.add(d)
+    println("{} {}", d.n, customs[0].n)
+
+    list<string> names = ["a", "b"]
+    names.add(names[0])
+    names.insert(0, names[2])
+    map<string, list<i64>> m
+    m["a"] = [1]
+    m["b"] = m["a"]
+    m["a"].add(2)
+    string s = "ab"
+    s += s
+    println("{} {} {} {} {}", names.len(), names[0], m["b"].len(), m["a"].len(), s)
+    Holder h
+    h.names.add("x")
+    h.rename(h.names[0])
+    println("{}", h.names[0])
+    list<list<i64>> g = [[1], [2]]
+    g[0] = g[1]
+    g[1].add(3)
+    g.add(g[1])
+    println("{:?}", g)
+    ret 0
+}

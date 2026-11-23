@@ -1,0 +1,134 @@
+// A generic struct with a constraint, a map, Option and a generic method; generic
+// functions with Ordered and with an interface; a generic enum that holds itself
+// (D39, D52, D92, D110, D421, D566).
+// expect-output: [3, 1] 1 false
+// expect-output: 9 pear
+// expect-output: rex,rex
+// expect-output: {"k": [Some(1), None]}
+// expect-output: 2 Node([Leaf("a"), Node([Leaf("b")])])
+// expect-output: 6
+// expect-exit: 0
+interface Named {
+    string name() const
+}
+
+interface Monoid {
+    Self plus(Self other) const
+}
+
+struct Dog : Named {
+    string called
+
+    string name() const {
+        ret called
+    }
+}
+
+struct Amount : Monoid {
+    i64 x
+
+    Amount plus(Amount other) const {
+        Amount r
+        r.x = x + other.x
+        ret r
+    }
+}
+
+struct Cache<K : Key, V> {
+    map<K, V> data
+    list<K> order
+
+    void put(K k, move V v) {
+        if (!data.contains(k)) {
+            order.add(k)
+        }
+        data[k] = move v
+    }
+
+    Option<V> get(K k) const {
+        if (data.contains(k)) {
+            ret Option<V>.Some(data[k])
+        }
+        ret Option<V>.None
+    }
+
+    list<U> mapAll<U>(func(V) U f) const {
+        list<U> out
+        for (K k in order) {
+            out.add(f(data[k]))
+        }
+        ret out
+    }
+}
+
+enum Tree<T> {
+    Leaf(T value)
+    Node(list<Tree<T>> children)
+}
+
+T largest<T : Ordered>(list<T> values) {
+    T best = values[0]
+    for (T x in values) {
+        if (x.compare(best) > 0) {
+            best = x
+        }
+    }
+    ret best
+}
+
+string names<T : Named>(list<T> values) {
+    list<string> out
+    for (T x in values) {
+        out.add(x.name())
+    }
+    ret join(out, ",")
+}
+
+T sum<T : Monoid>(list<T> items) {
+    T acc
+    for (T i in items) {
+        acc = acc.plus(i)
+    }
+    ret acc
+}
+
+i64 count<T>(Tree<T> t) {
+    switch (t) {
+        case Leaf {
+            ret 1
+        }
+        case Node(list<Tree<T>> children) {
+            i64 n = 0
+            for (Tree<T> child in children) {
+                n += count(child)
+            }
+            ret n
+        }
+    }
+}
+
+i32 main() {
+    Cache<string, list<i64>> c
+    c.put("a", [1, 2])
+    c.put("b", [3])
+    c.put("a", [9, 9, 9])
+    list<i64> lengths = c.mapAll<i64>([](list<i64> v) i64 { ret v.len() })
+    println("{:?} {} {}", lengths, c.get("b").value().len(), c.get("z").has())
+    list<i64> numbers = [3, 9, 2]
+    list<string> fruit = ["pear", "apple"]
+    println("{} {}", largest(numbers), largest(fruit))
+    Dog d
+    d.called = "rex"
+    list<Dog> dogs = [d, d]
+    println("{}", names(dogs))
+    map<string, list<Option<i64>>> deep
+    deep["k"] = [Option<i64>.Some(1), Option<i64>.None]
+    println("{:?}", deep)
+    Tree<string> t = Tree<string>.Node([Tree<string>.Leaf("a"), Tree<string>.Node([Tree<string>.Leaf("b")])])
+    println("{} {:?}", count(t), t)
+    Amount two
+    two.x = 2
+    list<Amount> vs = [two, two, two]
+    println("{}", sum(vs).x)
+    ret 0
+}

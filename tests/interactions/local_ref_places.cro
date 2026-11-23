@@ -1,0 +1,121 @@
+// Local references through fields, lists, maps, arrays and other references, in
+// loops and in a lambda: the place they name is the one that changes (D562).
+// expect-output: 1 id 8
+// expect-output: 2
+// expect-output: 17
+// expect-output: 3 7 hello!
+// expect-output: 9 2 0
+// expect-output: 21 21
+// expect-output: anon+ anon 1
+// expect-exit: 0
+struct Field {
+    string name
+    i64 size
+}
+
+struct Record {
+    list<Field> fields
+}
+
+struct Tree {
+    list<Record> records
+}
+
+struct Cell {
+    i64 n
+}
+
+struct Item {
+    string name
+    list<i64> tags
+}
+
+i64 apply(func(i64) i64 f) {
+    ret f(1)
+}
+
+void work(ref list<Item> items) {
+    for (ref Item it in items) {
+        ref list<i64> tags = it.tags
+        tags.add(tags.len())
+        const ref string current = it.name
+        bool empty = current == ""
+        if (empty) {
+            it.name = "anon"
+        }
+    }
+    ref Item first = items[0]
+    ref string name = first.name
+    name += "+"
+}
+
+i32 main() {
+    Tree tree
+    tree.records.add(Record())
+    tree.records[0].fields.add(Field())
+    ref Field f = tree.records[0].fields[0]
+    f.name = "id"
+    f.size += 8
+    const ref Record rec = tree.records[0]
+    println("{} {} {}", rec.fields.len(), rec.fields[0].name, rec.fields[0].size)
+    tree.records.add(Record())  // after the last use of the references
+    println("{}", tree.records.len())
+
+    list<Cell> cells
+    for (i64 i = 0; i < 4; i++) {
+        cells.add(Cell())
+    }
+    for (i64 i = 0; i < 4; i++) {
+        ref Cell c = cells[i]
+        c.n = i * i
+        if (i == 2) {
+            continue
+        }
+        c.n += 1
+    }
+    i64 total = 0
+    for (Cell c in cells) {
+        total += c.n
+    }
+    println("{}", total)
+
+    map<string, list<i64>> m
+    m["a"] = [1, 2]
+    ref list<i64> a = m["a"]
+    a.add(3)
+    i64[3] numbers
+    ref i64 mid = numbers[1]
+    mid = 7
+    string s = "hello"
+    ref string t = s
+    t += "!"
+    println("{} {} {}", m["a"].len(), numbers[1], s)
+
+    Record r
+    r.fields.add(Field())
+    r.fields.add(Field())
+    ref Record whole = r
+    ref list<Field> fields = whole.fields
+    ref Field one = fields[0]
+    one.size = 9
+    const ref Field two = r.fields[1]
+    i64 kept = two.size + 2
+    i64 size = r.fields[0].size
+    r.fields.clear()
+    println("{} {} {}", size, kept, r.fields.len())
+
+    list<i64> v = [10, 20]
+    ref i64 x = v[1]
+    i64 result = apply([ref x](i64 n) i64 {
+        x += n
+        ret x
+    })
+    println("{} {}", result, v[1])
+
+    list<Item> items
+    items.add(Item())
+    items.add(Item())
+    work(ref items)
+    println("{} {} {}", items[0].name, items[1].name, items[1].tags.len())
+    ret 0
+}

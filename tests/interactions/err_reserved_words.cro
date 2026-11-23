@@ -1,0 +1,28 @@
+// The words kept for the language to come, 'extend' and 'Self' are not names
+// (D569): a variable, a field, a parameter, a function or a method.
+// expect-error: 'class' is a reserved word: choose another name
+// expect-error: 'null' is a reserved word: choose another name
+// expect-error: 'await' is a reserved word: choose another name
+// expect-error: 'this' is a reserved word: choose another name
+// expect-error: 'return' is a reserved word: choose another name
+// expect-error: 'while' is a reserved word: choose another name
+// expect-error: 'extend' is a word of the language, for the block that adds methods to a type: choose another name
+// expect-error: 'Self' is a word of the language, the type that implements an interface: choose another name
+struct Box {
+    i64 class
+    i64 Self
+}
+
+i64 await(i64 this) {
+    ret this
+}
+
+void extend() {
+}
+
+i32 main() {
+    i64 null = 1
+    i64 return = 2
+    i64 while = 3
+    ret 0
+}

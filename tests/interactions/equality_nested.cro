@@ -1,0 +1,88 @@
+// == on structs that hold structs, maps, arrays and lists, on enums with data,
+// on generic structs and enums, and with an equals() written in an element (D565).
+// expect-output: true false
+// expect-output: false true true
+// expect-output: true false false
+// expect-output: true false
+// expect-output: true true
+// expect-output: false false
+// expect-output: true
+// expect-exit: 0
+struct Inner {
+    string name
+    list<i64> values
+}
+
+struct Outer {
+    Inner first
+    map<string, Inner> byName
+    i64[2] pair
+}
+
+enum Token {
+    Number(i64 value)
+    Word(string text)
+    End
+}
+
+struct Pair<A, B> {
+    A first
+    B second
+}
+
+enum Tree<T> {
+    Leaf(T value)
+    Node(list<Tree<T>> children)
+}
+
+struct Name {
+    string text
+
+    bool equals(Name other) const {
+        ret text.lower() == other.text.lower()
+    }
+}
+
+struct Measure {
+    f64 x
+}
+
+i32 main() {
+    Outer p
+    Outer q
+    bool same = p == q
+    p.byName["k"] = Inner()
+    println("{} {}", same, p == q)
+    q.byName["k"] = Inner()
+    q.byName["k"].values.add(1)
+    bool different = p == q
+    p.byName["k"].values.add(1)
+    println("{} {} {}", different, p == q, !(p != q))
+
+    println("{} {} {}", Token.Number(3) == Token.Number(3), Token.Number(3) == Token.Number(4),
+        Token.Word("a") == Token.End)
+    Pair<i64, string> a
+    Pair<i64, string> b
+    b.second = "x"
+    println("{} {}", a == a, a == b)
+
+    list<Name> upper = [Name()]
+    list<Name> lower = [Name()]
+    upper[0].text = "ABC"
+    lower[0].text = "abc"
+    list<list<string>> g1 = [["a"], []]
+    list<list<string>> g2 = [["a"], []]
+    println("{} {}", upper == lower, g1 == g2)
+
+    // A number that is not a number is different from itself, in a struct too.
+    Measure m
+    f64 zero = 0.0
+    m.x = zero / zero
+    Measure n = m
+    println("{} {}", m == n, m.x == n.x)
+
+    Tree<string> t = Tree<string>.Node([Tree<string>.Leaf("a"), Tree<string>.Node([Tree<string>.Leaf("b")])])
+    Tree<string> u = Tree<string>.Node([Tree<string>.Leaf("a"), Tree<string>.Node([Tree<string>.Leaf("b")])])
+    println("{}", t == u)
+    ret 0
+}

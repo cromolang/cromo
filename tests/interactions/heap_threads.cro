@@ -1,0 +1,114 @@
+// The heap with threads and tasks: blocks allocated by a thread and freed by
+// another, through a channel; every size in several threads at once; many threads
+// that end and give their free blocks back (D98).
+// expect-output: received 40000 1620000
+// expect-output: sizes 400 1600
+// expect-output: short 200
+// expect-output: tasks 64 2016
+// expect-exit: 0
+import std.thread
+
+i64 sizes(i64 seed) {
+    i64 total = 0
+    for (i64 round = 0; round < 20; round++) {
+        list<list<u8>> blocks
+        i64 size = 1
+        for (i64 k = 0; k < 20; k++) {  // from 1 byte to 512 KB: small blocks and mappings
+            list<u8> block
+            block.reserve(size)
+            block.add(u8(seed))
+            blocks.add(move block)
+            size *= 2
+        }
+        list<i64> growing
+        for (i64 k = 0; k < 5000; k++) {
+            growing.add(k)
+        }
+        total += blocks.len() + growing[4999] - 4999 + i64(blocks[19][0]) - seed
+    }
+    ret total
+}
+
+i32 main() {
+    // Strings made by four tasks, freed by the main thread.
+    thread.Channel<string> lines = thread.Channel<string>(64)
+    thread.Group writers
+    for (i64 t = 0; t < 4; t++) {
+        writers.start([lines, t]() {
+            for (i64 i = 0; i < 10000; i++) {
+                lines.send(format("thread {} line {:06} {}", t, i, "x".repeat(i % 40)))
+            }
+        })
+    }
+    i64 count = 0
+    i64 bytes = 0
+    for (i64 i = 0; i < 40000; i++) {
+        string line = lines.receive()
+        count++
+        bytes += line.len()
+    }
+    writers.wait()
+    println("received {} {}", count, bytes)
+
+    // Every size, in four threads of the system at once and in the main one.
+    thread.Atomic<i64> sum
+    thread.Thread a = thread.Thread([sum]() { sum.add(sizes(1)) })
+    thread.Thread b = thread.Thread([sum]() { sum.add(sizes(2)) })
+    thread.Thread c = thread.Thread([sum]() { sum.add(sizes(3)) })
+    thread.Thread d = thread.Thread([sum]() { sum.add(sizes(4)) })
+    a.start()
+    b.start()
+    c.start()
+    d.start()
+    i64 mine = sizes(5)
+    a.join()
+    b.join()
+    c.join()
+    d.join()
+    println("sizes {} {}", mine, sum.load())
+
+    // Threads that live briefly, some together: each gives its free blocks back.
+    i64 started = 0
+    for (i64 round = 0; round < 50; round++) {
+        list<thread.Thread> group
+        for (i64 t = 0; t < 4; t++) {
+            started++
+            i64 n = started
+            thread.Thread one = thread.Thread([n]() {
+                list<string> words
+                for (i64 i = 0; i < 100 + n; i++) {
+                    words.add(format("{}", i))
+                }
+            })
+            one.start()
+            group.add(move one)
+        }
+        for (ref thread.Thread one in group) {
+            one.join()
+        }
+    }
+    println("short {}", started)
+
+    // Lists made by tasks, which change thread while they wait, freed here.
+    thread.Channel<list<i64>> batches = thread.Channel<list<i64>>(4)
+    thread.Group makers
+    for (i64 t = 0; t < 64; t++) {
+        makers.start([batches, t]() {
+            list<i64> batch
+            for (i64 i = 0; i < 1000; i++) {
+                batch.add(t)
+            }
+            batches.send(move batch)
+        })
+    }
+    i64 got = 0
+    i64 seen = 0
+    for (i64 t = 0; t < 64; t++) {
+        list<i64> batch = batches.receive()
+        got++
+        seen += batch[999]
+    }
+    makers.wait()
+    println("tasks {} {}", got, seen)
+    ret 0
+}

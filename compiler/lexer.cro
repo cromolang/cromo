@@ -123,6 +123,19 @@ bool isDigit(u8 c) {
     ret c >= '0' && c <= '9'
 }
 
+// The words kept for the language to come (D569): they cannot be names, so that a
+// program written today still compiles when one of them gets a meaning.
+bool isReservedWord(string word) {
+    switch (word) {
+        case "while", "do", "goto", "return", "yield", "defer", "class", "trait", "impl", "typedef", "namespace", "using", "operator", "static", "virtual", "override", "null", "this", "delete", "as", "is", "auto", "let", "var", "mut", "async", "await", "private", "protected", "macro" {
+            ret true
+        }
+        default {
+            ret false
+        }
+    }
+}
+
 bool isIdentStart(u8 c) {
     ret (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_'
 }
@@ -537,7 +550,7 @@ struct Lexer {
             } else if (c == '/' && peek(1) == '*') {
                 blockComment(ref diag)
             } else if (isIdentStart(c)) {
-                identifier()
+                identifier(ref diag)
             } else if (isDigit(c)) {
                 number(ref diag)
             } else if (c == '"') {
@@ -666,7 +679,7 @@ struct Lexer {
         }
     }
 
-    void identifier() {
+    void identifier(ref Diagnostics diag) {
         i32 atLine = line
         i32 atColumn = column
         i64 from = pos
@@ -674,7 +687,40 @@ struct Lexer {
             advance()
         }
         string word = src.slice(from, pos)
-        push(keyword(word), atLine, atColumn, word, 0)
+        Kind kind = keyword(word)
+        if (kind == Kind.Identifier) {
+            checkReserved(ref diag, word, atLine, atColumn)
+        }
+        push(kind, atLine, atColumn, word, 0)
+    }
+
+    // A word that is not a name (D569). 'extend' is the word of its block only before
+    // the name of a type, and 'Self' is a type: after a type it would be a name.
+    // 'while (' is left to the parser, which says to write 'for'.
+    void checkReserved(ref Diagnostics diag, string word, i32 atLine, i32 atColumn) {
+        i64 next = pos
+        for (next < src.len() && (src[next] == ' ' || src[next] == '\t')) {
+            next++
+        }
+        u8 after = '\n'
+        if (next < src.len()) {
+            after = src[next]
+        }
+        if (word == "extend") {
+            if (!isIdentStart(after)) {
+                diag.error(atLine, atColumn, "'extend' is a word of the language, for the block that adds methods to a type: choose another name")
+            }
+        } else if (word == "Self") {
+            Kind last = Kind.Newline
+            if (tokens.len() > 0) {
+                last = tokens[tokens.len() - 1].kind
+            }
+            if (last == Kind.Identifier || last == Kind.Greater || last == Kind.RBracket) {
+                diag.error(atLine, atColumn, "'Self' is a word of the language, the type that implements an interface: choose another name")
+            }
+        } else if (isReservedWord(word) && !(word == "while" && after == '(')) {
+            diag.error(atLine, atColumn, "'" + word + "' is a reserved word: choose another name")
+        }
     }
 
     void number(ref Diagnostics diag) {

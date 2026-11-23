@@ -10,9 +10,9 @@ extern "cromo" {
 
 // ---- The heap, for lists and strings (D98) ----
 //
-// Each system has heapAlloc, heapResize and heapFree, and the lock of the heap,
-// which Windows does not need and Linux takes only when the program has threads,
-// as glibc does.
+// Each system has heapAlloc, heapResize and heapFree, which several threads can
+// call at once: Windows has the heap of the process, and Linux a cache of free
+// blocks for each thread in front of the lists that all share, as tcmalloc and Go.
 
 // The runtime in C says when the first thread starts, from the thread that starts
 // it, never inside an allocation.
@@ -28,9 +28,7 @@ addr allocate(i64 size) {
     if (size < 0) {
         cromo_out_of_memory()
     }
-    lockHeap()
     addr memory = heapAlloc(u64(size))
-    unlockHeap()
     if (memory == addr(0)) {
         cromo_out_of_memory()
     }
@@ -45,9 +43,7 @@ addr reallocate(addr memory, i64 size) {
     if (size < 0) {
         cromo_out_of_memory()
     }
-    lockHeap()
     addr result = heapResize(memory, u64(size))
-    unlockHeap()
     if (result == addr(0)) {
         cromo_out_of_memory()
     }
@@ -59,9 +55,7 @@ void release(addr memory) {
     if (memory == addr(0)) {
         ret
     }
-    lockHeap()
     heapFree(memory)
-    unlockHeap()
 }
 
 // ---- Hashes for the keys of a map (D198) ----

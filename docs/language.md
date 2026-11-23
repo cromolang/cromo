@@ -1,6 +1,6 @@
-# Cromo: draft specification
+# Cromo: specification
 
-> **Status: draft.** The final choices are only those marked *Decided* in [decisions.md](decisions.md). Next to each part is the decision it comes from (D1, D2, …); the parts marked as a proposal are not decided yet.
+> **Status: stable since 2026-11-23.** The language is the one of the choices marked *Decided* in [decisions.md](decisions.md): what is added from now on does not change the meaning of a program that compiles today. Next to each part is the decision it comes from (D1, D2, …).
 
 ## 1. Principles
 
@@ -25,15 +25,8 @@
   - characters: `'a'`, one byte of type `char`, ASCII only; escapes `'\n'`, `'\t'`, `'\\'`, `'\''`, `'\x41'` (D46)
   - strings: `"text\n"`
   - booleans: `true`, `false`
-- **Provisional** keywords: `struct interface enum import extern unsafe const void if else for in break continue ret switch case default try catch finally throw ref move public true false`. Among these, the following are decided:
-  - `if`, `else`, `for` (D15);
-  - `try`, `catch`, `finally` (D16);
-  - `ret` (D18);
-  - `struct`, `void`, `break`, `continue`, `throw` (D20);
-  - `ref`, `move` (D22, D23);
-  - `const` for methods and variables (D24, D26), `in` (D25);
-  - `switch`, `case`, `default` (D34), `enum` (D104);
-  - `unsafe` (D37), `interface` (D40), `import` (D41), `extern` (D42), `public` (D50).
+- **The words of the language** (D569): `struct interface enum extend import extern unsafe const void func if else for in break continue ret switch case default try catch finally throw ref move public true false`, and `Self`, the type that implements an interface. They are not names.
+- **The reserved words** (D569), kept for the language to come, are not names either: `while`, `do`, `goto`, `return`, `yield`, `defer`, `class`, `trait`, `impl`, `typedef`, `namespace`, `using`, `operator`, `static`, `virtual`, `override`, `null`, `this`, `delete`, `as`, `is`, `auto`, `let`, `var`, `mut`, `async`, `await`, `private`, `protected`, `macro`.
 - `print` and `println` are not keywords but special compiler functions (D21, D38).
 
 ## 3. Types
@@ -142,10 +135,10 @@ students.add(Student("Marco"))     // a temporary does not need move
 This is why `ref const` does not exist: it would be a second way of writing the read parameter.
 
 **Rules:**
-- **`ref` exists only for parameters:** no `ref` local variables, fields or return values. This way a reference never outlives the object, without the need for a borrow checker.
+- **`ref` is for parameters and for local references** (D562, §4): no `ref` fields or return values. A reference is never kept, so it never outlives the object, without the need for a borrow checker.
 - **Exclusivity:** an argument passed with `ref` cannot refer to the same object as another argument of the same call. With variable indices (`swap(ref v[i], ref v[j])`) the check is done at runtime (D35).
 - **`move const`:** a `move` parameter can also be `const` (`move const string n`): the function becomes its owner but cannot modify it.
-- **The object of a method** that is not `const` counts as a `ref` argument for exclusivity. A read argument of a simple type that overlaps something the call modifies is passed as a copy, so `c.add(c.step)` is allowed (D79).
+- **The object of a method** that is not `const` counts as a `ref` argument for exclusivity. A read argument that overlaps something the call modifies is passed as a copy, so `c.add(c.step)` is allowed (D79, D563).
 - **Return values:** they are always returned by value, that is, moved. The compiler avoids the copy by constructing the result directly in the destination.
 
 **`main`** returns `i32`, the exit code, or nothing. It can receive the arguments of the program (D154):
@@ -193,8 +186,7 @@ The shape of the struct (fields, constructor `Name(...)`, destructor `~Name()`, 
 - The initial value of a field is any expression, `list<string> names = ["a"]`, `i64 size = 4 * 1024`, a call: it is computed each time the default value of the struct is made, in the order of the fields, after the structs inside it; it cannot read the other fields, nor throw an exception (D360, D363, D364). A field moved away has the default of its type (D78, D362).
 - The fields are laid out in memory in the order of declaration, with the alignment of C (D74).
 - A destructor is never called by hand (D68).
-- Until `move` arrives, a struct that needs destruction is not copied: it is created directly in its variable, returned with `ret` of a local variable, or replaced with a new object (D75).
-- `==` and printing with `{}` do not work on structs yet (D76).
+- A struct is compared with `==` (D565, below) and printed with `{}` when it has `text()`, or with `{:?}` (§11).
 
 **Lifetime rules (D68, modeled on C++):**
 1. An object is destroyed at the end of the scope in which it is declared. Objects of the same scope are destroyed in reverse order of declaration.
@@ -215,7 +207,7 @@ A constructor that fails, for example because the file does not open, throws an 
 
 ### Methods in more files (D567)
 
-A block `extend Name { ... }` adds methods to a struct or an enum of the same module, in the same file or in another one of the module. Inside it the methods are written as in the struct, with its fields and with `public`. The fields, the cases, the constructor, the destructor and the interfaces stay in the declaration; a generic struct is extended with its name alone. `extend` is a word of the language only there, before a name and a block.
+A block `extend Name { ... }` adds methods to a struct or an enum of the same module, in the same file or in another one of the module. Inside it the methods are written as in the struct, with its fields and with `public`. The fields, the cases, the constructor, the destructor and the interfaces stay in the declaration; a generic struct is extended with its name alone. `extend` is a word of the language (D569).
 
 ```cromo
 extend Account {
@@ -379,7 +371,7 @@ Shape s = Shape.Circle(1.0)     // a value is created with the name of the enum
 - The default value of an enum is its first case (D51).
 - No fall-through from one case to the next, and several cases without data in one branch: `case Red, Green { ... }`. There is no `goto` (D108).
 - `switch` also works on integers and strings, with literals as cases; there `default` is optional (D109).
-- Enums can have methods, implement interfaces and be generic, like structs (D110). An enum whose cases have no data can be compared with `==` (D112).
+- Enums can have methods, implement interfaces and be generic, like structs (D110). Enums are compared with `==`, with their data (D112, D565).
 - In a method of the enum, `switch { ... }` without a value is the `switch` on the enum itself (D117).
 - In an enum without data, the cases can have a value, `Red = 1`. `i32(color)` gives the value of the case, and `Color(n)` the case with the value `n`, with a panic if there is none (D135).
 - `break` and `continue` written directly in a branch of a `switch` are errors: the branch ends by itself, and a `break` written out of C habit would leave the loop instead (D116).
@@ -575,7 +567,7 @@ public struct Stopwatch {
 - `[[export("name")]]` before a function gives it that name and the convention of C, so that C calls it: its parameters and its result are numbers, `bool` and `addr`, and it cannot let an exception out (D395). The runtime written in Cromo uses it (D393).
 - `addr(n)` makes an address from an `i64` or a `u64`, and `i64(p)` and `u64(p)` give the number of an address; `addr(0)` is the null address, the default value of `addr` (P13).
 - A module with `import unsafe` can declare variables outside its functions, for the state of the whole program (D394), as `i64 count`, `u8[4096] buffer` or `bool ready = true`. Only that module sees them; they hold numbers, `bool`, `addr`, and arrays and structs of them whose fields have no initial values, and start from their default value or from a literal, without any code before `main`. `variableAddress(x)` gives the `addr` of one of them, or of a field or an element of one, as for the atomics or for a C function.
-- Strings cannot be passed to C yet: it is an open question in [decisions.md](decisions.md).
+- A string is passed to C with `s.cstring()`, the address of a copy that ends with a zero (D204, §17).
 
 ## 15. Anonymous functions (D183–D186)
 

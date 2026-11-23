@@ -2,6 +2,7 @@
 
 #include <cstdio>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace cromo {
 
@@ -52,6 +53,18 @@ bool continuesOnNextLine(TokenKind kind) {
 namespace {
 
 bool isDigit(char c) { return c >= '0' && c <= '9'; }
+// The words kept for the language to come (D569): they cannot be names, so that a
+// program written today still compiles when one of them gets a meaning.
+bool isReservedWord(const std::string& word) {
+    static const std::unordered_set<std::string> words = {
+        "while", "do", "goto", "return", "yield", "defer", "class", "trait",
+        "impl", "typedef", "namespace", "using", "operator", "static", "virtual", "override",
+        "null", "this", "delete", "as", "is", "auto", "let", "var",
+        "mut", "async", "await", "private", "protected", "macro",
+    };
+    return words.count(word) != 0;
+}
+
 bool isIdentStart(char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_'; }
 bool isIdentChar(char c) { return isIdentStart(c) || isDigit(c); }
 
@@ -193,7 +206,29 @@ private:
         while (pos_ < src_.size() && isIdentChar(src_[pos_])) advance();
         std::string word = src_.substr(start, pos_ - start);
         auto it = keywords().find(word);
+        if (it == keywords().end()) checkReserved(word, loc);
         push(it != keywords().end() ? it->second : TokenKind::Identifier, loc, std::move(word));
+    }
+
+    // A word that is not a name (D569). 'extend' is the word of its block only before
+    // the name of a type, and 'Self' is a type: after a type it would be a name.
+    // 'while (' is left to the parser, which says to write 'for'.
+    void checkReserved(const std::string& word, SourceLocation loc) {
+        size_t next = pos_;
+        while (next < src_.size() && (src_[next] == ' ' || src_[next] == '\t')) ++next;
+        char after = next < src_.size() ? src_[next] : '\n';
+        if (word == "extend") {
+            if (!isIdentStart(after)) {
+                diag_.error(loc, "'extend' is a word of the language, for the block that adds methods to a type: choose another name");
+            }
+        } else if (word == "Self") {
+            TokenKind last = tokens_.empty() ? TokenKind::Newline : tokens_.back().kind;
+            if (last == TokenKind::Identifier || last == TokenKind::Greater || last == TokenKind::RBracket) {
+                diag_.error(loc, "'Self' is a word of the language, the type that implements an interface: choose another name");
+            }
+        } else if (isReservedWord(word) && !(word == "while" && after == '(')) {
+            diag_.error(loc, "'" + word + "' is a reserved word: choose another name");
+        }
     }
 
     void number() {

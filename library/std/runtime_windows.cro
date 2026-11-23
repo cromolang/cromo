@@ -28,12 +28,6 @@ void heapFree(addr memory) {
     HeapFree(GetProcessHeap(), 0, memory)
 }
 
-void lockHeap() {
-}
-
-void unlockHeap() {
-}
-
 // ---- The output (P25) ----
 
 u16[4096] wide  // the text of a console, in UTF-16

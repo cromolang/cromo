@@ -2653,23 +2653,52 @@ extend Checker {
 ### D568. `cromo` says what it does while it builds
 *2026-11-23.* Chosen by the author. `cromo build`, `run` and `test` write a line for each step, as the `make` of CMake and Ninja: `[ 20%] Checking 14 files`, `[100%] Linking server.exe`, and at the end `Built server.exe in 0.84 s`. The lines go to the standard error, as those of Cargo, so the output of a program started by `cromo run` stays its own; they have colors on a terminal, and none when the output goes to a file or the variable `NO_COLOR` is set. `--quiet`, or `-q`, leaves only the errors, for the scripts. The other way kept `cromo` silent, with the steps only on request: the author wants to see them without asking.
 
+### D569. The reserved words
+*2026-11-23.* Chosen by the author, before the language is declared stable: a word reserved later would break the programs that use it as a name, as C++ and Rust found, so the words that the language may need are kept now. They cannot be names of variables, fields, parameters, functions, methods or types: `'class' is a reserved word: choose another name`.
+- The words of the language are 30: `struct interface enum extend import extern unsafe const void func if else for in break continue ret switch case default try catch finally throw ref move public true false`, with `Self`, the type that implements an interface (D84). `extend` (D567) and `Self` were names where they had no meaning: now they are not. `extend` is the word of its block before the name of a type, and `Self` is a type.
+- The words kept for later are 30: `while`, `do`, `goto`, `return`, `yield`, `defer`, `class`, `trait`, `impl`, `typedef`, `namespace`, `using`, `operator`, `static`, `virtual`, `override`, `null`, `this`, `delete`, `as`, `is`, `auto`, `let`, `var`, `mut`, `async`, `await`, `private`, `protected`, `macro`. They have no meaning today. `while (` keeps the error that says to write `for` (D15).
+- The names of the built-in types and functions were already refused as names (`'string' is a type name`, `'println' is a built-in name`), and stay so.
+- The names of the library, as `list` for a struct of a program, `Option`, `Error` or `join`, are not reserved: a module sees its own names first (D126), as in Rust and Go, so a name added to the library never breaks a program.
+- A word inside a longer name, as `classes` or `nullable`, in a string or in a comment, is not the word.
+
+### D570. The proposals on the language are confirmed
+*2026-11-23.* Confirmed by the author, with the language declared stable: the choices of detail on the language that were *Proposed*, as they were written.
+
+**P10. How a module variable is written (D394)**
+As a local variable, outside the functions: `i64 count`, `bool ready = true`. It is private to its module, which sees it in all its files, also those of a system (D202); `public` and the attributes are errors.
+
+**P11. What a module variable holds (D394)**
+Numbers, `bool`, `addr`, and arrays and structs of them whose fields have no initial values; its value at the start is the default one or a literal, written in the executable: no code runs before `main` and none at its end, so there is no destructor. A type that needs code, as `string`, is an error.
+
+**P12. `variableAddress(x)` (D394)**
+A built-in function of `unsafe` that gives the `addr` of a module variable, or of a field or an element of one, for the atomics and the C functions. A local variable has none: its place ends with its block.
+
+**P13. An `addr` and an integer of 64 bits (D98)**
+In `unsafe`, `addr(n)` makes an address from an `i64` or a `u64`, and `i64(p)` and `u64(p)` give the number of an address, as `as` in Rust: the runtime needs them for what `mmap` gives and for the alignment of the stacks. `addr(0)` is the null address, the default value of `addr`. No other type converts to or from `addr`.
+
+**P28. The branches of `?:` with values that own resources (D422)**
+A branch whose type is not simple, as a `string`, gives a new value, also a copy of a variable (D424). `move` in a branch is an error for now: the analysis of the moves (D77) follows the paths of the statements, not those inside an expression. The temporaries of a branch end with the branch.
+
+**P91. The references, equality and the rest of M95 (D562-D567)**
+- A reference is a variable of the kind of the element of a `for`, which is where its place is; the generated code finds the address of the place once, at the declaration. What is done through it is done to the place it names: its path is the path of the place, so a call that takes `ref alias` and `ref` the place itself is refused as two overlapping arguments, and a reference made through another one lends what the first names.
+- The last use is the last statement of the block of the reference that names it, also inside a loop, a branch or a lambda of that statement: a name is never hidden by another (D66), so the name alone tells. A reference never used ends at once.
+- A reference is not declared in the head of a `for`, and not outside the functions. An element of a string or of a vector of SIMD has no place of its own, and cannot be named.
+- `==` on a struct, an enum, an array, a list or a map without a written `equals()` calls a function that the compiler writes in Cromo for that type, as those of JSON and of `{:?}` (D251, D319), checked as an instance with the types of its parts: the fields joined by `&&`, a `switch` on the two cases of an enum, a loop on the elements. An enum without data and without `equals()` is still compared as its numbers (D112). In the check of a generic, `==` on a struct that mentions a type parameter is accepted and checked in each instance; on a `T` alone it still needs an interface.
+- The copy of D563 is made for every read argument that overlaps, or may overlap, something the call modifies: a place that could only be told apart when the program runs was a check then, and is a copy now when its type can be copied.
+- A public constant is found as the other public names: the own module first, then the imports, then the core (D131). A variable declared in a function still hides only the names of its own module, so a constant added to a module never breaks a program that imports it.
+- `Option<T>` has `None` first, so the default value of an option is none (D51).
+- `extend Name {` at the start of a declaration is a block. *Changed by D569:* `extend` is a word of the language, and not a name elsewhere. Its methods are given to their struct with the names of the module, before anything else is checked.
+- The compiler in Cromo has the same six changes, and gives the same results as the C++ on every test (P89, P90).
+- Not done: `==` on a type parameter with a constraint, the references in the guide, and the grammars of the other editors.
+
+### D571. The heap of Linux has a cache for each thread
+*2026-11-23.* Chosen by the author. The heap of Linux (D98) had one lock: with two threads that allocate, a program took ten times the time of the same in C++, and with sixteen threads sixty times, since each allocation waited for the others. Now each thread of the runtime has lists of free blocks of its own in front of the shared ones, as tcmalloc and the allocator of Go: an empty list takes a batch of blocks at once, 32 of the small sizes, and one that grows beyond two batches gives one back, so the lock is taken once every many allocations. A block is freed in the cache of the thread that frees it, also when another allocated it; a thread that ends gives its blocks back. The cache is in the block of the thread of the runtime in C; the main thread with glibc or with Bionic, and a thread that the runtime did not start, have none and use the shared lists. Measured with 20 million rounds of a list and a string in each thread, on a Ryzen 9 5950X: 475 ms instead of 5,255 with 2 threads, 849 instead of 19,563 with 8, and 1,102 instead of 52,550 with 16. Windows keeps the heap of the process, which has its own locks.
+
 ---
 
 ## Proposed
 
 Choices of detail made while writing the code, to be confirmed by the author.
-
-### P10. How a module variable is written (D394)
-As a local variable, outside the functions: `i64 count`, `bool ready = true`. It is private to its module, which sees it in all its files, also those of a system (D202); `public` and the attributes are errors.
-
-### P11. What a module variable holds (D394)
-Numbers, `bool`, `addr`, and arrays and structs of them whose fields have no initial values; its value at the start is the default one or a literal, written in the executable: no code runs before `main` and none at its end, so there is no destructor. A type that needs code, as `string`, is an error.
-
-### P12. `variableAddress(x)` (D394)
-A built-in function of `unsafe` that gives the `addr` of a module variable, or of a field or an element of one, for the atomics and the C functions. A local variable has none: its place ends with its block.
-
-### P13. An `addr` and an integer of 64 bits (D98)
-In `unsafe`, `addr(n)` makes an address from an `i64` or a `u64`, and `i64(p)` and `u64(p)` give the number of an address, as `as` in Rust: the runtime needs them for what `mmap` gives and for the alignment of the stacks. `addr(0)` is the null address, the default value of `addr`. No other type converts to or from `addr`.
 
 ### P14. The interface of `std.jwt` (D399–D402)
 - `jwt.Algorithm`, with the cases `Hs256` ... `EdDsa`; a `jwt.Key` is made by `jwt.secret(algorithm, bytes)`, `jwt.publicKey(algorithm, pem)`, `jwt.privateKey(algorithm, pem)` and `jwt.keySet(jwks)`, and `key.id` is its `kid`, which `sign` writes in the header.
@@ -2734,9 +2763,6 @@ options:
       --config <string>  configuration file (required)
   -h, --help             print this help
 ```
-
-### P28. The branches of `?:` with values that own resources (D422)
-A branch whose type is not simple, as a `string`, gives a new value, also a copy of a variable (D424). `move` in a branch is an error for now: the analysis of the moves (D77) follows the paths of the statements, not those inside an expression. The temporaries of a branch end with the branch.
 
 ### P29. The program in one tree (D418, D423)
 The parser adds every file to the same `Tree`, whose `files` keep for each file its module, the file of the module it is a part of, its imports and whether it writes `import unsafe`; the declarations keep the index of their file, as the `SourceLocation` of the C++.
@@ -3135,18 +3161,6 @@ A component keeps the distances from the edges of its parent, the content of the
 - The type of a string literal given to `print` is one of the types of the language, as in the C++, before it is a `string` of the library.
 - The moves are a module of their own, `compiler/moves.cro`, which takes the tree from the analysis and gives it back.
 - Not done: the value of a float literal, the bytes of the file of `embed`, and the place of a capture in the data of its lambda, which the generation of the code needs.
-
-### P91. The references, equality and the rest of M95 (D562-D567)
-- A reference is a variable of the kind of the element of a `for`, which is where its place is; the generated code finds the address of the place once, at the declaration. What is done through it is done to the place it names: its path is the path of the place, so a call that takes `ref alias` and `ref` the place itself is refused as two overlapping arguments, and a reference made through another one lends what the first names.
-- The last use is the last statement of the block of the reference that names it, also inside a loop, a branch or a lambda of that statement: a name is never hidden by another (D66), so the name alone tells. A reference never used ends at once.
-- A reference is not declared in the head of a `for`, and not outside the functions. An element of a string or of a vector of SIMD has no place of its own, and cannot be named.
-- `==` on a struct, an enum, an array, a list or a map without a written `equals()` calls a function that the compiler writes in Cromo for that type, as those of JSON and of `{:?}` (D251, D319), checked as an instance with the types of its parts: the fields joined by `&&`, a `switch` on the two cases of an enum, a loop on the elements. An enum without data and without `equals()` is still compared as its numbers (D112). In the check of a generic, `==` on a struct that mentions a type parameter is accepted and checked in each instance; on a `T` alone it still needs an interface.
-- The copy of D563 is made for every read argument that overlaps, or may overlap, something the call modifies: a place that could only be told apart when the program runs was a check then, and is a copy now when its type can be copied.
-- A public constant is found as the other public names: the own module first, then the imports, then the core (D131). A variable declared in a function still hides only the names of its own module, so a constant added to a module never breaks a program that imports it.
-- `Option<T>` has `None` first, so the default value of an option is none (D51).
-- `extend` is not a reserved word: `extend Name {` at the start of a declaration is a block, and elsewhere `extend` is a name as any other. Its methods are given to their struct with the names of the module, before anything else is checked.
-- The compiler in Cromo has the same six changes, and gives the same results as the C++ on every test (P89, P90).
-- Not done: `==` on a type parameter with a constraint, the references in the guide, and the grammars of the other editors.
 
 ## Open
 

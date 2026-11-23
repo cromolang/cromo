@@ -1,0 +1,37 @@
+// A reserved word inside a longer name, in a string or in a comment is not the
+// word, and 'extend' and 'Self' keep their places (D569): class, null, while.
+// expect-output: 3 null while 7
+// expect-exit: 0
+interface Monoid {
+    Self plus(Self other) const
+}
+
+struct Amount : Monoid {
+    i64 classes
+    i64 nullable
+
+    Amount plus(Amount other) const {
+        Amount sum
+        sum.classes = classes + other.classes
+        ret sum
+    }
+}
+
+extend Amount {
+    i64 thisOne() const {
+        ret classes + nullable
+    }
+}
+
+T twice<T : Monoid>(T value) {
+    ret value.plus(value)
+}
+
+i32 main() {
+    Amount a
+    a.classes = 1
+    a.nullable = 2
+    i64 awaited = 7
+    println("{} {} {} {}", a.thisOne(), "null", "while", twice(a).classes + awaited - 2)
+    ret 0
+}

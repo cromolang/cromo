@@ -101,6 +101,10 @@
           "match": "\\b(?:if|else|for|in|break|continue|ret|switch|case|default|try|catch|finally|throw)\\b"
         },
         {
+          "name": "invalid.illegal.reserved.cromo",
+          "match": "\\b(?:while|do|goto|return|yield|defer|class|trait|impl|typedef|namespace|using|operator|static|virtual|override|null|this|delete|as|is|auto|let|var|mut|async|await|private|protected|macro)\\b"
+        },
+        {
           "name": "keyword.control.import.cromo",
           "match": "\\bimport\\b"
         },

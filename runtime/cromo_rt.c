@@ -950,6 +950,9 @@ NORETURN void cromo_uncaught(const u8* message, u64 size, const void* object) {
 void* cromo_alloc(i64 size);
 void cromo_free(void* memory);
 void cromo_heap_threaded(void);
+#ifndef _WIN32
+void cromo_heap_flush(void* cache);
+#endif
 
 // Without the lock of printing: memory can run out while a format holds it.
 NORETURN void cromo_out_of_memory(void) {
@@ -1119,13 +1122,19 @@ typedef struct Worker Worker;
 // What the register of the thread points to in every thread, fs on x86-64 and
 // tpidr_el0 on ARM64, so that a thread knows whether it is a worker of the tasks:
 // the first word is its own address, which x86-64 reads.
+//
+// The block has the cache of the heap of the thread too (std.runtime on Linux): 13
+// lists of free blocks and the 13 numbers of their blocks, which only the thread
+// reads and writes, until it ends and gives them back.
 typedef struct ThreadBlock {
     struct ThreadBlock* self;
     Worker* worker;
+    u64 heapCache[26];
+    u64 heapClosed;
 } ThreadBlock;
 
 // The main thread: _start (mem_x64.S, mem_arm64.S) points the register here.
-ThreadBlock cromo_main_block = {&cromo_main_block, 0};
+ThreadBlock cromo_main_block = {&cromo_main_block, 0, {0}, 0};
 #endif
 
 typedef struct {
@@ -1205,7 +1214,14 @@ static void runThread(ThreadRecord* thread) {
 #endif
     crashStack(thread);
     thread->head.code(thread->head.env, thread->head.raised);
-    if (endDetached(&thread->head)) pushEnded(thread);
+    int detached = endDetached(&thread->head);
+#ifndef _WIN32
+    // The free blocks of its cache go to the other threads, and what it still frees
+    // goes to the shared lists: its record, with the cache, is freed by another one.
+    cromo_heap_flush(thread->block.heapCache);
+    thread->block.heapClosed = 1;
+#endif
+    if (detached) pushEnded(thread);
 }
 
 static NORETURN void threadFailure(void) {
@@ -1765,6 +1781,25 @@ static Worker* currentWorker(void) {
 }
 #endif
 
+#endif
+
+#ifndef _WIN32
+// The cache of the heap of this thread, for std.runtime, or 0 for a thread without
+// a block, as the main one with glibc or with Bionic, or one that is ending.
+void* cromo_heap_cache(void) {
+    ThreadBlock* block;
+#if defined(CROMO_GLIBC)
+    block = *(ThreadBlock* volatile*)&threadBlock;
+#elif defined(CROMO_BIONIC)
+    block = pthread_getspecific(threadKey);
+#elif defined(__aarch64__)
+    __asm__ volatile("mrs %0, tpidr_el0" : "=r"(block));
+#else
+    __asm__ volatile("mov %%fs:0, %0" : "=r"(block));
+#endif
+    if (!block || block->heapClosed) return 0;
+    return block->heapCache;
+}
 #endif
 
 static Task* currentTask(void) {

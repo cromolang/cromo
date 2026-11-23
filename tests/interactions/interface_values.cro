@@ -1,0 +1,70 @@
+// Values of an interface in a list, a map and a variable: made by a function,
+// modified through for with ref, moved out of the list, destroyed once (D357-D361).
+// expect-output: 28
+// expect-output: 16 3
+// expect-output: end
+// expect-output: drop square 4
+// expect-exit: 0
+interface Shape {
+    f64 area() const
+    void grow(f64 k)
+}
+
+struct Square : Shape {
+    f64 side
+
+    f64 area() const {
+        ret side * side
+    }
+
+    void grow(f64 k) {
+        side *= k
+    }
+
+    ~Square() {
+        println("drop square {}", side)
+    }
+}
+
+struct Circle : Shape {
+    f64 radius
+
+    f64 area() const {
+        ret 3.0 * radius * radius
+    }
+
+    void grow(f64 k) {
+        radius *= k
+    }
+}
+
+Shape make(bool square) {
+    if (square) {
+        Square q
+        q.side = 2.0
+        ret move q
+    }
+    Circle c
+    c.radius = 1.0
+    ret c
+}
+
+i32 main() {
+    list<Shape> all
+    all.add(make(true))
+    all.add(make(false))
+    for (ref Shape s in all) {
+        s.grow(2.0)
+    }
+    f64 total = 0.0
+    for (Shape s in all) {
+        total += s.area()
+    }
+    println("{}", total)
+    Shape taken = move all[0]
+    map<string, Shape> named
+    named["c"] = make(false)
+    println("{} {}", taken.area(), named["c"].area())
+    println("end")
+    ret 0
+}

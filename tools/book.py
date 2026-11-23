@@ -1,6 +1,6 @@
 """The Cromo Guide: from the Markdown of book/<language>/ to the pages of the site.
 
-    python tools/book.py [--out dist/site] [--check] [--pdf] [--cromo build/cromo.exe]
+    python tools/book.py [--out dist/site] [--check] [--pdf [--press [--spine 21]]] [--cromo build/cromo.exe]
 
 Each language is a folder of book/ with SUMMARY.md, the list of its chapters:
 
@@ -36,9 +36,17 @@ the lines that matter, and stay a complete program.
 --check compiles and runs every program of every language, and compares what it
 prints with the output block that follows it. --pdf prints print.html of each
 language to <out>/book/<file>.pdf with Microsoft Edge or Chrome, headless, as a
-book: a cover, the contents with the pages, and a chapter on each new page. It
-prints twice: the pages of the chapters and of their sections come from the first
-PDF, from the destinations of its links.
+book of 165 x 240 mm: a cover, the contents with the pages, and a chapter on each
+new page. It prints more than once: the pages of the chapters and of their sections
+come from the PDF before, from the destinations of its links.
+
+--pdf --press also makes the file that a printer asks for, <file>-press.pdf: first
+the cover open, with the back, the spine and the front on one sheet, then the inside
+of the cover, white, then the pages one by one, starting from a title page. Every
+sheet has 3 mm of bleed on its four sides, so a page is 171 x 246 mm, and texts and
+marks stay at least 5 mm inside the cut. The spine is as wide as --spine says, the
+measure that the printer gives for the pages and the paper chosen, or the pages
+times --paper. It needs pypdf, which joins the sheets.
 """
 
 import argparse
@@ -51,6 +59,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.parse
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -59,7 +68,18 @@ REPOSITORY = 'https://github.com/cromolang/cromo'
 
 LANGUAGES = {
     'en': {
-        'name': 'English', 'pdf': 'cromo-guide-en.pdf',
+        'name': 'English', 'pdf': 'cromo-guide-en.pdf', 'press_pdf': 'cromo-guide-en-press.pdf',
+        'back_title': 'Native code, a familiar syntax, and no pointers.',
+        'back_text': [
+            'Cromo is a compiled language with the syntax of C and C++, no pointers and no garbage collector. Every value has '
+            'one owner, and what it holds is released when the owner ends. The compiler checks ownership with a few rules that '
+            'stay simple.',
+            'This guide teaches the whole language, from the first program to a web service, with the library, the tools and '
+            'what Cromo checks for you.'],
+        'back_inside': ['Ownership, moves and references', 'Structs, enums and generics', 'Errors and exceptions',
+                        'Threads, tasks and channels', 'Files, networking, HTTP and JSON', 'Databases and regular expressions',
+                        'Windows and apps, also for Android', 'Calling C, and the unsafe dialect'],
+        'back_comment': 'Every example in this book was compiled and run.',
         'previous': 'Previous', 'next': 'Next', 'search': 'Search the guide',
         'pdf_link': 'PDF', 'contents': 'Contents', 'theme': 'Light or dark theme',
         'site': 'cromolang.org', 'source': 'Source', 'no_results': 'No results', 'download': 'Download',
@@ -74,7 +94,18 @@ LANGUAGES = {
         'library_note': 'Made from the documentation in the sources of the library.',
     },
     'it': {
-        'name': 'Italiano', 'pdf': 'cromo-guida-it.pdf',
+        'name': 'Italiano', 'pdf': 'cromo-guida-it.pdf', 'press_pdf': 'cromo-guida-it-stampa.pdf',
+        'back_title': 'Codice nativo, una sintassi familiare, e niente puntatori.',
+        'back_text': [
+            'Cromo è un linguaggio compilato con la sintassi del C e del C++, senza puntatori e senza garbage collector. Ogni '
+            'valore ha un solo proprietario, e ciò che detiene viene rilasciato quando il proprietario finisce. Il compilatore '
+            'controlla il possesso con poche regole, che restano semplici.',
+            'Questa guida insegna tutto il linguaggio, dal primo programma a un servizio web, con la libreria, gli strumenti e '
+            'ciò che Cromo controlla per te.'],
+        'back_inside': ['Possesso, spostamenti e riferimenti', 'Struct, enum e generici', 'Errori ed eccezioni',
+                        'Thread, task e canali', 'File, rete, HTTP e JSON', 'Database ed espressioni regolari',
+                        'Finestre e app, anche per Android', 'Chiamare il C, e il dialetto unsafe'],
+        'back_comment': 'Ogni esempio di questo libro è stato compilato ed eseguito.',
         'previous': 'Precedente', 'next': 'Successivo', 'search': 'Cerca nella guida',
         'pdf_link': 'PDF', 'contents': 'Indice', 'theme': 'Tema chiaro o scuro',
         'site': 'cromolang.org', 'source': 'Sorgenti', 'no_results': 'Nessun risultato', 'download': 'Scarica',
@@ -582,10 +613,102 @@ def print_chapter(language, chapters, index, body, headings):
             'sections': [(f'{number}.{k + 1}' if number else '', anchor, text) for k, (anchor, text) in enumerate(sections)]}
 
 
-def print_page(language, book_title, parts, pages, checked):
+# The cover: the mark of Cromo in chrome, drawn large on the front.
+COVER_DEFS = ('<svg class="cover-defs" aria-hidden="true"><defs>'
+              '<linearGradient id="cover-chrome" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3a4658"/>'
+              '<stop offset=".3" stop-color="#9aa6b6"/><stop offset=".5" stop-color="#f1f4f8"/><stop offset=".68" stop-color="#8794a6"/>'
+              '<stop offset="1" stop-color="#2a3444"/></linearGradient>'
+              '<radialGradient id="cover-ball" cx=".35" cy=".3" r=".75"><stop offset="0" stop-color="#fff"/>'
+              '<stop offset=".35" stop-color="#cfd6df"/><stop offset=".8" stop-color="#7c8797"/><stop offset="1" stop-color="#4b5565"/>'
+              '</radialGradient><radialGradient id="cover-glow" cx=".5" cy=".5" r=".5"><stop offset="0" stop-color="#0ea5c6" '
+              'stop-opacity=".55"/><stop offset="1" stop-color="#0ea5c6" stop-opacity="0"/></radialGradient></defs></svg>')
+
+
+def cover_mark(css, hero=False):
+    """The mark, small next to the name or large behind the title."""
+    stroke, dot, ball, edge = ('2.6', '2.9', '8', '.6') if hero else ('4', '3.6', '9', '1')
+    glow = '<circle cx="32" cy="32" r="26" fill="url(#cover-glow)" opacity=".28"/>' if hero else ''
+    return (f'<svg class="{css}" viewBox="0 0 64 64" aria-hidden="true">{glow}<g transform="translate(32 32) rotate(-28)">'
+            f'<path d="M23.84 -5.16A27 11 0 1 0 23.84 5.16" fill="none" stroke="url(#cover-chrome)" stroke-width="{stroke}" '
+            f'stroke-linecap="round"/><circle cx="23.84" cy="5.16" r="{dot}" fill="#0ea5c6"/></g>'
+            f'<circle cx="32" cy="32" r="{ball}" fill="url(#cover-ball)" stroke="#3a4454" stroke-width="{edge}"/></svg>')
+
+
+def cover_front(language, book_title):
+    """What the front of the cover shows: the mark, the title on two lines, the
+    version of Cromo it is for and its month."""
+    words = LANGUAGES[language]
+    today = datetime.date.today()
+    month = words['months'].split()[today.month - 1]
+    first, _, last = book_title.rpartition(' ')
+    return f'''{cover_mark('cover-hero', True)}
+  <div class="cover-brand">{cover_mark('cover-logo')}<span>cromo</span></div>
+  <div class="cover-title">
+    <h1><span>{html.escape(first)}</span><span>{html.escape(last)}</span></h1>
+    <p>{html.escape(words['subtitle'])}</p>
+  </div>
+  <div class="cover-bottom"><div><b>Cromo {version()}</b>{month} {today.year}</div><div>cromolang.org</div></div>'''
+
+
+PAGE = (165, 240)  # the page of the book in mm, as in book.css
+BLEED = 3          # what a printer cuts away around every page
+
+
+def cover_page(language, book_title, spine, barcode):
+    """The cover for a printer, two sheets with 3 mm of bleed: the back, the spine
+    and the front, then the inside of the cover, which stays white."""
+    words = LANGUAGES[language]
+    width = 2 * PAGE[0] + spine + 2 * BLEED
+    inside = ''.join(f'<div>{html.escape(item)}</div>' for item in words['back_inside'])
+    text = ''.join(f'<p>{html.escape(paragraph)}</p>' for paragraph in words['back_text'])
+    code = (f'<span class="c">// {html.escape(words["back_comment"])}</span>\n'
+            '<span class="k">i32</span> main() {\n'
+            '    <span class="k">list</span>&lt;<span class="k">string</span>&gt; names = [<span class="s">"Ada"</span>, '
+            '<span class="s">"Alan"</span>]\n'
+            '    <span class="k">for</span> (<span class="k">string</span> name <span class="k">in</span> names) {\n'
+            '        println(<span class="s">"Hello, {}"</span>, name)\n    }\n    <span class="k">ret</span> 0\n}')
+    return f'''<!doctype html>
+<html lang="{language}">
+<head>
+<meta charset="utf-8">
+<title>{html.escape(book_title)}</title>
+{PRINT_FONTS}
+<link rel="stylesheet" href="../book.css">
+<style>
+@page {{ size: {width:.1f}mm {PAGE[1] + 2 * BLEED}mm; margin: 0; }}
+body.wrap .sheet {{ --spine: {spine:.1f}mm; }}
+</style>
+</head>
+<body class="wrap">
+{COVER_DEFS}
+<div class="sheet">
+  <div class="panel back">
+    <h2>{html.escape(words['back_title'])}</h2>
+    {text}
+    <div class="inside">{inside}</div>
+    <pre>{code}</pre>
+    <div class="bottom">
+      <div class="who"><b>cromo</b>cromolang.org<br>{REPOSITORY.replace('https://', '')}</div>
+      {'<div class="barcode"></div>' if barcode else ''}
+    </div>
+  </div>
+  <div class="panel spine">{cover_mark('spine-logo')}<div class="name">{html.escape(book_title)}</div><div class="edition">{version()}</div></div>
+  <div class="panel front">
+  {cover_front(language, book_title)}
+  </div>
+</div>
+<div class="sheet inner"></div>
+</body>
+</html>
+'''
+
+
+def print_page(language, book_title, parts, pages, checked, press=False):
     """The whole guide in one page, printed as a book. `pages` gives the page of each
     anchor, from a first print; without it the contents leave the numbers empty, in a
-    column of the same width, so that the pages do not move."""
+    column of the same width, so that the pages do not move. For a printer, `press`,
+    every page has 3 mm of bleed around it and the first one is a title page, as the
+    cover is a sheet of its own."""
     words = LANGUAGES[language]
     today = datetime.date.today()
     month = words['months'].split()[today.month - 1]
@@ -608,11 +731,19 @@ def print_page(language, book_title, parts, pages, checked):
         # The chapter at the foot of its pages: Chrome has no first page of a named
         # page, so a running head would stand above the title of the chapter.
         running = json.dumps(part['running'], ensure_ascii=False)
-        css.append(f'.chapter-{i} {{ page: c{i}; }}\n@page c{i} {{ @bottom-left {{ content: {running}; }} }}')
+        css.append(f'.chapter-{i} {{ page: c{i}; }}\n@page c{i}:right {{ @bottom-left {{ content: {running}; }} }}\n'
+                   f'@page c{i}:left {{ @bottom-right {{ content: {running}; }} }}')
         content.append(f'<section class="chapter chapter-{i}" id="chapter-{i}">{part["body"]}</section>')
     contents_title = words.get('print_contents', words['contents'])
-    mark = LOGO[LOGO.index('>') + 1:]
     checked_line = f'<p>{html.escape(words["checked"].format(version()))}</p>' if checked else ''
+    first = 'cover'
+    if press:
+        # The same pages, each larger by the bleed on its four sides.
+        first = 'title-page'
+        b = BLEED
+        css.append(f'@page {{ size: {PAGE[0] + 2 * b}mm {PAGE[1] + 2 * b}mm; margin: {18 + b}mm {13 + b}mm {20 + b}mm {19 + b}mm; }}\n'
+                   f'@page :right {{ margin-left: {19 + b}mm; margin-right: {13 + b}mm; }}\n'
+                   f'@page :left {{ margin-left: {13 + b}mm; margin-right: {19 + b}mm; }}')
     return f'''<!doctype html>
 <html lang="{language}">
 <head>
@@ -625,14 +756,9 @@ def print_page(language, book_title, parts, pages, checked):
 </style>
 </head>
 <body class="print">
-<section class="cover">
-  <svg class="cover-orbit" viewBox="0 0 64 64" aria-hidden="true">{mark}
-  <div class="cover-top"><svg class="cover-logo" viewBox="0 0 64 64" aria-hidden="true">{mark}<span>cromo</span></div>
-  <div class="cover-title">
-    <h1>{html.escape(book_title)}</h1>
-    <p>{html.escape(words['subtitle'])}</p>
-  </div>
-  <div class="cover-bottom"><span>{html.escape(edition)}</span><span>cromolang.org</span></div>
+{COVER_DEFS}
+<section class="{first}">
+  {cover_front(language, book_title)}
 </section>
 <section class="colophon">
   <p><strong>{html.escape(book_title)}</strong><br>{html.escape(edition)}</p>
@@ -811,10 +937,22 @@ def browser():
 
 
 def print_pdf(exe, profile, source, target):
+    if os.path.exists(target):
+        os.remove(target)
     url = 'file:///' + source.replace('\\', '/').lstrip('/')
     subprocess.run([exe, '--headless=new', '--disable-gpu', f'--user-data-dir={profile}', '--no-pdf-header-footer',
                     '--generate-pdf-document-outline', '--virtual-time-budget=20000', '--run-all-compositor-stages-before-draw',
                     f'--print-to-pdf={target}', url], check=True, capture_output=True)
+    # The browser can return before the file is whole, when another one of it runs.
+    size, waited = -1, 0
+    while waited < 300:
+        now = os.path.getsize(target) if os.path.exists(target) else -1
+        if now > 0 and now == size:
+            return
+        size = now
+        time.sleep(1)
+        waited += 1
+    sys.exit(f'the browser did not print {target}')
 
 
 def destinations(path):
@@ -848,23 +986,82 @@ def destinations(path):
     return found, len(order)
 
 
-def pdf(out):
+def print_book(exe, profile, language, source, target, pages, press=False):
+    """Prints the guide until its contents give the pages where the chapters are:
+    the numbers come from the print before, and a number can move a line."""
+    book_title, parts, checked = PRINT[language]
+    for _ in range(5):
+        with open(source, 'w', encoding='utf-8', newline='\n') as f:
+            f.write(print_page(language, book_title, parts, pages, checked, press))
+        print_pdf(exe, profile, source, target)
+        found, count = destinations(target)
+        if found == pages:
+            return found, count
+        pages = found
+    print(f'warning: the pages of {target} still move after five prints')
+    return found, count
+
+
+def press_pdf(exe, profile, out, language, pages, paper, spine, barcode):
+    """The file for a printer, in the order of its template: the cover open, back,
+    spine and front, the inside of the cover, then the pages one by one, each with
+    3 mm of bleed. The pages are filled with white ones up to a multiple of four."""
+    try:
+        from pypdf import PdfReader, PdfWriter
+    except ImportError:
+        sys.exit('--press needs pypdf: pip install pypdf')
+    words = LANGUAGES[language]
+    book_title = PRINT[language][0]
+    folder = os.path.abspath(os.path.join(out, 'book', language))
+    inside = os.path.join(folder, 'press-pages.pdf')
+    _, count = print_book(exe, profile, language, os.path.join(folder, 'press.html'), inside, pages, True)
+    total = count + (-count) % 4
+    if spine is None:
+        spine = round(total * paper, 1)
+    cover = os.path.join(folder, 'cover.html')
+    with open(cover, 'w', encoding='utf-8', newline='\n') as f:
+        f.write(cover_page(language, book_title, spine, barcode))
+    cover_target = os.path.join(folder, 'press-cover.pdf')
+    print_pdf(exe, profile, cover, cover_target)
+    writer = PdfWriter()
+    points = 72 / 25.4
+    height = PAGE[1] + 2 * BLEED
+
+    def add(sheet, width):
+        # The browser rounds a sheet to its pixels: the box gets the exact measure,
+        # from the top left corner, where the page starts.
+        top = float(sheet.mediabox.top)
+        for box in (sheet.mediabox, sheet.cropbox, sheet.trimbox, sheet.bleedbox, sheet.artbox):
+            box.lower_left = (0, top - height * points)
+            box.upper_right = (width * points, top)
+        writer.add_page(sheet)
+    sheets = PdfReader(cover_target).pages
+    if len(sheets) != 2:
+        sys.exit(f'the cover of {language} has {len(sheets)} sheets instead of 2')
+    for sheet in sheets:
+        add(sheet, 2 * PAGE[0] + spine + 2 * BLEED)
+    for sheet in PdfReader(inside).pages:
+        add(sheet, PAGE[0] + 2 * BLEED)
+    for _ in range(total - count):
+        writer.add_blank_page((PAGE[0] + 2 * BLEED) * points, (PAGE[1] + 2 * BLEED) * points)
+    target = os.path.abspath(os.path.join(out, 'book', words['press_pdf']))
+    with open(target, 'wb') as f:
+        writer.write(f)
+    os.remove(inside)
+    os.remove(cover_target)
+    print(f'press: {target} (the cover with a spine of {spine:.1f} mm, then {total} pages, {total - count} of them white at the end)')
+
+
+def pdf(out, paper=0.057, barcode=False, press=False, spine=None):
     exe = browser()
     profile = tempfile.mkdtemp(prefix='book-pdf-')
     for language, words in LANGUAGES.items():
-        book_title, parts, checked = PRINT[language]
         source = os.path.abspath(os.path.join(out, 'book', language, 'print.html'))
         target = os.path.abspath(os.path.join(out, 'book', words['pdf']))
-        print_pdf(exe, profile, source, target)
-        pages, _ = destinations(target)
-        with open(source, 'w', encoding='utf-8', newline='\n') as f:
-            f.write(print_page(language, book_title, parts, pages, checked))
-        print_pdf(exe, profile, source, target)
-        again, count = destinations(target)
-        moved = [name for name in pages if again.get(name) != pages[name]]
-        if moved:
-            print(f'warning: {len(moved)} anchors moved between the two prints, as {moved[0]}')
+        again, count = print_book(exe, profile, language, source, target, {})
         print(f'pdf: {target} ({count} pages, {os.path.getsize(target) // 1024} KB)')
+        if press:
+            press_pdf(exe, profile, out, language, again, paper, spine, barcode)
     shutil.rmtree(profile, ignore_errors=True)
 
 
@@ -875,6 +1072,12 @@ def main():
     parser.add_argument('--only', nargs='+', help='with --check, only these chapters, as modules.md; without building')
     parser.add_argument('--language', nargs='+', choices=list(LANGUAGES), help='with --check, only these languages')
     parser.add_argument('--pdf', action='store_true', help='print the guide to PDF')
+    parser.add_argument('--paper', type=float, default=0.057,
+                        help='with --press, how thick a page is in mm, for the spine of the cover (default: 0.057)')
+    parser.add_argument('--spine', type=float, help='with --press, the width of the spine in mm, as the printer gives it')
+    parser.add_argument('--barcode', action='store_true', help='with --press, a white box for the barcode on the back of the cover')
+    parser.add_argument('--press', action='store_true',
+                        help='with --pdf, also the file for a printer: the cover open and the pages, with 3 mm of bleed')
     parser.add_argument('--cromo', default=os.path.join(ROOT, 'build', 'cromo.exe' if os.name == 'nt' else 'cromo'))
     options = parser.parse_args()
     if options.only:
@@ -883,7 +1086,7 @@ def main():
         sys.exit(1)
     build(options.out, options.check, options.cromo)
     if options.pdf:
-        pdf(options.out)
+        pdf(options.out, options.paper, options.barcode, options.press, options.spine)
 
 
 if __name__ == '__main__':

@@ -1,0 +1,73 @@
+// An enum that holds a list of itself, read and modified through switch, and
+// switch on strings and integers with several values in a case (D104, D107, D109).
+// expect-output: 9 ab empty neg other
+// expect-output: Pair([Leaf(2), Pair([Leaf(3), Nil]), Leaf(4)])
+// expect-exit: 0
+enum Node {
+    Leaf(i64 value)
+    Pair(list<Node> children)
+    Nil
+}
+
+i64 sum(Node n) {
+    switch (n) {
+        case Leaf(i64 value) {
+            ret value
+        }
+        case Pair(list<Node> children) {
+            i64 total = 0
+            for (Node child in children) {
+                total += sum(child)
+            }
+            ret total
+        }
+        case Nil {
+            ret 0
+        }
+    }
+}
+
+void bump(ref Node n) {
+    switch (n) {
+        case Leaf(ref i64 value) {
+            value += 1
+        }
+        case Pair(ref list<Node> children) {
+            for (ref Node child in children) {
+                bump(ref child)
+            }
+        }
+        default {
+        }
+    }
+}
+
+string kind(string s, i64 n) {
+    switch (s) {
+        case "a", "b" {
+            ret "ab"
+        }
+        case "" {
+            ret "empty"
+        }
+    }
+    switch (n) {
+        case 1, 2 {
+            ret "low"
+        }
+        case -1 {
+            ret "neg"
+        }
+        default {
+            ret "other"
+        }
+    }
+}
+
+i32 main() {
+    Node n = Node.Pair([Node.Leaf(1), Node.Pair([Node.Leaf(2), Node.Nil]), Node.Leaf(3)])
+    bump(ref n)
+    println("{} {} {} {} {}", sum(n), kind("b", 0), kind("", 0), kind("x", -1), kind("x", 9))
+    println("{:?}", n)
+    ret 0
+}

@@ -1,0 +1,106 @@
+// extend on a struct that implements an interface with its methods, on a generic
+// struct with generic methods and lambdas, and on an enum (D567, D92, D183).
+// expect-output: 18 Square(3) true false
+// expect-output: [2] true
+// expect-output: 400 4 ["10", "20", "30", "40"]
+// expect-exit: 0
+interface Shape {
+    f64 area() const
+}
+
+struct Square : Shape {
+    f64 side
+}
+
+extend Square {
+    f64 area() const {
+        ret side * side
+    }
+
+    string text() const {
+        ret format("Square({})", side)
+    }
+}
+
+struct Pipe<T> {
+    list<T> items
+}
+
+extend Pipe {
+    Pipe<U> then<U>(func(T) U f) const {
+        Pipe<U> out
+        for (T x in items) {
+            out.items.add(f(x))
+        }
+        ret out
+    }
+
+    i64 fold(i64 start, func(i64, T) i64 f) const {
+        i64 acc = start
+        for (T x in items) {
+            acc = f(acc, x)
+        }
+        ret acc
+    }
+
+    bool equals(Pipe<T> other) const {
+        ret items.len() == other.items.len()
+    }
+}
+
+enum Color {
+    Red
+    Green
+}
+
+extend Color {
+    bool warm() const {
+        switch {
+            case Red {
+                ret true
+            }
+            case Green {
+                ret false
+            }
+        }
+    }
+}
+
+f64 twice(Shape s) {
+    ret 2.0 * s.area()
+}
+
+i32 main() {
+    Square s
+    s.side = 3.0
+    Color c
+    println("{} {} {} {}", twice(s), s, c.warm(), Color.Green.warm())
+
+    Pipe<string> words
+    words.items.add("xy")
+    Pipe<string> others
+    others.items.add("zzzz")
+    Pipe<i64> lengths = words.then<i64>([](string w) i64 { ret w.len() })
+    println("{:?} {}", lengths.items, words == others)
+
+    Pipe<i64> p
+    for (i64 i = 1; i <= 4; i++) {
+        p.items.add(i)
+    }
+    i64 k = 10
+    i64 calls = 0
+    Pipe<string> q = p.then<string>([k](i64 x) string { ret format("{}", x * k) })
+    i64 n = q.then<i64>([](string text) i64 { ret text.len() }).fold(0, [ref calls](i64 acc, i64 x) i64 {
+        calls += 1
+        switch (x) {
+            case 2 {
+                ret acc + 100
+            }
+            default {
+                ret acc + x
+            }
+        }
+    })
+    println("{} {} {:?}", n, calls, q.items)
+    ret 0
+}

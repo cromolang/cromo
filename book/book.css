@@ -223,15 +223,28 @@ footer a { color: var(--dim); }
   .brand b { display: none; }
 }
 
-/* The print version (print.html): a book of 178 x 235 mm, which tools/book.py prints to PDF */
+/* The print version (print.html): a book of 165 x 240 mm, which tools/book.py prints to PDF.
+   The pages are those of a bound book: the margin on the side of the spine is wider, the
+   number of the page is on the outer side and the chapter on the inner one. For a printer
+   (--press) tools/book.py adds 3 mm of bleed around every page. */
 @page {
-  size: 178mm 235mm;
-  margin: 19mm 19mm 21mm;
-  @bottom-left { font: 500 7pt/1 "Inter", sans-serif; color: #8a94a3; letter-spacing: 0.08em; text-transform: uppercase; vertical-align: top; padding-top: 6.4mm; }
-  @bottom-right { content: counter(page); font: 600 8pt/1 "Inter", sans-serif; color: #4d596b; vertical-align: top; padding-top: 6mm; }
+  size: 165mm 240mm;
+  margin: 18mm 13mm 20mm 19mm;
+  @bottom-left { vertical-align: top; }
+  @bottom-right { vertical-align: top; }
 }
-@page cover { margin: 0; @bottom-right { content: none; } }
-@page front { @bottom-right { content: none; } }
+@page :right {
+  margin-left: 19mm; margin-right: 13mm;
+  @bottom-left { font: 500 7pt/1 "Inter", sans-serif; color: #8a94a3; letter-spacing: 0.08em; text-transform: uppercase; padding-top: 6.4mm; }
+  @bottom-right { content: counter(page); font: 600 8pt/1 "Inter", sans-serif; color: #4d596b; padding-top: 6mm; }
+}
+@page :left {
+  margin-left: 13mm; margin-right: 19mm;
+  @bottom-right { font: 500 7pt/1 "Inter", sans-serif; color: #8a94a3; letter-spacing: 0.08em; text-transform: uppercase; padding-top: 6.4mm; }
+  @bottom-left { content: counter(page); font: 600 8pt/1 "Inter", sans-serif; color: #4d596b; padding-top: 6mm; }
+}
+@page cover { margin: 0; @bottom-left { content: none; } @bottom-right { content: none; } }
+@page front { @bottom-left { content: none; } @bottom-right { content: none; } }
 body.print {
   background: #ffffff; color: #1b2230; font: 10pt/1.5 "Source Serif 4", Georgia, serif; -webkit-font-smoothing: auto;
   -webkit-print-color-adjust: exact; print-color-adjust: exact;
@@ -239,19 +252,84 @@ body.print {
 body.print a { color: #0a7d99; }
 
 /* Cover and colophon */
+/* The front is the first page of the PDF; cover.html is the cover for a printer: the
+   back, the spine and the front on one sheet, with 3 mm of bleed on every side. */
+body.print .cover, body.wrap .sheet { background: #0a0e14; color: #e6ebf2; }
 body.print .cover {
-  page: cover; position: relative; overflow: hidden; height: 235mm; padding: 26mm 22mm 20mm;
-  display: flex; flex-direction: column; justify-content: space-between;
-  background: radial-gradient(120% 80% at 85% 10%, #1d2a3b 0%, #0e131b 55%, #0a0e14 100%); color: #e6ebf2;
+  page: cover; position: relative; overflow: hidden; height: 240mm; padding: 22mm 18mm 18mm;
+  display: flex; flex-direction: column;
 }
-body.print .cover .orbit { stroke: #c9d1dc; }
-body.print .cover-orbit { position: absolute; width: 190mm; height: 190mm; right: -62mm; top: -38mm; opacity: 0.13; }
-body.print .cover-top { display: flex; align-items: center; gap: 4mm; font: 700 17pt/1 var(--display); letter-spacing: -0.02em; }
-body.print .cover-logo { width: 15mm; height: 15mm; }
-body.print .cover-title h1 { font: 700 34pt/1.08 var(--display); letter-spacing: -0.03em; margin: 0 0 6mm; color: #ffffff; }
-body.print .cover-title p { font: 400 13pt/1.4 "Inter", sans-serif; color: #a3afbf; margin: 0; }
-body.print .cover-title::before { content: ""; display: block; width: 22mm; height: 1.4mm; border-radius: 1mm; margin-bottom: 9mm; background: linear-gradient(90deg, #0ea5c6, #4cc3e0); }
-body.print .cover-bottom { display: flex; justify-content: space-between; font: 500 9pt/1 var(--mono); color: #7c889a; }
+body.print .cover::before, body.wrap .sheet::before {
+  content: ""; position: absolute; inset: 0;
+  background: radial-gradient(60% 75% at 88% 12%, #22324a 0%, rgba(20, 29, 43, 0.6) 38%, rgba(10, 14, 20, 0) 70%),
+              radial-gradient(40% 50% at 8% 95%, #131c2a 0%, rgba(10, 14, 20, 0) 70%);
+}
+body.print .cover::before { background-size: 100% 100%; }
+.cover-defs { position: absolute; width: 0; height: 0; }
+.cover-hero { position: absolute; width: 168mm; height: 168mm; right: -58mm; top: -44mm; }
+.cover-brand { position: relative; display: flex; align-items: center; gap: 3.2mm; font: 700 16pt/1 var(--display); letter-spacing: -0.02em; color: #f3f6fa; }
+.cover-brand svg { width: 12mm; height: 12mm; }
+.cover-title { position: relative; margin-top: auto; margin-bottom: 30mm; }
+.cover-title::before { content: ""; display: block; width: 24mm; height: 1.6mm; border-radius: 1mm; margin-bottom: 10mm; background: linear-gradient(90deg, #0ea5c6, #5fd0ea); }
+.cover-title h1 { font: 700 54pt/0.96 var(--display); letter-spacing: -0.04em; margin: 0 0 8mm; color: #ffffff; }
+.cover-title h1 span { display: block; }
+.cover-title h1 span + span { background: linear-gradient(100deg, #f4f7fa 0%, #b9c4d2 55%, #7f8c9e 100%); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.cover-title p { font: 400 13.5pt/1.4 "Inter", sans-serif; color: #aab5c4; margin: 0; max-width: 110mm; }
+.cover-bottom { position: relative; display: flex; justify-content: space-between; align-items: flex-end; font: 500 8.5pt/1.5 var(--mono); color: #8591a3; }
+.cover-bottom b { display: block; font-weight: 500; color: #c8d1dc; }
+
+body.wrap { margin: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+body.wrap * { box-sizing: border-box; }
+body.wrap .sheet {
+  --bleed: 3mm; --w: 165mm; --h: 240mm;
+  position: relative; display: flex; overflow: hidden; break-after: page;
+  width: calc(2 * var(--w) + var(--spine) + 2 * var(--bleed)); height: calc(var(--h) + 2 * var(--bleed));
+}
+body.wrap .panel { position: relative; height: 100%; }
+body.wrap .front {
+  width: calc(var(--w) + var(--bleed)); overflow: hidden; display: flex; flex-direction: column;
+  padding: calc(var(--bleed) + 22mm) calc(var(--bleed) + 18mm) calc(var(--bleed) + 18mm) 18mm;
+}
+/* The inside of the cover, the second sheet: white, as the printer leaves it. */
+body.wrap .sheet.inner { background: #ffffff; break-after: auto; }
+body.wrap .sheet.inner::before { content: none; }
+body.wrap .spine {
+  width: var(--spine); display: flex; flex-direction: column; align-items: center; justify-content: space-between;
+  padding: calc(var(--bleed) + 14mm) 0; border-left: 0.2mm solid rgba(255, 255, 255, 0.05); border-right: 0.2mm solid rgba(255, 255, 255, 0.05);
+}
+body.wrap .spine svg { width: min(11mm, calc(var(--spine) - 6mm)); height: min(11mm, calc(var(--spine) - 6mm)); }
+body.wrap .spine .name { writing-mode: vertical-rl; font: 700 13pt/1 var(--display); letter-spacing: 0.01em; color: #ffffff; }
+body.wrap .spine .edition { writing-mode: vertical-rl; font: 500 6.5pt/1 var(--mono); color: #7c889a; letter-spacing: 0.06em; }
+body.wrap .back {
+  width: calc(var(--w) + var(--bleed)); display: flex; flex-direction: column;
+  padding: calc(var(--bleed) + 22mm) 18mm calc(var(--bleed) + 18mm) calc(var(--bleed) + 18mm);
+}
+body.wrap .back h2 { font: 700 21pt/1.15 var(--display); letter-spacing: -0.025em; margin: 0 0 7mm; color: #ffffff; max-width: 120mm; }
+body.wrap .back p { font: 400 9.6pt/1.6 "Inter", sans-serif; color: #b4bfcd; margin: 0 0 4mm; max-width: 128mm; }
+body.wrap .back .inside { margin-top: 5mm; display: grid; grid-template-columns: 1fr 1fr; gap: 2.6mm 8mm; max-width: 134mm; }
+body.wrap .back .inside div { font: 400 8.6pt/1.4 "Inter", sans-serif; color: #c8d1dc; padding-left: 4.2mm; position: relative; }
+body.wrap .back .inside div::before { content: ""; position: absolute; left: 0; top: 1.5mm; width: 1.6mm; height: 1.6mm; border-radius: 50%; background: #0ea5c6; }
+body.wrap .back pre {
+  margin: 7mm 0 0; padding: 4mm 5mm; border-radius: 2mm; max-width: 112mm; font: 7.6pt/1.55 var(--mono); color: #d7dee8;
+  background: rgba(255, 255, 255, 0.045); border: 0.2mm solid rgba(255, 255, 255, 0.08);
+}
+body.wrap .back pre .k { color: #5fd0ea; }
+body.wrap .back pre .c { color: #71809a; }
+body.wrap .back pre .s { color: #e3c78a; }
+body.wrap .back .bottom { margin-top: auto; display: flex; justify-content: space-between; align-items: flex-end; }
+body.wrap .back .who { font: 500 8pt/1.6 var(--mono); color: #8591a3; }
+body.wrap .back .who b { display: block; font: 700 13pt/1 var(--display); color: #f3f6fa; letter-spacing: -0.02em; margin-bottom: 2mm; }
+body.wrap .back .barcode { width: 51mm; height: 31mm; border-radius: 1mm; background: #f4f6f9; }
+/* The title page, which a printed book has where the PDF to read has the cover. */
+body.print .title-page { page: front; height: 196mm; display: flex; flex-direction: column; color: #1b2230; }
+body.print .title-page .cover-hero { display: none; }
+body.print .title-page .cover-brand { color: #1b2230; }
+body.print .title-page .cover-title { margin-top: 62mm; margin-bottom: auto; }
+body.print .title-page .cover-title h1 { font-size: 40pt; color: #121826; margin-bottom: 6mm; }
+body.print .title-page .cover-title h1 span + span { background: none; color: #121826; }
+body.print .title-page .cover-title p { color: #4d596b; font-size: 12pt; }
+body.print .title-page .cover-bottom { color: #6b7686; }
+body.print .title-page .cover-bottom b { color: #1b2230; }
 body.print .colophon {
   page: front; break-before: page; height: 190mm; display: flex; flex-direction: column; justify-content: flex-end;
   font: 8.5pt/1.55 "Inter", sans-serif; color: #4d596b;
@@ -303,11 +381,11 @@ body.print .code + .output { margin-top: -3.5mm; border-radius: 0 0 3px 3px; bor
 body.print .code:has(+ .output) { border-radius: 3px 3px 0 0; }
 body.print .does-not-compile { border-left-color: #d23a4f; }
 body.print .does-not-compile + .output { border-left-color: #d23a4f; }
-body.print pre { padding: 2.4mm 3.4mm; font: 7.8pt/1.45 var(--mono); color: #263142; white-space: pre-wrap; overflow: visible; orphans: 6; widows: 6; font-variant-ligatures: none; }
+body.print pre { padding: 2.4mm 2.4mm; font: 7.5pt/1.45 var(--mono); color: #263142; white-space: pre-wrap; overflow: visible; orphans: 6; widows: 6; font-variant-ligatures: none; }
 body.print pre code { white-space: pre-wrap; background: none; padding: 0; color: inherit; font-size: inherit; }
 body.print .output pre { color: #4d596b; }
 body.print .keep { break-inside: avoid; }
-body.print .code-name { font: 500 7pt/1 var(--mono); color: #6b7686; padding: 2.4mm 3.4mm 0; }
+body.print .code-name { font: 500 7pt/1 var(--mono); color: #6b7686; padding: 2.4mm 2.4mm 0; }
 body.print .hidden-line, body.print .code-lang, body.print .copy, body.print .toggle { display: none; }
 
 /* Tables */

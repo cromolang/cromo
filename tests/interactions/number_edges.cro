@@ -1,0 +1,28 @@
+// Division and remainder with negative numbers, the ends of the ranges, an explicit
+// conversion that keeps the low bits, and the floats divided by zero (D30, D33).
+// expect-output: -3 -1 1
+// expect-output: 200 44
+// expect-output: -9223372036854775808 18446744073709551615 ffffffffffffffff
+// expect-output: 0
+// expect-output: inf -inf
+// expect-output: -5
+// expect-exit: 0
+i32 main() {
+    i64 a = -7
+    i64 two = 2
+    println("{} {} {}", a / two, a % two, 7 % -two)
+    u8 b = 200
+    i32 wide = b
+    i64 big = 300
+    println("{} {}", wide, u8(big))
+    i64 min = -9223372036854775807 - 1
+    u64 top = 18446744073709551615
+    println("{} {} {:x}", min, top, top)
+    i64 minusOne = -1
+    println("{}", min % minusOne)
+    f64 zero = 0.0
+    println("{} {}", 1.0 / zero, -1.0 / zero)
+    f64 negative = -5.7
+    println("{}", i32(negative))
+    ret 0
+}

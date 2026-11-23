@@ -488,7 +488,7 @@ i32 main() {
 
 Inside the block the methods are written as in the struct: they see its fields, also the private ones, and each says whether it is `public`. The fields, the cases of an enum, the constructor, the destructor and the interfaces stay in the declaration, which alone says what the struct is. A generic struct is extended with its name alone, `extend Stack { ... }`, and its type parameters are those of the declaration.
 
-Only the module of a struct can extend it: `extend` on a struct of another module is the error `there is no struct or enum 'Account' in this module to extend`. `extend` is a word of the language only there, before a name and a block: elsewhere it is a name as any other.
+Only the module of a struct can extend it: `extend` on a struct of another module is the error `there is no struct or enum 'Account' in this module to extend`. `extend` is a word of the language: it cannot be the name of a variable or of a function.
 
 ## Where the modules are
 

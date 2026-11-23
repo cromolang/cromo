@@ -4,79 +4,191 @@ import unsafe
 
 extern "cromo" {
     void cromo_pause()                                    // in assembly: the hint of a loop that waits for another thread
+    addr cromo_heap_cache()                               // in the runtime in C: the cache of the heap of this thread, or addr(0)
     i32 cromo_app_write(i64 stream, addr data, i64 size)  // the log of an app of Android (P44)
 }
 
 // ---- The heap (D98) ----
 //
-// A simple allocator on top of mmap, under the lock of the heap. Every block
-// starts with 16 bytes that hold how many bytes it can contain. The small blocks,
-// up to 128 KB with those 16 bytes, have a size that is a power of two from 32
-// bytes: they are cut from areas of 4 MB, whose pages the system gives when they
-// are used, and the freed ones are kept in a list for each size, linked through
-// their first 8 bytes. The larger blocks have a mapping of their own, as for
-// malloc of glibc: a mapping for every block of a few KB costs two system calls,
-// which wait for each other in a process with threads.
+// A simple allocator on top of mmap. Every block starts with 16 bytes that hold
+// how many bytes it can contain. The small blocks, up to 128 KB with those 16
+// bytes, have a size that is a power of two from 32 bytes: they are cut from areas
+// of 4 MB, whose pages the system gives when they are used, and the freed ones are
+// kept in a list for each size, linked through their first 8 bytes. The larger
+// blocks have a mapping of their own, as for malloc of glibc: a mapping for every
+// block of a few KB costs two system calls, which wait for each other in a process
+// with threads.
+//
+// The lists and the area are of all the threads, under the lock of the heap. In a
+// program with threads each thread has lists of its own in front of them, its
+// cache, which it reads and writes without the lock: 13 lists and then the 13
+// numbers of their blocks, in the block of the thread of the runtime in C. An
+// empty list of the cache takes some blocks from the shared ones at once, and one
+// that grows too long gives half of them back, so the lock is taken once every
+// many allocations, and the threads do not wait for each other. A block can be
+// freed by another thread than the one that allocated it: it goes in the cache of
+// the one that frees it. A thread without a cache, as the main one with glibc or
+// one that the runtime did not start, uses the shared lists.
 
 addr[13] freeBlocks  // of 32 bytes, 64, ..., 128 KB
 addr areaNext
 u64 areaLeft
 u32 heapLock  // 0 free, 1 taken, 2 taken with threads waiting
 
-// A freed block of the right size when there is one, else a new one.
 addr heapAlloc(u64 size) {
     u64 total = size + 16
-    if (total <= smallLimit()) {
-        i64 index = sizeIndex(total)
-        total = u64(32) << index
-        addr block = freeBlocks[index]
-        if (block != addr(0)) {
-            freeBlocks[index] = copyAt<addr>(block)
-            put<u64>(block, total - 16)  // where the list kept the next block
-            ret offset(block, 16)
-        }
-    } else {
+    if (total > smallLimit()) {
         total = pagesFor(total)
+        addr mapping = mapPages(total)
+        if (mapping == addr(0)) {
+            ret mapping
+        }
+        put<u64>(mapping, total - 16)
+        ret offset(mapping, 16)
     }
-    ret newBlock(total)
+    i64 index = sizeIndex(total)
+    addr block
+    addr cache = addr(0)
+    if (threaded) {
+        cache = cromo_heap_cache()
+    }
+    if (cache == addr(0)) {
+        lockHeap()
+        block = sharedBlock(index)
+        unlockHeap()
+    } else {
+        addr head = offset(cache, index * 8)
+        block = copyAt<addr>(head)
+        if (block == addr(0)) {
+            block = refill(cache, index)
+        } else {
+            put<addr>(head, copyAt<addr>(block))
+            addr count = offset(cache, 104 + index * 8)
+            put<i64>(count, copyAt<i64>(count) - 1)
+        }
+    }
+    if (block == addr(0)) {
+        ret block
+    }
+    put<u64>(block, (u64(32) << index) - 16)  // where a list kept the next block
+    ret offset(block, 16)
 }
 
-// A small block cut from the area, or a large one mapped on its own. It is cold, so
-// that heapAlloc stays short and goes inline into cromo_alloc.
-[[cold]]
-addr newBlock(u64 total) {
-    addr block
-    if (total <= smallLimit()) {
-        if (areaLeft < total) {  // the rest of the old area is not used, nor touched
-            addr area = mapPages(areaSize())
-            if (area == addr(0)) {
-                ret area
-            }
-            areaNext = area
-            areaLeft = areaSize()
-        }
-        block = areaNext
-        areaNext = offset(areaNext, i64(total))
-        areaLeft -= total
-    } else {
-        block = mapPages(total)
-        if (block == addr(0)) {
-            ret block
-        }
+// A block of the shared lists, or cut from the area, with the lock taken: its
+// first 16 bytes are not written yet. addr(0) when the system gives no memory.
+addr sharedBlock(i64 index) {
+    addr block = freeBlocks[index]
+    if (block != addr(0)) {
+        freeBlocks[index] = copyAt<addr>(block)
+        ret block
     }
-    put<u64>(block, total - 16)
-    ret offset(block, 16)
+    u64 total = u64(32) << index
+    if (areaLeft < total) {  // the rest of the old area is not used, nor touched
+        addr area = mapPages(areaSize())
+        if (area == addr(0)) {
+            ret area
+        }
+        areaNext = area
+        areaLeft = areaSize()
+    }
+    block = areaNext
+    areaNext = offset(areaNext, i64(total))
+    areaLeft -= total
+    ret block
+}
+
+// How many blocks of a size a cache takes and gives back at once: 32 up to 2 KB,
+// then half for each size, down to one.
+i64 batch(i64 index) {
+    if (index <= 6) {
+        ret 32
+    }
+    if (index >= 11) {
+        ret 1
+    }
+    ret 32 >> (index - 6)
+}
+
+// An empty list of the cache: a block for who asks, and the others of a batch in
+// the list. It is cold, so that heapAlloc stays short.
+[[cold]]
+addr refill(addr cache, i64 index) {
+    lockHeap()
+    addr first = sharedBlock(index)
+    if (first != addr(0)) {
+        addr head = offset(cache, index * 8)
+        i64 taken = 0
+        for (i64 k = 1; k < batch(index); k++) {
+            addr block = sharedBlock(index)
+            if (block == addr(0)) {
+                break
+            }
+            put<addr>(block, copyAt<addr>(head))
+            put<addr>(head, block)
+            taken++
+        }
+        addr count = offset(cache, 104 + index * 8)
+        put<i64>(count, copyAt<i64>(count) + taken)
+    }
+    unlockHeap()
+    ret first
 }
 
 void heapFree(addr memory) {
     addr block = offset(memory, -16)
     u64 total = copyAt<u64>(block) + 16
-    if (total <= smallLimit()) {
-        i64 index = sizeIndex(total)
+    if (total > smallLimit()) {
+        systemCall(i64(Call.Munmap), block, i64(total), 0, 0, 0, 0)
+        ret
+    }
+    i64 index = sizeIndex(total)
+    addr cache = addr(0)
+    if (threaded) {
+        cache = cromo_heap_cache()
+    }
+    if (cache == addr(0)) {
+        lockHeap()
         put<addr>(block, freeBlocks[index])
         freeBlocks[index] = block
-    } else {
-        systemCall(i64(Call.Munmap), block, i64(total), 0, 0, 0, 0)
+        unlockHeap()
+        ret
+    }
+    addr head = offset(cache, index * 8)
+    put<addr>(block, copyAt<addr>(head))
+    put<addr>(head, block)
+    addr count = offset(cache, 104 + index * 8)
+    i64 held = copyAt<i64>(count) + 1
+    put<i64>(count, held)
+    if (held > 2 * batch(index)) {
+        spill(cache, index, batch(index))
+    }
+}
+
+// Gives `blocks` blocks of a list of the cache back to the shared one.
+[[cold]]
+void spill(addr cache, i64 index, i64 blocks) {
+    addr head = offset(cache, index * 8)
+    addr count = offset(cache, 104 + index * 8)
+    lockHeap()
+    for (i64 k = 0; k < blocks; k++) {
+        addr block = copyAt<addr>(head)
+        put<addr>(head, copyAt<addr>(block))
+        put<addr>(block, freeBlocks[index])
+        freeBlocks[index] = block
+    }
+    unlockHeap()
+    put<i64>(count, copyAt<i64>(count) - blocks)
+}
+
+// The runtime in C calls it when a thread ends, with its cache: its blocks go
+// back to the shared lists, for the other threads.
+[[export("cromo_heap_flush")]]
+void flushCache(addr cache) {
+    for (i64 index = 0; index < 13; index++) {
+        i64 held = copyAt<i64>(offset(cache, 104 + index * 8))
+        if (held > 0) {
+            spill(cache, index, held)
+        }
     }
 }
 
@@ -140,8 +252,9 @@ addr mapped(i64 result) {
 
 // ---- The lock of the heap (Drepper, "Futexes are tricky") ----
 //
-// It is held briefly: a short spin before sleeping, as the SRWLOCK of Windows
-// does, avoids a sleep and a wake for each allocation.
+// It is held briefly, and only by a thread without a cache or by one that fills
+// or empties a list of its cache: a short spin before sleeping, as the SRWLOCK of
+// Windows does, avoids a sleep and a wake.
 
 void lockHeap() {
     if (!threaded) {

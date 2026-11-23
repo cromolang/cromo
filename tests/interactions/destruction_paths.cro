@@ -1,0 +1,126 @@
+// Every value is destroyed once, whatever the path: a move on one branch,
+// continue and break, a constructor that throws, ret and exceptions through try
+// and finally (D68, D23, D16).
+// expect-output: sink 1
+// expect-output: drop 1
+// expect-output: drop 10
+// expect-output: drop 11
+// expect-output: end true
+// expect-output: drop 2
+// expect-output: drop 10
+// expect-output: drop 11
+// expect-output: end false
+// expect-output: drop 2
+// expect-output: drop 1
+// expect-output: drop 0
+// expect-output: drop 0
+// expect-output: drop 5
+// expect-output: caught boom
+// expect-output: finally 1
+// expect-output: drop 1
+// expect-output: 10
+// expect-output: catch two
+// expect-output: again
+// expect-output: finally 2
+// expect-output: drop 2
+// expect-output: 20
+// expect-output: inner 0
+// expect-output: inner 1
+// expect-output: inner 2
+// expect-output: finally 3
+// expect-output: drop 3
+// expect-output: 30
+// expect-exit: 0
+struct R {
+    i64 id
+
+    R(i64 n) {
+        id = n
+    }
+
+    ~R() {
+        println("drop {}", id)
+    }
+}
+
+void sink(move R r) {
+    println("sink {}", r.id)
+}
+
+void run(bool a) {
+    R x = R(1)
+    R y = R(2)
+    if (a) {
+        sink(move x)
+    }
+    for (i64 i = 0; i < 2; i++) {
+        R z = R(10 + i)
+        if (i == 0) {
+            continue
+        }
+        if (a) {
+            break
+        }
+    }
+    println("end {}", a)
+}
+
+struct Two {
+    R a
+    R b
+
+    Two() {
+        a = R(5)
+        throw Error("boom")
+    }
+}
+
+i64 paths(i64 n) {
+    R r
+    r.id = n
+    try {
+        if (n == 1) {
+            ret 10
+        }
+        if (n == 2) {
+            throw Error("two")
+        }
+        for (i64 i = 0; i < 3; i++) {
+            try {
+                if (i == 1) {
+                    continue
+                }
+                if (i == 2) {
+                    break
+                }
+            } finally {
+                println("inner {}", i)
+            }
+        }
+    } catch (Error e) {
+        println("catch {}", e.message())
+        try {
+            throw Error("again")
+        } catch (Exception x) {
+            println("{}", x.message())
+        }
+        ret 20
+    } finally {
+        println("finally {}", n)
+    }
+    ret 30
+}
+
+i32 main() {
+    run(true)
+    run(false)
+    try {
+        Two t = Two()
+    } catch (Exception e) {
+        println("caught {}", e.message())
+    }
+    println("{}", paths(1))
+    println("{}", paths(2))
+    println("{}", paths(3))
+    ret 0
+}
