@@ -1,0 +1,10 @@
+// A format with characters of more bytes of UTF-8 around its braces: the analysis
+// written in Cromo cut one of them in two.
+// expect-output: così è: 3 → €5, 日本
+// expect-output: {è} naïve
+i32 main() {
+    i64 count = 3
+    println("così è: {} → €{}, 日本", count, count + 2)
+    println("{{è}} {}", "naïve")
+    ret 0
+}

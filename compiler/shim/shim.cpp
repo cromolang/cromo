@@ -85,6 +85,9 @@ bool __cdecl __scrt_initialize_onexit_tables(int);
 // Windows this does what mainCRTStartup does before main, the C runtime and the
 // constructors of C++ of LLVM. With glibc the start of the runtime does it (D428).
 int32_t shim_start() {
+    static bool started = false;  // once: the constructors of LLVM must not run again
+    if (started) return 0;
+    started = true;
 #ifdef _WIN32
     if (!__scrt_initialize_crt(1) || !__scrt_initialize_onexit_tables(1)) return 1;
     if (_initterm_e(__xi_a, __xi_z) != 0) return 2;

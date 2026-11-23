@@ -18,6 +18,7 @@ extern "kernel32" {
     i32 WideCharToMultiByte(u32 page, u32 flags, addr wide, i32 size, addr text, i32 textSize, addr fallback, addr used)
     i32 SetEnvironmentVariableW(addr name, addr value)
     u32 GetActiveProcessorCount(u16 group)
+    i32 SetConsoleCtrlHandler(addr handler, i32 add)
 }
 
 // A text in UTF-16, ended by a zero: to free.
@@ -140,6 +141,24 @@ public i32 runProgram(string program, list<string> args, ref u32 problem) {
     u32 code = 1
     GetExitCodeProcess(process, ref code)
     CloseHandle(process)
+    ret i32(code)
+}
+
+// Runs a program to its end as runProgram does, while cromo ignores Ctrl+C, which
+// ends the program alone: `interrupted` says whether it did. The program is started
+// first, since what cromo ignores its programs would ignore too.
+public i32 runInterruptible(string program, list<string> args, ref bool interrupted) {
+    i64 process = startProcess(program, args, 0, 0)
+    if (process == 0) {
+        ret 1
+    }
+    SetConsoleCtrlHandler(addr(0), 1)
+    WaitForSingleObject(process, 0xFFFFFFFF)
+    SetConsoleCtrlHandler(addr(0), 0)
+    u32 code = 1
+    GetExitCodeProcess(process, ref code)
+    CloseHandle(process)
+    interrupted = code == 0xC000013A  // STATUS_CONTROL_C_EXIT
     ret i32(code)
 }
 

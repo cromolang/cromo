@@ -8005,9 +8005,13 @@ public struct Checker {
                 error(loc, "single '}' in the format string: write '}}' for a brace")
                 ret false
             }
-            if (c != '{') {
-                text += format.slice(i, i + 1)
-                i++
+            if (c != '{') {  // up to the next brace: a character of more bytes stays whole
+                i64 end = i + 1
+                for (end < format.len() && format[end] != '{' && format[end] != '}') {
+                    end++
+                }
+                text += format.slice(i, end)
+                i = end
                 continue
             }
             if (i + 1 < format.len() && format[i + 1] == '{') {

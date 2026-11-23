@@ -32,8 +32,12 @@ public struct Compilation {
     // A run inside another, as that of tools/get.cro while a program is built to be run,
     // has a folder of its own: the first one has no suffix.
     public i64 depth
-    public bool apk   // --target android: the APK with both architectures (D453)
-    public bool sign  // cromo build: with --release, the line sign of cromo.mod is run (D558)
+    public bool apk               // --target android: the APK with both architectures (D453)
+    public string androidPackage  // of [[android(...)]] on main (D455), then that of the APK
+    public string androidName
+    public bool network  // the program uses std.net: the permission INTERNET (D463)
+    public bool camera   // the program makes a gui.Camera: the permission CAMERA (D537)
+    public bool sign     // cromo build: with --release, the line sign of cromo.mod is run (D558)
     public BackendOptions options
     public bool release
     public bool tests  // the executable of cromo test (D352)
@@ -427,6 +431,9 @@ public i32 build(ref Compilation compilation) {
     if (program.diag.hasErrors()) {
         ret 1
     }
+    for (i64 i = 0; i < program.tree.files.len(); i++) {
+        compilation.network = compilation.network || program.tree.files[i].name == "std.net"
+    }
     steps.step(format("Checking {} files", program.diag.fileCount()), false)
     Checker checked = checkProgram(move program.tree, move program.diag, !tests && !compilation.runtime)
     if (!checked.diag.hasErrors()) {
@@ -434,6 +441,13 @@ public i32 build(ref Compilation compilation) {
     }
     if (checked.diag.hasErrors()) {
         ret 1
+    }
+    compilation.camera = checked.tree.camera
+    for (i64 i = 0; i < checked.tree.functions.len(); i++) {
+        if (checked.tree.functions[i].androidPackage.len() > 0) {  // D455
+            compilation.androidPackage = checked.tree.functions[i].androidPackage
+            compilation.androidName = checked.tree.functions[i].androidName
+        }
     }
     if (tests) {  // in the order of the entry point of the tests (codegen.cro)
         string own = checked.tree.files[0].name + "."
@@ -537,6 +551,160 @@ public i32 build(ref Compilation compilation) {
     }
     steps.finish(fs.fileName(compilation.options.outputPath))
     ret 0
+}
+
+// D453: the APK of an app. libmain.so of the program for each architecture, then
+// lib/tools/apk.cro writes and signs the APK with them, libSDL3.so of lib/ and the
+// classes of Java of SDL, the package and the name of [[android(...)]], or those
+// of the name of the file, and the icon next to it (D455).
+public i32 buildApk(ref Compilation compilation) {
+    string library = compilation.options.library
+    string folder = fs.joinPath(tempFolder(), format("cromo-apk-{}", os.processId()))
+    string source = compilation.inputPath
+    string output = absolute(compilation.options.outputPath)
+    list<string> entries
+    string dex = fs.joinPath(fs.joinPath(library, "android"), "classes.dex")
+    if (!fs.isFile(dex)) {
+        eprintln("cromo: the library has no {}: this cromo was built without the SDK of Android", dex)
+        ret 1
+    }
+    entries.add("classes.dex=" + dex)
+    for (Target target in [Target.AndroidArm64, Target.AndroidX64]) {
+        string abi = target == Target.AndroidArm64 ? "arm64-v8a" : "x86_64"
+        string sdl = fs.joinPath(fs.joinPath(library, systemFolder(target)), "libSDL3.so")
+        if (!fs.isFile(sdl)) {
+            eprintln("cromo: the library has no {}: this cromo was built without the NDK", sdl)
+            removeFolder(folder)
+            ret 1
+        }
+        try {
+            fs.createFolders(fs.joinPath(folder, abi))
+        } catch (Exception e) {
+        }
+        Compilation part = compilation
+        part.apk = false
+        part.options.target = target
+        if (target == Target.AndroidArm64) {
+            part.options.cpu = ""  // --cpu is for x86-64 (D513)
+        }
+        part.options.sharedLibrary = true
+        part.options.outputPath = fs.joinPath(fs.joinPath(folder, abi), "libmain.so")
+        i32 code = build(ref part)
+        if (code != 0) {
+            removeFolder(folder)
+            ret code
+        }
+        compilation.androidPackage = part.androidPackage
+        compilation.androidName = part.androidName
+        compilation.network = part.network
+        compilation.camera = part.camera
+        entries.add("lib/" + abi + "/libSDL3.so=" + sdl)
+        entries.add("lib/" + abi + "/libmain.so=" + part.options.outputPath)
+    }
+    string stem = fs.fileName(source)
+    stem = stem.slice(0, stem.len() - fs.extension(stem).len())
+    if (compilation.androidPackage.len() == 0) {  // org.cromo. and the name of the file, as a name of Java
+        string name
+        for (u8 c in stem.bytes()) {
+            bool letter = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+            name += letter || (c >= '0' && c <= '9') ? string([c]).lower() : "_"
+        }
+        bool starts = name.len() > 0 && ((name[0] >= 'a' && name[0] <= 'z') || (name[0] >= 'A' && name[0] <= 'Z'))
+        compilation.androidPackage = "org.cromo." + (starts ? "" : "app") + name
+    }
+    string name = compilation.androidName.len() == 0 ? stem : compilation.androidName
+    string icon = "-"
+    string named = source.slice(0, source.len() - fs.extension(source).len()) + ".png"
+    string main = source.slice(0, source.len() - fs.fileName(source).len()) + "main.png"
+    for (string candidate in [named, main]) {
+        if (icon == "-" && fs.isFile(candidate)) {
+            icon = absolute(candidate)
+        }
+    }
+    string permissions = compilation.network ? "INTERNET" : ""
+    if (compilation.camera) {
+        permissions += permissions.len() == 0 ? "CAMERA" : ",CAMERA"
+    }
+    list<string> args = [output, compilation.androidPackage, name, icon, permissions.len() == 0 ? "-" : permissions]
+    for (string entry in entries) {
+        args.add(entry)
+    }
+    i32 code = runTool(library, "tools/apk.cro", args, compilation.depth + 1)
+    removeFolder(folder)
+    ret code
+}
+
+// The adb of ANDROID_HOME or ANDROID_SDK_ROOT, in platform-tools, else the one in
+// PATH (P47); "" without it.
+string findAdb() {
+    bool windows = os.name() == "windows"
+    string name = windows ? "adb.exe" : "adb"
+    for (string variable in ["ANDROID_HOME", "ANDROID_SDK_ROOT"]) {
+        string sdk = os.env(variable)
+        if (sdk.len() == 0) {
+            continue
+        }
+        string adb = fs.joinPath(fs.joinPath(sdk, "platform-tools"), name)
+        if (fs.isFile(adb)) {
+            ret adb
+        }
+    }
+    for (string folder in os.env("PATH").split(windows ? ";" : ":")) {
+        if (folder.len() > 0 && fs.isFile(fs.joinPath(folder, name))) {
+            ret fs.joinPath(folder, name)
+        }
+    }
+    ret ""
+}
+
+// D464, D465, P47: cromo run --target android. The APK in a temporary folder, then
+// lib/tools/android.cro chooses the device, installs and starts the app and shows
+// its log until it ends, with its exit code. Ctrl+C ends the tool and adb, and
+// cromo stops the app.
+public i32 runAndroid(ref Compilation compilation) {
+    string library = compilation.options.library
+    string adb = findAdb()
+    if (adb.len() == 0) {
+        eprintln("cromo: adb not found: install the platform tools of the SDK of Android, and set ANDROID_HOME or put adb in PATH")
+        ret 1
+    }
+    string folder = fs.joinPath(tempFolder(), format("cromo-android-{}", os.processId()))
+    try {
+        fs.createFolders(folder)
+    } catch (Exception e) {
+        eprintln("cromo: cannot create the folder {}: {}", folder, e.message())
+        ret 1
+    }
+    string stem = fs.fileName(compilation.inputPath)
+    string apk = fs.joinPath(folder, stem.slice(0, stem.len() - fs.extension(stem).len()) + ".apk")
+    compilation.options.outputPath = apk
+    i32 code = buildApk(ref compilation)
+    if (code == 0) {
+        // The tool is built as by cromo run, then run while cromo ignores Ctrl+C.
+        Compilation tool
+        tool.options.library = library
+        tool.depth = compilation.depth + 1
+        tool.inputPath = fs.joinPath(fs.joinPath(library, "tools"), "android.cro")
+        tool.quiet = true  // D568: a tool of cromo, not the program of who runs it
+        string tools = fs.joinPath(folder, "tool")
+        try {
+            fs.createFolders(tools)
+        } catch (Exception e) {
+        }
+        tool.options.outputPath = fs.joinPath(tools, os.name() == "windows" ? "android.exe" : "android")
+        code = build(ref tool)
+        if (code == 0) {
+            bool interrupted = false
+            code = runInterruptible(tool.options.outputPath, [adb, apk, compilation.androidPackage], ref interrupted)
+            if (interrupted) {
+                u32 problem = 0
+                runProgram(adb, ["shell", "am", "force-stop", compilation.androidPackage], ref problem)
+                code = 130  // as the shells say Ctrl+C
+            }
+        }
+    }
+    removeFolder(folder)
+    ret code
 }
 
 // Whether a file is in the library of cromo.
@@ -832,10 +1000,6 @@ public i32 command(list<string> args) {
         ret 2
     }
     compilation.sign = name == "build"
-    if (compilation.apk) {
-        eprintln("cromo: --target android is not yet in the cromo written in Cromo")
-        ret 2
-    }
     // D517: each executable of cromo.mod, with the same options.
     list<Executable> executables = compilation.executables
     if (name == "test") {
@@ -867,8 +1031,8 @@ public i32 command(list<string> args) {
         for (Executable executable in executables) {
             Compilation one = compilation
             one.inputPath = executable.path
-            one.options.outputPath = executable.name + (one.options.target == Target.Windows ? ".exe" : "")
-            i32 code = build(ref one)
+            one.options.outputPath = executable.name + (one.apk ? ".apk" : one.options.target == Target.Windows ? ".exe" : "")
+            i32 code = one.apk ? buildApk(ref one) : build(ref one)
             if (code != 0) {
                 ret code
             }
@@ -876,7 +1040,14 @@ public i32 command(list<string> args) {
         ret 0
     }
     if (!isRun) {
-        ret build(ref compilation)
+        ret compilation.apk ? buildApk(ref compilation) : build(ref compilation)
+    }
+    if (compilation.apk) {
+        if (separator != args.len()) {
+            eprintln("cromo: an app of Android has no arguments")
+            ret 2
+        }
+        ret runAndroid(ref compilation)
     }
     list<string> programArgs
     for (i64 i = separator + 1; i < args.len(); i++) {
