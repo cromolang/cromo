@@ -1,0 +1,51 @@
+// D568: what cromo does while it builds: a line for each step on the standard
+// error, with its percentage and with colors on a terminal, and the time at the end.
+import std.os
+import std.time
+
+public struct Progress {
+    bool quiet = true
+    bool color
+    i64 steps = 1
+    i64 done
+    Instant start
+
+    public Progress(bool silent, i64 count) {
+        quiet = silent
+        steps = count
+        start = time.now()
+        if (!quiet) {
+            color = errorIsTerminal() && os.env("NO_COLOR").len() == 0
+        }
+    }
+
+    public void step(string text, bool strong) {
+        if (quiet) {
+            ret
+        }
+        if (done < steps) {
+            done++
+        }
+        string percent = format("{}", done * 100 / steps)
+        string head = "[" + " ".repeat(3 - percent.len()) + percent + "%] "
+        if (color) {
+            eprintln("{}\u{1B}[{}m{}\u{1B}[0m", head, strong ? "1;32" : "32", text)
+        } else {
+            eprintln("{}{}", head, text)
+        }
+    }
+
+    public void finish(string what) {
+        if (quiet) {
+            ret
+        }
+        i64 hundredths = (start.elapsed().milliseconds() + 5) / 10
+        string cents = format("{}", hundredths % 100)
+        string seconds = format("{}.", hundredths / 100) + (cents.len() < 2 ? "0" : "") + cents
+        if (color) {
+            eprintln("\u{1B}[1mBuilt {}\u{1B}[0m in {} s", what, seconds)
+        } else {
+            eprintln("Built {} in {} s", what, seconds)
+        }
+    }
+}

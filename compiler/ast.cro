@@ -588,6 +588,7 @@ public struct Import {
 public struct FileInfo {
     public string name  // "geometry.shapes": the path of the module
     public i32 part = -1
+    public list<string> libraryFolders  // of the native libraries of its package, for this system (D551)
     public bool isLibrary
     public bool isUnsafe
     public list<Import> imports

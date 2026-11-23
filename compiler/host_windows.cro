@@ -1,0 +1,193 @@
+// What cromo asks of Windows and the library does not give: where its executable is,
+// the temporary folder, a program started with the terminal of cromo or with its
+// output in a file, and the wait for the first of several to end.
+import unsafe
+
+extern "kernel32" {
+    u32 GetModuleFileNameW(addr module, addr buffer, u32 size)
+    u32 GetTempPathW(u32 size, addr buffer)
+    i32 CreateProcessW(addr application, addr commandLine, addr processAttributes, addr threadAttributes, i32 inherit, u32 flags,
+        addr environment, addr folder, addr startup, addr information)
+    u32 WaitForSingleObject(i64 handle, u32 milliseconds)
+    u32 WaitForMultipleObjects(u32 count, addr handles, i32 all, u32 milliseconds)
+    i32 GetExitCodeProcess(i64 handle, ref u32 code)
+    i32 CloseHandle(i64 handle)
+    i64 CreateFileW(addr name, u32 access, u32 share, addr security, u32 creation, u32 flags, addr template)
+    u32 GetLastError()
+    i32 MultiByteToWideChar(u32 page, u32 flags, addr text, i32 size, addr wide, i32 wideSize)
+    i32 WideCharToMultiByte(u32 page, u32 flags, addr wide, i32 size, addr text, i32 textSize, addr fallback, addr used)
+    i32 SetEnvironmentVariableW(addr name, addr value)
+    u32 GetActiveProcessorCount(u16 group)
+}
+
+// A text in UTF-16, ended by a zero: to free.
+addr wide(string text) {
+    i32 size = MultiByteToWideChar(65001, 0, text.cstring(), i32(text.len()), addr(0), 0)
+    addr buffer = alloc(i64(size) * 2 + 2)
+    MultiByteToWideChar(65001, 0, text.cstring(), i32(text.len()), buffer, size)
+    put<u16>(offset(buffer, i64(size) * 2), 0)
+    ret buffer
+}
+
+// `count` characters of UTF-16 as a text.
+string narrow(addr text, i64 count) {
+    if (count <= 0) {
+        ret ""
+    }
+    i32 size = WideCharToMultiByte(65001, 0, text, i32(count), addr(0), 0, addr(0), addr(0))
+    addr buffer = alloc(i64(size))
+    WideCharToMultiByte(65001, 0, text, i32(count), buffer, size, addr(0), addr(0))
+    string result = string(buffer, i64(size))
+    free(buffer)
+    ret result
+}
+
+// The path of the executable of cromo.
+public string programPath() {
+    addr buffer = alloc(65536)
+    u32 length = GetModuleFileNameW(addr(0), buffer, 32768)
+    string path = narrow(buffer, i64(length))
+    free(buffer)
+    ret path
+}
+
+// The folder of the temporary files, without a separator at its end.
+public string tempFolder() {
+    addr buffer = alloc(1040)
+    u32 length = GetTempPathW(520, buffer)
+    string path = narrow(buffer, i64(length))
+    free(buffer)
+    for (path.len() > 3 && (path.endsWith("\\") || path.endsWith("/"))) {
+        path = path.slice(0, path.len() - 1)
+    }
+    ret path
+}
+
+public void setEnv(string name, string value) {
+    addr key = wide(name)
+    addr text = wide(value)
+    SetEnvironmentVariableW(key, text)
+    free(key)
+    free(text)
+}
+
+// How many programs run at a time: the processors, and no more than Windows waits for.
+public i64 processors() {
+    i64 count = i64(GetActiveProcessorCount(0xFFFF))
+    ret count < 1 ? 1 : count > 64 ? 64 : count
+}
+
+// Writes an argument in a command line so that the program reads it back as it
+// is, with the rules of the C runtime of Microsoft.
+string quoteArgument(string arg) {
+    if (arg.len() > 0 && !arg.contains(" ") && !arg.contains("\t") && !arg.contains("\"")) {
+        ret arg
+    }
+    string out = "\""
+    i64 backslashes = 0
+    for (i64 i = 0; i < arg.len(); i++) {
+        if (arg[i] == '\\') {
+            backslashes++
+            continue
+        }
+        out += "\\".repeat(arg[i] == '"' ? backslashes * 2 + 1 : backslashes)
+        backslashes = 0
+        out += arg.slice(i, i + 1)
+    }
+    ret out + "\\".repeat(backslashes * 2) + "\""
+}
+
+// Starts a program with its arguments: the handle of its process, or 0. With
+// `input` and `output`, those are its standard input, and its standard output and
+// error; without, it has those of cromo.
+i64 startProcess(string program, list<string> args, i64 input, i64 output) {
+    string line = quoteArgument(program)
+    for (string arg in args) {
+        line += " " + quoteArgument(arg)
+    }
+    addr command = wide(line)
+    addr startup = alloc(104)  // STARTUPINFOW
+    zero(startup, 104)
+    put<u32>(startup, 104)
+    if (output != 0) {
+        put<u32>(offset(startup, 60), 0x100)  // STARTF_USESTDHANDLES
+        put<i64>(offset(startup, 80), input)
+        put<i64>(offset(startup, 88), output)
+        put<i64>(offset(startup, 96), output)
+    }
+    addr information = alloc(24)  // PROCESS_INFORMATION
+    zero(information, 24)
+    i64 process = 0
+    if (CreateProcessW(addr(0), command, addr(0), addr(0), 1, 0, addr(0), addr(0), startup, information) != 0) {
+        process = copyAt<i64>(information)
+        CloseHandle(copyAt<i64>(offset(information, 8)))
+    }
+    free(command)
+    free(startup)
+    free(information)
+    ret process
+}
+
+// Runs a program to its end, with the terminal of cromo. Its exit code; when it does
+// not start, -1, with the error of Windows in `problem`.
+public i32 runProgram(string program, list<string> args, ref u32 problem) {
+    i64 process = startProcess(program, args, 0, 0)
+    if (process == 0) {
+        problem = GetLastError()
+        ret -1
+    }
+    WaitForSingleObject(process, 0xFFFFFFFF)
+    u32 code = 1
+    GetExitCodeProcess(process, ref code)
+    CloseHandle(process)
+    ret i32(code)
+}
+
+// Starts a program with nothing to read, and its output and its errors in a file.
+// The handle of its process, or 0.
+public i64 startQuiet(string program, list<string> args, string outputPath) {
+    addr inherit = alloc(24)  // SECURITY_ATTRIBUTES, with the handle inherited
+    zero(inherit, 24)
+    put<u32>(inherit, 24)
+    put<i32>(offset(inherit, 16), 1)
+    addr name = wide(outputPath)
+    addr nothing = wide("NUL")
+    i64 output = CreateFileW(name, 0x40000000, 1, inherit, 2, 0x80, addr(0))  // GENERIC_WRITE, CREATE_ALWAYS
+    i64 input = CreateFileW(nothing, 0x80000000, 3, inherit, 3, 0, addr(0))   // GENERIC_READ, OPEN_EXISTING
+    free(name)
+    free(nothing)
+    free(inherit)
+    if (output == -1 || input == -1) {
+        ret 0
+    }
+    i64 process = startProcess(program, args, input, output)
+    CloseHandle(output)  // the program has its own: the next one must not inherit it
+    CloseHandle(input)
+    ret process
+}
+
+// Waits for the first of the processes to end: its place in the list, and its exit
+// code in `code`; -1 when the wait fails. The process is closed.
+public i64 waitAny(list<i64> processes, ref i32 code) {
+    addr handles = alloc(processes.len() * 8)
+    for (i64 i = 0; i < processes.len(); i++) {
+        put<i64>(offset(handles, i * 8), processes[i])
+    }
+    u32 signaled = WaitForMultipleObjects(u32(processes.len()), handles, 0, 0xFFFFFFFF)
+    free(handles)
+    i64 slot = i64(signaled)
+    if (slot >= processes.len()) {
+        ret -1
+    }
+    u32 exitCode = 1
+    GetExitCodeProcess(processes[slot], ref exitCode)
+    CloseHandle(processes[slot])
+    code = i32(exitCode)
+    ret slot
+}
+
+void zero(addr memory, i64 size) {
+    for (i64 i = 0; i < size; i++) {
+        put<u8>(offset(memory, i), 0)
+    }
+}

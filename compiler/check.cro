@@ -14,6 +14,7 @@ import loader
 import moves
 import names
 import sema
+import targets
 import std.fs
 
 i32 main(list<string> given) {
@@ -41,6 +42,8 @@ i32 main(list<string> given) {
     }
     bool linux = target != "windows"
     bool arm64 = target == "linux-arm64" || target == "android-arm64"
+    Target system = Target.Windows
+    targetOf(target, ref system)
     string library = libraryFolder(given[0])
     if (runtime) {  // D393: a file of the library that imports std.runtime, never written
         args.add(library + "\\runtime-object.cro")
@@ -63,7 +66,7 @@ i32 main(list<string> given) {
         eprintln("cromo: cannot read {}", core)
         ret 2
     }
-    Program program = load(path, runtime ? "import std.runtime\n" : readSource(path), library, linux, arm64, tests)
+    Program program = load(path, runtime ? "import std.runtime\n" : readSource(path), library, system, tests)
     if (program.diag.hasErrors()) {
         ret 1
     }

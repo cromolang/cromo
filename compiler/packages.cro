@@ -1,0 +1,633 @@
+// The packages of a project (D376-D391) and what cromo.mod says of it, as
+// src/packages.cpp: the lines of cromo.mod, the selection of the versions as Go does
+// (D378), the cache, cromo.sum (D380, D387) and the native libraries (D551).
+import std.fs
+import std.os
+import loader
+import targets
+
+// A line `require name url version` of a cromo.mod (D377), or `require name folder`
+// for a package in a folder next to the project (D390).
+public struct Require {
+    public string name     // the first name of its imports (D383)
+    public string url      // "github.com/anna/geometry", or "" for a folder
+    public string version  // "v1.2.0"
+    public string local    // the folder, as written
+    public i64 line
+}
+
+// A line `native system url sha256:hash file...` of a cromo.mod (D551): the archive
+// with the libraries of a package for a system, and the files of it that are taken.
+public struct Native {
+    public string system  // "windows-x86_64", "linux-x86_64"
+    public string url
+    public string sha256
+    public list<string> files  // their paths in the archive
+    public i64 line
+}
+
+// What a cromo.mod says of the packages.
+public struct ProjectFile {
+    public string module
+    public list<Require> requires
+    public list<Native> natives
+    // D557: what the executables for Windows say of themselves, and D558, the command
+    // that signs them. Only those of the project that is built are used.
+    public string version  // "1.2.0", up to four numbers, or ""
+    public string company
+    public string description
+    public string copyright
+    public list<string> sign  // the command and its arguments, or nothing
+}
+
+// A package of a program, in the version that the selection chose (D378).
+public struct Package {
+    public string url      // "" for the project and for a folder
+    public string major    // "v1"
+    public string version  // "v1.2.0"
+    public string folder
+    public bool local
+    public map<string, i32> requires  // the names of its cromo.mod, each the number of its package
+    public list<Native> natives
+}
+
+// The packages of a program: the first is the project.
+public struct Resolution {
+    public list<Package> packages
+}
+
+bool isLetterOrDigit(u8 c) {
+    ret (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+}
+
+// A name of letters, digits and the characters of `others`.
+public bool nameOf(string text, string others) {
+    if (text.len() == 0) {
+        ret false
+    }
+    for (i64 i = 0; i < text.len(); i++) {
+        if (!isLetterOrDigit(text[i]) && others.find(text.slice(i, i + 1)) < 0) {
+            ret false
+        }
+    }
+    ret true
+}
+
+// The words of a line, between its spaces.
+public list<string> wordsOf(string line) {
+    list<string> words
+    i64 start = -1
+    for (i64 i = 0; i <= line.len(); i++) {
+        bool space = i == line.len() || line[i] == ' ' || (line[i] >= 9 && line[i] <= 13)
+        if (space && start >= 0) {
+            words.add(line.slice(start, i))
+            start = -1
+        } else if (!space && start < 0) {
+            start = i
+        }
+    }
+    ret words
+}
+
+// The lines of a text, each without its `\n`.
+public list<string> linesOf(string text) {
+    list<string> lines = text.split("\n")
+    if (lines.len() > 0 && lines[lines.len() - 1].len() == 0) {
+        lines.remove(lines.len() - 1)
+    }
+    ret lines
+}
+
+// "github.com/anna/geometry": a host with a dot, then a path.
+bool isPackageUrl(string text) {
+    i64 slash = text.find("/")
+    if (slash <= 0 || slash + 1 == text.len()) {
+        ret false
+    }
+    i64 dot = text.find(".")
+    if ((dot < 0 || dot > slash) && !text.startsWith("localhost:") && !text.startsWith("127.0.0.1:")) {
+        ret false
+    }
+    ret nameOf(text, "._-/:") && !text.contains("//") && !text.endsWith("/")
+}
+
+list<i64> numbersOf(string version) {
+    list<i64> numbers
+    for (string part in version.slice(1, version.len()).split(".")) {
+        i64 number = 0
+        for (u8 c in part.bytes()) {
+            if (c < '0' || c > '9') {
+                break
+            }
+            number = number * 10 + i64(c - '0')
+        }
+        numbers.add(number)
+    }
+    for (numbers.len() < 3) {
+        numbers.add(0)
+    }
+    ret numbers
+}
+
+string keyOf(string url, string major) {
+    ret url + "@" + major
+}
+
+// Whether `text` is a version, as v1.2.0.
+public bool isPackageVersion(string text) {
+    if (text.len() < 6 || text[0] != 'v') {
+        ret false
+    }
+    i64 dots = 0
+    bool digit = false
+    for (i64 i = 1; i < text.len(); i++) {
+        if (text[i] == '.') {
+            if (!digit) {
+                ret false
+            }
+            dots++
+            digit = false
+        } else if (text[i] >= '0' && text[i] <= '9') {
+            digit = true
+        } else {
+            ret false
+        }
+    }
+    ret dots == 2 && digit
+}
+
+// The major version of a version, as v1.
+public string majorOf(string version) {
+    i64 dot = version.find(".")
+    ret dot < 0 ? version : version.slice(0, dot)
+}
+
+// -1, 0 or 1, as version `a` is before `b`, the same or after it.
+public i32 comparePackageVersions(string a, string b) {
+    list<i64> x = numbersOf(a)
+    list<i64> y = numbersOf(b)
+    for (i64 i = 0; i < 3; i++) {
+        if (x[i] != y[i]) {
+            ret x[i] < y[i] ? -1 : 1
+        }
+    }
+    ret 0
+}
+
+// The cache of the packages (D388): CROMO_PACKAGES, or ~/.cromo/packages.
+public string packagesFolder() {
+    string folder = os.env("CROMO_PACKAGES")
+    if (folder.len() > 0) {
+        ret folder
+    }
+    string home = os.env(os.name() == "windows" ? "USERPROFILE" : "HOME")
+    ret fs.joinPath(fs.joinPath(home.len() > 0 ? home : ".", ".cromo"), "packages")
+}
+
+// Where a version of a package is in the cache.
+public string packageFolder(string url, string version) {
+    // The port of a host of a test is not in the name of a folder.
+    ret packagesFolder() + fs.separator() + url.replace(":", "_") + "@" + version
+}
+
+// The name in front of the modules of a package (D391): its URL, with the major
+// version from v2, as "github.com/anna/geometry@v2".
+public string packageModuleName(Package package) {
+    if (package.url.len() == 0) {
+        ret fs.fileName(package.folder)
+    }
+    ret package.major == "v0" || package.major == "v1" ? package.url : package.url + "@" + package.major
+}
+
+// The name of a system in a line native of cromo.mod (D551), or "" for a system that has none.
+public string nativeSystem(Target system) {
+    if (system == Target.Windows) {
+        ret "windows-x86_64"
+    }
+    ret system == Target.Linux ? "linux-x86_64" : ""
+}
+
+// Where the files taken from the archive of a line native are in the cache: by the
+// hash of the archive and by the files taken of it; another list of files is another folder.
+public string nativeFolder(Native native) {
+    u64 mix = 1469598103934665603  // FNV-1a
+    for (string file in native.files) {
+        for (u8 c in (file + "\n").bytes()) {
+            mix = wrapMul(mix ^ u64(c), 1099511628211)
+        }
+    }
+    ret fs.joinPath(fs.joinPath(packagesFolder(), ".native"), native.sha256.slice(0, 16) + "-" + format("{:016x}", mix))
+}
+
+// The folders of the native libraries of a package for a system, those of its lines.
+public list<string> nativeFolders(Package package, Target system) {
+    list<string> folders
+    for (Native native in package.natives) {
+        if (native.system == nativeSystem(system)) {
+            folders.add(nativeFolder(native))
+        }
+    }
+    ret folders
+}
+
+// The native libraries of the packages for a system (D551). True when all are in the
+// cache; if not, `missing` is the first that is not, to download.
+public bool nativesReady(Resolution resolution, Target system, ref Native missing) {
+    for (Package package in resolution.packages) {
+        for (Native native in package.natives) {
+            if (native.system == nativeSystem(system) && !fs.isFolder(nativeFolder(native))) {
+                missing = native
+                ret false
+            }
+        }
+    }
+    ret true
+}
+
+// Reads the lines of the packages of a cromo.mod; a file that is not there has none.
+// False, with the errors each on a line as "cromo.mod:3: error: ...", when it is wrong.
+public bool readProjectFile(string file, ref ProjectFile out, ref string error) {
+    if (!fs.isFile(file)) {
+        ret true
+    }
+    string text
+    try {
+        text = fs.readText(file)
+    } catch (Exception e) {
+        error = "cannot read " + file
+        ret false
+    }
+    if (text.startsWith("\u{FEFF}")) {
+        text = text.slice(3, text.len())
+    }
+    bool good = true
+    map<string, bool> names
+    list<string> lines = linesOf(text)
+    for (i64 number = 1; number <= lines.len(); number++) {
+        string line = lines[number - 1]
+        i64 comment = line.find("//")
+        if (comment >= 0 && (comment == 0 || line[comment - 1] != ':')) {  // not the one of https://
+            line = line.slice(0, comment)
+        }
+        list<string> words = wordsOf(line)
+        if (words.len() == 0) {
+            continue
+        }
+        string failed
+        if (words[0] == "module" && words.len() == 2) {
+            out.module = words[1]
+        } else if (words[0] == "require") {
+            Require require
+            require.line = number
+            if (words.len() == 4 && nameOf(words[1], "_") && isPackageUrl(words[2]) && isPackageVersion(words[3])) {
+                require.name = words[1]
+                require.url = words[2]
+                require.version = words[3]
+            } else if (words.len() == 3 && nameOf(words[1], "_")) {
+                require.name = words[1]
+                require.local = words[2]
+            } else {
+                failed = "require takes a name, the address of a package and its version, as require geometry " +
+                    "github.com/anna/geometry v1.2.0, or a name and a folder, as require geometry ../geometry"
+            }
+            if (failed.len() == 0) {
+                if (require.name == "std" || require.name == "unsafe") {
+                    failed = "a package cannot be called " + require.name
+                } else if (names.contains(require.name)) {
+                    failed = "another package is called " + require.name
+                } else {
+                    names[require.name] = true
+                    out.requires.add(move require)
+                }
+            }
+        } else if (words[0] == "native") {
+            bool system = words.len() > 1 && (words[1] == "windows-x86_64" || words[1] == "linux-x86_64")
+            if (words.len() < 5 || !system || !words[3].startsWith("sha256:") || words[3].len() != 71) {
+                failed = "native takes a system, windows-x86_64 or linux-x86_64, the address of an archive, its hash as " +
+                    "sha256: and 64 digits, and the files of it to take"
+            } else {
+                Native native
+                native.line = number
+                native.system = words[1]
+                native.url = words[2]
+                native.sha256 = words[3].slice(7, words[3].len())
+                for (i64 i = 4; i < words.len(); i++) {
+                    native.files.add(words[i])
+                }
+                out.natives.add(move native)
+            }
+        } else if (words[0] == "version") {  // D557
+            bool valid = words.len() == 2 && out.version.len() == 0
+            i64 parts = 1
+            i64 digits = 0
+            i64 value = 0
+            for (i64 i = 0; valid && i < words[1].len(); i++) {
+                u8 c = words[1][i]
+                if (c == '.') {
+                    parts++
+                    valid = digits > 0 && parts <= 4
+                    digits = 0
+                    value = 0
+                } else {
+                    digits++
+                    valid = c >= '0' && c <= '9' && digits <= 5
+                    value = value * 10 + i64(c) - 48
+                    if (valid && value > 65535) {
+                        valid = false
+                    }
+                }
+            }
+            if (valid && digits > 0) {
+                out.version = words[1]
+            } else {
+                failed = out.version.len() == 0 ? "version takes up to four numbers, each up to 65535, as version 1.2.0" :
+                    "the line version is written once"
+            }
+        } else if (words[0] == "company" || words[0] == "description" || words[0] == "copyright") {  // D557
+            string had = words[0] == "company" ? out.company : words[0] == "description" ? out.description : out.copyright
+            i64 start = line.find(words[0]) + words[0].len()
+            for (start < line.len() && (line[start] == ' ' || line[start] == '\t')) {
+                start++
+            }
+            i64 end = line.len()
+            for (end > start && (line[end - 1] == ' ' || line[end - 1] == '\t' || line[end - 1] == '\r')) {
+                end--
+            }
+            if (start >= end) {
+                failed = words[0] + " takes a text, to the end of the line"
+            } else if (had.len() > 0) {
+                failed = "the line " + words[0] + " is written once"
+            } else if (words[0] == "company") {
+                out.company = line.slice(start, end)
+            } else if (words[0] == "description") {
+                out.description = line.slice(start, end)
+            } else {
+                out.copyright = line.slice(start, end)
+            }
+        } else if (words[0] == "sign") {  // D558: words, and "words with spaces"
+            list<string> command
+            i64 at = line.find("sign") + 4
+            bool closed = true
+            for (closed) {
+                for (at < line.len() && (line[at] == ' ' || line[at] == '\t' || line[at] == '\r')) {
+                    at++
+                }
+                if (at >= line.len()) {
+                    break
+                }
+                i64 end = at
+                if (line[at] == '"') {
+                    end = at + 1
+                    for (end < line.len() && line[end] != '"') {
+                        end++
+                    }
+                    closed = end < line.len()
+                    if (closed) {
+                        command.add(line.slice(at + 1, end))
+                        at = end + 1
+                    }
+                } else {
+                    for (end < line.len() && line[end] != ' ' && line[end] != '\t' && line[end] != '\r') {
+                        end++
+                    }
+                    command.add(line.slice(at, end))
+                    at = end
+                }
+            }
+            if (!closed || command.len() == 0) {
+                failed = "sign takes the command that signs an executable, as sign signtool sign /fd SHA256 /a"
+            } else if (out.sign.len() > 0) {
+                failed = "the line sign is written once"
+            } else {
+                out.sign = move command
+            }
+        }
+        if (failed.len() > 0) {
+            error += (error.len() == 0 ? "" : "\n") + fs.fileName(file) + format(":{}: error: ", number) + failed
+            good = false
+        }
+    }
+    ret good
+}
+
+// What is wanted of each package, by its address and its major version: the
+// highest version among those that the project and the packages chosen require.
+struct Wanted {
+    string key
+    string url
+    string version
+    string folder  // of a package in a folder (D390)
+    ProjectFile file
+    bool read
+}
+
+struct Selection {
+    list<Wanted> wanted  // in the order of their keys
+    string error
+
+    i64 find(string key) const {
+        for (i64 i = 0; i < wanted.len(); i++) {
+            if (wanted[i].key == key) {
+                ret i
+            }
+        }
+        ret -1
+    }
+
+    // The entry of a key, made when it is not there, at its place in the order.
+    i64 entry(string key) {
+        i64 found = find(key)
+        if (found >= 0) {
+            ret found
+        }
+        i64 at = 0
+        for (at < wanted.len() && wanted[at].key.compare(key) < 0) {
+            at++
+        }
+        Wanted added
+        added.key = key
+        wanted.insert(at, move added)
+        ret at
+    }
+
+    bool want(Require require, string from, bool fromProject) {
+        if (require.local.len() > 0) {
+            if (!fromProject) {
+                error = "the package in " + from + " requires the folder " + require.local +
+                    ": a folder in place of a version holds only in the project that is built"
+                ret false
+            }
+            string folder = absolute(fs.joinPath(from, require.local))
+            if (!fs.isFolder(folder)) {
+                error = format("cromo.mod:{}: error: there is no folder ", require.line) + require.local
+                ret false
+            }
+            i64 at = entry("folder:" + folder)
+            wanted[at].folder = folder
+            ret true
+        }
+        i64 at = entry(keyOf(require.url, majorOf(require.version)))
+        if (wanted[at].version.len() == 0 || comparePackageVersions(require.version, wanted[at].version) > 0) {
+            wanted[at].url = require.url
+            wanted[at].version = require.version
+            wanted[at].read = false
+        }
+        ret true
+    }
+}
+
+// The packages of the project of a folder, chosen as Go does (D378): of each, the
+// highest version that the project and the packages chosen require. 0 when they are
+// chosen; 1, with the reason, when they cannot be; 2 when a version is not in the
+// cache: `missing` has its address and its version, to download before asking again.
+public i32 resolvePackages(string projectFolder, ref Resolution out, ref string error, ref Require missing) {
+    list<Package> none
+    out.packages = move none
+    string root = projectFolder
+    ProjectFile project
+    if (!readProjectFile(fs.joinPath(root, "cromo.mod"), ref project, ref error)) {
+        ret 1
+    }
+    Selection selection
+    for (Require require in project.requires) {
+        if (!selection.want(require, root, true)) {
+            error = selection.error
+            ret 1
+        }
+    }
+    bool again = true
+    for (again) {
+        again = false
+        for (i64 i = 0; i < selection.wanted.len(); i++) {
+            if (selection.wanted[i].read) {
+                continue
+            }
+            selection.wanted[i].read = true
+            again = true
+            string url = selection.wanted[i].url
+            string version = selection.wanted[i].version
+            bool local = selection.wanted[i].folder.len() > 0
+            string folder = local ? selection.wanted[i].folder : packageFolder(url, version)
+            if (!local && !fs.isFolder(folder)) {
+                missing.url = url
+                missing.version = version
+                ret 2
+            }
+            ProjectFile file
+            string problems
+            if (!readProjectFile(fs.joinPath(folder, "cromo.mod"), ref file, ref problems)) {
+                error = "the package in " + folder + " has a wrong cromo.mod:\n" + problems
+                ret 1
+            }
+            if (!local && file.module.len() > 0 && file.module != url) {
+                error = "the package downloaded from " + url + " says in its cromo.mod that it is " + file.module +
+                    ": require it by that address"
+                ret 1
+            }
+            list<Require> requires = file.requires
+            selection.wanted[i].file = move file
+            for (Require require in requires) {
+                if (!selection.want(require, folder, false)) {
+                    error = selection.error
+                    ret 1
+                }
+            }
+            break  // the list may have changed: from its start again
+        }
+    }
+
+    // The packages, the project first, each with the names of its cromo.mod.
+    map<string, i32> numbers
+    Package first
+    first.folder = root
+    first.natives = project.natives
+    out.packages.add(move first)
+    for (Wanted wanted in selection.wanted) {
+        Package package
+        package.url = wanted.url
+        package.version = wanted.version
+        package.major = wanted.version.len() == 0 ? "" : majorOf(wanted.version)
+        package.local = wanted.folder.len() > 0
+        package.folder = package.local ? wanted.folder : packageFolder(wanted.url, wanted.version)
+        package.natives = wanted.file.natives
+        numbers[wanted.key] = i32(out.packages.len())
+        out.packages.add(move package)
+    }
+    nameRequires(ref out.packages[0], project.requires, root, numbers)
+    for (Wanted wanted in selection.wanted) {
+        i32 number = numbers[wanted.key]
+        string from = out.packages[number].folder
+        nameRequires(ref out.packages[number], wanted.file.requires, from, numbers)
+    }
+    ret 0
+}
+
+void nameRequires(ref Package package, list<Require> requires, string from, map<string, i32> numbers) {
+    for (Require require in requires) {
+        string key = require.local.len() == 0 ? keyOf(require.url, majorOf(require.version)) :
+            "folder:" + absolute(fs.joinPath(from, require.local))
+        package.requires[require.name] = numbers.contains(key) ? numbers[key] : 0
+    }
+}
+
+string trimmedEnd(string text) {
+    i64 end = text.len()
+    for (end > 0 && (text[end - 1] == ' ' || (text[end - 1] >= 9 && text[end - 1] <= 13))) {
+        end--
+    }
+    ret text.slice(0, end)
+}
+
+// cromo.sum (D380, D387): the hash of each version chosen is the one written there,
+// or it is written there when `write` is set. False when a hash is another.
+public bool checkPackageSums(string projectFolder, Resolution resolution, bool write, ref string error) {
+    string file = fs.joinPath(projectFolder, "cromo.sum")
+    map<string, string> written  // "url version" and its hash
+    string before
+    if (fs.isFile(file)) {
+        before = readSource(file)
+        for (string line in linesOf(before)) {
+            list<string> words = wordsOf(line)
+            if (words.len() >= 3) {
+                written[words[0] + " " + words[1]] = words[2]
+            }
+        }
+    }
+    list<string> rows
+    for (i64 i = 1; i < resolution.packages.len(); i++) {
+        const ref Package package = resolution.packages[i]
+        if (package.local) {
+            continue
+        }
+        string folder = packageFolder(package.url, package.version)
+        string hash
+        try {
+            hash = trimmedEnd(fs.readText(folder + ".sum"))
+        } catch (Exception e) {
+            error = "the cache has no hash of " + package.url + " " + package.version + ": delete its folder, " + folder +
+                ", and build again"
+            ret false
+        }
+        string key = package.url + " " + package.version
+        if (written.contains(key) && written[key] != hash) {
+            error = "the files of " + package.url + " " + package.version + " are not those of cromo.sum: its tag was moved, or " +
+                "the download is wrong. cromo.sum has " + written[key] + ", the files give " + hash
+            ret false
+        }
+        rows.add(key + " " + hash)
+    }
+    sort(ref rows)
+    string text
+    for (string row in rows) {
+        text += row + "\n"
+    }
+    if (write && text != before && !(text.len() == 0 && before.len() == 0)) {
+        try {
+            fs.writeText(file, text)
+        } catch (Exception e) {
+            error = "cannot write " + file
+            ret false
+        }
+    }
+    ret true
+}

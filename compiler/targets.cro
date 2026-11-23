@@ -1,0 +1,103 @@
+// The systems that cromo compiles for (D144, D406, P43), as src/target.h.
+import std.os
+
+public enum Target {
+    Windows
+    Linux
+    LinuxArm64
+    AndroidArm64
+    AndroidX64
+}
+
+// Android has the kernel of Linux: its programs use the files of the library for
+// Linux (P43).
+public bool isLinux(Target target) {
+    ret target != Target.Windows
+}
+
+public bool isAndroid(Target target) {
+    ret target == Target.AndroidArm64 || target == Target.AndroidX64
+}
+
+public bool isArm64(Target target) {
+    ret target == Target.LinuxArm64 || target == Target.AndroidArm64
+}
+
+// Android from API 26 (D454).
+public string targetTriple(Target target) {
+    switch (target) {
+        case Linux {
+            ret "x86_64-unknown-linux-gnu"
+        }
+        case LinuxArm64 {
+            ret "aarch64-unknown-linux-gnu"
+        }
+        case AndroidArm64 {
+            ret "aarch64-unknown-linux-android26"
+        }
+        case AndroidX64 {
+            ret "x86_64-unknown-linux-android26"
+        }
+        default {
+            ret "x86_64-pc-windows-msvc"
+        }
+    }
+}
+
+// The name of --target.
+public string targetName(Target target) {
+    switch (target) {
+        case Linux {
+            ret "linux"
+        }
+        case LinuxArm64 {
+            ret "linux-arm64"
+        }
+        case AndroidArm64 {
+            ret "android-arm64"
+        }
+        case AndroidX64 {
+            ret "android-x86_64"
+        }
+        default {
+            ret "windows"
+        }
+    }
+}
+
+// The target of a name of --target; false when there is none.
+public bool targetOf(string name, ref Target target) {
+    for (Target each in [Target.Windows, Target.Linux, Target.LinuxArm64, Target.AndroidArm64, Target.AndroidX64]) {
+        if (targetName(each) == name) {
+            target = each
+            ret true
+        }
+    }
+    ret false
+}
+
+// The folder of the runtime and of the C libraries of a system, in lib/ (D237).
+public string systemFolder(Target target) {
+    switch (target) {
+        case Linux {
+            ret "linux"
+        }
+        case LinuxArm64 {
+            ret "linux_arm64"
+        }
+        case AndroidArm64 {
+            ret "android_arm64"
+        }
+        case AndroidX64 {
+            ret "android_x86_64"
+        }
+        default {
+            ret "windows"
+        }
+    }
+}
+
+// The system cromo runs on: the target when none is given.
+public Target hostTarget() {
+    ret os.name() == "windows" ? Target.Windows : Target.Linux
+}

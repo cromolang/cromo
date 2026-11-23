@@ -1,0 +1,802 @@
+// From the IR to the executable (D28, D291), as src/backend.cpp: LLVM reads the IR,
+// optimizes it and writes the object; the table of the stack traces is made from
+// the lines of the object and linked as an object of its own (D339); LLD links the
+// executable with the runtime, the C libraries, and on Windows the resources and
+// the import libraries, which cromo writes (D136).
+import std.fs
+import codegen
+import llvmc
+import progress
+import targets
+
+// A DLL and the functions imported from it: cromo writes its import library (D136).
+public struct ImportLibrary {
+    public string dll  // "user32.dll"
+    public list<string> functions
+}
+
+public struct BackendOptions {
+    public string outputPath  // executable to produce
+    public Target target = Target.Windows
+    public string library               // the folder lib/ of cromo (D237)
+    public i32 optLevel = 2             // from 0 to 3
+    public string cpu                   // D513: the processor of --cpu, as x86-64-v3 or native; empty for x86-64
+    public bool keepObject              // keep the intermediate object file
+    public bool objectOnly              // the runtime in Cromo (D393): only the object, in outputPath, for its archive
+    public list<string> archives        // static libraries of the extern blocks: name.lib, libname.a (D136, D143)
+    public list<ImportLibrary> imports  // DLLs of the extern blocks; kernel32 is always there, for the runtime
+    public bool debugInfo = true        // D338: a PDB next to the executable on Windows, DWARF kept in it on Linux
+    public bool window                  // D426: on Windows, an executable of the windows, without a console
+    public string icon                  // D425: on Windows, the .ico of the executable, or nothing
+    // D557: on Windows, what the executable says of itself, from the cromo.mod of its project.
+    public string version  // "1.2.0", or "" for 0.0.0.0
+    public string company
+    public string description
+    public string copyright
+    public bool glibc           // D428: on Linux, linked with glibc, for the C libraries that call it
+    public list<string> shared  // D554: on Linux, the shared libraries of the extern blocks
+    public bool sharedLibrary   // P44: on Android, libmain.so of an app
+    // D339: the path of each source file in the debug information, and its name in a stack trace.
+    public list<string> debugPaths
+    public list<string> shownPaths
+}
+
+// The runtime of a system, in lib/ (D237).
+public string runtimeLibraryPath(string library, Target target) {
+    ret fs.joinPath(fs.joinPath(library, systemFolder(target)), target == Target.Windows ? "cromo_rt.lib" : "libcromo_rt.a")
+}
+
+// The libraries of glibc whose stubs are in lib/linux/glibc, in the order of the linker.
+public list<string> glibcLibraries() {
+    ret ["libc.so.6", "libm.so.6", "libpthread.so.0", "libdl.so.2", "librt.so.1", "ld-linux-x86-64.so.2"]
+}
+
+public string glibcFolder(string library) {
+    ret fs.joinPath(fs.joinPath(library, "linux"), "glibc")
+}
+
+public string glibcRuntimePath(string library) {
+    ret fs.joinPath(fs.joinPath(library, "linux"), "libcromo_rt_glibc.a")
+}
+
+// For Android (P43): the stubs of Bionic.
+public string bionicFolder(string library, Target target) {
+    ret fs.joinPath(fs.joinPath(library, systemFolder(target)), "bionic")
+}
+
+list<string> bionicLibraries() {
+    ret ["libc.so", "libm.so", "libdl.so", "liblog.so"]
+}
+
+// D513: the features that a program can use and the processor must have, in the
+// order of cpuFeatures in runtime/cromo_rt.c, which checks them at the start.
+list<string> checkedFeatures() {
+    ret [
+        // x86-64-v2
+        "sse3", "ssse3", "sse4.1", "sse4.2", "popcnt", "cx16", "sahf",
+        // x86-64-v3
+        "avx", "avx2", "bmi", "bmi2", "f16c", "fma", "lzcnt", "movbe", "xsave",
+        // x86-64-v4
+        "avx512f", "avx512bw", "avx512cd", "avx512dq", "avx512vl",
+        // the newer processors
+        "aes", "pclmul", "rdrnd", "rdseed", "adx", "sha", "gfni", "vaes", "vpclmulqdq", "avx512vbmi", "avx512vbmi2",
+        "avx512vnni", "avx512bitalg", "avx512vpopcntdq", "avx512ifma", "avx512fp16", "avxvnni", "avx512bf16"
+    ]
+}
+
+void removeFile(string path) {
+    try {
+        fs.remove(path)
+    } catch (Exception e) {
+    }
+}
+
+// ---- The table of the stack traces (D339) ----
+//
+// The runtime turns a return address into functions, files and lines without the
+// debug information: for the code of the program, from the label cromo_code at the
+// start of its section (codegen.cro), the points where the line or the inlined
+// calls change, each with its frames from the innermost. It is made from the DWARF
+// of the object, which has the lines on both systems, and linked as an object of
+// its own:
+//   cromo_trace_table = { code, size, count, offsets[count], chains[count],
+//                         frames[3 each: name, file, line | 1 << 31 if a caller follows],
+//                         strings }
+
+string irNumbers(list<u32> numbers) {
+    list<string> parts
+    for (u32 number in numbers) {
+        parts.add(format("i32 {}", number))
+    }
+    ret format("[{} x i32] [", numbers.len()) + join(parts, ", ") + "]"
+}
+
+// The strings of the table, each ended by a zero, and where each starts.
+struct TraceStrings {
+    list<u8> bytes
+    map<string, u32> index
+
+    u32 text(string value) {
+        if (index.contains(value)) {
+            ret index[value]
+        }
+        u32 at = u32(bytes.len())
+        for (u8 c in value.bytes()) {
+            bytes.add(c)
+        }
+        bytes.add(0)
+        index[value] = at
+        ret at
+    }
+}
+
+// The IR of the table, from the lines of the object of the program.
+bool traceTableIr(string objectPath, BackendOptions options, ref string ir, ref string error) {
+    string text
+    if (!traceLines(objectPath, ref text)) {
+        error = text
+        ret false
+    }
+    // A path compared whatever its separators: DWARF joins the folder and the name.
+    map<string, string> names
+    for (i64 i = 0; i < options.debugPaths.len(); i++) {
+        names[options.debugPaths[i].replace("\\", "/")] = options.shownPaths[i]
+    }
+    list<string> lines = text.split("\n")
+    string size = lines[0]
+    list<u32> offsets
+    list<u32> chains
+    list<u32> frames
+    map<string, u32> chainIndex
+    TraceStrings strings
+    string previous
+    bool first = true
+    i64 at = 1
+    for (at < lines.len() && lines[at].startsWith("@")) {
+        u32 address = u32(i64(lines[at].slice(1, lines[at].len())))
+        at++
+        // The frames of the address: function, file and line, a text that names the chain.
+        list<string> functions
+        list<string> files
+        list<u32> numbers
+        string chain
+        for (at < lines.len() && !lines[at].startsWith("@") && lines[at].len() > 0) {
+            list<string> parts = lines[at].split("\t")
+            at++
+            if (parts[0] == "cromo_start") {  // the entry point (codegen.cro)
+                continue
+            }
+            string key = parts[1].replace("\\", "/")
+            string file = names.contains(key) ? names[key] : parts[1]
+            functions.add(parts[0])
+            files.add(file)
+            numbers.add(u32(i64(parts[2])))
+            chain += parts[0] + "\t" + file + "\t" + parts[2] + "\n"
+        }
+        if (numbers.len() > 0 && numbers[0] == 0) {  // code of no line: the point before holds
+            continue
+        }
+        if (!first && chain == previous) {
+            continue
+        }
+        first = false
+        previous = chain
+        offsets.add(address)
+        if (numbers.len() == 0) {
+            chains.add(0xFFFFFFFF)
+            continue
+        }
+        if (chainIndex.contains(chain)) {
+            chains.add(chainIndex[chain])
+            continue
+        }
+        u32 index = u32(frames.len() / 3)
+        chainIndex[chain] = index
+        chains.add(index)
+        for (i64 i = 0; i < numbers.len(); i++) {
+            frames.add(strings.text(functions[i]))
+            frames.add(strings.text(files[i]))
+            frames.add(numbers[i] | (i + 1 < numbers.len() ? 0x80000000 : 0))
+        }
+    }
+    if (strings.bytes.len() == 0) {
+        strings.bytes.add(0)
+    }
+    ir = "@cromo_code = external global i8\n"
+    ir += "@cromo.trace.offsets = private unnamed_addr constant " + irNumbers(offsets) + "\n"
+    ir += "@cromo.trace.chains = private unnamed_addr constant " + irNumbers(chains) + "\n"
+    ir += "@cromo.trace.frames = private unnamed_addr constant " + irNumbers(frames) + "\n"
+    ir += format("@cromo.trace.strings = private unnamed_addr constant [{} x i8] c", strings.bytes.len()) + quotedBytes(strings.bytes) + "\n"
+    ir += "@cromo_trace_table = constant { ptr, i64, i64, ptr, ptr, ptr, ptr } { ptr @cromo_code, i64 " + size +
+        format(", i64 {}", offsets.len()) +
+        ", ptr @cromo.trace.offsets, ptr @cromo.trace.chains, ptr @cromo.trace.frames, ptr @cromo.trace.strings }\n"
+    ret true
+}
+
+bool emitTraceTable(string objectPath, BackendOptions options, ref Machine machine, string tablePath, ref string error) {
+    string ir
+    if (!traceTableIr(objectPath, options, ref ir, ref error)) {
+        ret false
+    }
+    string problem
+    if (!machine.emitOther(ir, "cromo.trace", tablePath, ref problem)) {
+        error = "internal error: the table of the stack traces is not valid:\n" + problem
+        ret false
+    }
+    ret true
+}
+
+// The functions of kernel32 that the runtime imports: the `__imp_` symbols that
+// it leaves undefined, because it declares them with `dllimport`.
+bool runtimeImports(string library, ref list<string> names, ref string error) {
+    string path = runtimeLibraryPath(library, Target.Windows)
+    list<string> found
+    string problem
+    if (!archiveNames(path, ref found, ref problem)) {
+        error = "cannot read the runtime " + path + ": " + problem
+        ret false
+    }
+    for (string name in found) {
+        if ((name.startsWith("U__imp_") || name.startsWith("u__imp_")) && name.len() > 7) {
+            names.add(name.slice(7, name.len()))
+        }
+    }
+    ret true
+}
+
+// ---- The resources of an executable of Windows ----
+
+void put16(ref list<u8> out, u32 value) {
+    out.add(u8(value & 0xFF))
+    out.add(u8((value >> 8) & 0xFF))
+}
+
+void put32(ref list<u8> out, u32 value) {
+    put16(ref out, value & 0xFFFF)
+    put16(ref out, value >> 16)
+}
+
+void putAll(ref list<u8> out, list<u8> bytes) {
+    for (u8 c in bytes) {
+        out.add(c)
+    }
+}
+
+// A text of UTF-8 in UTF-16, ended by a zero, as the resources of Windows keep it.
+list<u8> wideText(string text) {
+    list<u8> out
+    list<u8> bytes = text.bytes()
+    i64 i = 0
+    for (i < bytes.len()) {
+        u32 c = u32(bytes[i])
+        i64 more = c >= 0xF0 ? 3 : c >= 0xE0 ? 2 : c >= 0xC0 ? 1 : 0
+        u32 point = more == 3 ? c & 0x07 : more == 2 ? c & 0x0F : more == 1 ? c & 0x1F : c
+        for (i64 k = 1; k <= more && i + k < bytes.len(); k++) {
+            point = (point << 6) | (u32(bytes[i + k]) & 0x3F)
+        }
+        i += more + 1
+        if (point >= 0x10000) {
+            point -= 0x10000
+            put16(ref out, 0xD800 + (point >> 10))
+            put16(ref out, 0xDC00 + (point & 0x3FF))
+        } else {
+            put16(ref out, point)
+        }
+    }
+    put16(ref out, 0)
+    ret out
+}
+
+// A block of the version of an executable: its length, the length of its value, 1 for
+// a text and 0 for bytes, its name, its value and the blocks inside it, each
+// starting at a multiple of 4 bytes.
+list<u8> versionBlock(string name, list<u8> value, bool text, list<list<u8>> inside) {
+    list<u8> out = [0, 0, 0, 0, 0, 0]
+    putAll(ref out, wideText(name))
+    for (out.len() % 4 != 0) {
+        out.add(0)
+    }
+    putAll(ref out, value)
+    for (list<u8> block in inside) {
+        for (out.len() % 4 != 0) {
+            out.add(0)
+        }
+        putAll(ref out, block)
+    }
+    i64 valueLength = text ? value.len() / 2 : value.len()
+    out[0] = u8(out.len() & 0xFF)
+    out[1] = u8((out.len() >> 8) & 0xFF)
+    out[2] = u8(valueLength & 0xFF)
+    out[3] = u8((valueLength >> 8) & 0xFF)
+    out[4] = text ? 1 : 0
+    ret out
+}
+
+// The name of a file without its folder, and without its extension.
+string stemOf(string path) {
+    string name = fs.fileName(path)
+    i64 point = name.findLast(".")
+    ret point > 0 ? name.slice(0, point) : name
+}
+
+// D557: the resource of the version, as rc writes a VERSIONINFO: the numbers, and
+// the texts that Explorer shows in the properties of the file.
+list<u8> versionResource(BackendOptions options) {
+    list<u32> numbers = [0, 0, 0, 0]
+    string version = options.version.len() == 0 ? "0.0.0" : options.version
+    i64 part = 0
+    for (u8 c in version.bytes()) {
+        if (c == '.') {
+            part++
+        } else if (part < 4) {
+            numbers[part] = (numbers[part] * 10 + (u32(c) - 48)) & 0xFFFF
+        }
+    }
+    list<u8> fixed
+    u32 high = (numbers[0] << 16) | numbers[1]
+    u32 low = (numbers[2] << 16) | numbers[3]
+    // VS_FIXEDFILEINFO: its mark and its version, the version of the file and of the
+    // product, no flags, for Windows NT, an application.
+    list<u32> values = [0xFEEF04BD, 0x00010000, high, low, high, low, 0x3F, 0, 0x00040004, 1, 0, 0, 0]
+    for (u32 value in values) {
+        put32(ref fixed, value)
+    }
+
+    string file = fs.fileName(options.outputPath)
+    string name = stemOf(options.outputPath)
+    list<string> keys
+    list<string> texts
+    if (options.company.len() > 0) {
+        keys.add("CompanyName")
+        texts.add(options.company)
+    }
+    keys.add("FileDescription")
+    texts.add(options.description.len() == 0 ? name : options.description)
+    keys.add("FileVersion")
+    texts.add(version)
+    keys.add("InternalName")
+    texts.add(name)
+    if (options.copyright.len() > 0) {
+        keys.add("LegalCopyright")
+        texts.add(options.copyright)
+    }
+    keys.add("OriginalFilename")
+    texts.add(file)
+    keys.add("ProductName")
+    texts.add(name)
+    keys.add("ProductVersion")
+    texts.add(version)
+    list<list<u8>> none
+    list<u8> empty
+    list<list<u8>> strings
+    for (i64 i = 0; i < keys.len(); i++) {
+        strings.add(versionBlock(keys[i], wideText(texts[i]), true, none))
+    }
+    // The texts are in English of the United States, in Unicode: 0409 and 04B0.
+    list<list<u8>> tables
+    tables.add(versionBlock("040904B0", empty, true, strings))
+    list<u8> language = [0x09, 0x04, 0xB0, 0x04]
+    list<list<u8>> translations
+    translations.add(versionBlock("Translation", language, false, none))
+    list<list<u8>> blocks
+    blocks.add(versionBlock("StringFileInfo", empty, true, tables))
+    blocks.add(versionBlock("VarFileInfo", empty, true, translations))
+    ret versionBlock("VS_VERSION_INFO", fixed, false, blocks)
+}
+
+// D557: the manifest of every executable: started with the rights of who starts it,
+// made for Windows 10 and 11, with the texts of the system in UTF-8 and the long
+// paths; a program of the windows draws its pixels on every screen by itself.
+string manifestResource(bool window) {
+    string text = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n" +
+        "<assembly xmlns=\"urn:schemas-microsoft-com:asm.v1\" manifestVersion=\"1.0\">\r\n" +
+        "  <trustInfo xmlns=\"urn:schemas-microsoft-com:asm.v3\">\r\n" +
+        "    <security>\r\n" +
+        "      <requestedPrivileges>\r\n" +
+        "        <requestedExecutionLevel level=\"asInvoker\" uiAccess=\"false\"/>\r\n" +
+        "      </requestedPrivileges>\r\n" +
+        "    </security>\r\n" +
+        "  </trustInfo>\r\n" +
+        "  <compatibility xmlns=\"urn:schemas-microsoft-com:compatibility.v1\">\r\n" +
+        "    <application>\r\n" +
+        "      <supportedOS Id=\"{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}\"/>\r\n" +
+        "    </application>\r\n" +
+        "  </compatibility>\r\n" +
+        "  <application xmlns=\"urn:schemas-microsoft-com:asm.v3\">\r\n" +
+        "    <windowsSettings>\r\n" +
+        "      <activeCodePage xmlns=\"http://schemas.microsoft.com/SMI/2019/WindowsSettings\">UTF-8</activeCodePage>\r\n" +
+        "      <longPathAware xmlns=\"http://schemas.microsoft.com/SMI/2016/WindowsSettings\">true</longPathAware>\r\n"
+    if (window) {
+        text += "      <dpiAware xmlns=\"http://schemas.microsoft.com/SMI/2005/WindowsSettings\">true/pm</dpiAware>\r\n" +
+            "      <dpiAwareness xmlns=\"http://schemas.microsoft.com/SMI/2016/WindowsSettings\">PerMonitorV2</dpiAwareness>\r\n"
+    }
+    text += "    </windowsSettings>\r\n" + "  </application>\r\n" + "</assembly>\r\n"
+    ret text
+}
+
+u32 u16At(list<u8> data, i64 at) {
+    ret u32(data[at]) | (u32(data[at + 1]) << 8)
+}
+
+u32 u32At(list<u8> data, i64 at) {
+    ret u16At(data, at) | (u16At(data, at + 2) << 16)
+}
+
+// A resource: its header of 32 bytes, with a number for the type and one for the
+// name, the language neutral, and its data aligned to 4 bytes.
+void resource(ref list<u8> out, u32 type, u32 name, u32 flags, list<u8> bytes) {
+    put32(ref out, u32(bytes.len()))
+    put32(ref out, 32)
+    put16(ref out, 0xFFFF)
+    put16(ref out, type)
+    put16(ref out, 0xFFFF)
+    put16(ref out, name)
+    put32(ref out, 0)
+    put16(ref out, flags)
+    put16(ref out, 0)
+    put32(ref out, 0)
+    put32(ref out, 0)
+    putAll(ref out, bytes)
+    for (out.len() % 4 != 0) {
+        out.add(0)
+    }
+}
+
+// The resources of the executable, in a .res file as rc writes it, which lld-link
+// converts and links: its manifest and its version (D557), and its icon (D425),
+// where each image of the .ico is an RT_ICON resource, and their list an
+// RT_GROUP_ICON.
+bool writeResources(BackendOptions options, string resPath, ref string error) {
+    list<u8> data
+    if (options.icon.len() > 0) {
+        try {
+            data = fs.readBytes(options.icon)
+        } catch (Exception e) {
+            error = "cannot read the icon " + options.icon + ": " + e.message()
+            ret false
+        }
+    }
+    // The header: 0, 1 for an icon and the number of images, then 16 bytes for each,
+    // with the size of its data and where it starts.
+    i64 count = data.len() >= 6 && u16At(data, 0) == 0 && u16At(data, 2) == 1 ? i64(u16At(data, 4)) : 0
+    bool valid = options.icon.len() == 0 || (count > 0 && data.len() >= 6 + 16 * count)
+    for (i64 i = 0; valid && i < count; i++) {
+        i64 size = i64(u32At(data, 6 + 16 * i + 8))
+        i64 start = i64(u32At(data, 6 + 16 * i + 12))
+        valid = size > 0 && start <= data.len() && size <= data.len() - start
+    }
+    if (!valid) {
+        error = "the icon " + options.icon + " is not a .ico file"
+        ret false
+    }
+
+    list<u8> out
+    list<u8> empty
+    resource(ref out, 0, 0, 0, empty)  // a .res file starts with an empty resource
+    // The version only when cromo.mod says something of the program: one with the name
+    // of the file alone and 0.0.0 says nothing, and Bitdefender takes a small
+    // executable of --release that has it for malware.
+    bool described = options.version.len() > 0 || options.company.len() > 0 || options.description.len() > 0 ||
+        options.copyright.len() > 0
+    if (described) {
+        resource(ref out, 16, 1, 0x30, versionResource(options))  // RT_VERSION
+    }
+    resource(ref out, 24, 1, 0x30, manifestResource(options.window).bytes())  // RT_MANIFEST, the one of the process
+    list<u8> group
+    put16(ref group, 0)
+    put16(ref group, 1)
+    put16(ref group, u32(count))
+    for (i64 i = 0; i < count; i++) {
+        // RT_ICON, moveable and discardable; in the group the same 12 bytes of the
+        // image, with the number of its resource instead of where it starts.
+        i64 start = i64(u32At(data, 6 + 16 * i + 12))
+        i64 size = i64(u32At(data, 6 + 16 * i + 8))
+        list<u8> image
+        for (i64 k = 0; k < size; k++) {
+            image.add(data[start + k])
+        }
+        resource(ref out, 3, u32(i + 1), 0x1010, image)
+        for (i64 k = 0; k < 12; k++) {
+            group.add(data[6 + 16 * i + k])
+        }
+        put16(ref group, u32(i + 1))
+    }
+    if (options.icon.len() > 0) {
+        resource(ref out, 14, 1, 0x1030, group)  // RT_GROUP_ICON, pure too
+    }
+    try {
+        fs.writeBytes(resPath, out)
+    } catch (Exception e) {
+        error = "cannot write " + resPath + ": " + e.message()
+        ret false
+    }
+    ret true
+}
+
+// ---- The linker ----
+
+bool runLld(list<string> args, ref string error) {
+    string messages
+    if (!link(args, ref messages)) {
+        error = "linking failed:\n" + messages
+        ret false
+    }
+    ret true
+}
+
+bool linkWindows(string objectPath, string tablePath, string runtimePath, BackendOptions options, ref list<string> temporaries,
+    ref string error) {
+    // The DLLs of the extern blocks, and kernel32 for the runtime.
+    list<ImportLibrary> imports = options.imports
+    i64 kernel32 = -1
+    for (i64 i = 0; i < imports.len() && kernel32 < 0; i++) {
+        if (imports[i].dll == "kernel32.dll") {
+            kernel32 = i
+        }
+    }
+    if (kernel32 < 0) {
+        ImportLibrary added
+        added.dll = "kernel32.dll"
+        imports.add(move added)
+        kernel32 = imports.len() - 1
+    }
+    list<string> needed
+    if (!runtimeImports(options.library, ref needed, ref error)) {
+        ret false
+    }
+    for (string name in needed) {
+        if (!hasText(imports[kernel32].functions, name)) {
+            imports[kernel32].functions.add(name)
+        }
+    }
+
+    // No C runtime (D19): our own entry point and no default libraries.
+    list<string> args = [
+        "lld-link", "/nologo", "/out:" + options.outputPath, "/entry:cromo_start",
+        options.window ? "/subsystem:windows" : "/subsystem:console",  // D426
+        "/machine:x64", "/nodefaultlib", objectPath, tablePath, runtimePath
+    ]
+    // D338: the PDB next to the executable. /debug would keep the code that nothing
+    // calls. The DWARF, made for the table of the stack traces, stays in the
+    // executable too: without it Bitdefender takes the small ones for malware.
+    if (options.debugInfo) {
+        args.add("/debug")
+        args.add("/opt:ref")
+    }
+    for (string archive in options.archives) {
+        args.add(archive)
+    }
+    string resources = options.outputPath + ".res"
+    temporaries.add(resources)
+    if (!writeResources(options, resources, ref error)) {
+        ret false
+    }
+    args.add(resources)
+    for (ImportLibrary item in imports) {
+        string path = options.outputPath + "." + item.dll.slice(0, item.dll.len() - 4) + ".lib"
+        temporaries.add(path)
+        string problem
+        if (!writeImportLibrary(item.dll, item.functions, path, ref problem)) {
+            error = "cannot write the import library of " + item.dll + ": " + problem
+            ret false
+        }
+        args.add(path)
+    }
+    ret runLld(args, ref error)
+}
+
+// An executable for Android (P43): position independent, for the dynamic loader of
+// Android, with the stubs of Bionic before the runtime, as for glibc. Its
+// segments are aligned to 16 KB, the pages of the newer devices.
+//
+// The program of an app (P44) is libmain.so, which exports only SDL_main of the
+// runtime: the activity of SDL calls it after loading libSDL3.so.
+bool linkAndroid(string objectPath, string tablePath, string runtimePath, BackendOptions options, ref list<string> temporaries,
+    ref string error) {
+    list<string> args = ["ld.lld", "-o", options.outputPath, "-z", "max-page-size=16384", "--eh-frame-hdr"]
+    if (options.sharedLibrary) {
+        string script = options.outputPath + ".map"
+        temporaries.add(script)
+        try {
+            fs.writeText(script, "{\n  global: SDL_main;\n  local: *;\n};\n")
+        } catch (Exception e) {
+            error = "cannot write " + script + ": " + e.message()
+            ret false
+        }
+        for (string arg in ["-shared", "-soname", "libmain.so", "--no-undefined", "--version-script"]) {
+            args.add(arg)
+        }
+        args.add(script)
+    } else {
+        for (string arg in ["-e", "_start", "-pie", "--dynamic-linker=/system/bin/linker64"]) {
+            args.add(arg)
+        }
+    }
+    args.add(objectPath)
+    args.add(tablePath)
+    if (!options.debugInfo) {
+        args.add("--strip-debug")
+    }
+    for (string archive in options.archives) {
+        args.add(archive)
+    }
+    args.add("--as-needed")
+    for (string stub in bionicLibraries()) {
+        args.add(fs.joinPath(bionicFolder(options.library, options.target), stub))
+    }
+    args.add("--no-as-needed")
+    args.add(runtimePath)
+    ret runLld(args, ref error)
+}
+
+// A static executable at a fixed address, without the dynamic loader (D142, D145).
+// The static libraries of the extern blocks come before the runtime, because
+// their C code can call memcpy and the other functions of mem_x64.S.
+//
+// With glibc (D428), an executable at a fixed address for the dynamic loader of
+// the system, with the stubs of glibc before the runtime for glibc: a function of
+// C that the runtime has too, as strlen, is that of glibc for the C libraries.
+// Only the libraries of glibc that are used are needed.
+bool linkLinux(string objectPath, string tablePath, string runtimePath, BackendOptions options, ref string error) {
+    // --eh-frame-hdr: the index of the unwind tables, for the stack traces (D375).
+    list<string> args = [
+        "ld.lld", "-o", options.outputPath, "-e", "_start",
+        options.glibc ? "--dynamic-linker=/lib64/ld-linux-x86-64.so.2" : "-static",
+        "--eh-frame-hdr", objectPath, tablePath
+    ]
+    if (!options.debugInfo) {
+        args.add("--strip-debug")  // D338: only the table of the stack traces
+    }
+    for (string archive in options.archives) {
+        args.add(archive)
+    }
+    if (!options.glibc) {
+        args.add(runtimePath)
+        ret runLld(args, ref error)
+    }
+    if (options.shared.len() > 0) {
+        // D554: looked for next to the executable when it starts; what they need of
+        // other libraries, as that of C++, is found by the loader of the system.
+        args.add("-rpath=$ORIGIN")
+        args.add("--allow-shlib-undefined")
+        for (string library in options.shared) {
+            args.add(library)
+        }
+    }
+    args.add("--as-needed")
+    for (string stub in glibcLibraries()) {
+        args.add(fs.joinPath(glibcFolder(options.library), stub))
+    }
+    args.add("--no-as-needed")
+    args.add(glibcRuntimePath(options.library))
+    ret runLld(args, ref error)
+}
+
+// D513: the processor of --cpu and its features for LLVM; native is the one of this
+// computer, with what it has and lacks. ARM64 is ARMv8.0, whose atomics call the
+// functions of mem_arm64.S, which use LSE when the processor has it (D407).
+string processorOf(BackendOptions options, ref string features) {
+    features = ""
+    if (isArm64(options.target)) {
+        features = "+outline-atomics"
+        ret "generic"
+    }
+    if (options.cpu.len() == 0) {
+        ret "x86-64"
+    }
+    if (options.cpu != "native") {
+        ret options.cpu
+    }
+    features = hostFeatures()
+    ret hostProcessor()
+}
+
+// Reads the textual IR with LLVM, optimizes it, generates machine code and links
+// the executable with LLD (D28). On failure it returns false and puts the reason
+// in `error`. LLVM is started before: startLlvm().
+public bool buildExecutable(string irText, string moduleName, BackendOptions options, ref Progress steps, ref string error) {
+    Machine machine
+    string problem
+    if (!machine.parse(irText, moduleName, ref problem)) {
+        error = "internal error: the generated IR is not valid:\n" + problem
+        ret false
+    }
+    string features
+    string cpu = processorOf(options, ref features)
+    // Android: position independent code, as its executables and libraries (P43).
+    if (!machine.target(targetTriple(options.target), cpu, features, options.optLevel, isAndroid(options.target), ref error)) {
+        ret false
+    }
+    machine.adopt()
+    if (isAndroid(options.target)) {
+        machine.setPic(!options.objectOnly && !options.sharedLibrary)
+    }
+    if (options.cpu.len() > 0 && !isArm64(options.target)) {
+        u64 needs = 0
+        list<string> checked = checkedFeatures()
+        for (i64 i = 0; i < checked.len(); i++) {
+            if (machine.hasFeature(checked[i])) {
+                needs = needs | (u64(1) << u64(i))
+            }
+        }
+        machine.requireProcessor(needs, options.cpu)
+    }
+    if (!machine.verify(ref problem)) {
+        error = "internal error: the generated IR fails LLVM verification:\n" + problem
+        ret false
+    }
+
+    if (options.optLevel > 0) {
+        steps.step("Optimizing", false)
+    }
+    machine.optimize(options.optLevel)
+    // D339: the table of the stack traces counts from cromo_code, at the start of
+    // .text: every function stays there, also those that LLVM finds cold and would
+    // move to .text.unlikely.
+    machine.setSections(".text")
+
+    bool linux = isLinux(options.target)
+    if (options.objectOnly) {
+        ret emitObject(ref machine, options.outputPath, ref error)
+    }
+    string objectPath = options.outputPath + (linux ? ".o" : ".obj")
+    string runtimePath = runtimeLibraryPath(options.library, options.target)  // in lib/ (D237)
+    steps.step("Writing the object", false)
+    if (!emitObject(ref machine, objectPath, ref error)) {
+        ret false
+    }
+    string tablePath = options.outputPath + (linux ? ".trace.o" : ".trace.obj")
+    if (!emitTraceTable(objectPath, options, ref machine, tablePath, ref error)) {
+        removeFile(objectPath)
+        removeFile(tablePath)
+        ret false
+    }
+
+    steps.step("Linking " + fs.fileName(options.outputPath), true)
+    list<string> temporaries
+    bool linked = false
+    if (isAndroid(options.target)) {
+        linked = linkAndroid(objectPath, tablePath, runtimePath, options, ref temporaries, ref error)
+    } else if (linux) {
+        linked = linkLinux(objectPath, tablePath, runtimePath, options, ref error)
+    } else {
+        linked = linkWindows(objectPath, tablePath, runtimePath, options, ref temporaries, ref error)
+    }
+    for (string path in temporaries) {
+        removeFile(path)
+    }
+    removeFile(tablePath)
+    if (!options.keepObject) {
+        removeFile(objectPath)
+    }
+    ret linked
+}
+
+bool emitObject(ref Machine machine, string path, ref string error) {
+    string problem
+    if (!machine.emit(path, ref problem)) {
+        error = "cannot write " + path + ": " + problem
+        ret false
+    }
+    ret true
+}
+
+// D513: whether `cpu` is native or a processor of x86-64 that LLVM knows; if not,
+// false with the reason in `error`.
+public bool validCpu(string cpu, ref string error) {
+    if (cpu == "native" || validProcessor(targetTriple(Target.Windows), cpu)) {
+        ret true
+    }
+    error = "unknown processor for --cpu: " + cpu +
+        " (x86-64, x86-64-v2, x86-64-v3, x86-64-v4, native, or a processor of x86-64 as haswell or znver4)"
+    ret false
+}
+
+public bool hasText(list<string> items, string text) {
+    for (string item in items) {
+        if (item == text) {
+            ret true
+        }
+    }
+    ret false
+}

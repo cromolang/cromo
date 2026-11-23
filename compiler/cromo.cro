@@ -1,0 +1,7 @@
+// cromo, written in Cromo (D44, D291): the compiler of compiler/ with LLVM and LLD
+// inside it.
+import driver
+
+i32 main(list<string> args) {
+    ret command(args)
+}

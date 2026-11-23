@@ -21,3 +21,7 @@ tests/m36/sdl/*.lib
 # The build of cromo for Linux (build-linux.sh), and the archives (tools/package.ps1)
 build-linux/
 dist/
+
+# LLVM, LLD and the runtime of C++ for the compiler in Cromo (tools/llvm-archive.ps1)
+compiler/*.lib
+compiler/*.a

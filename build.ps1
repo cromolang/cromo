@@ -53,4 +53,12 @@ if ($LASTEXITCODE) { exit $LASTEXITCODE }
 & (Join-Path $build 'cromo.exe') build --release (Join-Path $root 'compiler\main.cro') -o (Join-Path $build 'cromo-fmt.exe')
 if ($LASTEXITCODE) { exit $LASTEXITCODE }
 & (Join-Path $build 'cromo.exe') build --release (Join-Path $root 'compiler\check.cro') -o (Join-Path $build 'cromo-check.exe')
+if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+# cromo written in Cromo (D291), with LLVM and LLD inside it: compiled by the cromo in
+# C++ into build\stage1\cromo.exe, which finds build\lib as that one does.
+& (Join-Path $root 'tools\llvm-archive.ps1') -LlvmRoot $LlvmRoot
+if ($LASTEXITCODE) { exit $LASTEXITCODE }
+New-Item -ItemType Directory -Force (Join-Path $build 'stage1') | Out-Null
+& (Join-Path $build 'cromo.exe') build --release (Join-Path $root 'compiler\cromo.cro') -o (Join-Path $build 'stage1\cromo.exe')
 exit $LASTEXITCODE

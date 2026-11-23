@@ -1,0 +1,15 @@
+// The terminal of Windows, for the colors of the steps (D568).
+import unsafe
+
+extern "kernel32" {
+    i64 GetStdHandle(u32 which)
+    i32 GetConsoleMode(i64 console, ref u32 mode)
+    i32 SetConsoleMode(i64 console, u32 mode)
+}
+
+// Whether the standard error is a console, which then takes the colors of ANSI.
+bool errorIsTerminal() {
+    i64 console = GetStdHandle(0xFFFFFFF4)  // STD_ERROR_HANDLE
+    u32 mode = 0
+    ret GetConsoleMode(console, ref mode) != 0 && SetConsoleMode(console, mode | 4) != 0  // ENABLE_VIRTUAL_TERMINAL_PROCESSING
+}

@@ -605,6 +605,7 @@ Each milestone lists the decisions still open that are needed **before** writing
 | **M95** | Local references, the copy of an argument that overlaps, `public const`, `==` on structs, `Option<T>` and `extend` | none: D562-D568, P91 |
 | **M96** | Towards a stable language: the reserved words, the proposals confirmed, the cache of the heap for each thread on Linux, the guide as a book for a printer | none: D569-D571 |
 | **M97** | The generation of the code in Cromo: the IR of LLVM as text, the same as the C++ on every test | none: D572 |
+| **M98** | `cromo` in Cromo: the way to LLVM and to LLD, `cromo build` with the same executables as the C++, then the other commands | none: D291, P92 |
 | **Last** | Compiler written in Cromo that compiles itself and makes the same archives, when the language is mature (§2, D147, D290, D291) | |
 
 Generics come before containers because `list<T>` is written in Cromo as a generic struct (D37, D39). After M9 the order is D152: the tools come first, because they help to write the library. `cromo update` (D153) downloads the versions from the manifests and the archives of cromolang.org (D285–D289): it came in M28, once the archives were published and the library could download and open them (D403).

@@ -1,0 +1,2 @@
+// What cromo asks of the system it runs on and the library does not give: its
+// functions are in host_windows.cro (D202).

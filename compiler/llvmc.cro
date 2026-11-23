@@ -1,0 +1,407 @@
+// LLVM and LLD for the compiler (D291): the functions of the C API of LLVM that it
+// calls, and those of compiler/shim/shim.cpp for what the C API does not give. They
+// are in one static library, `cromollvm`, made by the build of cromo with the
+// libraries of LLVM, of LLD and the runtime of C++. An object of LLVM is an address.
+import unsafe
+
+extern "cromollvm" {
+    // The shim.
+    i32 shim_start()
+    void shim_free(addr text)
+    void shim_optimize(addr module, addr machine, i32 level)
+    void shim_set_pic(addr module, i32 pie)
+    i32 shim_has_feature(addr machine, addr feature)
+    i32 shim_valid_cpu(addr triple, addr cpu)
+    addr shim_link(addr arguments, i64 size, ref i32 code, ref i64 length)
+    addr shim_trace(addr objectPath, ref i32 status, ref i64 length)
+    addr shim_archive_names(addr path, ref i32 status, ref i64 length)
+    addr shim_dll_exports(addr path, ref i32 status, ref i64 length)
+    addr shim_shared_names(addr path, ref i32 status, ref i64 length)
+    addr shim_import_library(addr dll, addr names, i64 size, addr path, ref i32 status, ref i64 length)
+
+    // LLVM-C: the targets.
+    void LLVMInitializeX86TargetInfo()
+    void LLVMInitializeX86Target()
+    void LLVMInitializeX86TargetMC()
+    void LLVMInitializeX86AsmPrinter()
+    void LLVMInitializeX86AsmParser()
+    void LLVMInitializeAArch64TargetInfo()
+    void LLVMInitializeAArch64Target()
+    void LLVMInitializeAArch64TargetMC()
+    void LLVMInitializeAArch64AsmPrinter()
+    void LLVMInitializeAArch64AsmParser()
+    i32 LLVMGetTargetFromTriple(addr triple, ref i64 target, ref i64 message)
+    addr LLVMCreateTargetMachine(addr target, addr triple, addr cpu, addr features, i32 level, i32 relocation, i32 codeModel)
+    void LLVMDisposeTargetMachine(addr machine)
+    addr LLVMCreateTargetDataLayout(addr machine)
+    void LLVMDisposeTargetData(addr layout)
+    i32 LLVMTargetMachineEmitToFile(addr machine, addr module, addr path, i32 fileType, ref i64 message)
+    addr LLVMGetHostCPUName()
+    addr LLVMGetHostCPUFeatures()
+    void LLVMGetVersion(ref u32 major, ref u32 minor, ref u32 patch)
+
+    // LLVM-C: the modules.
+    addr LLVMContextCreate()
+    void LLVMContextDispose(addr context)
+    addr LLVMCreateMemoryBufferWithMemoryRangeCopy(addr data, i64 length, addr name)
+    i32 LLVMParseIRInContext(addr context, addr buffer, ref i64 module, ref i64 message)
+    void LLVMDisposeModule(addr module)
+    void LLVMDisposeMessage(addr message)
+    void LLVMSetTarget(addr module, addr triple)
+    void LLVMSetModuleDataLayout(addr module, addr layout)
+    i32 LLVMVerifyModule(addr module, i32 action, ref i64 message)
+    addr LLVMGetFirstFunction(addr module)
+    addr LLVMGetNextFunction(addr function)
+    addr LLVMGetNamedFunction(addr module, addr name)
+    i32 LLVMIsDeclaration(addr value)
+    void LLVMSetSection(addr value, addr section)
+
+    // LLVM-C: the instructions that the compiler adds (D513).
+    void LLVMAddTargetDependentFunctionAttr(addr function, addr name, addr value)
+    addr LLVMInt64TypeInContext(addr context)
+    addr LLVMVoidTypeInContext(addr context)
+    addr LLVMPointerTypeInContext(addr context, u32 space)
+    addr LLVMFunctionType(addr result, addr parameters, u32 count, i32 variadic)
+    addr LLVMAddFunction(addr module, addr name, addr type)
+    addr LLVMCreateBuilderInContext(addr context)
+    void LLVMDisposeBuilder(addr builder)
+    addr LLVMGetEntryBasicBlock(addr function)
+    addr LLVMGetFirstInstruction(addr block)
+    addr LLVMGetNextInstruction(addr instruction)
+    void LLVMPositionBuilderBeforeInstrAndDbgRecords(addr builder, addr instruction)
+    addr LLVMInstructionGetDebugLoc(addr instruction)
+    void LLVMSetCurrentDebugLocation2(addr builder, addr location)
+    addr LLVMBuildGlobalString(addr builder, addr text, addr name)
+    addr LLVMConstInt(addr type, u64 value, i32 signExtend)
+    addr LLVMBuildCall2(addr builder, addr type, addr function, addr arguments, u32 count, addr name)
+}
+
+// The text of C at an address, up to its zero.
+string textAt(addr text) {
+    if (text == addr(0)) {
+        ret ""
+    }
+    i64 length = 0
+    for (copyAt<u8>(offset(text, length)) != 0) {
+        length++
+    }
+    ret string(text, length)
+}
+
+// A text that the shim gives, freed.
+string taken(addr text, i64 length) {
+    string result = string(text, length)
+    shim_free(text)
+    ret result
+}
+
+// A message of LLVM, freed.
+string message(addr text) {
+    string result = textAt(text)
+    if (text != addr(0)) {
+        LLVMDisposeMessage(text)
+    }
+    ret result
+}
+
+// What every program that uses LLVM does first: the runtime of C++ on Windows, and
+// the targets of cromo, whatever the system it runs on: x86-64 and AArch64 (D405).
+// The parsers of their assembly read the instructions written inline.
+public bool startLlvm() {
+    if (shim_start() != 0) {
+        ret false
+    }
+    LLVMInitializeX86TargetInfo()
+    LLVMInitializeX86Target()
+    LLVMInitializeX86TargetMC()
+    LLVMInitializeX86AsmPrinter()
+    LLVMInitializeX86AsmParser()
+    LLVMInitializeAArch64TargetInfo()
+    LLVMInitializeAArch64Target()
+    LLVMInitializeAArch64TargetMC()
+    LLVMInitializeAArch64AsmPrinter()
+    LLVMInitializeAArch64AsmParser()
+    ret true
+}
+
+// The module of an IR, checked, with its machine: what LLVM keeps of a program
+// while the compiler makes its object.
+public struct Machine {
+    addr context = addr(0)
+    addr module = addr(0)
+    addr machine = addr(0)
+    public string triple
+
+    ~Machine() {
+        if (module != addr(0)) {
+            LLVMDisposeModule(module)
+        }
+        if (machine != addr(0)) {
+            LLVMDisposeTargetMachine(machine)
+        }
+        if (context != addr(0)) {
+            LLVMContextDispose(context)
+        }
+    }
+
+    // Reads the IR. False, with the reason, when LLVM refuses it.
+    public bool parse(string ir, string name, ref string error) {
+        context = LLVMContextCreate()
+        addr buffer = LLVMCreateMemoryBufferWithMemoryRangeCopy(ir.cstring(), ir.len(), name.cstring())
+        i64 parsed = 0
+        i64 text = 0
+        if (LLVMParseIRInContext(context, buffer, ref parsed, ref text) != 0) {
+            error = message(addr(text))
+            ret false
+        }
+        module = addr(parsed)
+        ret true
+    }
+
+    // The machine of a triple: its processor and features, the level of the
+    // generation of the code from 0 to 3, position independent code or not.
+    public bool target(string wanted, string cpu, string features, i32 level, bool pic, ref string error) {
+        triple = wanted
+        i64 found = 0
+        i64 text = 0
+        if (LLVMGetTargetFromTriple(triple.cstring(), ref found, ref text) != 0) {
+            error = "target not available: " + message(addr(text))
+            ret false
+        }
+        machine = LLVMCreateTargetMachine(addr(found), triple.cstring(), cpu.cstring(), features.cstring(), level, pic ? 2 : 0, 0)
+        if (machine == addr(0)) {
+            error = "cannot create the target machine for " + triple
+            ret false
+        }
+        ret true
+    }
+
+    // The module is for the machine: its triple and its layout of the data.
+    public void adopt() {
+        LLVMSetTarget(module, triple.cstring())
+        addr layout = LLVMCreateTargetDataLayout(machine)
+        LLVMSetModuleDataLayout(module, layout)
+        LLVMDisposeTargetData(layout)
+    }
+
+    public void setPic(bool pie) {
+        shim_set_pic(module, pie ? 1 : 0)
+    }
+
+    public bool hasFeature(string feature) const {
+        ret shim_has_feature(machine, feature.cstring()) != 0
+    }
+
+    // False, with what LLVM found, when the module is not valid.
+    public bool verify(ref string error) {
+        i64 text = 0
+        bool broken = LLVMVerifyModule(module, 2, ref text) != 0
+        string found = message(addr(text))
+        if (broken) {
+            error = found
+        }
+        ret !broken
+    }
+
+    public void optimize(i32 level) {
+        shim_optimize(module, machine, level)
+    }
+
+    // Every function of the module in one section.
+    public void setSections(string section) {
+        addr function = LLVMGetFirstFunction(module)
+        for (function != addr(0)) {
+            if (LLVMIsDeclaration(function) == 0) {
+                LLVMSetSection(function, section.cstring())
+            }
+            function = LLVMGetNextFunction(function)
+        }
+    }
+
+    // D513: cromo_start, compiled for x86-64, first asks the runtime whether the
+    // processor has the features of --cpu, which the rest of the program can use
+    // anywhere: LLVM does not bring the functions of the program into it. `needs`
+    // has a bit for each feature that the runtime checks.
+    public void requireProcessor(u64 needs, string cpu) {
+        addr start = LLVMGetNamedFunction(module, "cromo_start".cstring())
+        if (start == addr(0) || LLVMIsDeclaration(start) != 0 || needs == 0) {
+            ret
+        }
+        LLVMAddTargetDependentFunctionAttr(start, "target-cpu".cstring(), "x86-64".cstring())
+        LLVMAddTargetDependentFunctionAttr(start, "target-features".cstring(), "".cstring())
+        addr wide = LLVMInt64TypeInContext(context)
+        addr parameters = alloc(24)
+        put<addr>(parameters, wide)
+        put<addr>(offset(parameters, 8), LLVMPointerTypeInContext(context, 0))
+        put<addr>(offset(parameters, 16), wide)
+        addr type = LLVMFunctionType(LLVMVoidTypeInContext(context), parameters, 3, 0)
+        addr check = LLVMGetNamedFunction(module, "cromo_cpu_check".cstring())
+        if (check == addr(0)) {
+            check = LLVMAddFunction(module, "cromo_cpu_check".cstring(), type)
+        }
+        addr builder = LLVMCreateBuilderInContext(context)
+        addr first = LLVMGetFirstInstruction(LLVMGetEntryBasicBlock(start))
+        LLVMPositionBuilderBeforeInstrAndDbgRecords(builder, first)
+        addr instruction = first
+        for (instruction != addr(0)) {
+            addr location = LLVMInstructionGetDebugLoc(instruction)
+            if (location != addr(0)) {
+                LLVMSetCurrentDebugLocation2(builder, location)
+                break
+            }
+            instruction = LLVMGetNextInstruction(instruction)
+        }
+        addr name = LLVMBuildGlobalString(builder, cpu.cstring(), "cromo.cpu".cstring())
+        put<addr>(parameters, LLVMConstInt(wide, needs, 0))
+        put<addr>(offset(parameters, 8), name)
+        put<addr>(offset(parameters, 16), LLVMConstInt(wide, u64(cpu.len()), 0))
+        LLVMBuildCall2(builder, type, check, parameters, 3, "".cstring())
+        LLVMDisposeBuilder(builder)
+        free(parameters)
+    }
+
+    // Writes the object file of another IR, for the same machine.
+    public bool emitOther(string ir, string name, string path, ref string error) {
+        addr other = LLVMContextCreate()
+        addr buffer = LLVMCreateMemoryBufferWithMemoryRangeCopy(ir.cstring(), ir.len(), name.cstring())
+        i64 found = 0
+        i64 text = 0
+        if (LLVMParseIRInContext(other, buffer, ref found, ref text) != 0) {
+            error = message(addr(text))
+            LLVMContextDispose(other)
+            ret false
+        }
+        addr parsed = addr(found)
+        LLVMSetTarget(parsed, triple.cstring())
+        addr layout = LLVMCreateTargetDataLayout(machine)
+        LLVMSetModuleDataLayout(parsed, layout)
+        LLVMDisposeTargetData(layout)
+        bool failed = LLVMTargetMachineEmitToFile(machine, parsed, path.cstring(), 1, ref text) != 0
+        if (failed) {
+            error = message(addr(text))
+        }
+        LLVMDisposeModule(parsed)
+        LLVMContextDispose(other)
+        ret !failed
+    }
+
+    // Writes the object file of the module.
+    public bool emit(string path, ref string error) {
+        i64 text = 0
+        if (LLVMTargetMachineEmitToFile(machine, module, path.cstring(), 1, ref text) != 0) {
+            error = message(addr(text))
+            ret false
+        }
+        ret true
+    }
+}
+
+// D513: the name of the processor of this computer, and its features as LLVM writes
+// them, what it has with `+` and what it lacks with `-`.
+public string hostProcessor() {
+    ret message(LLVMGetHostCPUName())
+}
+
+public string hostFeatures() {
+    ret message(LLVMGetHostCPUFeatures())
+}
+
+// D513: whether LLVM knows a processor of the architecture of a triple.
+public bool validProcessor(string triple, string cpu) {
+    ret shim_valid_cpu(triple.cstring(), cpu.cstring()) != 0
+}
+
+// LLD with its arguments, `lld-link` or `ld.lld` the first. False, with what the
+// linker wrote, when it fails.
+public bool link(list<string> arguments, ref string messages) {
+    string joined = join(arguments, "\n")
+    i32 code = 0
+    i64 length = 0
+    addr text = shim_link(joined.cstring(), joined.len(), ref code, ref length)
+    messages = taken(text, length)
+    ret code == 0
+}
+
+// The lines of the code of an object, for the table of the stack traces (D339): the
+// text that shim_trace describes. False, with the reason, when it cannot be read.
+public bool traceLines(string objectPath, ref string text) {
+    i32 status = 0
+    i64 length = 0
+    addr given = shim_trace(objectPath.cstring(), ref status, ref length)
+    text = taken(given, length)
+    ret status == 0
+}
+
+// The names of the objects of an archive, each after `U`, `u`, `D` or `d`: left
+// undefined or defined, in capitals when global or weak.
+public bool archiveNames(string path, ref list<string> names, ref string error) {
+    i32 status = 0
+    i64 length = 0
+    addr given = shim_archive_names(path.cstring(), ref status, ref length)
+    string text = taken(given, length)
+    if (status != 0) {
+        error = text
+        ret false
+    }
+    names = nonEmpty(text.split("\n"))
+    ret true
+}
+
+// The names that a DLL exports. 0, or 1 with the reason when it cannot be read, or 2
+// when it is not a DLL for x64.
+public i32 dllExports(string path, ref list<string> names, ref string error) {
+    i32 status = 0
+    i64 length = 0
+    addr given = shim_dll_exports(path.cstring(), ref status, ref length)
+    string text = taken(given, length)
+    if (status == 1) {
+        error = text
+    } else if (status == 0) {
+        names = nonEmpty(text.split("\n"))
+    }
+    ret status
+}
+
+// The names of a shared library of Linux for the programs linked with it.
+public bool sharedNames(string path, ref list<string> names) {
+    i32 status = 0
+    i64 length = 0
+    addr given = shim_shared_names(path.cstring(), ref status, ref length)
+    string text = taken(given, length)
+    if (status == 0) {
+        names = nonEmpty(text.split("\n"))
+    }
+    ret status == 0
+}
+
+// Writes the import library of a DLL with its functions (D136).
+public bool writeImportLibrary(string dll, list<string> functions, string path, ref string error) {
+    string names = join(functions, "\n")
+    i32 status = 0
+    i64 length = 0
+    addr given = shim_import_library(dll.cstring(), names.cstring(), names.len(), path.cstring(), ref status, ref length)
+    string text = taken(given, length)
+    if (status != 0) {
+        error = text
+    }
+    ret status == 0
+}
+
+list<string> nonEmpty(list<string> lines) {
+    list<string> result
+    for (string line in lines) {
+        if (line.len() > 0) {
+            result.add(line)
+        }
+    }
+    ret result
+}
+
+// The version of LLVM, as 23.1.4.
+public string llvmVersion() {
+    u32 major = 0
+    u32 minor = 0
+    u32 patch = 0
+    LLVMGetVersion(ref major, ref minor, ref patch)
+    ret format("{}.{}.{}", major, minor, patch)
+}

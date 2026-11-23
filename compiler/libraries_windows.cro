@@ -1,0 +1,21 @@
+// The system folder of Windows, where kernel32.dll is (D137).
+import unsafe
+
+extern "kernel32" {
+    u32 GetSystemDirectoryW(addr buffer, u32 size)
+    i32 WideCharToMultiByte(u32 page, u32 flags, addr wide, i32 size, addr text, i32 textSize, addr fallback, addr used)
+}
+
+string windowsSystemFolder() {
+    addr wide = alloc(520)
+    u32 length = GetSystemDirectoryW(wide, 260)
+    string folder
+    if (length > 0 && length < 260) {
+        addr text = alloc(1040)
+        i32 size = WideCharToMultiByte(65001, 0, wide, i32(length), text, 1040, addr(0), addr(0))
+        folder = string(text, i64(size))
+        free(text)
+    }
+    free(wide)
+    ret folder
+}

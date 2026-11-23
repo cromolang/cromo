@@ -3169,6 +3169,15 @@ A component keeps the distances from the edges of its parent, the content of the
 - The moves are a module of their own, `compiler/moves.cro`, which takes the tree from the analysis and gives it back.
 - Not done: the value of a float literal, the bytes of the file of `embed`, and the place of a capture in the data of its lambda, which the generation of the code needs.
 
+### P92. `cromo` in Cromo: the way to LLVM and to LLD (D291)
+- What the C API of LLVM does not give is in `compiler/shim/shim.cpp`, the only C++ of the compiler: LLD; the passes of a level, with the functions of C that LLVM may call (D19); the levels of position independent code; the lines of an object, from its DWARF, for the table of the stack traces (D339); the names of an archive, of a DLL and of a shared library; the import library of a DLL (D136); whether a processor is known and has a feature (D513). Each is a function of C that takes and gives numbers, addresses and texts. Everything else of `src/backend.cpp` and `src/libraries.cpp` is in Cromo, `compiler/backend.cro` and `compiler/libraries.cro`, which call LLVM-C through `extern "cromollvm"` in `compiler/llvmc.cro`: the IR is read, checked, given its machine and written as an object with the functions of LLVM-C.
+- `cromollvm` is one static library, `compiler/cromollvm.lib`, found next to its module as any C library (D136): the shim, the libraries of LLVM and of LLD that `cromo.exe` is linked with, and the static runtime of C and C++ of MSVC, which the linker of a program of Cromo does not add by itself. `tools/llvm-archive.ps1` makes it, called by `build.ps1`; it is not in the repository.
+- A program of Cromo starts at `cromo_start`, not at the start of the C runtime: `shim_start()`, the first thing the compiler calls before LLVM, does what `mainCRTStartup` does before `main`: the C runtime, its tables of the functions of the exit, and the constructors of C++. The linker and the entry point of the programs do not change.
+- The runtime gives its stack probe the second name `_alloca_probe`, that of the code of MSVC, so that the C runtime does not bring its own, with the same name `__chkstk`.
+- `build.ps1` compiles `compiler/cromo.cro` with the `cromo` in C++ into `build\stage1\cromo.exe`, which finds `build\lib` as that one does. It is checked as the IR was: the two build every program of the tests at the same path, and the executables must have the same bytes, apart from the time of the build that `lld-link` writes in them.
+- A module cannot be called `llvm` today: its functions get symbols that start with `llvm.`, which LLVM keeps for its own, and the module is refused by LLVM, not by `cromo`. The module of the compiler is `llvmc`; what `cromo` should do with such a name is to be decided.
+- A parameter cannot have the name of an imported module, so the module of the systems is `targets`, and a `Progress` is a parameter called `steps`.
+
 ## Open
 
 The points still to be defined, each when its milestone needs it (D152):

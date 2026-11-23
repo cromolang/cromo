@@ -122,10 +122,13 @@ memcmp:
 
 # __chkstk: touches every 4 KB page of a large stack frame, from the top down,
 # so that the guard page grows the stack in order. The size arrives in rax;
-# every register except r10 and r11 must be preserved.
+# every register except r10 and r11 must be preserved. _alloca_probe is the name
+# that the code of MSVC gives it, in the C and C++ libraries linked with a program.
     .globl __chkstk
+    .globl _alloca_probe
     .p2align 4
 __chkstk:
+_alloca_probe:
     push rcx
     push rax
     cmp rax, 0x1000

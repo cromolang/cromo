@@ -9,7 +9,9 @@ import std.os
 import ast
 import diagnostics
 import lexer
+import packages
 import parser
+import targets
 
 public struct Program {
     public Tree tree
@@ -29,12 +31,13 @@ public string libraryFolder(string program) {
 }
 
 // The program of the file `path`, for Windows x64: its tree and its errors.
-public Program load(string path, string text, string library, bool linux, bool arm64, bool tests) {
+public Program load(string path, string text, string library, Target system, bool tests) {
     Loader loader
     loader.library = library
     loader.tests = tests
-    loader.linux = linux
-    loader.arm64 = arm64
+    loader.system = system
+    loader.linux = isLinux(system)
+    loader.arm64 = isArm64(system)
     loader.program.diag = Diagnostics(path, text)
     string core = library + "\\core.cro"
     string coreText = readSource(core)
@@ -49,6 +52,23 @@ public Program load(string path, string text, string library, bool linux, bool a
     loader.loaded[key(core)] = 1
     loader.names.add(stemOf(main))
     loader.names.add("std")
+    loader.contexts.add(0)
+    loader.contexts.add(0)
+    if (loader.inProject) {
+        // D376-D391: the packages of cromo.mod, already in the cache: cromo build
+        // downloads those that are missing before it comes here.
+        string error
+        Require missing
+        i32 status = resolvePackages(loader.root, ref loader.resolution, ref error, ref missing)
+        if (status == 2) {
+            error = "the package " + missing.url + " " + missing.version + " is not downloaded yet: cromo build downloads it"
+        }
+        if (status != 0) {
+            loader.program.diag.errorIn(0, 1, 1, "the packages of cromo.mod: " + error)
+            Resolution none
+            loader.resolution = move none
+        }
+    }
     FileInfo first
     FileInfo second
     loader.program.tree.files.add(move first)
@@ -71,12 +91,15 @@ struct Loader {
     bool linux  // the system and the architecture of the program (D202, D408)
     bool arm64
     bool tests  // with the files name_test.cro, for cromo test (D350)
+    Target system
     Program program
     string library
     string root
     bool inProject           // the root is the folder of cromo.mod (D516)
     map<string, i32> loaded  // the files read, by their normal path
     list<string> names       // the module of each file
+    list<i32> contexts       // the package of each file: 0 for the project and for the library
+    Resolution resolution    // the packages of cromo.mod (D376-D391)
 
     void run() {
         parseFile(1, -1)
@@ -86,7 +109,7 @@ struct Loader {
         string base = parentOf(absolute(main)) + "\\" + stemOf(main)
         for (string suffix in ownSuffixes(linux, arm64)) {
             if (fs.isFile(base + suffix + ".cro")) {
-                loadFile(base + suffix + ".cro", names[0].copy(), 0, 1, 1, 0)
+                loadFile(base + suffix + ".cro", names[0].copy(), 0, 1, 1, 0, 0)
             }
         }
         loadTests(absolute(main), names[0].copy(), 0)
@@ -109,6 +132,9 @@ struct Loader {
         program.tree.files[index].name = names[index]
         program.tree.files[index].part = part
         program.tree.files[index].isLibrary = isLibraryFile(program.diag.path(index))
+        if (i64(contexts[index]) < resolution.packages.len()) {
+            program.tree.files[index].libraryFolders = nativeFolders(resolution.packages[contexts[index]], system)
+        }
         program.diag.current = index
         list<Token> tokens = tokenize(program.diag.text(index), ref program.diag, false)
         map<i64, bool> angles
@@ -121,15 +147,44 @@ struct Loader {
         i32 line = program.tree.files[from].imports[k].line
         i32 column = program.tree.files[from].imports[k].column
         string dotted = join(path, ".")
-        string relative = join(path, "\\")
-        string shown = join(path, "/")
         list<i32> files
         if (path[0] == "std") {
             ret resolveLibrary(from, line, column, path.len(), dotted, fromLibrary)
         }
-        string file = root + "\\" + relative + ".cro"
-        string folder = root + "\\" + relative
-        bool isFile = fs.isFile(file)
+        // The first name is a package of the cromo.mod of the one that imports, or a
+        // module of its own; the modules of a package have its address in front (D391).
+        string home = root
+        string front
+        i32 context = contexts[from]
+        i32 target = context
+        if (i64(context) < resolution.packages.len()) {
+            if (context != 0) {
+                home = resolution.packages[context].folder
+                front = packageModuleName(resolution.packages[context])
+            }
+            if (resolution.packages[context].requires.contains(path[0])) {
+                if (fs.exists(home + "\\" + path[0]) || fs.exists(home + "\\" + path[0] + ".cro")) {
+                    program.diag.errorIn(from, line, column, path[0] +
+                        " is a package of cromo.mod and also a module next to it: rename one of them")
+                    ret files
+                }
+                target = resolution.packages[context].requires[path[0]]
+                home = resolution.packages[target].folder
+                front = packageModuleName(resolution.packages[target])
+                path.remove(0)
+            }
+        }
+        string relative = join(path, "\\")
+        string shown = path.len() == 0 ? program.tree.files[from].imports[k].path[0] : join(path, "/")
+        if (front.len() > 0) {
+            dotted = front
+            for (string part in path) {
+                dotted += "." + part
+            }
+        }
+        string file = home + "\\" + relative + ".cro"
+        string folder = path.len() == 0 ? home : home + "\\" + relative
+        bool isFile = path.len() > 0 && fs.isFile(file)
         bool isFolder = fs.isFolder(folder)
         if (isFile && isFolder) {
             program.diag.errorIn(from, line, column, "both " + shown + ".cro and the folder " + shown +
@@ -137,14 +192,16 @@ struct Loader {
             ret files
         }
         if (isFile) {
-            i32 index = loadFile(file, dotted, from, line, column, -1)
+            i32 index = loadFile(file, dotted, from, line, column, -1, target)
             for (string suffix in ownSuffixes(linux, arm64)) {
-                string own = root + "\\" + relative + suffix + ".cro"
+                string own = home + "\\" + relative + suffix + ".cro"
                 if (fs.isFile(own)) {
-                    loadFile(own, dotted, from, line, column, index)
+                    loadFile(own, dotted, from, line, column, index, target)
                 }
             }
-            loadTests(file, dotted, index)
+            if (target == 0) {  // the tests of a package are its own
+                loadTests(file, dotted, index)
+            }
             files.add(index)
             ret files
         }
@@ -173,14 +230,14 @@ struct Loader {
                 ret files
             }
             sort(ref entries)
-            i32 first = loadFile(folder + "\\" + entries[0], dotted, from, line, column, -1)
+            i32 first = loadFile(folder + "\\" + entries[0], dotted, from, line, column, -1, target)
             for (i64 i = 1; i < entries.len(); i++) {
-                loadFile(folder + "\\" + entries[i], dotted, from, line, column, first)
+                loadFile(folder + "\\" + entries[i], dotted, from, line, column, first, target)
             }
-            if (tests) {
+            if (tests && target == 0) {
                 sort(ref testEntries)
                 for (string entry in testEntries) {
-                    loadFile(folder + "\\" + entry, dotted, from, line, column, first)
+                    loadFile(folder + "\\" + entry, dotted, from, line, column, first, target)
                 }
             }
             files.add(first)
@@ -200,11 +257,11 @@ struct Loader {
         }
         string path = parentOf(file) + "\\" + stemOf(file) + "_test.cro"
         if (fs.isFile(path)) {
-            loadFile(path, name, index, 1, 1, index)
+            loadFile(path, name, index, 1, 1, index, 0)
         }
     }
 
-    i32 loadFile(string path, string name, i32 from, i32 line, i32 column, i32 part) {
+    i32 loadFile(string path, string name, i32 from, i32 line, i32 column, i32 part, i32 context) {
         string normal = key(path)
         if (loaded.contains(normal)) {
             // D515: a file of a folder imported by itself too, before or after.
@@ -234,6 +291,7 @@ struct Loader {
         }
         loaded[normal] = index
         names.add(name)
+        contexts.add(context)
         parseFile(index, part)
         ret index
     }
@@ -249,11 +307,11 @@ struct Loader {
                 libraryModules() + ", and its core is visible without import")
             ret files
         }
-        i32 first = loadFile(path, dotted, from, line, column, -1)
+        i32 first = loadFile(path, dotted, from, line, column, -1, 0)
         for (string suffix in ownSuffixes(linux, arm64)) {
             string own = library + "\\" + base + suffix + ".cro"
             if (fs.isFile(own)) {
-                loadFile(own, dotted, from, line, column, first)
+                loadFile(own, dotted, from, line, column, first, 0)
             }
         }
         files.add(first)
@@ -348,7 +406,7 @@ bool isTestFile(string path) {
 }
 
 // D516: the folder of cromo.mod, from `folder` up to the root of the drive, or "".
-string projectFolder(string folder) {
+public string projectFolder(string folder) {
     string at = folder
     for (true) {
         if (fs.isFile(at + "\\cromo.mod")) {

@@ -1,0 +1,265 @@
+// The C libraries of the extern blocks (D136-D138, D143), as src/libraries.cpp: the
+// library of every block is found, and its C functions are checked in the DLL
+// (D137); for Linux, the static library libname.a (D143) or a shared one (D554).
+import std.fs
+import ast
+import backend
+import llvmc
+import loader
+import sema
+import targets
+
+public struct Libraries {
+    public list<string> archives        // the static libraries next to the modules, given to the linker as they are
+    public list<ImportLibrary> imports  // the DLLs whose import library cromo writes
+    public list<string> copies          // the DLLs next to the modules, to copy next to the executable
+    public list<string> shared          // on Linux, the shared libraries, linked as they are and copied too (D554)
+}
+
+// The C functions of one library, and the folders of the modules that declare
+// them, in the order in which the modules are loaded (D139).
+struct Use {
+    string name
+    list<i32> functions
+    list<string> folders
+}
+
+// The folder of a file, from the root.
+string folderOf(string path) {
+    ret parentOf(absolute(path))
+}
+
+// Finds the library of every extern block and checks its C functions in the DLL
+// (D137). The problems are reported to the diagnostics of the program.
+public Libraries findLibraries(ref Checker c, Target target, string library) {
+    string systemLibraries = fs.joinPath(library, systemFolder(target))
+    list<Use> uses
+    for (i64 f = 0; f < c.tree.functions.len(); f++) {
+        if (!c.tree.functions[f].isExtern || c.tree.functions[f].library == "cromo" || c.tree.functions[f].owner >= 0) {
+            continue  // the runtime, always linked (D240)
+        }
+        string name = c.tree.functions[f].library
+        i32 file = c.tree.functions[f].file
+        i64 use = -1
+        for (i64 i = 0; i < uses.len() && use < 0; i++) {
+            if (uses[i].name == name) {
+                use = i
+            }
+        }
+        if (use < 0) {
+            Use added
+            added.name = name
+            uses.add(move added)
+            use = uses.len() - 1
+        }
+        uses[use].functions.add(i32(f))
+        // The C libraries of the modules of the library are in its folder for the
+        // system, as lib/windows/SDL3.lib and lib/linux/libSDL3.a (P31).
+        string folder = c.tree.files[file].isLibrary ? systemLibraries : folderOf(c.diag.path(file))
+        if (!hasText(uses[use].folders, folder)) {
+            uses[use].folders.add(folder)
+        }
+        // Then where the native libraries of its package are, in the cache (D551).
+        for (string native in c.tree.files[file].libraryFolders) {
+            if (!hasText(uses[use].folders, native)) {
+                uses[use].folders.add(native)
+            }
+        }
+    }
+
+    Libraries libraries
+    if (isLinux(target)) {  // the linker checks the names (D146)
+        for (Use use in uses) {
+            string file = "lib" + use.name + ".a"
+            string shared = "lib" + use.name + ".so"
+            string folder
+            string sharedFolder
+            for (string each in use.folders) {
+                if (folder.len() == 0 && fs.isFile(fs.joinPath(each, file))) {
+                    folder = each
+                }
+                // On Android a library can be shared, as libSDL3.so, which goes in the APK (P44).
+                if (sharedFolder.len() == 0 && fs.isFile(fs.joinPath(each, shared))) {
+                    sharedFolder = each
+                }
+            }
+            // D554: libname.so, or libname.so.1 as the library names itself for the loader.
+            string found
+            if (folder.len() == 0 && !isAndroid(target)) {
+                for (string each in use.folders) {
+                    list<string> entries
+                    try {
+                        entries = fs.listFolder(each)
+                    } catch (Exception e) {
+                    }
+                    for (string entry in entries) {
+                        if (found.len() == 0 && (entry == shared || entry.startsWith(shared + ".")) && fs.isFile(fs.joinPath(each, entry))) {
+                            found = fs.joinPath(each, entry)
+                        }
+                    }
+                }
+            }
+            const ref Function first = c.tree.functions[use.functions[0]]
+            if (found.len() > 0) {
+                libraries.shared.add(found)
+                libraries.copies.add(found)
+            } else if (folder.len() == 0 && isAndroid(target) && sharedFolder.len() > 0) {
+                libraries.archives.add(fs.joinPath(sharedFolder, shared))
+            } else if (folder.len() > 0) {
+                libraries.archives.add(fs.joinPath(folder, file))
+            } else if (use.folders.len() == 1 && use.folders[0] == systemLibraries) {
+                // A module of the library, as std.gui on ARM64, which has no SDL yet (P31).
+                c.diag.errorIn(first.file, first.line, first.column, "the library has no " + file + " for this system, in " +
+                    use.folders[0] + "")
+            } else {
+                c.diag.errorIn(first.file, first.line, first.column, "cannot find the library '" + use.name + "': there is no " +
+                    file + " or " + shared + " next to the modules that use it")
+            }
+        }
+        ret libraries
+    }
+
+    string system = windowsSystemFolder()
+    for (Use use in uses) {
+        string archive
+        string dll
+        for (string folder in use.folders) {
+            if (archive.len() == 0 && fs.isFile(fs.joinPath(folder, use.name + ".lib"))) {
+                archive = fs.joinPath(folder, use.name + ".lib")
+            }
+            if (dll.len() == 0 && fs.isFile(fs.joinPath(folder, use.name + ".dll"))) {
+                dll = fs.joinPath(folder, use.name + ".dll")
+            }
+        }
+        if (dll.len() > 0) {
+            libraries.copies.add(dll)  // D138, D141
+        }
+        if (archive.len() > 0) {
+            libraries.archives.add(archive)  // the linker checks the names (D140)
+            continue
+        }
+        if (dll.len() == 0 && system.len() > 0 && fs.isFile(fs.joinPath(system, use.name + ".dll"))) {
+            dll = fs.joinPath(system, use.name + ".dll")
+        }
+        ImportLibrary item
+        item.dll = use.name + ".dll"
+        const ref Function first = c.tree.functions[use.functions[0]]
+        if (dll.len() == 0 && system.len() == 0) {
+            // From Linux there is no folder of the system to check the DLLs of Windows:
+            // the functions are taken as declared, and the program finds out when it starts.
+            for (i32 function in use.functions) {
+                if (!hasText(item.functions, c.tree.functions[function].name)) {
+                    item.functions.add(c.tree.functions[function].name)
+                }
+            }
+            libraries.imports.add(move item)
+            continue
+        }
+        if (dll.len() == 0) {
+            c.diag.errorIn(first.file, first.line, first.column, "cannot find the library '" + use.name + "': there is no " +
+                use.name + ".lib or " + use.name + ".dll next to the modules that use it, nor " + use.name + ".dll in " + system + "")
+            continue
+        }
+        list<string> exported
+        string problem
+        i32 status = dllExports(dll, ref exported, ref problem)
+        if (status != 0) {
+            c.diag.errorIn(first.file, first.line, first.column,
+                status == 2 ? fs.fileName(dll) + " is not a DLL for x64" : "cannot read " + dll + ": " + problem)
+            continue
+        }
+        map<string, bool> has
+        for (string name in exported) {
+            has[name] = true
+        }
+        for (i32 function in use.functions) {
+            const ref Function decl = c.tree.functions[function]
+            if (!has.contains(decl.name)) {
+                c.diag.errorIn(decl.file, decl.line, decl.column, use.name + ".dll has no function '" + decl.name + "'")
+            } else if (!hasText(item.functions, decl.name)) {
+                item.functions.add(decl.name)  // several modules can declare it (D133)
+            }
+        }
+        libraries.imports.add(move item)
+    }
+    ret libraries
+}
+
+// The global names that the objects of the archives define, and those that they
+// leave undefined.
+bool readArchive(string path, ref map<string, bool> defined, ref map<string, bool> undefined, ref string error) {
+    list<string> names
+    string problem
+    if (!archiveNames(path, ref names, ref problem)) {
+        error = "cannot read " + path + ": " + problem
+        ret false
+    }
+    for (string name in names) {
+        if (name.startsWith("U")) {
+            undefined[name.slice(1, name.len())] = true
+        } else if (name.startsWith("D")) {
+            defined[name.slice(1, name.len())] = true
+        }
+    }
+    ret true
+}
+
+// Whether the static libraries of the extern blocks for Linux call functions of
+// the C library that the runtime does not have, so that the executable is
+// linked with glibc (D428). On failure it returns false and puts the reason in `error`.
+public bool callsTheCLibrary(list<string> archives, string library, ref bool calls, ref string error) {
+    calls = false
+    if (archives.len() == 0) {
+        ret true
+    }
+    map<string, bool> defined
+    map<string, bool> undefined
+    for (string archive in archives) {
+        if (!readArchive(archive, ref defined, ref undefined, ref error)) {
+            ret false
+        }
+    }
+    map<string, bool> runtime  // memcpy and the others, which a C library can call without glibc
+    map<string, bool> unused
+    if (!readArchive(runtimeLibraryPath(library, Target.Linux), ref runtime, ref unused, ref error)) {
+        ret false
+    }
+    for (string stub in glibcLibraries()) {
+        string path = fs.joinPath(glibcFolder(library), stub)
+        list<string> names
+        if (!sharedNames(path, ref names)) {
+            error = "cannot read the stub of glibc " + path + ""
+            ret false
+        }
+        for (string name in names) {
+            if (undefined.contains(name) && !defined.contains(name) && !runtime.contains(name)) {
+                calls = true
+                ret true
+            }
+        }
+    }
+    ret true
+}
+
+// Copies the DLLs next to the executable, when it is in another folder (D138).
+// On failure it returns false and puts the reason in `error`.
+public bool copyLibraries(list<string> dlls, string executable, ref string error) {
+    string folder = folderOf(executable)
+    for (string dll in dlls) {
+        string to = fs.joinPath(folder, fs.fileName(dll))
+        if (folderOf(dll).lower() == folder.lower()) {
+            continue
+        }
+        // Only a copy that is missing or different (D141): the program may be running.
+        try {
+            if (fs.isFile(to) && fs.size(to) == fs.size(dll) && fs.modified(to) == fs.modified(dll)) {
+                continue
+            }
+            fs.copy(dll, to)
+        } catch (Exception e) {
+            error = "cannot copy " + fs.fileName(dll) + " next to the executable: " + e.message() + ""
+            ret false
+        }
+    }
+    ret true
+}

@@ -1,0 +1,886 @@
+// The commands of cromo (D151), as src/main.cpp: what `cromo build` does with a
+// program, from its file to its executable.
+import std.fs
+import std.os
+import ast
+import backend
+import codegen
+import diagnostics
+import fmt
+import host
+import libraries
+import llvmc
+import loader
+import moves
+import packages
+import progress
+import sema
+import targets
+import version
+
+// D517: an executable of cromo.mod, its name and its main file.
+public struct Executable {
+    public string name
+    public string path
+}
+
+// What a command compiles, and how.
+public struct Compilation {
+    public string inputPath
+    public list<string> filters          // cromo test: the names of the tests to run (D352)
+    public list<Executable> executables  // D517: those of cromo.mod, without a file
+    // A run inside another, as that of tools/get.cro while a program is built to be run,
+    // has a folder of its own: the first one has no suffix.
+    public i64 depth
+    public bool apk   // --target android: the APK with both architectures (D453)
+    public bool sign  // cromo build: with --release, the line sign of cromo.mod is run (D558)
+    public BackendOptions options
+    public bool release
+    public bool tests  // the executable of cromo test (D352)
+    public bool emitIr
+    public bool runtime            // --runtime: the object of std.runtime, for the archive of the runtime (D393)
+    public bool quiet              // D568
+    public list<string> testNames  // of the tests of the program, in the order of its entry point
+}
+
+// D516, D517: the executables of the cromo.mod of this folder (P68). False, after
+// printing the errors with their lines, when it is wrong.
+public bool readProject(ref list<Executable> executables) {
+    string text
+    try {
+        text = fs.readText("cromo.mod")
+    } catch (Exception e) {
+        eprintln("cromo: cannot read cromo.mod")
+        ret false
+    }
+    if (text.startsWith("\u{FEFF}")) {
+        text = text.slice(3, text.len())
+    }
+    bool good = true
+    bool first = true
+    list<string> lines = linesOf(text)
+    for (i64 number = 1; number <= lines.len(); number++) {
+        string line = lines[number - 1]
+        i64 comment = line.find("//")
+        if (comment >= 0) {
+            line = line.slice(0, comment)
+        }
+        list<string> words = wordsOf(line)
+        if (words.len() == 0) {
+            continue
+        }
+        bool wasFirst = first
+        first = false
+        list<string> problems
+        if (words[0] == "module") {
+            if (!wasFirst) {
+                problems.add("the line module comes first, once")
+            } else if (words.len() != 2 || !nameOf(words[1], "._-/")) {
+                problems.add("module takes the name of the project, as module example.com/app")
+            }
+        } else {
+            if (wasFirst) {
+                problems.add("cromo.mod starts with the line module, with the name of the project, as module example.com/app")
+            }
+            if (words[0] == "bin") {
+                if (words.len() != 3 || !nameOf(words[1], "_-") || fs.extension(words[2]) != ".cro") {
+                    problems.add("bin takes the name of an executable and its main file, as bin server cmd/server.cro")
+                } else {
+                    if (!fs.isFile(words[2])) {
+                        problems.add("there is no file " + words[2])
+                    }
+                    for (Executable other in executables) {
+                        if (other.name == words[1]) {
+                            problems.add("another executable is called " + words[1])
+                        }
+                    }
+                    Executable added
+                    added.name = words[1]
+                    added.path = words[2]
+                    executables.add(move added)
+                }
+            } else if (words[0] != "require" && words[0] != "native" && words[0] != "version" && words[0] != "company" &&
+                words[0] != "description" && words[0] != "copyright" && words[0] != "sign") {
+                // Those are read with the packages (D377, D551, D557, D558).
+                problems.add("unknown line " + words[0] + ": cromo.mod has the lines module, bin, require, native, version, " +
+                    "company, description, copyright and sign")
+            }
+        }
+        for (string problem in problems) {
+            eprintln("cromo.mod:{}: error: {}", number, problem)
+            good = false
+        }
+    }
+    if (first) {
+        eprintln("cromo.mod:1: error: cromo.mod starts with the line module, with the name of the project, as module example.com/app")
+        good = false
+    }
+    // The lines of the packages, of the version and of the signature (D377, D551, D557, D558).
+    ProjectFile file
+    string problems
+    if (!readProjectFile("cromo.mod", ref file, ref problems)) {
+        eprintln("{}", problems)
+        good = false
+    }
+    ret good
+}
+
+// "server, client and tool": the names of the executables.
+public string executableNames(list<Executable> executables) {
+    string text
+    for (i64 i = 0; i < executables.len(); i++) {
+        text += (i == 0 ? "" : i + 1 == executables.len() ? " and " : ", ") + executables[i].name
+    }
+    ret text
+}
+
+// D376-D391: the packages of the project, downloaded when they are not in the cache,
+// with their hashes written in cromo.sum (D380, D387).
+public bool preparePackages(string project, string library, Target target, i64 depth) {
+    Resolution resolution
+    string error
+    for (true) {
+        Require missing
+        i32 status = resolvePackages(project, ref resolution, ref error, ref missing)
+        if (status == 0) {
+            break
+        }
+        if (status == 2) {
+            if (runTool(library, "tools/get.cro", ["fetch", packagesFolder(), missing.url, missing.version], depth) != 0) {
+                error = "cannot download the package " + missing.url + " " + missing.version
+                status = 1
+            } else if (!fs.isFolder(packageFolder(missing.url, missing.version))) {
+                error = "the package " + missing.url + " " + missing.version + " was not downloaded"
+                status = 1
+            }
+        }
+        if (status == 1) {
+            eprintln("cromo: {}", error)
+            ret false
+        }
+    }
+    if (!checkPackageSums(project, resolution, true, ref error)) {
+        eprintln("cromo: {}", error)
+        ret false
+    }
+    // D551: the native libraries of the packages for this system, by their lines native.
+    for (true) {
+        Native wanted
+        if (nativesReady(resolution, target, ref wanted)) {
+            break
+        }
+        list<string> args = ["native", nativeFolder(wanted), wanted.url, wanted.sha256]
+        for (string file in wanted.files) {
+            args.add(file)
+        }
+        if (runTool(library, "tools/get.cro", args, depth) != 0) {
+            eprintln("cromo: cannot download the libraries of {}", wanted.url)
+            ret false
+        }
+        if (!fs.isFolder(nativeFolder(wanted))) {
+            eprintln("cromo: the libraries of {} were not downloaded", wanted.url)
+            ret false
+        }
+    }
+    ret true
+}
+
+// Compiles a program of the library, as tools/get.cro, and runs it with these arguments.
+public i32 runTool(string library, string file, list<string> args, i64 depth) {
+    Compilation tool
+    tool.depth = depth
+    tool.options.library = library
+    tool.inputPath = fs.joinPath(library, file.replace("/", fs.separator()))
+    tool.quiet = true  // D568: a tool of cromo, not the program of who runs it
+    string name = fs.fileName(file)
+    tool.options.outputPath = name.slice(0, name.len() - fs.extension(name).len())
+    ret run(ref tool, args)
+}
+
+// D156: compiles the program in a temporary folder, runs it with its arguments
+// and deletes the folder. Returns the exit code of the program.
+public i32 run(ref Compilation compilation, list<string> programArgs) {
+    string folder = fs.joinPath(tempFolder(), format("cromo-run-{}", os.processId()) +
+        (compilation.depth == 0 ? "" : format("-{}", compilation.depth)))
+    try {
+        fs.createFolders(folder)
+    } catch (Exception e) {
+        eprintln("cromo: cannot create the folder {}: {}", folder, e.message())
+        ret 1
+    }
+    string stem = "main"
+    if (compilation.options.outputPath.len() > 0) {
+        stem = fs.fileName(compilation.options.outputPath)
+        stem = stem.slice(0, stem.len() - fs.extension(stem).len())
+    }
+    compilation.options.outputPath = fs.joinPath(folder, stem + (os.name() == "windows" ? ".exe" : ""))
+    i32 code = build(ref compilation)
+    if (code == 0) {
+        u32 problem = 0
+        code = runProgram(compilation.options.outputPath, programArgs, ref problem)
+        if (code == -1 && problem != 0) {
+            eprintln("cromo: cannot run {} (error {})", compilation.options.outputPath, problem)
+            code = 1
+        }
+    }
+    removeFolder(folder)
+    ret code
+}
+
+void removeFolder(string folder) {
+    try {
+        fs.removeAll(folder)
+    } catch (Exception e) {
+    }
+}
+
+// ---- cromo test (D349-D352) ----
+
+// A test to run, and what it left.
+struct TestRun {
+    string name
+    i64 index      // its number for the executable of the tests
+    string output  // its standard output and error
+    i32 code
+    bool done
+}
+
+// "ok    name", or "FAIL  name" and what the test wrote, indented.
+void reportTest(TestRun test) {
+    if (test.code == 0) {
+        println("ok    {}", test.name)
+        ret
+    }
+    println("FAIL  {}", test.name)
+    list<u8> bytes
+    try {
+        bytes = fs.readBytes(test.output)
+    } catch (Exception e) {
+    }
+    i64 start = 0
+    for (start < bytes.len()) {
+        i64 end = start
+        for (end < bytes.len() && bytes[end] != '\n') {
+            end++
+        }
+        i64 last = end > start && bytes[end - 1] == '\r' ? end - 1 : end
+        list<u8> line
+        for (i64 i = start; i < last; i++) {
+            line.add(bytes[i])
+        }
+        println("      {}", shownText(line))
+        start = end + 1
+    }
+    if (test.code != 101 && test.code != 1) {  // not a panic, not an exception: say how it ended
+        println("      the test ended with the exit code {}", test.code)
+    }
+}
+
+// The bytes of a line as a text, with `?` in place of those that are not of UTF-8.
+string shownText(list<u8> bytes) {
+    try {
+        ret string(bytes)
+    } catch (Exception e) {
+    }
+    list<u8> plain
+    for (u8 c in bytes) {
+        plain.add(c < 0x80 ? c : '?')
+    }
+    ret string(plain)
+}
+
+// D352: each test in its own process, as many at a time as the processors.
+void runTests(string exe, ref list<TestRun> tests) {
+    i64 width = processors()
+    list<i64> running
+    list<i64> which
+    i64 next = 0
+    i64 shown = 0
+    for (shown < tests.len()) {
+        for (next < tests.len() && running.len() < width) {
+            i64 process = startQuiet(exe, [format("{}", tests[next].index)], tests[next].output)
+            if (process == 0) {
+                tests[next].code = -1
+                tests[next].done = true
+            } else {
+                running.add(process)
+                which.add(next)
+            }
+            next++
+        }
+        if (running.len() > 0) {
+            i32 code = 1
+            i64 slot = waitAny(running, ref code)
+            if (slot >= 0) {
+                tests[which[slot]].code = code
+                tests[which[slot]].done = true
+                running.remove(slot)
+                which.remove(slot)
+            }
+        }
+        for (shown < tests.len() && tests[shown].done) {  // in the order of the file
+            reportTest(tests[shown])
+            shown++
+        }
+    }
+}
+
+// D349-D352: builds the tests of the program in a temporary folder, runs each in
+// its own process and says which failed. Returns 0 when all passed.
+// `unmatched`, with the executables of cromo.mod and `several`: set when no test has
+// the names given, which is an error only if no executable has one (D517).
+public i32 testCommand(ref Compilation compilation, bool several, ref bool unmatched) {
+    string folder = fs.joinPath(tempFolder(), format("cromo-test-{}", os.processId()))
+    try {
+        fs.createFolders(folder)
+    } catch (Exception e) {
+        eprintln("cromo: cannot create the folder {}: {}", folder, e.message())
+        ret 1
+    }
+    compilation.options.outputPath = fs.joinPath(folder, os.name() == "windows" ? "tests.exe" : "tests")
+    i32 code = build(ref compilation)
+    if (code != 0) {
+        removeFolder(folder)
+        ret code
+    }
+    list<TestRun> tests
+    for (i64 i = 0; i < compilation.testNames.len(); i++) {
+        bool chosen = compilation.filters.len() == 0
+        for (string filter in compilation.filters) {
+            chosen = chosen || compilation.testNames[i].contains(filter)
+        }
+        if (!chosen) {
+            continue
+        }
+        TestRun test
+        test.name = compilation.testNames[i]
+        test.index = i
+        test.output = fs.joinPath(folder, format("test{}.out", i))
+        tests.add(move test)
+    }
+    if (tests.len() == 0) {
+        removeFolder(folder)
+        if (compilation.testNames.len() > 0 && several) {
+            unmatched = true
+            println("no test of this executable has those names")
+            ret 0
+        }
+        println("{}", compilation.testNames.len() == 0 ? "no tests: write them as [[test]] void name()" : "no test has those names")
+        ret compilation.testNames.len() == 0 ? 0 : 1
+    }
+    runTests(compilation.options.outputPath, ref tests)
+    i64 failed = 0
+    for (TestRun test in tests) {
+        if (test.code != 0) {
+            failed++
+        }
+    }
+    println("{} passed, {} failed", tests.len() - failed, failed)
+    removeFolder(folder)
+    ret failed == 0 ? 0 : 1
+}
+
+// Compiles the program and writes the executable. Returns the exit code of cromo.
+public i32 build(ref Compilation compilation) {
+    string library = compilation.options.library
+    Target target = compilation.options.target
+    bool linux = isLinux(target)
+    string core = fs.joinPath(library, "core.cro")
+    if (library.len() == 0 || !fs.isFile(core)) {
+        eprintln("cromo: cannot find the library: lib/ is missing next to the folder of cromo")
+        ret 2
+    }
+    string path = compilation.inputPath
+    string text
+    if (compilation.runtime) {
+        // D393: the runtime written in Cromo is std.runtime, which only a file of the
+        // library can import; it is compiled once, with the build of cromo, and
+        // goes in the archive of the runtime next to the C, as in --release.
+        path = fs.joinPath(library, "runtime-object.cro")
+        text = "import std.runtime\n"
+        compilation.release = true
+        compilation.options.objectOnly = true
+    } else {
+        if (!fs.isFile(path)) {
+            eprintln("cromo: cannot read {}", path)
+            ret 2
+        }
+        text = readSource(path)
+    }
+    ProjectFile projectFile
+    if (!compilation.runtime && !inLibrary(library, path)) {
+        string project = projectFolder(parentOf(absolute(path)))
+        if (project.len() > 0 && !preparePackages(project, library, target, compilation.depth + 1)) {
+            ret 1
+        }
+        if (project.len() > 0) {  // D557, D558: read and checked with the packages, just now
+            string ignored
+            readProjectFile(fs.joinPath(project, "cromo.mod"), ref projectFile, ref ignored)
+        }
+    }
+    // D568: a line for each step, unless it is asked not to or cromo prints something else.
+    bool silent = compilation.quiet || compilation.emitIr || compilation.runtime
+    Progress steps = Progress(silent, compilation.options.optLevel > 0 ? 6 : 5)
+    steps.step("Reading " + fs.fileName(path) + " and its modules", false)
+    bool tests = compilation.tests
+    Program program = load(path, text, library, target, tests)
+    if (program.diag.hasErrors()) {
+        ret 1
+    }
+    steps.step(format("Checking {} files", program.diag.fileCount()), false)
+    Checker checked = checkProgram(move program.tree, move program.diag, !tests && !compilation.runtime)
+    if (!checked.diag.hasErrors()) {
+        checkMoves(ref checked)
+    }
+    if (checked.diag.hasErrors()) {
+        ret 1
+    }
+    if (tests) {  // in the order of the entry point of the tests (codegen.cro)
+        string own = checked.tree.files[0].name + "."
+        for (i64 i = 0; i < checked.tree.functions.len(); i++) {
+            if (!checked.tree.functions[i].isTest || checked.tree.files[checked.tree.functions[i].file].isLibrary) {
+                continue
+            }
+            string symbol = checked.functionSymbol(i32(i))
+            compilation.testNames.add(symbol.startsWith(own) ? symbol.slice(own.len(), symbol.len()) : symbol)
+        }
+    }
+
+    // The libraries of the extern blocks, with their C functions checked in the DLLs (D136, D137, D143).
+    Libraries found = findLibraries(ref checked, target, library)
+    if (checked.diag.hasErrors()) {
+        ret 1
+    }
+    compilation.options.archives = found.archives
+    compilation.options.imports = found.imports
+    compilation.options.shared = found.shared
+    string failure
+    if (target == Target.Linux && !callsTheCLibrary(found.archives, library, ref compilation.options.glibc, ref failure)) {
+        eprintln("cromo: {}", failure)  // D428
+        ret 1
+    }
+    if (found.shared.len() > 0) {
+        compilation.options.glibc = true  // D554: a shared library is loaded by the loader of glibc
+    }
+    if (target == Target.Windows && !tests && !compilation.runtime) {
+        for (i64 i = 0; i < checked.tree.functions.len(); i++) {
+            if (checked.tree.functions[i].isWindow) {
+                compilation.options.window = true  // D426
+            }
+        }
+        // D557: what the executable says of itself.
+        compilation.options.version = projectFile.version
+        compilation.options.company = projectFile.company
+        compilation.options.description = projectFile.description
+        compilation.options.copyright = projectFile.copyright
+        // D425: the icon next to the file with main, with its name or main.ico.
+        // Its path is that of the file, as it was given.
+        string named = path.slice(0, path.len() - fs.extension(path).len()) + ".ico"
+        string main = path.slice(0, path.len() - fs.fileName(path).len()) + "main.ico"
+        for (string icon in [named, main]) {
+            if (compilation.options.icon.len() == 0 && fs.isFile(icon)) {
+                compilation.options.icon = icon
+            }
+        }
+    }
+
+    Options options
+    options.sourcePath = path
+    options.release = compilation.release
+    options.tests = tests
+    options.runtime = compilation.runtime
+    options.windows = !linux
+    options.arm64 = isArm64(target)
+    options.triple = targetTriple(target)
+    options.library = library
+    options.optimized = compilation.options.optLevel > 0
+    Generator generator = Generator(move options)
+    // In the messages of the program, a file of the library is named without the
+    // folder where cromo is installed, and a debugger finds a file from anywhere (D338).
+    for (i32 file = 0; file < checked.diag.fileCount(); file++) {
+        compilation.options.shownPaths.add(generator.shownPath(checked, file))
+        compilation.options.debugPaths.add(absolute(checked.diag.path(file)))
+    }
+    compilation.options.debugInfo = !compilation.release
+    steps.step("Generating the code", false)
+    string ir = generator.run(checked)
+    if (compilation.emitIr) {
+        print("{}", ir)
+        ret 0
+    }
+
+    string error
+    if (!startLlvm()) {
+        eprintln("cromo: internal error: the runtime of C++ does not start")
+        ret 1
+    }
+    if (!buildExecutable(ir, fs.fileName(path), compilation.options, ref steps, ref error) ||
+        !copyLibraries(found.copies, compilation.options.outputPath, ref error)) {
+        eprintln("cromo: {}", error)
+        ret 1
+    }
+    // D558: an executable of --release for Windows is signed by the command of cromo.mod,
+    // which takes its path as its last argument.
+    if (compilation.sign && compilation.release && target == Target.Windows && !tests && projectFile.sign.len() > 0) {
+        list<string> command
+        for (i64 i = 1; i < projectFile.sign.len(); i++) {
+            command.add(projectFile.sign[i])
+        }
+        command.add(compilation.options.outputPath)
+        u32 problem = 0
+        i32 code = runProgram(projectFile.sign[0], command, ref problem)
+        if (code != 0) {
+            eprintln("cromo: the command of the line sign of cromo.mod, {}, did not sign {}: it ended with {}", projectFile.sign[0],
+                compilation.options.outputPath, code == -1 ? 1 : code)
+            ret 1
+        }
+    }
+    steps.finish(fs.fileName(compilation.options.outputPath))
+    ret 0
+}
+
+// Whether a file is in the library of cromo.
+bool inLibrary(string library, string path) {
+    ret absolute(path).lower().startsWith(absolute(library).lower() + "\\")
+}
+
+// Reads the options of build, run and test, from `args[first]` to `args[last]`
+// (excluded). Returns false, after printing why, if they are wrong.
+public bool readOptions(list<string> args, i64 first, i64 last, bool isRun, ref Compilation compilation) {
+    bool test = compilation.tests
+    string command = test ? "test" : isRun ? "run" : "build"
+    for (i64 i = first; i < last; i++) {
+        string arg = args[i]
+        bool android = arg == "--target" && isRun && i + 1 < last && args[i + 1] == "android"  // D464
+        if (arg == "--target" && isRun && !android) {
+            eprintln("cromo: cromo run takes only --target android, which runs the app on the phone")
+            ret false
+        }
+        if ((arg == "-o" || arg == "--emit-ir" || arg == "--target") && (isRun || test) && !android) {
+            eprintln("cromo: {} is an option of cromo build", arg)
+            ret false
+        }
+        if (arg == "-o" && i + 1 < last) {
+            i++
+            compilation.options.outputPath = args[i]
+        } else if (arg == "--target" && i + 1 < last) {
+            i++
+            string target = args[i]              // D142, D144, D406
+            if (target == "android" && !test) {  // D453: the APK, and cromo run on the phone (D464)
+                compilation.options.target = Target.AndroidArm64
+                compilation.apk = true
+            } else if (!targetOf(target, ref compilation.options.target)) {
+                eprintln("cromo: unknown target: {} (windows, linux, linux-arm64, android, android-arm64 or android-x86_64)", target)
+                ret false
+            }
+        } else if (arg == "--cpu" && i + 1 < last) {
+            i++
+            compilation.options.cpu = args[i]  // D513
+            string error
+            if (!startLlvm() || !validCpu(args[i], ref error)) {
+                eprintln("cromo: {}", error)
+                ret false
+            }
+        } else if (arg == "--quiet" || arg == "-q") {
+            compilation.quiet = true  // D568
+        } else if (arg == "--release") {
+            compilation.release = true  // D57
+        } else if (arg == "--emit-ir") {
+            compilation.emitIr = true
+        } else if (arg == "--tests" && !isRun && !test) {
+            compilation.tests = true  // D572: the IR of cromo test, not in the help
+        } else if (arg == "--runtime" && !isRun && !test) {
+            compilation.runtime = true  // D393: only for the build of cromo, not in the help
+        } else if (arg.len() == 3 && arg.startsWith("-O") && arg[2] >= '0' && arg[2] <= '3') {
+            compilation.options.optLevel = i32(arg[2]) - 48
+        } else if (!arg.startsWith("-") && compilation.inputPath.len() == 0 && (!test || fs.extension(arg) == ".cro")) {
+            compilation.inputPath = arg
+        } else if (!arg.startsWith("-") && test) {
+            compilation.filters.add(arg)  // a part of the names of the tests to run
+        } else {
+            eprintln("cromo: unknown option of cromo {}: {}\n", command, arg)
+            printUsage(true)
+            ret false
+        }
+    }
+    bool windows = compilation.options.target == Target.Windows
+    if (compilation.options.cpu.len() > 0 && isArm64(compilation.options.target) && !compilation.apk) {
+        eprintln("cromo: --cpu names a processor of x86-64, and {} is ARM64", targetName(compilation.options.target))
+        ret false
+    }
+    if (compilation.runtime) {
+        if ((compilation.options.outputPath.len() == 0 && !compilation.emitIr) || compilation.inputPath.len() > 0) {
+            eprintln("cromo: cromo build --runtime [--target system] -o <object>, for the build of cromo")
+            ret false
+        }
+        ret true
+    }
+    string extension = compilation.apk ? ".apk" : windows ? ".exe" : ""
+    if (compilation.inputPath.len() == 0 && fs.isFile("cromo.mod")) {
+        // D517: the executables of cromo.mod, all of them, or the only one for run.
+        if (!readProject(ref compilation.executables)) {
+            ret false
+        }
+        if (compilation.executables.len() > 0 && compilation.options.outputPath.len() > 0) {
+            eprintln("cromo: -o names one executable, and those of cromo.mod are named after their lines")
+            ret false
+        }
+        if (isRun && compilation.executables.len() > 1) {
+            eprintln("cromo: cromo.mod has the executables {}: write which one, as cromo run {}",
+                executableNames(compilation.executables), compilation.executables[0].name)
+            ret false
+        }
+        if (isRun && compilation.executables.len() == 1) {
+            compilation.inputPath = compilation.executables[0].path
+            compilation.options.outputPath = compilation.executables[0].name + extension
+            list<Executable> none
+            compilation.executables = move none
+        }
+        if (compilation.executables.len() > 0) {
+            ret true
+        }
+    } else if (compilation.inputPath.len() > 0 && fs.extension(compilation.inputPath).len() == 0 &&
+        !fs.exists(compilation.inputPath)) {
+        // D517: an executable of cromo.mod by its name.
+        list<Executable> executables
+        if (fs.isFile("cromo.mod") && !readProject(ref executables)) {
+            ret false
+        }
+        i64 found = -1
+        for (i64 i = 0; i < executables.len() && found < 0; i++) {
+            if (executables[i].name == compilation.inputPath) {
+                found = i
+            }
+        }
+        if (found < 0) {
+            if (executables.len() == 0) {
+                eprintln("cromo: there is no file {}, and no cromo.mod here with an executable of that name", compilation.inputPath)
+            } else {
+                eprintln("cromo: there is no file {}, and cromo.mod has the executables {}", compilation.inputPath,
+                    executableNames(executables))
+            }
+            ret false
+        }
+        if (compilation.options.outputPath.len() == 0) {
+            compilation.options.outputPath = executables[found].name + extension
+        }
+        compilation.inputPath = executables[found].path
+    }
+    if (compilation.inputPath.len() == 0) {
+        // D155: main.cro of this folder, and the executable named after the folder.
+        if (!fs.isFile("main.cro")) {
+            eprintln("cromo: there is no main.cro in this folder: write the file to compile, as cromo {} hello.cro ", command)
+            ret false
+        }
+        compilation.inputPath = "main.cro"
+        if (compilation.options.outputPath.len() == 0) {
+            string folder = fs.fileName(os.currentFolder())
+            compilation.options.outputPath = (folder.len() == 0 ? "main" : folder) + extension
+        }
+    }
+    if (compilation.options.outputPath.len() == 0) {
+        string input = compilation.inputPath
+        compilation.options.outputPath = input.slice(0, input.len() - fs.extension(input).len()) + extension
+    }
+    string folder = fs.parent(compilation.options.outputPath)
+    if (folder.len() > 0 && !fs.isFolder(folder)) {  // as the compilers of C: the folder is not made
+        eprintln("cromo: cannot write {}: there is no folder {}", compilation.options.outputPath, folder)
+        ret false
+    }
+    ret true
+}
+
+// The help, on the standard output or on the standard error.
+public void printUsage(bool toError) {
+    string text = "usage: cromo <command> [options] [file.cro] [-- arguments]\n" +
+        "       cromo fmt [--check] [files and folders | -]\n" +
+        "\n" +
+        "commands:\n" +
+        "  build      compiles file.cro into an executable; without a file, the executables\n" +
+        "             of the cromo.mod of this folder, or its main.cro; with a name, that\n" +
+        "             executable of cromo.mod\n" +
+        "  test       runs the [[test]] functions of file.cro, or of main.cro of this folder, and\n" +
+        "             of the files name_test.cro of its modules; the names after the file choose\n" +
+        "             the tests that contain them\n" +
+        "  run        compiles and runs the program, or an executable of cromo.mod by its name;\n" +
+        "             its arguments come after --\n" +
+        "  fmt        formats the .cro files, by default of this folder and its subfolders;\n" +
+        "             --check only lists the ones to format, - formats the standard input\n" +
+        "  lsp        the language server for editors, on the standard input and output\n" +
+        "  ai         what an AI needs to write Cromo: the rules, the syntax and examples; with\n" +
+        "             the name of a module, as cromo ai std.fs or cromo ai core, its reference\n" +
+        "  get        adds a package to the cromo.mod of this folder, or raises its version: cromo get\n" +
+        "             github.com/anna/geometry, with @v2 or @v1.4.0 for a version, and a name after\n" +
+        "             it for its imports; build, run and test download what is missing\n" +
+        "  update     installs the latest version of cromo and makes it the active one; with a\n" +
+        "             version, as cromo update 0.28.0, that one, also an older one\n" +
+        "  design     the designer of the windows: the components of a window put with the\n" +
+        "             mouse, saved as a form, as cromo design notes.form, and as a module\n" +
+        "  version    prints the version of cromo and of LLVM\n" +
+        "  help       prints this text\n" +
+        "\n" +
+        "options of build and run:\n" +
+        "  -o <file>    name of the executable (build; default: the source name, or the folder\n" +
+        "               without a file, with .exe for Windows)\n" +
+        "  --target     the system of the executable: windows, linux, linux-arm64, android-arm64,\n" +
+        "               android-x86_64, or android for the APK of an app (build; default: the one\n" +
+        "               cromo runs on); cromo run --target android runs the app on the phone\n" +
+        "  --cpu        the processor of x86-64 whose instructions the program uses: x86-64,\n" +
+        "               x86-64-v2, x86-64-v3 (AVX2), x86-64-v4 (AVX-512), native for the one of\n" +
+        "               this computer, or a name as haswell (default: x86-64); a processor\n" +
+        "               without them stops the program at the start, with a message\n" +
+        "  --release    no overflow checks: integers wrap around (default: debug, with checks)\n" +
+        "  -O<n>        optimization level (default: -O2)\n" +
+        "  --emit-ir    print the generated LLVM IR instead of producing the executable (build)\n" +
+        "  --quiet, -q  no lines for what cromo does, only the errors: for the scripts\n"
+    if (toError) {
+        eprint("{}", text)
+    } else {
+        print("{}", text)
+    }
+}
+
+// cromo with its arguments, the first the command (D151). Returns its exit code.
+public i32 command(list<string> args) {
+    if (args.len() < 2) {
+        printUsage(true)
+        ret 2
+    }
+    string library = libraryFolder(programPath())
+    string name = args[1]
+    if (name == "help" || name == "-h" || name == "--help") {
+        printUsage(false)
+        ret 0
+    }
+    if (name == "version") {
+        println("cromo {} (LLVM {})", cromoVersion(), llvmVersion())  // D157
+        ret 0
+    }
+    if (name == "update" || name == "design") {
+        // D403: a program written in Cromo, in the library of this cromo, compiled
+        // and run as by cromo run, with the version asked (D289); D523: the designer
+        // of the windows, with the form asked.
+        if (name == "update" && args.len() > 3) {
+            eprintln("cromo: cromo update takes at most a version, as cromo update 0.28.0")
+            ret 2
+        }
+        if (name == "design") {
+            setEnv("CROMO", programPath())  // the designer runs this cromo for its preview
+        }
+        list<string> programArgs
+        for (i64 i = 2; i < args.len(); i++) {
+            programArgs.add(args[i])
+        }
+        ret runTool(library, "tools/" + name + ".cro", programArgs, 0)
+    }
+    if (name == "get") {
+        // D381: the version is chosen and written in cromo.mod by tools/get.cro, then
+        // the packages are those of a build.
+        if (args.len() < 3 || args.len() > 4) {
+            eprintln("{}", "cromo: cromo get takes the address of a package, as cromo get github.com/anna/geometry, with @v2 or " +
+                "@v1.4.0 for a version, and a name after it for its imports")
+            ret 2
+        }
+        if (!fs.isFile("cromo.mod")) {
+            eprintln("{}", "cromo: there is no cromo.mod in this folder: write one with a line as module example.com/app, the name " +
+                "of the project")
+            ret 1
+        }
+        i32 code = runTool(library, "tools/get.cro", ["get", packagesFolder(), args[2], args.len() > 3 ? args[3] : ""], 0)
+        if (code != 0) {
+            ret code
+        }
+        ret preparePackages(os.currentFolder(), library, hostTarget(), 1) ? 0 : 1
+    }
+    if (name == "fmt") {
+        ret formatCommand(args, 2)
+    }
+    if (name == "ai" || name == "lsp") {
+        eprintln("cromo: cromo {} is not yet in the cromo written in Cromo", name)
+        ret 2
+    }
+    if (name == "rls") {
+        eprintln("cromo: the language server is cromo lsp")
+        ret 2
+    }
+    if (name != "build" && name != "run" && name != "test") {
+        if (fs.extension(name) == ".cro") {
+            eprintln("cromo: the command comes first: cromo build {}", name)
+        } else {
+            eprintln("cromo: unknown command: {}\n", name)
+            printUsage(true)
+        }
+        ret 2
+    }
+
+    bool isRun = name == "run"
+    i64 separator = args.len()
+    for (i64 i = args.len() - 1; i >= 2; i--) {
+        if (args[i] == "--") {
+            separator = i
+        }
+    }
+    if (!isRun && separator != args.len()) {
+        eprintln("cromo: the arguments after -- are for cromo run")
+        ret 2
+    }
+    Compilation compilation
+    compilation.options.library = library
+    compilation.options.target = hostTarget()
+    compilation.tests = name == "test"
+    if (!readOptions(args, 2, separator, isRun, ref compilation)) {
+        ret 2
+    }
+    compilation.sign = name == "build"
+    if (compilation.apk) {
+        eprintln("cromo: --target android is not yet in the cromo written in Cromo")
+        ret 2
+    }
+    // D517: each executable of cromo.mod, with the same options.
+    list<Executable> executables = compilation.executables
+    if (name == "test") {
+        bool none = false
+        if (executables.len() == 0) {
+            ret testCommand(ref compilation, false, ref none)
+        }
+        i32 result = 0
+        i64 unmatched = 0
+        for (Executable executable in executables) {
+            Compilation one = compilation
+            one.inputPath = executable.path
+            println("{} ({})", executable.name, executable.path)
+            none = false
+            if (testCommand(ref one, compilation.filters.len() > 0, ref none) != 0) {
+                result = 1
+            }
+            if (none) {
+                unmatched++
+            }
+        }
+        if (unmatched == executables.len()) {  // the names chose no test at all
+            println("no test has those names")
+            ret 1
+        }
+        ret result
+    }
+    if (!isRun && executables.len() > 0) {
+        for (Executable executable in executables) {
+            Compilation one = compilation
+            one.inputPath = executable.path
+            one.options.outputPath = executable.name + (one.options.target == Target.Windows ? ".exe" : "")
+            i32 code = build(ref one)
+            if (code != 0) {
+                ret code
+            }
+        }
+        ret 0
+    }
+    if (!isRun) {
+        ret build(ref compilation)
+    }
+    list<string> programArgs
+    for (i64 i = separator + 1; i < args.len(); i++) {
+        programArgs.add(args[i])
+    }
+    ret run(ref compilation, programArgs)
+}
