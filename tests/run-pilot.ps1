@@ -5,7 +5,8 @@
 # build\cromo-check.exe the same errors as cromo build --check-names and as cromo build
 # --list-declarations, --list-types and --check-moves on every program, and the same
 # lists (P30, P89, P90); and the same IR of LLVM as cromo build --emit-ir, byte for
-# byte, with and without --release, and for Linux on x86-64 and on ARM64 (D572).
+# byte, with and without --release, for Linux on x86-64 and on ARM64, for the
+# executable of cromo test and for the object of std.runtime of every system (D572).
 # Usage: powershell -ExecutionPolicy Bypass -File tests\run-pilot.ps1
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
@@ -87,7 +88,8 @@ foreach ($file in Get-ChildItem 'tests', 'examples', 'bench' -Recurse -Filter *.
         "`"$cromo`" build --check-moves", "`"$check`"", "`"$cromo`" build --emit-ir", "`"$check`" --emit-ir",
         "`"$cromo`" build --emit-ir --release", "`"$check`" --emit-ir --release",
         "`"$cromo`" build --emit-ir --target linux", "`"$check`" --emit-ir --target linux",
-        "`"$cromo`" build --emit-ir --target linux-arm64", "`"$check`" --emit-ir --target linux-arm64") {
+        "`"$cromo`" build --emit-ir --target linux-arm64", "`"$check`" --emit-ir --target linux-arm64",
+        "`"$cromo`" build --emit-ir --tests", "`"$check`" --emit-ir --tests") {
         cmd /c "$program `"$relative`" > `"$work\names.out`" 2> `"$work\names.err`""
         $results += "$LASTEXITCODE " + [IO.File]::ReadAllText("$work\names.err").Replace("`r`n", "`n") +
             [IO.File]::ReadAllText("$work\names.out").Replace("`r`n", "`n")
@@ -108,6 +110,18 @@ foreach ($file in Get-ChildItem 'tests', 'examples', 'bench' -Recurse -Filter *.
     # system has not: only the IR of those that the C++ compiles is compared.
     if ($results[12].StartsWith('0 ') -and $results[12] -ne $results[13]) { $problems += "the IR for Linux differs: $relative" }
     if ($results[14].StartsWith('0 ') -and $results[14] -ne $results[15]) { $problems += "the IR for Linux ARM64 differs: $relative" }
+    # The executable of cromo test, with the files name_test.cro and without main (D352).
+    if ($results[16].StartsWith('0 ') -and $results[16] -ne $results[17]) { $problems += "the IR of the tests differs: $relative" }
+}
+# The object of std.runtime (D393), which has no file of a program.
+foreach ($target in 'windows', 'linux', 'linux-arm64', 'android-arm64', 'android-x86_64') {
+    $results = @()
+    foreach ($program in "`"$cromo`" build --emit-ir", "`"$check`" --emit-ir") {
+        cmd /c "$program --runtime --target $target > `"$work\names.out`" 2> `"$work\names.err`""
+        $results += "$LASTEXITCODE " + [IO.File]::ReadAllText("$work\names.err").Replace("`r`n", "`n") +
+            [IO.File]::ReadAllText("$work\names.out").Replace("`r`n", "`n")
+    }
+    if ($results[0] -ne $results[1]) { $problems += "the IR of the runtime for $target differs" }
 }
 Pop-Location
 Remove-Item -Recurse -Force $work

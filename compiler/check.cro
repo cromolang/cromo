@@ -18,13 +18,20 @@ import std.fs
 
 i32 main(list<string> given) {
     // `--emit-ir --release`: without the checks of overflow, as cromo build --release;
-    // `--target linux`, as its --target.
+    // `--target linux`, as its --target; `--tests`, the executable of cromo test, with
+    // the files name_test.cro; `--runtime`, the object of std.runtime, without a file.
     list<string> args
     bool release = false
+    bool tests = false
+    bool runtime = false
     string target = "windows"
     for (i64 i = 0; i < given.len(); i++) {
         if (given[i] == "--release") {
             release = true
+        } else if (given[i] == "--tests") {
+            tests = true
+        } else if (given[i] == "--runtime") {
+            runtime = true
         } else if (given[i] == "--target" && i + 1 < given.len()) {
             target = given[i + 1]
             i++
@@ -34,6 +41,11 @@ i32 main(list<string> given) {
     }
     bool linux = target != "windows"
     bool arm64 = target == "linux-arm64" || target == "android-arm64"
+    string library = libraryFolder(given[0])
+    if (runtime) {  // D393: a file of the library that imports std.runtime, never written
+        args.add(library + "\\runtime-object.cro")
+        release = true
+    }
     string option = args.len() == 3 ? args[1] : ""
     bool known = option == "--names" || option == "--declarations" || option == "--list" || option == "--list-types" ||
         option == "--emit-ir"
@@ -42,8 +54,7 @@ i32 main(list<string> given) {
         ret 2
     }
     string path = args[args.len() - 1]
-    string library = libraryFolder(args[0])
-    if (!fs.isFile(path)) {
+    if (!runtime && !fs.isFile(path)) {
         eprintln("cromo: cannot read {}", path)
         ret 2
     }
@@ -52,7 +63,7 @@ i32 main(list<string> given) {
         eprintln("cromo: cannot read {}", core)
         ret 2
     }
-    Program program = load(path, readSource(path), library, linux, arm64)
+    Program program = load(path, runtime ? "import std.runtime\n" : readSource(path), library, linux, arm64, tests)
     if (program.diag.hasErrors()) {
         ret 1
     }
@@ -61,7 +72,7 @@ i32 main(list<string> given) {
         ret program.diag.hasErrors() ? 1 : 0
     }
     if (option == "--emit-ir") {
-        Checker checked = checkProgram(move program.tree, move program.diag)
+        Checker checked = checkProgram(move program.tree, move program.diag, !tests && !runtime)
         if (!checked.diag.hasErrors()) {
             checkMoves(ref checked)
         }
@@ -71,6 +82,8 @@ i32 main(list<string> given) {
         Options options
         options.sourcePath = path
         options.release = release
+        options.tests = tests
+        options.runtime = runtime
         options.windows = !linux
         options.arm64 = arm64
         options.triple = target == "linux" ? "x86_64-unknown-linux-gnu" : target == "linux-arm64" ? "aarch64-unknown-linux-gnu" :
@@ -82,7 +95,7 @@ i32 main(list<string> given) {
         ret 0
     }
     if (option == "" || option == "--list-types") {
-        Checker checked = checkProgram(move program.tree, move program.diag)
+        Checker checked = checkProgram(move program.tree, move program.diag, true)
         if (option == "--list-types") {
             checked.listTypes()
         } else if (!checked.diag.hasErrors()) {

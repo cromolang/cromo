@@ -8844,10 +8844,11 @@ public Checker checkDeclarations(move Tree tree, move Diagnostics diag) {
 
 // The whole analysis of a program, with its errors: the declarations, then the
 // bodies of the functions.
-public Checker checkProgram(move Tree tree, move Diagnostics diag) {
+public Checker checkProgram(move Tree tree, move Diagnostics diag, bool requireMain) {
     Checker checker
     checker.tree = move tree
     checker.diag = move diag
+    checker.requireMain = requireMain
     checker.run()
     ret checker
 }

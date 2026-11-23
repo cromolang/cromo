@@ -608,6 +608,8 @@ bool readOptions(const std::vector<std::string>& args, size_t first, size_t last
             compilation.codegen.release = true;  // D57
         } else if (arg == "--emit-ir") {
             compilation.emitIr = true;
+        } else if (arg == "--tests" && !run && !test) {
+            compilation.codegen.tests = true;  // D572: the IR of cromo test, for the pilot, not in the help
         } else if (arg == "--runtime" && !run && !test) {
             compilation.runtime = true;  // D393: only for the build of cromo, not in the help
         } else if (arg == "--reference" && !run && !test && i + 1 < last) {
@@ -642,7 +644,7 @@ bool readOptions(const std::vector<std::string>& args, size_t first, size_t last
         return false;
     }
     if (compilation.runtime) {
-        if (options.outputPath.empty() || !compilation.inputPath.empty()) {
+        if ((options.outputPath.empty() && !compilation.emitIr) || !compilation.inputPath.empty()) {
             std::fputs("cromo: cromo build --runtime [--target system] -o <object>, for the build of cromo\n", stderr);
             return false;
         }
@@ -1497,7 +1499,7 @@ int main(int argc, char** argv) {
     // D517: each executable of cromo.mod, with the same options.
     std::vector<Executable> executables = std::move(compilation.executables);
     compilation.executables.clear();
-    if (compilation.codegen.tests) {
+    if (command == "test") {
         if (executables.empty()) return testCommand(compilation);
         int result = 0;
         size_t unmatched = 0;

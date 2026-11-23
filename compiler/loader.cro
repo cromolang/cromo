@@ -29,9 +29,10 @@ public string libraryFolder(string program) {
 }
 
 // The program of the file `path`, for Windows x64: its tree and its errors.
-public Program load(string path, string text, string library, bool linux, bool arm64) {
+public Program load(string path, string text, string library, bool linux, bool arm64, bool tests) {
     Loader loader
     loader.library = library
+    loader.tests = tests
     loader.linux = linux
     loader.arm64 = arm64
     loader.program.diag = Diagnostics(path, text)
@@ -69,6 +70,7 @@ public string readSource(string path) {
 struct Loader {
     bool linux  // the system and the architecture of the program (D202, D408)
     bool arm64
+    bool tests  // with the files name_test.cro, for cromo test (D350)
     Program program
     string library
     string root
@@ -87,6 +89,7 @@ struct Loader {
                 loadFile(base + suffix + ".cro", names[0].copy(), 0, 1, 1, 0)
             }
         }
+        loadTests(absolute(main), names[0].copy(), 0)
         // The list of files grows while their imports are loaded.
         for (i32 i = 0; i < program.diag.fileCount(); i++) {
             bool fromLibrary = isLibraryFile(program.diag.path(i))
@@ -141,18 +144,26 @@ struct Loader {
                     loadFile(own, dotted, from, line, column, index)
                 }
             }
+            loadTests(file, dotted, index)
             files.add(index)
             ret files
         }
         if (isFolder) {
             // D515: one module of the files of the folder, in the order of their names,
             // the first holding its names; those of another system or architecture are
-            // left out (D202, D408), and so are the tests.
+            // left out (D202, D408), and the tests join it for cromo test (D350).
             list<string> entries
+            list<string> testEntries
             for (string entry in fs.listFolder(folder)) {
                 string stem = stemOf(entry)
-                if (fs.extension(entry) != ".cro" || !fs.isFile(folder + "\\" + entry) || (stem.len() > 5 && stem.endsWith("_test")) ||
-                    withoutSuffix(stem, linux, arm64).other) {
+                if (fs.extension(entry) != ".cro" || !fs.isFile(folder + "\\" + entry)) {
+                    continue
+                }
+                if (isTestFile(entry)) {
+                    testEntries.add(entry)
+                    continue
+                }
+                if (withoutSuffix(stem, linux, arm64).other) {
                     continue
                 }
                 entries.add(entry)
@@ -166,6 +177,12 @@ struct Loader {
             for (i64 i = 1; i < entries.len(); i++) {
                 loadFile(folder + "\\" + entries[i], dotted, from, line, column, first)
             }
+            if (tests) {
+                sort(ref testEntries)
+                for (string entry in testEntries) {
+                    loadFile(folder + "\\" + entry, dotted, from, line, column, first)
+                }
+            }
             files.add(first)
             ret files
         }
@@ -173,6 +190,18 @@ struct Loader {
         program.diag.errorIn(from, line, column, "cannot find the module " + dotted + ": there is no " + shown + ".cro or folder " +
             shown + " next to " + next)
         ret files
+    }
+
+    // D350: `geometry_test.cro` is a part of the module of `geometry.cro`, only for
+    // cromo test.
+    void loadTests(string file, string name, i32 index) {
+        if (!tests || isTestFile(file)) {
+            ret
+        }
+        string path = parentOf(file) + "\\" + stemOf(file) + "_test.cro"
+        if (fs.isFile(path)) {
+            loadFile(path, name, index, 1, 1, index)
+        }
     }
 
     i32 loadFile(string path, string name, i32 from, i32 line, i32 column, i32 part) {
@@ -313,6 +342,11 @@ Suffixed withoutSuffix(string stem, bool linux, bool arm64) {
     ret result
 }
 
+bool isTestFile(string path) {
+    string stem = stemOf(path)
+    ret stem.len() > 5 && stem.endsWith("_test")
+}
+
 // D516: the folder of cromo.mod, from `folder` up to the root of the drive, or "".
 string projectFolder(string folder) {
     string at = folder
@@ -337,7 +371,7 @@ string stemOf(string path) {
 }
 
 // The folder of a path, without the separator at its end.
-string parentOf(string path) {
+public string parentOf(string path) {
     i64 at = path.len() - 1
     for (at >= 0 && path[at] != '\\' && path[at] != '/') {
         at--
