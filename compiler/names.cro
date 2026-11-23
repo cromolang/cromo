@@ -101,7 +101,7 @@ void errorAt(ref Diagnostics diag, i32 file, i32 line, i32 column, string messag
 }
 
 // The file whose names a file shares: its own, or that of its module (D202).
-i32 scopeOf(Tree tree, i32 file) {
+public i32 scopeOf(Tree tree, i32 file) {
     i32 part = tree.files[file].part
     ret part >= 0 ? part : file
 }

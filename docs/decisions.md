@@ -2600,6 +2600,12 @@ i32 total = sum.sum()
 ### D559. `cromo ai`: what an AI needs to write Cromo
 *2026-11-20.* Chosen by the author. Much code is written today with an AI, and an AI that has never seen Cromo writes C++ with other keywords: `return`, a variable called `move`, a block alone, a literal without a type. `cromo ai` prints what it needs to write Cromo that compiles: the rules that are easy to get wrong, the syntax with whole programs as examples, and the commands; `cromo ai std.fs` prints the reference of a module, and `cromo ai core` that of the core. It is in `cromo` and not only on the site, so that the text is of the version installed, and is there without a network: an AI that works in a terminal asks the compiler it is about to use.
 
+### D560. The types of the compiler in Cromo: an id for each type
+*2026-11-23.* Chosen by the author. It follows D418 and D423. In the compiler written in Cromo a type is an `i32`, the index of its entry in a table where every different type is written once: its kind, the bits and the sign of a number, the struct, the interface or the type parameter it names, the element and the count of an array or of a vector, the parameters and the result of a function type. Two types are the same when their ids are equal. It is the way of the compiler of Zig and of `rustc`, and of D418: every reference is an index. The other forms were a struct copied by value with the fields of `src/types.h`, whose equality compares all its fields, and an enum with data, which cannot hold a type inside another one.
+
+### D561. The instances of a generic in the compiler in Cromo: copies of the declaration
+*2026-11-23.* Chosen by the author. As the C++ does, an instance of a generic struct or function, as `list<Point>`, is a copy of its declaration added at the end of the tables of the tree (D418), with its own nodes, on which the analysis writes the types of that instance. The errors and their order are those of the C++, so each part of sema is still checked against it (D423). The other way was one body with a table of types for each instance: less memory, but another design than the C++, harder to compare.
+
 ---
 
 ## Proposed
@@ -3064,6 +3070,24 @@ A component keeps the distances from the edges of its parent, the content of the
 - Every block of Cromo in the text is a whole program, and a test builds them all (`tests/m94`): a rule that the compiler refuses is found when the tests run, not by who trusts the text.
 - `cromo ai std.fs`, or `cromo ai fs`, prints the public declarations of that module with their signatures and their documentation, read from the library as the reference of the site is (D519), so it never falls behind; `cromo ai core` those of the core, with the built-in functions and types. A name that is not a module is an error that lists them.
 - The text is in English only, as the messages of the compiler.
+### P89. The check of the declarations of sema (D423, D560, D561)
+- `cromo build --check-declarations`, an option not in the help as `--check-names` (P30), stops the C++ after the types of the declarations, before any body of a function; `--list-declarations` prints also what the analysis knows then: every struct that is not generic and every instance, with its size, its alignment, whether it needs destruction, its fields and cases with their types and its methods with their signatures, then the functions and the instances of the generic functions, in the order they were made. `build\cromo-check.exe` does the same in Cromo, with `--list`, and `--names` for the first part; `tests\run-pilot.ps1` compares the errors and the lists on every test.
+- The ids of the types of the language are the same in every table: the error type is 0, so a node that the analysis has not reached yet has it, as in the C++.
+- What the analysis adds to a node is written in the node, at its end, as in `src/ast.h`; a written type is not changed, since the copies of a declaration share it (D561), and what it became is in the field, the parameter or the function that has it.
+- A type parameter has an entry of its own, with its constraints, for each declaration and each copy of a generic method, as the C++ tells them apart by their address.
+- The initial values of the fields and of the variables of the modules are checked here only when they are literals, which is what the C++ does before the bodies; a minus in front of a literal is read as a part of it without changing the tree, and the next part will fold it.
+- Not done: the symbols of the declarations, which only the generation of the code needs.
+
+### P90. The bodies and the moves of sema in Cromo (D423, D418)
+- `cromo build --check-types` stops the C++ after the whole of sema, and `--check-moves` after the moves too; `--list-types` prints also what sema wrote on the bodies: for every function checked its variables, with their kind and whether they have a drop flag, and every expression in the order of the source, with its kind, its position, its type, the function it calls, the field it reads and what it became. `build\cromo-check.exe` does the same, with `--list-types` and with no option; `tests\run-pilot.ps1` compares the errors and the lists on every test.
+- A node that the analysis changes is rewritten in its place: `x` that is a field becomes the node of the field in the place of the name, and a value that is converted or copied moves to a new place, with the conversion in its old one. The nodes that name it by its index still do; what names a node for what it is, as the lambda of a thread of its block, names one that never moves.
+- The kinds of nodes that only the analysis makes, as the conversions and the values of the enums, are at the end of the kinds of the parser, which never sees them; a node made by the analysis uses the fields of the others, `left` for its operand and `items` for its arguments.
+- The variables are in a table of the tree, as the nodes; each has its place among those of its function, which the moves use.
+- The parameters of what is not a function, as the data of a case, a built-in function and a function type, are a declaration added to the functions of the tree, so that the arguments are checked in one way; those of the cases and of the function types are made once.
+- The functions that the compiler writes in Cromo, for JSON and for `{:?}`, are parsed into the tree as a part of the file that sees their names, and taken out of the functions of its module.
+- The type of a string literal given to `print` is one of the types of the language, as in the C++, before it is a `string` of the library.
+- The moves are a module of their own, `compiler/moves.cro`, which takes the tree from the analysis and gives it back.
+- Not done: the value of a float literal, the bytes of the file of `embed`, and the place of a capture in the data of its lambda, which the generation of the code needs.
 
 ## Open
 

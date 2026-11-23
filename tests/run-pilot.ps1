@@ -2,8 +2,9 @@
 # the same results as cromo fmt in C++ on every .cro file of the repository: the same
 # files written, the same names printed and the same errors, apart from the line
 # endings of the output, which the runtime of Cromo writes as \n; and
-# build\cromo-check.exe the same errors as cromo build --check-names on every program
-# (P30).
+# build\cromo-check.exe the same errors as cromo build --check-names and as cromo build
+# --list-declarations, --list-types and --check-moves on every program, and the same
+# lists (P30, P89, P90).
 # Usage: powershell -ExecutionPolicy Bypass -File tests\run-pilot.ps1
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
@@ -67,8 +68,11 @@ foreach ($folder in 'library', 'examples', 'tests\m11') {
     }
 }
 
-# The first part of sema (D423, P30): the same exit code and the same errors as the
-# C++ stopped after the names of the modules, on every program.
+# Sema (D423, P30, P89, P90): the same exit code and the same errors as the C++ stopped
+# after the names of the modules, after the types of the declarations, after the types
+# of the expressions and after the moves, on every program; and the same lists of what
+# the analysis knows: the structs with their layout, their instances and the
+# signatures, then every function checked with its variables and its expressions.
 $programs = 0
 Push-Location $root
 foreach ($file in Get-ChildItem 'tests', 'examples', 'bench' -Recurse -Filter *.cro) {
@@ -76,16 +80,22 @@ foreach ($file in Get-ChildItem 'tests', 'examples', 'bench' -Recurse -Filter *.
     $programs++
     $relative = $file.FullName.Substring($root.Length + 1)
     $results = @()
-    foreach ($program in "`"$cromo`" build --check-names", "`"$check`"") {
-        cmd /c "$program `"$relative`" > NUL 2> `"$work\names.err`""
-        $results += "$LASTEXITCODE " + [IO.File]::ReadAllText("$work\names.err").Replace("`r`n", "`n")
+    foreach ($program in "`"$cromo`" build --check-names", "`"$check`" --names", "`"$cromo`" build --list-declarations",
+        "`"$check`" --list", "`"$cromo`" build --list-types", "`"$check`" --list-types",
+        "`"$cromo`" build --check-moves", "`"$check`"") {
+        cmd /c "$program `"$relative`" > `"$work\names.out`" 2> `"$work\names.err`""
+        $results += "$LASTEXITCODE " + [IO.File]::ReadAllText("$work\names.err").Replace("`r`n", "`n") +
+            [IO.File]::ReadAllText("$work\names.out").Replace("`r`n", "`n")
     }
     if ($results[0] -ne $results[1]) { $problems += "the names differ: $relative" }
+    if ($results[2] -ne $results[3]) { $problems += "the declarations differ: $relative" }
+    if ($results[4] -ne $results[5]) { $problems += "the types differ: $relative" }
+    if ($results[6] -ne $results[7]) { $problems += "the moves differ: $relative" }
 }
 Pop-Location
 Remove-Item -Recurse -Force $work
 
-'{0} files, C++ {1:N0} ms, Cromo {2:N0} ms; {3} through the standard input; {4} programs for the names' -f $count, $times['cpp'], $times['cromo'], $piped, $programs
+'{0} files, C++ {1:N0} ms, Cromo {2:N0} ms; {3} through the standard input; {4} programs for the analysis' -f $count, $times['cpp'], $times['cromo'], $piped, $programs
 if ($problems.Count -gt 0) {
     $problems | Select-Object -First 20
     'pilot: FAILED'

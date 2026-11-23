@@ -1,0 +1,172 @@
+// The functions and the variables of a module with `import unsafe` (D423), checked
+// by the second part of sema in Cromo too: the C functions, the attributes, the
+// module variables and the constants.
+// expect-error: a C function returns a number, bool or addr, not string
+// expect-error: a C function has no 'move' parameters
+// expect-error: 'ref' to a C function is a pointer to a number or to a struct of numbers, not Name
+// expect-error: a C function takes numbers, bool, addr and 'ref' to numbers or structs of numbers, not Pixel
+// expect-error: the C function 'strlen' is already declared with another signature
+// expect-error: 'free' is a built-in function of the unsafe dialect
+// expect-error: [[cold]] takes no arguments
+// expect-error: the function 'slow' already has [[cold]]
+// expect-error: [[window]] is only for main of the program
+// expect-error: [[android]] is only for main of the program
+// expect-error: [[export]] takes the name of the function in C
+// expect-error: an exported function has no other attributes
+// expect-error: an exported function cannot be generic: C calls it as it is
+// expect-error: the parameters of an exported function are numbers, bool or addr, passed by value
+// expect-error: an exported function returns a number, a bool, an addr or nothing
+// expect-error: another function is exported as 'shared_name'
+// expect-error: unknown attribute 'fast': a function has only [[test]], [[export("name")]] or [[cold]]
+// expect-error: the function 'twice' already has [[test]]
+// expect-error: a test cannot be generic: cromo test calls it as it is
+// expect-error: a test takes no parameters and returns nothing: [[test]] void counted()
+// expect-error: a module variable holds numbers, bool, addr, or arrays and structs of them
+// expect-error: the initial value of a module variable is a number, a character, true or false
+// expect-error: value 70000 is out of range for u16 (0 .. 65535)
+// expect-error: a constant of a module is a number, bool or char, or an array of them, not Pixel
+// expect-error: constant 'missing' needs its value
+// expect-error: the value of a constant of a module is a number, a character, true or false
+// expect-error: the value of a constant array is a list of literals in square brackets
+// expect-error: the array has 3 elements, and the list 2
+// expect-error: function 'open' is public, but its type addr is only for the modules with 'import unsafe'
+// expect-error: function 'pixel' is public, but its type Pixel is private to the module
+// expect-error: field 'inner' is public, but its type Pixel is private to the module
+// expect-error: method 'all' is public, but its type Pixel is private to the module
+// expect-error: [[window]] takes no arguments
+// expect-error: the package of an app is names of letters, digits and _
+import unsafe
+
+struct Pixel {
+    u8 red
+    u8 green
+    u8 blue
+}
+
+struct Name {
+    string text
+}
+
+struct Count {
+    i32 value = 1 + 2
+}
+
+extern "c" {
+    string name()
+    i32 take(move i32 value)
+    void fill(ref Pixel pixel, ref Name name, ref i32[4] values)
+    void show(Pixel pixel, addr data, bool flag)
+    i64 strlen(addr text)
+    i32 strlen(addr text)
+    void free(addr data)
+}
+
+[[cold(often)]] void rare() {
+}
+
+[[cold]] [[cold]] void slow() {
+}
+
+[[window]] void windowed() {
+}
+
+[[android("org.example.app", "App")]] void app() {
+}
+
+[[export]] void unnamed() {
+}
+
+[[export("9lives")]] void digits() {
+}
+
+[[export("two")]] [[test]] void both() {
+}
+
+[[export("generic")]] void generic<T>() {
+}
+
+[[export("by_ref")]] void byRef(ref i32 value) {
+}
+
+[[export("text")]] string text() {
+    ret ""
+}
+
+[[export("shared_name")]] i32 one() {
+    ret 1
+}
+
+[[export("shared_name")]] i32 another() {
+    ret 2
+}
+
+[[cold]] [[export("cold_one")]] addr coldOne(addr data, i64 size, bool zero) {
+    ret data
+}
+
+[[fast]] void quick() {
+}
+
+[[test]] [[test]] void twice() {
+}
+
+[[test]] void each<T>() {
+}
+
+[[test]] i32 counted() {
+    ret 0
+}
+
+[[test]] void good() {
+}
+
+i64 counter
+i64 started = 5
+f64 ratio = -1.5
+bool ready = true
+u8 letter = 'a'
+Pixel black
+i32[8] table
+Pixel[2][3] image
+string name
+Name named
+Count counted2
+list<i32> items
+i64 sum = 2 + 3
+u16 big = 70000
+i32x4 lanes
+
+const i32 limit = 100
+const f64 half = 0.5
+const bool debug = false
+const u8[3] bytes = [1, 2, 3]
+const Pixel white = 1
+const i32 missing
+const i32 computed = 2 * 3
+const i32[3] values = 5
+const i32[3] short = [1, 2]
+const i32[2] mixed = [1, limit]
+
+public addr open() {
+    ret offset(0)
+}
+
+public Pixel pixel() {
+    Pixel p
+    ret p
+}
+
+public struct Image {
+    public Pixel inner
+    Pixel hidden
+    public list<Image> parts
+
+    public list<Pixel> all() {
+        list<Pixel> result
+        ret result
+    }
+}
+
+[[window(big)]] [[android("app", "App")]] i32 main() {
+    ret 0
+}

@@ -1,0 +1,487 @@
+// The types of the analysis (D560), as src/types.h: a type is an id, the index of
+// its entry in the table of Types, where every different type is written once, so
+// two types are the same when their ids are equal. The types of the language have
+// the ids of the functions below, the same in every table.
+import ast
+
+public enum TypeKind {
+    Error  // a type error has already been reported
+    Void
+    Bool
+    Int
+    Float
+    Struct
+    Param         // a type parameter inside a generic: `T` (D39)
+    Interface     // a reference with its method table (D49)
+    SelfType      // `Self` in the methods of an interface (D84)
+    Addr          // an address without a type: only in the standard library (D37, D98)
+    UntypedInt    // integer literal still waiting for its type (D55)
+    UntypedFloat  // floating-point literal still waiting for its type (D55)
+    Function      // `func(i32, i32) bool` (D185)
+    Array         // `i32[4]` (D196)
+    Vector        // `i16x16` (D505)
+    String        // a string literal given to print, before it is a string of the library (D65)
+}
+
+public struct TypeInfo {
+    public TypeKind kind
+    public i32 bits  // of a number
+    public bool isSigned
+    public i32 decl = -1     // the struct, the interface or the type parameter
+    public i32 element = -1  // of an array or a vector
+    public i64 count
+    public list<i32> params  // of a function type
+    public list<ParamMode> modes
+    public i32 result = -1
+}
+
+// A type parameter of a generic: every declaration and every copy of it has its own.
+public struct ParamInfo {
+    public string name
+    public list<i32> interfaces  // its constraints
+}
+
+public i32 errorType() {
+    ret 0
+}
+
+public i32 voidType() {
+    ret 1
+}
+
+public i32 boolType() {
+    ret 2
+}
+
+public i32 untypedInt() {
+    ret 3
+}
+
+public i32 untypedFloat() {
+    ret 4
+}
+
+public i32 selfType() {
+    ret 5
+}
+
+public i32 addrType() {
+    ret 6
+}
+
+public i32 intType(i32 bits, bool isSigned) {
+    ret 7 + (isSigned ? 0 : 4) + (bits == 8 ? 0 : bits == 16 ? 1 : bits == 32 ? 2 : 3)
+}
+
+public i32 floatType(i32 bits) {
+    ret bits == 32 ? 15 : 16
+}
+
+public i32 literalString() {
+    ret 17
+}
+
+public struct Types {
+    public list<TypeInfo> items
+    public list<ParamInfo> params
+    map<string, i32> known
+
+    i32 add(TypeKind kind, i32 bits, bool isSigned) {
+        TypeInfo info
+        info.kind = kind
+        info.bits = bits
+        info.isSigned = isSigned
+        items.add(move info)
+        ret i32(items.len() - 1)
+    }
+
+    // The types of the language, in the order of their ids.
+    public void addBuiltins() {
+        add(TypeKind.Error, 0, false)
+        add(TypeKind.Void, 0, false)
+        add(TypeKind.Bool, 1, false)
+        add(TypeKind.UntypedInt, 0, false)
+        add(TypeKind.UntypedFloat, 0, false)
+        add(TypeKind.SelfType, 0, false)
+        add(TypeKind.Addr, 64, false)
+        for (i32 bits = 8; bits <= 64; bits *= 2) {
+            add(TypeKind.Int, bits, true)
+        }
+        for (i32 bits = 8; bits <= 64; bits *= 2) {
+            add(TypeKind.Int, bits, false)
+        }
+        add(TypeKind.Float, 32, false)
+        add(TypeKind.Float, 64, false)
+        add(TypeKind.String, 0, false)
+    }
+
+    // The id of a type with a declaration, an element or a signature: the one it
+    // already has, or a new one.
+    i32 intern(string key, move TypeInfo info) {
+        if (known.contains(key)) {
+            ret known[key]
+        }
+        items.add(move info)
+        i32 id = i32(items.len() - 1)
+        known[key] = id
+        ret id
+    }
+
+    i32 named(TypeKind kind, string letter, i32 decl) {
+        TypeInfo info
+        info.kind = kind
+        info.decl = decl
+        ret intern(format("{}{}", letter, decl), move info)
+    }
+
+    public i32 structType(i32 record) {
+        ret named(TypeKind.Struct, "S", record)
+    }
+
+    public i32 interfaceType(i32 decl) {
+        ret named(TypeKind.Interface, "I", decl)
+    }
+
+    public i32 paramType(i32 param) {
+        ret named(TypeKind.Param, "P", param)
+    }
+
+    // A new type parameter, and its index in `params`.
+    public i32 addParam(string name, list<i32> interfaces) {
+        ParamInfo info
+        info.name = name
+        info.interfaces = interfaces
+        params.add(move info)
+        ret i32(params.len() - 1)
+    }
+
+    public i32 arrayType(i32 element, i64 count) {
+        TypeInfo info
+        info.kind = TypeKind.Array
+        info.element = element
+        info.count = count
+        ret intern(format("A{}:{}", element, count), move info)
+    }
+
+    // The vector of SIMD with `count` numbers of the type `element` (D505).
+    public i32 vectorType(i32 element, i64 count) {
+        TypeInfo info
+        info.kind = TypeKind.Vector
+        info.element = element
+        info.count = count
+        ret intern(format("V{}:{}", element, count), move info)
+    }
+
+    public i32 functionType(list<i32> parameters, list<ParamMode> modes, i32 result) {
+        string key = "F"
+        for (i64 i = 0; i < parameters.len(); i++) {
+            key += format("{}{},", modes[i] == ParamMode.Ref ? "r" : modes[i] == ParamMode.Move ? "m" : "", parameters[i])
+        }
+        key += format(">{}", result)
+        TypeInfo info
+        info.kind = TypeKind.Function
+        info.params = parameters
+        info.modes = modes
+        info.result = result
+        ret intern(key, move info)
+    }
+
+    public TypeKind kind(i32 type) const {
+        ret items[type].kind
+    }
+
+    public bool isError(i32 type) const {
+        ret type == 0
+    }
+
+    public bool isVoid(i32 type) const {
+        ret type == 1
+    }
+
+    public bool isBool(i32 type) const {
+        ret type == 2
+    }
+
+    public bool isInt(i32 type) const {
+        ret items[type].kind == TypeKind.Int
+    }
+
+    public bool isFloat(i32 type) const {
+        ret items[type].kind == TypeKind.Float
+    }
+
+    public bool isNumeric(i32 type) const {
+        ret isInt(type) || isFloat(type)
+    }
+
+    public bool isStruct(i32 type) const {
+        ret items[type].kind == TypeKind.Struct
+    }
+
+    public bool isParam(i32 type) const {
+        ret items[type].kind == TypeKind.Param
+    }
+
+    public bool isInterface(i32 type) const {
+        ret items[type].kind == TypeKind.Interface
+    }
+
+    public bool isFunction(i32 type) const {
+        ret items[type].kind == TypeKind.Function
+    }
+
+    public bool isArray(i32 type) const {
+        ret items[type].kind == TypeKind.Array
+    }
+
+    public bool isVector(i32 type) const {
+        ret items[type].kind == TypeKind.Vector
+    }
+
+    public bool isUntyped(i32 type) const {
+        ret type == 3 || type == 4
+    }
+
+    // The struct, the interface or the type parameter of a type.
+    public i32 decl(i32 type) const {
+        ret items[type].decl
+    }
+
+    public i32 element(i32 type) const {
+        ret items[type].element
+    }
+
+    // The type of the elements of the innermost array: i32 for i32[3][4].
+    public i32 baseElement(i32 type) const {
+        i32 at = type
+        for (isArray(at)) {
+            at = items[at].element
+        }
+        ret at
+    }
+
+    // Built-in types that can be named in the source (D9, D46), or -1. `char` is u8.
+    public i32 findBuiltin(string name) {
+        i64 x = name.find("x")  // `i16x16`, `f32x8` (D505): 128 or 256 bits
+        if (x >= 2) {
+            string number = name.slice(0, x)
+            string lanes = name.slice(x + 1, name.len())
+            bool digits = lanes.len() > 0 && lanes.len() <= 2 && lanes[0] != '0'
+            for (i64 i = 0; i < lanes.len(); i++) {
+                digits = digits && lanes[i] >= '0' && lanes[i] <= '9'
+            }
+            i32 element = findBuiltin(number)
+            if (element >= 0 && isNumeric(element) && number != "char" && digits) {
+                i64 count = i64(lanes)
+                i64 bits = count * i64(items[element].bits)
+                if (bits == 128 || bits == 256) {
+                    ret vectorType(element, count)
+                }
+            }
+            ret -1
+        }
+        switch (name) {
+            case "bool" {
+                ret boolType()
+            }
+            case "f32" {
+                ret floatType(32)
+            }
+            case "f64" {
+                ret floatType(64)
+            }
+            case "char", "u8" {
+                ret intType(8, false)
+            }
+            case "u16" {
+                ret intType(16, false)
+            }
+            case "u32" {
+                ret intType(32, false)
+            }
+            case "u64" {
+                ret intType(64, false)
+            }
+            case "i8" {
+                ret intType(8, true)
+            }
+            case "i16" {
+                ret intType(16, true)
+            }
+            case "i32" {
+                ret intType(32, true)
+            }
+            case "i64" {
+                ret intType(64, true)
+            }
+            default {
+                ret -1
+            }
+        }
+    }
+
+    // True if a value of type `from` fits in `to` without any loss (D33).
+    public bool convertsLosslessly(i32 from, i32 to) const {
+        if (from == to) {
+            ret true
+        }
+        if (isInt(from) && isInt(to)) {
+            if (items[from].isSigned == items[to].isSigned) {
+                ret items[to].bits >= items[from].bits
+            }
+            ret !items[from].isSigned && items[to].isSigned && items[to].bits > items[from].bits  // u8 -> i16, u32 -> i64
+        }
+        if (isInt(from) && isFloat(to)) {
+            i32 mantissa = items[to].bits == 64 ? 53 : 24
+            ret items[from].bits < mantissa  // every value is exactly representable
+        }
+        if (isFloat(from) && isFloat(to)) {
+            ret items[to].bits >= items[from].bits
+        }
+        ret false
+    }
+}
+
+// The types of a new table.
+public Types makeTypes() {
+    Types types
+    types.addBuiltins()
+    ret types
+}
+
+// A type as written in Cromo: "i32", "list<Point>", "func(ref i32) bool".
+public string typeName(Tree tree, Types types, i32 type) {
+    switch (types.items[type].kind) {
+        case Error {
+            ret "<error>"
+        }
+        case Void {
+            ret "void"
+        }
+        case Bool {
+            ret "bool"
+        }
+        case Int {
+            ret format("{}{}", types.items[type].isSigned ? "i" : "u", types.items[type].bits)
+        }
+        case Float {
+            ret format("f{}", types.items[type].bits)
+        }
+        case Struct {
+            ret tree.records[types.items[type].decl].name
+        }
+        case Param {
+            ret types.params[types.items[type].decl].name
+        }
+        case Interface {
+            ret tree.interfaces[types.items[type].decl].name
+        }
+        case Function {
+            string text = "func("
+            for (i64 i = 0; i < types.items[type].params.len(); i++) {
+                if (i > 0) {
+                    text += ", "
+                }
+                if (types.items[type].modes[i] == ParamMode.Ref) {
+                    text += "ref "
+                }
+                if (types.items[type].modes[i] == ParamMode.Move) {
+                    text += "move "
+                }
+                text += typeName(tree, types, types.items[type].params[i])
+            }
+            text += ")"
+            if (!types.isVoid(types.items[type].result)) {
+                text += " " + typeName(tree, types, types.items[type].result)
+            }
+            ret text
+        }
+        case Array {  // i32[3][4]: three arrays of four
+            string dimensions
+            i32 inner = type
+            for (types.isArray(inner)) {
+                dimensions += format("[{}]", types.items[inner].count)
+                inner = types.items[inner].element
+            }
+            ret typeName(tree, types, inner) + dimensions
+        }
+        case Vector {
+            ret format("{}x{}", typeName(tree, types, types.items[type].element), types.items[type].count)
+        }
+        case SelfType {
+            ret "Self"
+        }
+        case Addr {
+            ret "addr"
+        }
+        case UntypedInt {
+            ret "integer literal"
+        }
+        case UntypedFloat {
+            ret "decimal literal"
+        }
+        case String {
+            ret "string"
+        }
+    }
+}
+
+// True for the types that need destruction: a struct with a destructor, or with a
+// field that needs one. A type parameter may need it; a function value owns its
+// captured data (D184).
+public bool needsDestruction(Tree tree, Types types, i32 type) {
+    if (types.isArray(type)) {
+        ret needsDestruction(tree, types, types.items[type].element)
+    }
+    ret types.isParam(type) || types.isFunction(type) || types.isInterface(type) ||
+        (types.isStruct(type) && tree.records[types.items[type].decl].needsDestruction)
+}
+
+// True if the type mentions a type parameter: such an instance is never emitted.
+public bool isAbstract(Tree tree, Types types, i32 type) {
+    if (types.isArray(type)) {
+        ret isAbstract(tree, types, types.items[type].element)
+    }
+    ret types.isParam(type) || type == selfType() || (types.isStruct(type) && tree.records[types.items[type].decl].isAbstract)
+}
+
+// Size in bytes with the natural alignment of C (D74).
+public i32 sizeOf(Tree tree, Types types, i32 type) {
+    switch (types.items[type].kind) {
+        case Bool {
+            ret 1
+        }
+        case Int, Float {
+            ret types.items[type].bits / 8
+        }
+        case Struct {
+            ret tree.records[types.items[type].decl].size
+        }
+        case Interface, Function {
+            ret 16
+        }
+        case Addr {
+            ret 8
+        }
+        case Array, Vector {
+            ret i32(types.items[type].count * i64(sizeOf(tree, types, types.items[type].element)))
+        }
+        default {
+            ret 0
+        }
+    }
+}
+
+public i32 alignOf(Tree tree, Types types, i32 type) {
+    if (types.isStruct(type)) {
+        ret tree.records[types.items[type].decl].align
+    }
+    if (types.isInterface(type) || types.isFunction(type)) {
+        ret 8
+    }
+    if (types.isArray(type)) {
+        ret alignOf(tree, types, types.items[type].element)
+    }
+    i32 size = sizeOf(tree, types, type)  // a vector as LLVM aligns it: at its size (D505)
+    ret size > 0 ? size : 1
+}

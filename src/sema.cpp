@@ -9,6 +9,7 @@
 #include <charconv>
 #include <cstring>
 #include <cstdint>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -325,7 +326,7 @@ public:
     // D423: the first part of the analysis, which the pilot of sema repeats.
     void runNames() { declareNames(); }
 
-    void run() {
+    void declare() {
         declareNames();
         ModuleScope& library = modules_[kLibraryFile];
         stringDecl_ = library.structs.count("string") ? library.structs["string"] : nullptr;
@@ -361,6 +362,13 @@ public:
                 if (!member.typeParams.empty()) instantiateMethod(member, ownParams(member.typeParams), member.loc);
             }
         }
+    }
+
+    // D423: the second part, the types of the declarations, before any body.
+    void runDeclarations() { declare(); }
+
+    void run() {
+        declare();
         checkBodies(definitions_);
         for (StructDecl& decl : module_.structs) {
             if (!decl.typeParams.empty()) continue;
@@ -519,8 +527,7 @@ private:
                                (init.kind == ExprKind::BoolLiteral);
                 Type target = variable->type;
                 if (!literal || !(target.isNumeric() || target.isBool())) {
-                    diag_->error(init.loc, "the initial value of a module variable is a number, a character, true or false "
-                                           "");
+                    diag_->error(init.loc, "the initial value of a module variable is a number, a character, true or false");
                 } else if (!coerce(global.init, target)) {
                     variable->type = Type::error();
                 }
@@ -3742,8 +3749,7 @@ private:
             if (element.isError()) return Type::error();
             if (element.isUntyped() || element.isVoid()) {
                 diag_->error(list.elements[0]->loc, "the type of the elements cannot be deduced: write the type of the list, "
-                                                    "as list<i64> values = [1, 2], or of the first element, as [i64(1), 2] "
-                                                    "");
+                                                    "as list<i64> values = [1, 2], or of the first element, as [i64(1), 2]");
                 return Type::error();
             }
             checkedFirst = true;
@@ -6412,6 +6418,340 @@ bool check(Module& module, Diagnostics& diag, bool requireMain) {
 
 bool checkNames(Module& module, Diagnostics& diag) {
     Checker(module, diag, false).runNames();
+    return !diag.hasErrors();
+}
+
+namespace {
+
+std::string listedSignature(const FunctionDecl& function) {
+    std::string text = function.name + "(";
+    for (size_t i = 0; i < function.paramTypes.size(); ++i) {
+        if (i) text += ", ";
+        if (function.params[i].mode == ParamMode::Ref) text += "ref ";
+        if (function.params[i].mode == ParamMode::Move) text += "move ";
+        text += function.paramTypes[i].name();
+    }
+    return text + ") " + function.resolvedReturn.name() + (function.isAbstract ? " abstract" : "");
+}
+
+std::string listedFields(const std::vector<FieldDecl>& fields) {
+    std::string text;
+    for (const FieldDecl& field : fields) text += " " + field.name + ":" + field.resolved.name();
+    return text;
+}
+
+void listStruct(const StructDecl& decl) {
+    std::string text = std::string(decl.isEnum ? "enum " : "struct ") + decl.name + " size=" + std::to_string(decl.size) +
+                       " align=" + std::to_string(decl.align) + (decl.needsDestruction ? " destruct" : "") +
+                       (decl.addressed ? " addressed" : "") + (decl.isAbstract ? " abstract" : "") + listedFields(decl.fields) + "\n";
+    for (const EnumCase& item : decl.cases) {
+        text += "  case " + item.name + "=" + std::to_string(item.value) + listedFields(item.fields) + "\n";
+    }
+    for (const FunctionDecl& member : decl.members) {
+        if (member.typeParams.empty()) text += "  method " + listedSignature(member) + "\n";
+    }
+    std::fputs(text.c_str(), stdout);
+}
+
+// What the analysis knows after the declarations (P89): the structs, their instances
+// and the signatures, in the order they were made.
+void listDeclarations(const Module& module) {
+    for (const StructDecl& decl : module.structs) {
+        if (decl.typeParams.empty()) listStruct(decl);
+    }
+    for (const auto& instance : module.structInstances) listStruct(*instance);
+    for (const FunctionDecl& function : module.functions) {
+        if (function.typeParams.empty()) std::fputs(("function " + listedSignature(function) + "\n").c_str(), stdout);
+    }
+    for (const auto& instance : module.functionInstances) {
+        std::fputs(("instance " + listedSignature(*instance) + "\n").c_str(), stdout);
+    }
+}
+
+// What the analysis writes on the bodies (P90): for every function checked its
+// variables, and every expression in the order of the source, with its kind, its
+// position and its type. `cromo-check --list-types` prints the same from the tree of
+// the compiler in Cromo.
+struct TypeLister {
+    std::string out;
+
+    static const char* kindName(ExprKind kind) {
+        switch (kind) {
+        case ExprKind::IntLiteral: return "int";
+        case ExprKind::FloatLiteral: return "float";
+        case ExprKind::BoolLiteral: return "bool";
+        case ExprKind::StringLiteral: return "text";
+        case ExprKind::Name: return "name";
+        case ExprKind::Unary: return "unary";
+        case ExprKind::Binary: return "binary";
+        case ExprKind::Call: return "call";
+        case ExprKind::Conversion: return "conversion";
+        case ExprKind::Print: return "print";
+        case ExprKind::Field: return "field";
+        case ExprKind::MethodCall: return "method";
+        case ExprKind::Construct: return "construct";
+        case ExprKind::Self: return "self";
+        case ExprKind::Move: return "move";
+        case ExprKind::Ref: return "ref";
+        case ExprKind::Copy: return "copy";
+        case ExprKind::Index: return "index";
+        case ExprKind::EnumCase: return "case";
+        case ExprKind::TypeRef: return "type";
+        case ExprKind::Lambda: return "lambda";
+        case ExprKind::CallValue: return "value";
+        case ExprKind::ListLiteral: return "list";
+        case ExprKind::Conditional: return "conditional";
+        }
+        return "?";
+    }
+
+    void line(const Expr& expr, const std::string& extra) {
+        out += "  " + std::string(kindName(expr.kind)) + " " + std::to_string(expr.loc.line) + ":" + std::to_string(expr.loc.column) +
+               " " + expr.type.name() + extra + "\n";
+    }
+
+    void all(const std::vector<ExprPtr>& exprs) {
+        for (const ExprPtr& expr : exprs) {
+            if (expr) walk(*expr);
+        }
+    }
+
+    void walk(const Expr& expr) {
+        switch (expr.kind) {
+        case ExprKind::IntLiteral: {
+            const auto& node = static_cast<const IntLiteralExpr&>(expr);
+            line(expr, std::string(node.negative && node.magnitude ? " -" : " ") + std::to_string(node.magnitude));
+            break;
+        }
+        case ExprKind::FloatLiteral:
+        case ExprKind::BoolLiteral:
+        case ExprKind::StringLiteral:
+        case ExprKind::Self:
+        case ExprKind::TypeRef: line(expr, ""); break;
+        case ExprKind::Name: {
+            const Variable* variable = static_cast<const NameExpr&>(expr).variable;
+            line(expr, variable ? " " + variable->name : "");
+            break;
+        }
+        case ExprKind::Unary:
+            line(expr, "");
+            walk(*static_cast<const UnaryExpr&>(expr).operand);
+            break;
+        case ExprKind::Binary: {
+            const auto& node = static_cast<const BinaryExpr&>(expr);
+            line(expr, " " + node.operandType.name() + (node.wrap ? " wrap" : ""));
+            walk(*node.lhs);
+            walk(*node.rhs);
+            break;
+        }
+        case ExprKind::Conditional: {
+            const auto& node = static_cast<const ConditionalExpr&>(expr);
+            line(expr, "");
+            walk(*node.condition);
+            walk(*node.whenTrue);
+            walk(*node.whenFalse);
+            break;
+        }
+        case ExprKind::Call: {
+            const auto& node = static_cast<const CallExpr&>(expr);
+            line(expr, " " + node.callee + (node.function ? " -> " + node.function->name : "") + " " +
+                           std::to_string(static_cast<int>(node.intrinsic)) + " " + std::to_string(node.overlaps.size()));
+            all(node.args);
+            break;
+        }
+        case ExprKind::Conversion: {
+            const auto& node = static_cast<const ConversionExpr&>(expr);
+            line(expr, node.isExplicit ? " explicit" : "");
+            walk(*node.operand);
+            break;
+        }
+        case ExprKind::Print: {
+            const auto& node = static_cast<const PrintExpr&>(expr);
+            line(expr, " " + std::to_string(node.stream) + (node.newline ? " newline " : " ") + std::to_string(node.pieces.size()));
+            all(node.args);
+            break;
+        }
+        case ExprKind::Field: {
+            const auto& node = static_cast<const FieldExpr&>(expr);
+            line(expr, " " + node.field + " " + std::to_string(node.index));
+            walk(*node.object);
+            break;
+        }
+        case ExprKind::MethodCall: {
+            const auto& node = static_cast<const MethodCallExpr&>(expr);
+            line(expr, " " + node.method + (node.function ? " -> " + node.function->name : "") + " " +
+                           std::to_string(node.overlaps.size()));
+            walk(*node.object);
+            all(node.args);
+            break;
+        }
+        case ExprKind::Construct: {
+            const auto& node = static_cast<const ConstructExpr&>(expr);
+            line(expr, " " + node.decl->name + (node.blockThread ? " thread" : ""));
+            all(node.args);
+            break;
+        }
+        case ExprKind::Move: {
+            const auto& node = static_cast<const MoveExpr&>(expr);
+            line(expr, " " + std::to_string(static_cast<int>(node.moveKind)));
+            walk(*node.operand);
+            break;
+        }
+        case ExprKind::Ref:
+            line(expr, "");
+            walk(*static_cast<const RefExpr&>(expr).operand);
+            break;
+        case ExprKind::Copy:
+            line(expr, "");
+            walk(*static_cast<const CopyExpr&>(expr).operand);
+            break;
+        case ExprKind::Index: {
+            const auto& node = static_cast<const IndexExpr&>(expr);
+            line(expr, node.access ? " -> " + node.access->name : "");
+            walk(*node.object);
+            walk(*node.index);
+            break;
+        }
+        case ExprKind::EnumCase: {
+            const auto& node = static_cast<const EnumCaseExpr&>(expr);
+            line(expr, " " + node.decl->name + " " + std::to_string(node.index));
+            all(node.args);
+            break;
+        }
+        case ExprKind::Lambda: {
+            const auto& node = static_cast<const LambdaExpr&>(expr);
+            std::string extra = std::string(node.borrows ? " borrows" : "") + (node.onStack ? " stack" : "") +
+                                (node.forThread ? " thread" : "") + (node.group ? " group" : "");
+            for (const Capture& capture : node.captures) {
+                extra += " " + capture.name + (capture.byAddress ? "&" : "") + (capture.outer ? "" : "?");
+            }
+            line(expr, extra);
+            function(*node.function, "lambda");
+            break;
+        }
+        case ExprKind::CallValue: {
+            const auto& node = static_cast<const CallValueExpr&>(expr);
+            line(expr, node.signature ? " -> " + node.signature->name : "");
+            walk(*node.callee);
+            all(node.args);
+            break;
+        }
+        case ExprKind::ListLiteral:
+            line(expr, "");
+            all(static_cast<const ListLiteralExpr&>(expr).elements);
+            break;
+        }
+    }
+
+    void block(const Block& body) {
+        for (const StmtPtr& statement : body.statements) walk(*statement);
+    }
+
+    void walk(const Stmt& statement) {
+        switch (statement.kind) {
+        case StmtKind::VarDecl: {
+            const auto& node = static_cast<const VarDeclStmt&>(statement);
+            if (node.init) walk(*node.init);
+            break;
+        }
+        case StmtKind::Assign: {
+            const auto& node = static_cast<const AssignStmt&>(statement);
+            if (node.call) {
+                walk(*node.call);
+            } else {
+                if (node.target) walk(*node.target);
+                if (node.value) walk(*node.value);
+            }
+            break;
+        }
+        case StmtKind::IncDec: walk(*static_cast<const IncDecStmt&>(statement).target); break;
+        case StmtKind::Expr: walk(*static_cast<const ExprStmt&>(statement).expr); break;
+        case StmtKind::If: {
+            const auto& node = static_cast<const IfStmt&>(statement);
+            walk(*node.condition);
+            block(node.thenBlock);
+            if (node.elseBlock) block(*node.elseBlock);
+            break;
+        }
+        case StmtKind::For: {
+            const auto& node = static_cast<const ForStmt&>(statement);
+            if (node.init) walk(*node.init);
+            if (node.condition) walk(*node.condition);
+            if (node.list) walk(*node.list);
+            if (node.step) walk(*node.step);
+            block(node.body);
+            break;
+        }
+        case StmtKind::Switch: {
+            const auto& node = static_cast<const SwitchStmt&>(statement);
+            if (node.value) walk(*node.value);
+            out += std::string("  switch") + (node.exhaustive ? " exhaustive\n" : "\n");
+            for (const SwitchBranch& branch : node.branches) {
+                for (const CasePattern& pattern : branch.patterns) {
+                    out += "  pattern " + std::to_string(pattern.caseIndex) + "\n";
+                    if (pattern.literal) walk(*pattern.literal);
+                }
+                block(branch.body);
+            }
+            if (node.defaultBlock) block(*node.defaultBlock);
+            break;
+        }
+        case StmtKind::Throw: {
+            const auto& node = static_cast<const ThrowStmt&>(statement);
+            if (node.value) walk(*node.value);
+            break;
+        }
+        case StmtKind::Try: {
+            const auto& node = static_cast<const TryStmt&>(statement);
+            block(node.body);
+            for (const CatchClause& clause : node.catches) {
+                out += "  catch " + clause.resolved.name() + "\n";
+                block(clause.body);
+            }
+            if (node.finallyBlock) block(*node.finallyBlock);
+            break;
+        }
+        case StmtKind::Return: {
+            const auto& node = static_cast<const ReturnStmt&>(statement);
+            if (node.value) walk(*node.value);
+            break;
+        }
+        case StmtKind::Break:
+        case StmtKind::Continue: break;
+        }
+    }
+
+    void function(const FunctionDecl& decl, const char* what) {
+        if (!decl.bodyChecked) return;
+        out += std::string(what) + " " + decl.name + (decl.canThrow ? " throws" : "") + (decl.isAbstract ? " abstract" : "") + "\n";
+        for (const auto& variable : decl.variables) {
+            out += "  var " + variable->name + " " + std::to_string(static_cast<int>(variable->kind)) + " " + variable->type.name() +
+                   (variable->isConst ? " const" : "") + (variable->needsDropFlag ? " flag" : "") +
+                   (variable->blockThread ? " thread" : "") + (variable->group ? " group" : "") + "\n";
+        }
+        block(decl.body);
+    }
+};
+
+}  // namespace
+
+void listTypes(const Module& module) {
+    TypeLister lister;
+    for (const StructDecl& decl : module.structs) {
+        if (!decl.typeParams.empty()) continue;
+        for (const FunctionDecl& member : decl.members) lister.function(member, ("member " + decl.name).c_str());
+    }
+    for (const auto& instance : module.structInstances) {
+        for (const FunctionDecl& member : instance->members) lister.function(member, ("member " + instance->name).c_str());
+    }
+    for (const FunctionDecl& function : module.functions) lister.function(function, "function");
+    for (const auto& instance : module.functionInstances) lister.function(*instance, "instance");
+    std::fputs(lister.out.c_str(), stdout);
+}
+
+bool checkDeclarations(Module& module, Diagnostics& diag, bool list) {
+    Checker(module, diag, true).runDeclarations();
+    if (list) listDeclarations(module);
     return !diag.hasErrors();
 }
 

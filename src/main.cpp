@@ -107,6 +107,11 @@ struct Compilation {
     bool emitIr = false;
     bool runtime = false;  // --runtime: the object of std.runtime, for the archive of the runtime (D393)
     bool checkNames = false;  // --check-names: only the names of the modules, for the pilot (D423)
+    bool checkDeclarations = false;  // --check-declarations: up to the types of the declarations (D423)
+    bool listDeclarations = false;   // --list-declarations: the same, and what sema knows of them (P89)
+    bool checkTypes = false;         // --check-types: the whole of sema, without the moves (D423)
+    bool listTypes = false;          // --list-types: the same, and what sema wrote on the bodies (P90)
+    bool checkMoves = false;         // --check-moves: sema and the moves, and nothing more (D423)
     std::string reference;    // --reference <file>: the documentation of the library, for the site (D519)
     std::string aiModule;     // cromo ai <module>: its reference on the standard output (D559)
     std::vector<std::string> filters;  // cromo test: the names of the tests to run (D352)
@@ -326,6 +331,21 @@ int build(Compilation& compilation) {
         if (!diag.hasErrors()) cromo::checkNames(module, diag);
         return diag.hasErrors() ? 1 : 0;
     }
+    if (compilation.checkDeclarations) {
+        if (!diag.hasErrors()) cromo::checkDeclarations(module, diag, compilation.listDeclarations);
+        return diag.hasErrors() ? 1 : 0;
+    }
+    if (compilation.checkMoves) {
+        if (!diag.hasErrors() && cromo::check(module, diag, true)) cromo::checkMoves(module, diag);
+        return diag.hasErrors() ? 1 : 0;
+    }
+    if (compilation.checkTypes) {
+        if (!diag.hasErrors()) {
+            cromo::check(module, diag, true);
+            if (compilation.listTypes) cromo::listTypes(module);
+        }
+        return diag.hasErrors() ? 1 : 0;
+    }
     bool requireMain = !tests && !compilation.runtime;
     if (diag.hasErrors() || !cromo::check(module, diag, requireMain) || !cromo::checkMoves(module, diag)) return 1;
     compilation.camera = module.camera;
@@ -525,6 +545,14 @@ bool readOptions(const std::vector<std::string>& args, size_t first, size_t last
             compilation.reference = args[++i];  // D519: for tools/book.py, not in the help
         } else if (arg == "--check-names" && !run && !test) {
             compilation.checkNames = true;  // D423: the reference of the pilot, not in the help
+        } else if (arg == "--check-moves" && !run && !test) {
+            compilation.checkMoves = true;  // D423: as --check-names
+        } else if ((arg == "--check-types" || arg == "--list-types") && !run && !test) {
+            compilation.checkTypes = true;  // D423: as --check-names
+            compilation.listTypes = arg == "--list-types";
+        } else if ((arg == "--check-declarations" || arg == "--list-declarations") && !run && !test) {
+            compilation.checkDeclarations = true;  // D423: as --check-names
+            compilation.listDeclarations = arg == "--list-declarations";
         } else if (arg.size() == 3 && arg[0] == '-' && arg[1] == 'O' && arg[2] >= '0' && arg[2] <= '3') {
             options.optLevel = arg[2] - '0';
         } else if (arg[0] != '-' && compilation.inputPath.empty() && (!test || fs::path(arg).extension() == ".cro")) {

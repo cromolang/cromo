@@ -8,8 +8,10 @@ struct Source {
 }
 
 public struct Diagnostics {
-    public bool silent  // the errors are counted, not printed: cromo fmt checks its result so
-    public i32 current  // the file of the lexer and of the parser
+    public bool silent     // the errors are counted, not printed: cromo fmt checks its result so
+    public i32 current     // the file of the lexer and of the parser
+    public bool muted      // nothing is reported or counted: the analysis checks an expression only to learn its type
+    public string context  // added to every message, as the generic being instantiated
     list<Source> files
     i32 count
 
@@ -42,16 +44,44 @@ public struct Diagnostics {
         ret count > 0
     }
 
+    public i32 errorCount() const {
+        ret count
+    }
+
+    // An error of the whole program, as a missing main.
+    public void errorOf(string message) {
+        if (muted) {
+            ret
+        }
+        count++
+        if (!silent) {
+            eprint("{}: error: {}\n", files[0].path, message + context)
+        }
+    }
+
     public void error(i32 line, i32 column, string message) {
         errorIn(current, line, column, message)
     }
 
     public void errorIn(i32 file, i32 line, i32 column, string message) {
+        if (muted) {
+            ret
+        }
         count++
+        report("error", file, line, column, message + context)
+    }
+
+    public void warningIn(i32 file, i32 line, i32 column, string message) {
+        if (!muted) {
+            report("warning", file, line, column, message + context)
+        }
+    }
+
+    void report(string kind, i32 file, i32 line, i32 column, string message) {
         if (silent) {
             ret
         }
-        eprint("{}:{}:{}: error: {}\n", files[file].path, line, column, message)
+        eprint("{}:{}:{}: {}: {}\n", files[file].path, line, column, kind, message)
         string source = lineAt(file, line)
         if (source.len() == 0) {
             ret

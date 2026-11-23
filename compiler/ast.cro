@@ -1,6 +1,7 @@
 // The tree of a program (D418): the nodes are in the lists of a Tree, one for each
 // kind, and name their children with their index, -1 when there is none. The same
-// information as src/ast.h, without what the analysis adds.
+// information as src/ast.h; what the analysis adds is at the end of each node, and a
+// type there is its id (D560).
 
 // type := 'void' | [module '.'] name ['<' type {',' type} '>'] {'[' size ']'}, or a
 // function type, func(...) result (D185).
@@ -21,6 +22,7 @@ public struct TypeParam {
     public i32 line
     public i32 column
     public list<i32> constraints
+    public i32 id = -1  // its entry in the type parameters of the analysis
 }
 
 public enum ExprKind {
@@ -42,6 +44,151 @@ public enum ExprKind {
     Lambda
     ListLiteral
     Conditional
+    // Made by the analysis.
+    Conversion  // written as `f64(x)`, or inserted when it is lossless (D33)
+    Print       // print, println, eprint, eprintln and format, with the format string parsed
+    Construct   // `Student("Anna")`: a new object of a struct
+    Self        // the object a method works on (D70)
+    Copy        // a read argument of a simple type passed as a copy (D79)
+    EnumCase    // `Shape.Circle(1.0)`, `Color.Red` (D105)
+}
+
+// Functions built into the compiler: `panic` (D102) and, in the standard library
+// only, the `unsafe` dialect (D37, D98).
+public enum Intrinsic {
+    None
+    Panic
+    Alloc
+    Resize
+    Free
+    SizeOf
+    Offset
+    Take
+    Put
+    Destroy
+    CopyAt
+    CopyMemory
+    CompareMemory
+    CheckIndex
+    ArgumentCount
+    ArgumentLength
+    ArgumentData
+    DecimalToFloat
+    SquareRoot
+    HashBytes
+    SystemCall
+    Environment
+    ExitProcess
+    ThreadStart
+    ThreadWait
+    ThreadRethrow
+    ThreadUncaught
+    ThreadFree
+    MutexLock
+    MutexUnlock
+    SelfAddress
+    EqualAt
+    TaskStart
+    GroupStart
+    CallC
+    Assert
+    AtomicLoad
+    AtomicStore
+    AtomicAdd
+    AtomicExchange
+    AtomicCompareExchange
+    JsonWrite
+    JsonRead
+    DebugWrite
+    HashNumber
+    CompareNumbers
+    FloatBits
+    FloatFromBits
+    VariableAddress
+    CountOnes
+    TrailingZeros
+    LeadingZeros
+    RotateLeft
+    RotateRight
+    Fma
+    AtomicLoadRelaxed
+    AtomicStoreRelaxed
+    AtomicAddRelaxed
+    VectorLoad
+    VectorStore
+    VectorSum
+    VectorSmallest
+    VectorLargest
+    VectorMin
+    VectorMax
+    VectorAbs
+    VectorAll
+    VectorAny
+    VectorSelect
+    VectorLow
+    VectorHigh
+}
+
+public enum MoveKind {
+    Copy      // a simple type: the source does not change (D80)
+    Variable  // a whole local variable or `move` parameter: it can no longer be used (D23)
+    Take      // a field or a `ref` parameter: it keeps the default value (D78)
+}
+
+public enum VariableKind {
+    Local
+    Captured   // a capture inside the body of a lambda (D183)
+    ReadParam  // read-only, the caller remains the owner (D22)
+    RefParam   // the caller's object, which the function can modify (D22)
+    MoveParam  // owned by the function (D22)
+    Element    // the element of a `for` over a list: read-only, or `ref` (D25)
+    Binding    // the data of a case in a `switch`: read-only, or `ref` (D107)
+    Caught     // the exception of a `catch`: read-only (D114)
+    Module     // declared outside the functions (D394)
+}
+
+// A local variable or a parameter, made by the analysis.
+public struct Variable {
+    public string name
+    public i32 type
+    public i32 file
+    public i32 line
+    public i32 column
+    public VariableKind kind
+    public bool isConst
+    public i32 id                 // its place among the variables of its function
+    public bool needsDropFlag     // moved somewhere: destroyed only if still alive (D77)
+    public bool captureByAddress  // Captured: the data hold its address, not its value
+    public i32 captured = -1      // Captured: the variable outside the lambda
+    public i32 blockThread = -1   // a thread or a task of its block (D215, D269): the lambda it runs
+    public bool group             // a thread.Group (D273)
+}
+
+// Format specification of a placeholder, as in std::format (D21, D38). A character
+// that is not written is 0.
+public struct FormatSpec {
+    public u8 fill = 32
+    public u8 align  // one of < > ^
+    public u8 sign   // one of + - and the space
+    public bool alternate
+    public bool zeroPad
+    public u8 type  // one of "dxXbocefgs", or ? until the analysis makes it a string (D319)
+    public i32 width = -1
+    public i32 precision = -1
+}
+
+public struct FormatPiece {
+    public string text   // literal text, when arg < 0
+    public i32 arg = -1  // index into the arguments
+    public FormatSpec spec
+    public bool hasSpec
+}
+
+// Two arguments that must not be the same element of a list (D35): -1 is the
+// object of a method.
+public struct OverlapCheck {
+    public i32 first
+    public i32 second
 }
 
 public enum UnaryOp {
@@ -81,6 +228,10 @@ public struct Capture {
     public string name
     public i32 line
     public i32 column
+    // The analysis.
+    public i32 outer = -1  // the variable captured
+    public i32 inner = -1  // its name inside the body
+    public bool byAddress  // `ref`, or the read of a value that is not simple
 }
 
 // An expression: its fields are used as its kind needs.
@@ -106,6 +257,37 @@ public struct Expr {
     public i64 opEnd
     public i64 textBegin  // the condition of assert, as written (D351)
     public i64 textEnd
+    // The analysis. A node it makes uses `left` for its operand and `items` for its
+    // arguments, as those of the parser.
+    public i32 resolved       // its type
+    public bool negative      // a literal with its minus
+    public i32 variable = -1  // of a name
+    public i32 target = -1    // the function called, the method of a map for `m[k]`, the signature of a function value
+    public Intrinsic intrinsic
+    public i32 typeArg      // of the intrinsics with a type argument: `sizeOf<T>()`
+    public i32 decl = -1    // the struct of a Construct or of an EnumCase
+    public i32 index = -1   // of the field, or of the case
+    public i32 operandType  // of a Binary: the common type of the two operands
+    public bool wrap        // `wrapAdd(a, b)` (D396): no overflow check
+    public bool isExplicit  // a conversion that is written
+    public list<OverlapCheck> overlaps
+    public i32 stream  // of a Print: 1 = stdout, 2 = stderr, 3 = a string for format (D200)
+    public bool newline
+    public list<FormatPiece> pieces
+    public MoveKind moveKind
+    public string assertText  // of assert (D351): the condition, and the sides of a comparison
+    public string leftText
+    public string rightText
+    public bool borrows             // a lambda that captures by address: only as an argument (D184)
+    public bool onStack             // passed as an argument: its data live in the frame of the caller
+    public bool forThread           // given to a thread (D215)
+    public i32 group = -1           // the variable of the group it is given to (D273)
+    public i32 enclosing = -1       // the function a lambda is written in
+    public list<i32> capturePlaces  // the captures by address, as names, for exclusivity (D22)
+    public i32 reserve = -1         // of a list literal: the methods that make it
+    public i32 add = -1
+    public i32 count = -1        // of a list literal: the literal of its length
+    public i32 blockThread = -1  // of a Construct: `thread.Thread(lambda)` capturing by address (D215)
 }
 
 public enum StmtKind {
@@ -173,6 +355,11 @@ public struct Stmt {
     public i32 step = -1
     public list<i32> parts       // the branches of a switch, the catches of a try
     public i32 defaultBody = -1  // of a switch
+    // The analysis.
+    public i32 variable = -1       // of a declaration, of the element of a for
+    public i32 valueVariable = -1  // of the value of a map in a for
+    public i32 call = -1           // `s += t` on strings is `s.append(t)` (D95)
+    public bool exhaustive         // a switch where some branch runs for every value
 }
 
 public struct Block {
@@ -189,6 +376,7 @@ public struct Binding {
     public string name
     public i32 line
     public i32 column
+    public i32 variable = -1  // by the analysis
 }
 
 public struct Pattern {
@@ -198,6 +386,7 @@ public struct Pattern {
     public bool hasBindings
     public list<Binding> bindings
     public i32 literal = -1
+    public i32 caseIndex = -1  // by the analysis
 }
 
 public struct Branch {
@@ -211,6 +400,9 @@ public struct Catch {
     public i32 nameLine
     public i32 nameColumn
     public i32 body = -1
+    // The analysis.
+    public i32 resolved  // a struct, or the interface Exception
+    public i32 variable = -1
 }
 
 public struct Param {
@@ -259,6 +451,34 @@ public struct Function {
     public string library  // of a C function (D128)
     public list<Attribute> attributes
     public i32 body = -1
+    // The analysis.
+    public i32 resolvedReturn
+    public list<i32> paramTypes
+    public i32 owner = -1    // the struct of a member
+    public i32 generic = -1  // the generic function of an instance (D561)
+    public list<TypeBinding> bindings
+    public bool isAbstract    // it mentions a type parameter: never emitted
+    public bool isDefinition  // the check of a generic itself (D52)
+    public bool genericMethod
+    public bool scheduled
+    public bool isCold
+    public bool isWindow
+    public bool isTest
+    public bool isExported
+    public string exportName
+    public string androidPackage
+    public string androidName
+    public bool isGenerated   // `copy()` generated by the compiler (D35)
+    public bool convertsJson  // generated for JSON (D251) or for {:?} (D319)
+    public bool bodyChecked
+    public bool canThrow        // an exception can leave it (D36)
+    public list<i32> variables  // its variables, the parameters first
+}
+
+// A type parameter and what it is in an instance: `T` is `i32`.
+public struct TypeBinding {
+    public string name
+    public i32 type
 }
 
 public struct Field {
@@ -269,6 +489,9 @@ public struct Field {
     public i32 init = -1
     public bool isPublic
     public list<Attribute> attributes
+    // The analysis.
+    public i32 resolved
+    public string jsonName  // empty with json(skip) (D256)
 }
 
 public struct Case {
@@ -278,6 +501,11 @@ public struct Case {
     public list<Attribute> attributes
     public list<Field> fields
     public i32 value = -1  // `Red = 1` (D135)
+    // The analysis.
+    public string jsonName
+    public i64 number  // its value (D135)
+    public i32 size
+    public i32 align
 }
 
 // A struct, or an enum.
@@ -293,6 +521,22 @@ public struct Record {
     public list<Field> fields
     public list<i32> members  // the functions: constructor, destructor, methods
     public list<Case> cases
+    // The analysis.
+    public i32 generic = -1  // the generic struct of an instance (D561)
+    public list<i32> typeArgs
+    public list<TypeBinding> bindings
+    public bool isAbstract
+    public i32 size
+    public i32 align = 1
+    public i32 payloadOffset  // of an enum: where the data of the case start
+    public bool needsDestruction
+    public bool addressed  // written by the threads through its address (D216)
+    public i32 constructor = -1
+    public i32 destructor = -1
+    public map<string, i32> methods
+    public list<i32> implements      // its interfaces
+    public i32 defaultFunction = -1  // the initial values that are not literals (D360)
+    public i32 generatedCopy = -1    // made when `copy()` is used (D35)
 }
 
 public struct Interface {
@@ -302,6 +546,7 @@ public struct Interface {
     public i32 column
     public bool isPublic
     public list<i32> methods
+    public bool usesSelf  // only a constraint (D84)
 }
 
 // A variable or a constant of the module (D394, D414).
@@ -313,6 +558,9 @@ public struct Global {
     public i32 column
     public i32 init = -1
     public bool isConst
+    // The analysis.
+    public i32 resolved
+    public i32 variable = -1  // of kind Module
 }
 
 public struct Import {
@@ -345,4 +593,9 @@ public struct Tree {
     public list<Interface> interfaces
     public list<Global> globals
     public list<FileInfo> files
+    // The analysis.
+    public list<Variable> variables
+    public list<i32> lambdas     // every lambda, as an expression
+    public list<i32> signatures  // a declaration for each function type called (D183, D186)
+    public bool camera           // the program makes a gui.Camera (D537)
 }

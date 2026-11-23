@@ -1,0 +1,139 @@
+// The generics in the declarations (D423, D561), checked by the second part of
+// sema in Cromo too: the type parameters, their constraints and the instances that
+// the fields and the signatures name.
+// expect-error: type parameter 'T' is already defined
+// expect-error: 'Point' is already the name of a type
+// expect-error: 'i64' is already the name of a type
+// expect-error: a constraint must be an interface, found 'Point'
+// expect-error: 'T' is already a type parameter of Box
+// expect-error: 'T' is a type parameter: it has no type arguments
+// expect-error: 'Pair' takes 2 type arguments, but 1 were given
+// expect-error: 'Box' takes 1 type argument, but 2 were given
+// expect-error: 'void' cannot be a type argument
+// expect-error: a type argument cannot be of Equal, which uses Self
+// expect-error: Point does not implement Named, required by T of Tagged
+// expect-error: i32 does not implement Named, required by T of Tagged
+// expect-error: Point does not implement Key, required by K of map
+// expect-error: an interface has no type arguments
+// expect-error: the instances of Grow are nested too deeply: is a generic using itself with a bigger type?
+// expect-error: struct 'Loop<T>' contains itself through field 'inner': use a list instead
+// expect-error: values of type Hidden cannot be printed with {:?}: Hidden.work has type func(i32)
+// expect-error: U can be printed with {:?} only with a constraint: write <U : Debug>
+// expect-error: T does not implement Named, required by T of Tagged
+// expect-error: main cannot be generic
+interface Named {
+    string name() const
+}
+
+interface Equal {
+    bool same(Self other) const
+}
+
+struct Point {
+    i32 x
+    i32 y
+}
+
+struct Person : Named {
+    string first
+
+    string name() const {
+        ret first
+    }
+}
+
+struct Twice<T, T> {
+    T value
+}
+
+struct Shadow<Point, i64> {
+    i32 value
+}
+
+struct Limited<T : Point> {
+    T value
+}
+
+struct Box<T> {
+    T value
+    T<i32> wrong
+
+    void put<T>(T other) {
+    }
+
+    U first<U>(U other) {
+        ret other
+    }
+}
+
+struct Pair<A, B> {
+    A first
+    B second
+    list<A> all
+    map<string, B> named
+    Box<Pair<A, B>> boxed
+}
+
+struct Tagged<T : Named> {
+    T value
+    list<T> others
+}
+
+struct Uses {
+    Pair<i32> one
+    Box<i32, i64> two
+    Box<void> three
+    Box<Equal> four
+    Tagged<Person> five
+    Tagged<Point> six
+    Tagged<i32> seven
+    map<Point, i32> eight
+    Named<i32> nine
+    Pair<Box<i32>, list<Pair<string, f64>>> ten
+    func(Box<i32>, ref Pair<i32, i32>) Box<string> eleven
+    Box<Point>[4] twelve
+}
+
+struct Wrap<T> {
+    T value
+}
+
+struct Grow<T> {
+    list<Grow<Wrap<T>>> more
+}
+
+struct Loop<T> {
+    Loop<T> inner
+}
+
+struct Hidden {
+    func(i32) work
+}
+
+struct Shown<T : Debug> {
+    T value
+}
+
+struct Shows<U> {
+    Shown<i32> one
+    Shown<list<Point>> two
+    Shown<U> three
+}
+
+struct Late {
+    Shown<Hidden> hidden
+    Shown<map<string, Point[2]>> shown
+}
+
+T largest<T : Ordered>(T a, T b) {
+    ret a
+}
+
+Pair<T, list<T>> both<T>(T value, Tagged<T> tagged) {
+    Pair<T, list<T>> pair
+    ret pair
+}
+
+i32 main<T>() {
+    ret 0
+}

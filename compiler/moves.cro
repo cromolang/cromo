@@ -1,0 +1,416 @@
+// The third part of the analysis (D423), as src/ownership.cpp: no variable is used
+// after a `move`, following every path through branches and loops (D23, D77, D81).
+// It runs on the tree checked by sema.
+import ast
+import diagnostics
+import sema
+import types
+
+const u8 live = 1
+const u8 moved = 2
+
+// What is known about the variables at a point of a function: for each one,
+// whether it may be alive and whether it may have been moved.
+struct State {
+    bool reachable = true
+    list<u8> variables  // by the id of the variable
+}
+
+// The state where two paths meet.
+State merge(State a, State b) {
+    if (!a.reachable) {
+        ret b
+    }
+    if (!b.reachable) {
+        ret a
+    }
+    State result = a
+    for (i64 i = 0; i < result.variables.len(); i++) {
+        result.variables[i] = result.variables[i] | b.variables[i]
+    }
+    ret result
+}
+
+bool same(State a, State b) {
+    if (a.reachable != b.reachable || a.variables.len() != b.variables.len()) {
+        ret false
+    }
+    for (i64 i = 0; i < a.variables.len(); i++) {
+        if (a.variables[i] != b.variables[i]) {
+            ret false
+        }
+    }
+    ret true
+}
+
+struct Loop {
+    list<State> breaks
+    list<State> continues
+}
+
+struct MoveChecker {
+    Tree tree
+    Types types
+    Diagnostics diag
+    i32 file  // of the function being checked
+    State state
+    list<Loop> loops
+    list<State> raises  // for each enclosing `try` body: where an exception can arise
+    bool report = true
+
+    void checkFunction(i32 function) {
+        State start
+        for (i64 i = 0; i < tree.functions[function].variables.len(); i++) {
+            start.variables.add(tree.variables[tree.functions[function].variables[i]].kind != VariableKind.Local ? live : 0)
+        }
+        state = move start
+        file = tree.functions[function].file
+        loops.clear()
+        raises.clear()
+        checkBlock(tree.functions[function].body)
+    }
+
+    State unreachable() const {
+        State result
+        result.reachable = false
+        for (i64 i = 0; i < state.variables.len(); i++) {
+            result.variables.add(0)
+        }
+        ret result
+    }
+
+    // A read of a variable: it must not have been moved on any path.
+    void use(i32 variable, i32 line, i32 column) {
+        if (variable < 0 || !state.reachable || tree.variables[variable].kind == VariableKind.Module) {
+            ret
+        }
+        i32 id = tree.variables[variable].id
+        u8 bits = state.variables[id]
+        if ((bits & moved) == 0) {
+            ret
+        }
+        if (report) {
+            if (bits == moved) {
+                diag.errorIn(file, line, column, "'" + tree.variables[variable].name + "' has been moved and can no longer be used")
+            } else {
+                diag.errorIn(file, line, column, "'" + tree.variables[variable].name +
+                    "' may have been moved, on another path or in a previous iteration of a loop")
+            }
+        }
+        state.variables[id] = live  // one error per move
+    }
+
+    void set(i32 variable, u8 bits) {
+        if (variable >= 0 && state.reachable && tree.variables[variable].kind != VariableKind.Module) {
+            state.variables[tree.variables[variable].id] = bits
+        }
+    }
+
+    // ---- Statements ----
+
+    void checkBlock(i32 block) {
+        if (block < 0) {
+            ret
+        }
+        for (i64 i = 0; i < tree.blocks[block].statements.len(); i++) {
+            checkStatement(tree.blocks[block].statements[i])
+        }
+    }
+
+    void checkStatement(i32 statement) {
+        i32 value = tree.stmts[statement].value
+        switch (tree.stmts[statement].kind) {
+            case VarDecl {
+                visit(value)
+                set(tree.stmts[statement].variable, live)
+            }
+            case Assign {
+                // The value is computed before the target is written.
+                if (tree.stmts[statement].call >= 0) {  // `s += t` (D95)
+                    visit(tree.stmts[statement].call)
+                    ret
+                }
+                visit(value)
+                i32 target = tree.stmts[statement].target
+                if (tree.exprs[target].kind == ExprKind.Name && tree.stmts[statement].op == AssignOp.Assign) {
+                    set(tree.exprs[target].variable, live)  // usable again (D81)
+                } else {
+                    visit(target)
+                }
+            }
+            case IncDec {
+                visit(tree.stmts[statement].target)
+            }
+            case Expression {
+                visit(value)
+                // D102: nothing runs after a panic.
+                if (tree.exprs[value].kind == ExprKind.Call && tree.exprs[value].intrinsic == Intrinsic.Panic) {
+                    state = unreachable()
+                }
+            }
+            case If {
+                visit(value)
+                State before = state
+                checkBlock(tree.stmts[statement].body)
+                State afterThen = state
+                state = move before
+                checkBlock(tree.stmts[statement].elseBody)
+                state = merge(afterThen, state)
+            }
+            case For {
+                checkFor(statement)
+            }
+            case Switch {
+                // Every branch starts from the same state; without a branch for every
+                // value, the switch can also do nothing.
+                visit(value)
+                State before = state
+                State after = tree.stmts[statement].exhaustive ? unreachable() : before
+                for (i64 b = 0; b < tree.stmts[statement].parts.len(); b++) {
+                    state = before
+                    checkBlock(tree.branches[tree.stmts[statement].parts[b]].body)
+                    after = merge(after, state)
+                }
+                if (tree.stmts[statement].defaultBody >= 0) {
+                    state = before
+                    checkBlock(tree.stmts[statement].defaultBody)
+                    after = merge(after, state)
+                }
+                state = move after
+            }
+            case Throw {
+                visit(value)
+                noteRaise()
+                state = unreachable()
+            }
+            case Try {
+                checkTry(statement)
+            }
+            case Break {
+                loops[loops.len() - 1].breaks.add(state)
+                state = unreachable()
+            }
+            case Continue {
+                loops[loops.len() - 1].continues.add(state)
+                state = unreachable()
+            }
+            case Return {
+                visit(value)
+                state = unreachable()
+            }
+        }
+    }
+
+    // A `catch` starts from any point of the body where an exception can arise:
+    // the states at those points are merged. `finally` runs on every exit.
+    void checkTry(i32 statement) {
+        raises.add(state)
+        checkBlock(tree.stmts[statement].body)
+        State atCatch = raises.remove(raises.len() - 1)
+        State after = state
+        for (i64 c = 0; c < tree.stmts[statement].parts.len(); c++) {
+            state = atCatch
+            checkBlock(tree.catches[tree.stmts[statement].parts[c]].body)
+            after = merge(after, state)
+        }
+        if (tree.stmts[statement].elseBody < 0) {
+            state = move after
+            ret
+        }
+        state = merge(after, atCatch)
+        checkBlock(tree.stmts[statement].elseBody)
+        if (!after.reachable) {
+            state = unreachable()
+        }
+    }
+
+    // A point where an exception can arise: a call or a `throw`.
+    void noteRaise() {
+        for (i64 i = 0; i < raises.len(); i++) {
+            raises[i] = merge(raises[i], state)
+        }
+    }
+
+    // A loop is visited until the state at its start no longer changes, without
+    // reporting errors; then once more, reporting them.
+    void checkFor(i32 statement) {
+        if (tree.stmts[statement].init >= 0) {
+            checkStatement(tree.stmts[statement].init)
+        }
+        if (tree.stmts[statement].form == ForForm.Each) {
+            visit(tree.stmts[statement].value)
+        }
+        State head = state
+        bool reported = report
+        report = false
+        for (true) {
+            State exit
+            State next = merge(head, iterate(statement, head, ref exit))
+            if (same(next, head)) {
+                break
+            }
+            head = move next
+        }
+        report = reported
+        State exit
+        iterate(statement, head, ref exit)
+        state = move exit
+    }
+
+    // One pass over the loop, starting from `head`. Returns the state at the end of
+    // an iteration; `exit` receives the state after the loop.
+    State iterate(i32 statement, State head, ref State exit) {
+        state = head
+        State whenFalse = unreachable()
+        bool each = tree.stmts[statement].form == ForForm.Each
+        if (!each && tree.stmts[statement].value >= 0) {
+            visit(tree.stmts[statement].value)
+            whenFalse = state
+        }
+        if (each) {
+            whenFalse = state  // the list may have no more elements
+        }
+        Loop fresh
+        loops.add(move fresh)
+        checkBlock(tree.stmts[statement].body)
+        Loop loop = loops.remove(loops.len() - 1)
+        for (State other in loop.continues) {
+            state = merge(state, other)
+        }
+        if (tree.stmts[statement].step >= 0) {
+            checkStatement(tree.stmts[statement].step)
+        }
+        exit = move whenFalse
+        for (State other in loop.breaks) {
+            exit = merge(exit, other)
+        }
+        ret state
+    }
+
+    // ---- Expressions, in the order in which they are evaluated ----
+
+    void visitAll(i32 expr) {
+        for (i64 i = 0; i < tree.exprs[expr].items.len(); i++) {
+            visit(tree.exprs[expr].items[i])
+        }
+    }
+
+    void visit(i32 expr) {
+        if (expr < 0) {
+            ret
+        }
+        switch (tree.exprs[expr].kind) {
+            case IntLiteral, FloatLiteral, BoolLiteral, StringLiteral, Self, TypeRef {
+            }
+            case Name {
+                use(tree.exprs[expr].variable, tree.exprs[expr].line, tree.exprs[expr].column)
+            }
+            case Field, Unary, Conversion, Ref, Copy {
+                visit(tree.exprs[expr].left)
+            }
+            case Conditional {  // D422: one of the two branches
+                visit(tree.exprs[expr].left)
+                State before = state
+                visit(tree.exprs[expr].right)
+                State afterTrue = state
+                state = move before
+                visit(tree.exprs[expr].other)
+                state = merge(afterTrue, state)
+            }
+            case Binary {
+                visit(tree.exprs[expr].left)
+                if (tree.exprs[expr].binary == BinaryOp.And || tree.exprs[expr].binary == BinaryOp.Or) {
+                    State afterLeft = state  // the right side may not be evaluated
+                    visit(tree.exprs[expr].right)
+                    state = merge(afterLeft, state)
+                } else {
+                    visit(tree.exprs[expr].right)
+                }
+            }
+            case Call, Construct {
+                visitAll(expr)
+                noteRaise()
+            }
+            case MethodCall, CallValue {
+                visit(tree.exprs[expr].left)
+                visitAll(expr)
+                noteRaise()
+            }
+            case EnumCase, Print, ListLiteral {
+                visitAll(expr)
+            }
+            case Move {
+                i32 operand = tree.exprs[expr].left
+                visit(operand)
+                if (tree.exprs[expr].moveKind == MoveKind.Variable) {
+                    set(tree.exprs[operand].variable, moved)
+                }
+            }
+            case Index {
+                visit(tree.exprs[expr].left)
+                visit(tree.exprs[expr].right)
+            }
+            case Lambda {
+                // Its body is a function of its own; here it uses its captures, and
+                // takes those with `move` (D183).
+                for (i64 c = 0; c < tree.exprs[expr].captures.len(); c++) {
+                    i32 outer = tree.exprs[expr].captures[c].outer
+                    use(outer, tree.exprs[expr].captures[c].line, tree.exprs[expr].captures[c].column)
+                    if (tree.exprs[expr].captures[c].mode == ParamMode.Move && outer >= 0 &&
+                        needsDestruction(tree, types, tree.variables[outer].type)) {
+                        set(outer, moved)
+                    }
+                }
+            }
+        }
+    }
+
+    // A generic is checked in its definition, where T may need destruction: that
+    // is stricter than any of its instances (D80, D85).
+    bool isInstance(i32 function) const {
+        i32 owner = tree.functions[function].owner
+        ret tree.functions[function].generic >= 0 || (owner >= 0 && tree.records[owner].generic >= 0)
+    }
+
+    void check(i32 function) {
+        if (tree.functions[function].bodyChecked && (!isInstance(function) || tree.functions[function].isDefinition)) {
+            checkFunction(function)
+        }
+    }
+
+    void run(list<i32> made) {
+        for (i64 r = 0; r < tree.records.len(); r++) {
+            for (i64 m = 0; m < tree.records[r].members.len(); m++) {
+                check(tree.records[r].members[m])
+            }
+        }
+        for (i64 i = 0; i < tree.topFunctions.len(); i++) {
+            check(tree.topFunctions[i])
+        }
+        for (i32 function in made) {
+            check(function)
+        }
+        // A lambda is checked where the function that contains it is.
+        for (i64 i = 0; i < tree.lambdas.len(); i++) {
+            i32 lambda = tree.lambdas[i]
+            i32 enclosing = tree.exprs[lambda].enclosing
+            i32 function = tree.exprs[lambda].function
+            if (tree.functions[function].bodyChecked && (!isInstance(enclosing) || tree.functions[enclosing].isDefinition ||
+                tree.functions[enclosing].isLambda)) {
+                checkFunction(function)
+            }
+        }
+    }
+}
+
+// The moves of a program that sema has checked, with their errors.
+public void checkMoves(ref Checker checker) {
+    MoveChecker moves
+    moves.tree = move checker.tree
+    moves.types = move checker.types
+    moves.diag = move checker.diag
+    moves.run(checker.made)
+    checker.tree = move moves.tree
+    checker.types = move moves.types
+    checker.diag = move moves.diag
+}
