@@ -831,6 +831,7 @@ bool buildExecutable(const std::string& irText, const std::string& moduleName, c
         return false;
     }
 
+    if (options.progress && options.optLevel > 0) options.progress("Optimizing");
     optimize(*module, *machine, options.optLevel);
     // D339: the table of the stack traces counts from cromo_code, at the start of
     // .text: every function stays there, also those that LLVM finds cold and would
@@ -843,6 +844,7 @@ bool buildExecutable(const std::string& irText, const std::string& moduleName, c
     if (options.objectOnly) return emitObject(*module, *machine, options.outputPath, error);
     std::string objectPath = options.outputPath + (linux ? ".o" : ".obj");
     std::string runtimePath = runtimeLibraryPath(options.target).string();  // in lib/ (D237)
+    if (options.progress) options.progress("Writing the object");
     if (!emitObject(*module, *machine, objectPath, error)) return false;
     std::string tablePath = options.outputPath + (linux ? ".trace.o" : ".trace.obj");
     if (!emitTraceTable(objectPath, options, *machine, tablePath, error)) {
@@ -851,6 +853,7 @@ bool buildExecutable(const std::string& irText, const std::string& moduleName, c
         return false;
     }
 
+    if (options.progress) options.progress("Linking");
     std::vector<std::string> temporaries;
     bool linked = isAndroid(options.target) ? linkAndroid(objectPath, tablePath, runtimePath, options, temporaries, error)
                   : linux                   ? linkLinux(objectPath, tablePath, runtimePath, options, error)

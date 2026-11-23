@@ -46,6 +46,7 @@ public struct DefaultField {
 const i32 structsTable = 0
 const i32 interfacesTable = 1
 const i32 functionsTable = 2
+const i32 globalsTable = 3
 
 const i32 libraryFile = 1  // the core of the library (P29)
 const i32 maxNesting = 16
@@ -96,6 +97,14 @@ public struct Checker {
     i32 threadInit = -1            // the value of the declaration being checked
     list<LoopBorrow> loopBorrows   // the lists that the enclosing `for` go over (D101)
     list<ThreadBorrow> threadBorrows
+    // The references of the blocks (D562): the place each one names, the references
+    // that place is written through, and the statement of its block after which its
+    // place is free again.
+    map<i32, Path> refPaths
+    map<i32, list<i32>> refChains
+    map<i32, i64> refEnds
+    i32 blockNow = -1  // the block being checked, and which of its statements
+    i64 indexNow
     map<i32, bool> startedThreads  // the threads of a block with their start() written
     list<GroupLog> activeGroups    // the groups whose block is being checked (D273)
     list<i64> switchLoops          // for each enclosing `switch`, how many loops enclose it (D116)
@@ -264,6 +273,9 @@ public struct Checker {
         if (table == interfacesTable) {
             ret scopes[scope].interfaces.contains(name) ? scopes[scope].interfaces[name] : -1
         }
+        if (table == globalsTable) {
+            ret scopes[scope].globals.contains(name) ? scopes[scope].globals[name] : -1
+        }
         ret scopes[scope].functions.contains(name) ? scopes[scope].functions[name] : -1
     }
 
@@ -273,6 +285,9 @@ public struct Checker {
         }
         if (table == interfacesTable) {
             ret tree.interfaces[decl].isPublic
+        }
+        if (table == globalsTable) {
+            ret tree.globals[decl].isPublic
         }
         ret tree.functions[decl].isPublic
     }
@@ -2447,6 +2462,13 @@ public struct Checker {
         ret tree.globals[scopes[scope].globals[name]].variable
     }
 
+    // The same, or a public constant of an imported module (D564); `module` is the
+    // name written in front, as in `geometry.limit`.
+    i32 findConstant(string name, Loc loc, string module) {
+        i32 found = findDecl(globalsTable, name, loc, module)
+        ret found < 0 ? -1 : tree.globals[found].variable
+    }
+
     // Field of the struct whose method is being checked (D70).
     i32 ownFieldIndex(string name) const {
         if (current < 0 || tree.functions[current].owner < 0) {
@@ -2554,7 +2576,7 @@ public struct Checker {
         ret "the object"
     }
 
-    Path pathOf(i32 expr) const {
+    Path writtenPath(i32 expr) const {
         Path path
         switch (tree.exprs[expr].kind) {
             case Name {
@@ -2565,7 +2587,7 @@ public struct Checker {
                 path.valid = true
             }
             case Field {
-                path = pathOf(tree.exprs[expr].left)
+                path = writtenPath(tree.exprs[expr].left)
                 if (path.valid) {
                     Step step
                     step.field = tree.exprs[expr].index
@@ -2573,7 +2595,7 @@ public struct Checker {
                 }
             }
             case Index {
-                path = pathOf(tree.exprs[expr].left)
+                path = writtenPath(tree.exprs[expr].left)
                 if (path.valid) {
                     Step step
                     step.index = tree.exprs[expr].right
@@ -2651,6 +2673,10 @@ public struct Checker {
                 }
                 if (kind == VariableKind.Captured && isConst) {
                     ret "'" + variableName + "' is captured to be read: capture it with 'ref " + variableName + "' to modify it"
+                }
+                if (tree.variables[variable].reference && isConst) {  // D562
+                    ret "'" + variableName + "' is a 'const ref', which only reads: write 'ref " + name(tree.variables[variable].type) +
+                        " " + variableName + " = ...' to modify it"
                 }
                 if (kind == VariableKind.Element && isConst) {
                     ret "'" + variableName + "' is an element of a read-only 'for': write 'for (ref " +
@@ -2923,6 +2949,9 @@ public struct Checker {
             activeGroups[g].modified.add(move modified)
         }
         for (i64 i = 0; i < loopBorrows.len(); i++) {
+            if (through(place, loopBorrows[i].thread)) {
+                continue  // D562
+            }
             if (overlaps(path, loopBorrows[i].path) == overlapNo) {
                 continue
             }
@@ -3144,7 +3173,8 @@ public struct Checker {
                 }
                 case Binding, Element {
                     if (tree.variables[variable].isConst) {
-                        error(loc, "cannot move '" + variableName + "': " + (tree.variables[variable].kind == VariableKind.Element ?
+                        error(loc, "cannot move '" + variableName + "': " + (tree.variables[variable].reference ?
+                            "it is a 'const ref', which only reads" : tree.variables[variable].kind == VariableKind.Element ?
                             "it is an element of a read-only 'for'" : "it is read-only data of the case"))
                         ret errorType()
                     }
@@ -3181,21 +3211,37 @@ public struct Checker {
         locals.add(move scope)
         Flow flow = Flow.Continues
         bool warned = false
+        i32 outerBlock = blockNow
+        i64 outerIndex = indexNow
         for (i64 i = 0; i < tree.blocks[block].statements.len(); i++) {
             i32 statement = tree.blocks[block].statements[i]
             if (flow != Flow.Continues && !warned) {
                 diag.warningIn(curFile, tree.stmts[statement].line, tree.stmts[statement].column, "unreachable code")
                 warned = true
             }
+            blockNow = block
+            indexNow = i
             Flow next = checkStatement(statement)
             if (flow == Flow.Continues) {
                 flow = next
             }
+            // D562: a reference lends its place until the statement of its last use.
+            list<i32> over
+            for (string key, i32 variable in locals[locals.len() - 1]) {
+                if (tree.variables[variable].reference && refEnds.contains(variable) && refEnds[variable] == i) {
+                    over.add(variable)
+                }
+            }
+            for (i32 variable in over) {
+                endThread(variable)
+            }
         }
+        blockNow = outerBlock
+        indexNow = outerIndex
         // The threads and the groups of this block end with it (D215, D273).
         list<i32> ended
         for (string key, i32 variable in locals[locals.len() - 1]) {
-            if (tree.variables[variable].blockThread >= 0 || tree.variables[variable].group) {
+            if (tree.variables[variable].blockThread >= 0 || tree.variables[variable].group || tree.variables[variable].reference) {
                 ended.add(variable)
             }
         }
@@ -3262,6 +3308,10 @@ public struct Checker {
     }
 
     void checkVarDecl(i32 decl) {
+        if (tree.stmts[decl].isRef) {
+            checkReference(decl)
+            ret
+        }
         i32 node = tree.stmts[decl].type
         i32 type = resolveOrError(node, curFile)
         if (types.isVoid(type)) {
@@ -4148,8 +4198,15 @@ public struct Checker {
         }
         map<string, i32> scope
         locals.add(move scope)  // the variable of the classic form lives only in the loop
-        if (tree.stmts[statement].init >= 0) {
-            checkStatement(tree.stmts[statement].init)
+        i32 init = tree.stmts[statement].init
+        if (init >= 0 && tree.stmts[init].kind == StmtKind.VarDecl && tree.stmts[init].isRef) {
+            error(stmtLoc(init), "a reference is declared in a block, not in the head of a 'for'")
+            tree.stmts[init].isRef = false
+            tree.stmts[init].isConst = false
+            tree.stmts[init].value = -1
+        }
+        if (init >= 0) {
+            checkStatement(init)
         }
         bool hasCondition = tree.stmts[statement].value >= 0
         if (hasCondition) {
@@ -4394,8 +4451,8 @@ public struct Checker {
             tree.exprs[expr] = move field
             ret checkField(expr)
         }
-        i32 global = findGlobal(written, loc.file)
-        if (global >= 0) {  // D394
+        i32 global = findConstant(written, loc, "")
+        if (global >= 0) {  // D394, D564
             tree.exprs[expr].variable = global
             ret tree.variables[global].type
         }
@@ -4575,6 +4632,21 @@ public struct Checker {
         if (named >= 0) {
             list<i32> none
             ret checkEnumCase(expr, named, fieldName, false, none)
+        }
+        if (tree.exprs[inner].kind == ExprKind.Name) {  // `geometry.limit`: a public constant of a module (D564)
+            string module = tree.exprs[inner].text
+            if (lookup(module) < 0 && ownFieldIndex(module) < 0 && importsQualifier(curFile, module)) {
+                i32 constant = findConstant(fieldName, loc, module)
+                if (constant < 0) {
+                    error(loc, "the module " + module + " has no public constant '" + fieldName + "'")
+                    ret errorType()
+                }
+                Expr written = nodeAt(ExprKind.Name, loc.line, loc.column)
+                written.text = fieldName
+                written.variable = constant
+                tree.exprs[expr] = move written
+                ret tree.variables[constant].type
+            }
         }
         i32 object = checkExpr(inner, -1)
         if (types.isError(object)) {
@@ -4814,7 +4886,9 @@ public struct Checker {
                 i64 read = firstModifies ? b : a
                 i32 readExpr = accesses[read].expr
                 i32 readType = tree.exprs[readExpr].resolved
-                if (!accesses[read].modifies && accesses[read].arg >= 0 && !needsDestruction(tree, types, readType)) {
+                // D79, D563: a read argument is passed as a copy, with its copy() when it owns resources.
+                if (!accesses[read].modifies && accesses[read].arg >= 0 && (!needsDestruction(tree, types, readType) ||
+                    canCopy(readType))) {
                     copied[accesses[read].arg] = true
                     continue
                 }
@@ -4832,8 +4906,6 @@ public struct Checker {
                     message += "and the call can modify both"
                 } else if (accesses[read].arg < 0) {
                     message += "which is the object of the method"
-                } else if (canCopy(readType)) {
-                    message += "which the call can modify: pass a copy, as " + placeText(readExpr) + ".copy()"
                 } else {
                     message += "which the call can modify, and values of type " + name(readType) + " cannot be copied"
                 }
@@ -4842,8 +4914,14 @@ public struct Checker {
             }
         }
         for (i64 i = 0; i < args.len(); i++) {
-            if (copied[i]) {
-                wrap(args[i], ExprKind.Copy, tree.exprs[args[i]].resolved)
+            if (!copied[i]) {
+                continue
+            }
+            i32 type = tree.exprs[args[i]].resolved
+            if (needsDestruction(tree, types, type)) {  // D563
+                ok = copyIfNeeded(args[i], type) && ok
+            } else {
+                wrap(args[i], ExprKind.Copy, type)
             }
         }
         ret ok
@@ -5723,12 +5801,12 @@ public struct Checker {
             ret errorType()
         }
         bool equality = op == BinaryOp.Eq || op == BinaryOp.Ne
-        if (types.isStruct(operand) && tree.records[types.decl(operand)].isEnum && equality) {
-            if (!withoutData(types.decl(operand))) {
-                error(loc, quoted + " works on the enums whose cases have no data: tell the case with 'switch'")
-                ret errorType()
-            }
-            ret boolType()
+        if (types.isStruct(operand) && tree.records[types.decl(operand)].isEnum && equality && withoutData(types.decl(operand)) &&
+            !tree.records[types.decl(operand)].methods.contains("equals")) {
+            ret boolType()  // their cases, as numbers (D112)
+        }
+        if (equality && (types.isStruct(operand) || types.isArray(operand))) {
+            ret checkEquality(expr, operand)  // D565
         }
         if (types.isStruct(operand)) {
             error(loc, quoted + " does not work on structs yet")
@@ -8232,6 +8310,384 @@ public struct Checker {
             listFunction(function, "instance", ref out)
         }
         print("{}", out)
+    }
+
+    // ---- `==` on structs, enums and arrays (D565) ----
+
+    // Why the values of `type` cannot be compared with `==`, or "" when they can:
+    // all the types but the functions, the interfaces and the vectors, and what
+    // holds them without an equals() of its own.
+    string equalProblem(i32 type) const {
+        map<i32, bool> visiting
+        ret equalProblemAt(type, "", ref visiting)
+    }
+
+    string equalProblemAt(i32 type, string place, ref map<i32, bool> visiting) const {
+        if (types.isBool(type) || types.isNumeric(type) || types.isError(type) || type == addrType() || types.isParam(type)) {
+            ret ""
+        }
+        if (types.isArray(type)) {
+            ret equalProblemAt(types.element(type), place.len() == 0 ? "an element" : place + "[i]", ref visiting)
+        }
+        if (!types.isStruct(type)) {
+            ret place.len() == 0 ? "it has no equals()" : place + " has type " + name(type)
+        }
+        i32 decl = types.decl(type)
+        if (decl == stringDecl || tree.records[decl].methods.contains("equals")) {
+            ret ""
+        }
+        if (isList(type)) {
+            ret equalProblemAt(tree.records[decl].typeArgs[0], place.len() == 0 ? "an element" : place + "[i]", ref visiting)
+        }
+        if (isMap(type)) {
+            ret equalProblemAt(tree.records[decl].typeArgs[1], place.len() == 0 ? "a value" : place + "[key]", ref visiting)
+        }
+        if (visiting.contains(decl)) {
+            ret ""  // already being checked: it contains a list of itself
+        }
+        visiting[decl] = true
+        string base = place.len() == 0 ? tree.records[decl].name : place
+        for (i64 c = 0; c < tree.records[decl].cases.len(); c++) {
+            for (i64 f = 0; f < tree.records[decl].cases[c].fields.len(); f++) {
+                string problem = equalProblemAt(tree.records[decl].cases[c].fields[f].resolved, base + "." +
+                    tree.records[decl].cases[c].name, ref visiting)
+                if (problem.len() > 0) {
+                    ret problem
+                }
+            }
+        }
+        for (i64 f = 0; f < tree.records[decl].fields.len(); f++) {
+            string problem = equalProblemAt(tree.records[decl].fields[f].resolved, base + "." + tree.records[decl].fields[f].name,
+                ref visiting)
+            if (problem.len() > 0) {
+                ret problem
+            }
+        }
+        ret ""
+    }
+
+    // `a == b` and `a != b` on two values of a struct, an enum or an array: the call
+    // of its equals(), written or generated, as copy() (D35, D83).
+    i32 checkEquality(i32 expr, i32 type) {
+        Loc loc = locOf(expr)
+        BinaryOp op = tree.exprs[expr].binary
+        i32 lhs = tree.exprs[expr].left
+        i32 rhs = tree.exprs[expr].right
+        if (isAbstract(tree, types, type)) {
+            ret boolType()  // D85: checked in each instance
+        }
+        i32 method = -1
+        if (types.isStruct(type) && tree.records[types.decl(type)].methods.contains("equals")) {
+            i32 written = tree.records[types.decl(type)].methods["equals"]
+            bool fits = tree.functions[written].params.len() == 1 && tree.functions[written].paramTypes.len() == 1 &&
+                tree.functions[written].params[0].mode == ParamMode.Read && tree.functions[written].paramTypes[0] == type &&
+                types.isBool(tree.functions[written].resolvedReturn) && tree.functions[written].isConst
+            if (!fits) {
+                error(loc, "'" + spelling(op) + "' needs the equals() of " + name(type) + " written 'bool equals(" + name(type) +
+                    " other) const'")
+                ret errorType()
+            }
+            method = written
+            use(method, loc)
+        }
+        Expr node = nodeAt(method >= 0 ? ExprKind.MethodCall : ExprKind.Call, loc.line, loc.column)
+        node.text = "equals"
+        if (method >= 0) {
+            node.left = lhs
+            node.items.add(rhs)
+        } else {
+            string problem = equalProblem(type)
+            if (problem.len() > 0) {
+                error(loc, "values of type " + name(type) + " cannot be compared with '" + spelling(op) + "': " + problem)
+                ret errorType()
+            }
+            method = generatedEqual(type, loc)
+            if (method < 0) {
+                ret errorType()
+            }
+            node.items.add(lhs)
+            node.items.add(rhs)
+        }
+        node.target = method
+        node.resolved = boolType()
+        noteCall(method, loc)
+        if (op == BinaryOp.Ne) {
+            tree.exprs.add(move node)
+            Expr negation = nodeAt(ExprKind.Unary, loc.line, loc.column)
+            negation.unary = UnaryOp.Not
+            negation.left = i32(tree.exprs.len() - 1)
+            tree.exprs[expr] = move negation
+        } else {
+            tree.exprs[expr] = move node
+        }
+        ret boolType()
+    }
+
+    // The equals of a type without one, written in Cromo and checked as an instance
+    // with the types of its parts, in the scope of the core; it reads the private
+    // fields too, as copy().
+    i32 generatedEqual(i32 type, Loc loc) {
+        string key = format("equals {}", type)
+        if (generated.contains(key)) {
+            ret generated[key]
+        }
+        list<TypeBinding> generatedBindings
+        generatedBindings.add(binding("T", type))
+        string text = equalText(type, ref generatedBindings)
+        i32 function = parseGenerated(text, libraryFile)
+        if (function < 0) {
+            error(loc, "internal error: the equals of " + name(type) + " does not parse")
+            ret -1
+        }
+        generated[key] = function
+        addGenerated(function, generatedBindings, name(type), loc)
+        ret function
+    }
+
+    // The fields one by one; the elements of a list or of an array, and their number;
+    // the keys and the values of a map; the case of an enum and its data.
+    string equalText(i32 type, ref list<TypeBinding> generatedBindings) const {
+        string text = "bool equals(T a, T b) {\n"
+        if (types.isArray(type) || isList(type)) {
+            ret text + "if (a.len() != b.len()) {\nret false\n}\nfor (i64 i = 0; i < a.len(); i++) {\n" +
+                "if (a[i] != b[i]) {\nret false\n}\n}\nret true\n}\n"
+        }
+        i32 decl = types.decl(type)
+        if (isMap(type)) {
+            generatedBindings.add(binding("K", tree.records[decl].typeArgs[0]))
+            generatedBindings.add(binding("V", tree.records[decl].typeArgs[1]))
+            ret text + "if (a.len() != b.len()) {\nret false\n}\nfor (K key, V value in a) {\n" +
+                "if (!b.contains(key) || b[key] != value) {\nret false\n}\n}\nret true\n}\n"
+        }
+        if (tree.records[decl].isEnum) {
+            text += "switch (a) {\n"
+            for (i64 c = 0; c < tree.records[decl].cases.len(); c++) {
+                string caseName = tree.records[decl].cases[c].name
+                i64 count = tree.records[decl].cases[c].fields.len()
+                string left
+                string right
+                string same
+                for (i64 i = 0; i < count; i++) {
+                    string param = format("E{}_{}", c, i)
+                    generatedBindings.add(binding(param, tree.records[decl].cases[c].fields[i].resolved))
+                    left += format("{}{} x{}", i > 0 ? ", " : "", param, i)
+                    right += format("{}{} y{}", i > 0 ? ", " : "", param, i)
+                    same += format("{}{} == y{}", i > 0 ? " && x" : "x", i, i)
+                }
+                text += "case " + caseName + (count > 0 ? "(" + left + ")" : "") + " {\nswitch (b) {\ncase " + caseName + (count > 0 ?
+                    "(" + right + ")" : "") + " {\nret " + (count > 0 ? same : "true") + "\n}\ndefault {\nret false\n}\n}\n}\n"
+            }
+            ret text + "}\n}\n"
+        }
+        string same
+        for (i64 f = 0; f < tree.records[decl].fields.len(); f++) {
+            string fieldName = tree.records[decl].fields[f].name
+            same += (same.len() == 0 ? "a." : " && a.") + fieldName + " == b." + fieldName
+        }
+        ret text + "ret " + (same.len() == 0 ? "true" : same) + "\n}\n"
+    }
+
+    // ---- The references of a block (D562) ----
+
+    // Whether a part of the program that is not checked yet uses a name, as a
+    // variable: a reference lends its place until its last use. A name is never
+    // hidden by another (D66), so the name alone tells.
+    bool exprMentions(i32 expr, string name) const {
+        if (expr < 0) {
+            ret false
+        }
+        switch (tree.exprs[expr].kind) {
+            case IntLiteral, FloatLiteral, BoolLiteral, StringLiteral, TypeRef {
+                ret false
+            }
+            case Name {
+                ret tree.exprs[expr].text == name
+            }
+            case Lambda {
+                for (Capture capture in tree.exprs[expr].captures) {
+                    if (capture.name == name) {
+                        ret true
+                    }
+                }
+                ret blockMentions(tree.functions[tree.exprs[expr].function].body, name)
+            }
+            case Conversion, Print, Construct, Self, Copy, EnumCase {
+                ret true  // made by the analysis: not in what is still to check
+            }
+            default {
+            }
+        }
+        if (tree.exprs[expr].kind == ExprKind.Call && (tree.exprs[expr].text == name || tree.exprs[expr].module == name)) {
+            ret true
+        }
+        if (exprMentions(tree.exprs[expr].left, name) || exprMentions(tree.exprs[expr].right, name) ||
+            exprMentions(tree.exprs[expr].other, name)) {
+            ret true
+        }
+        for (i32 item in tree.exprs[expr].items) {
+            if (exprMentions(item, name)) {
+                ret true
+            }
+        }
+        ret false
+    }
+
+    bool stmtMentions(i32 statement, string name) const {
+        if (statement < 0) {
+            ret false
+        }
+        if (exprMentions(tree.stmts[statement].value, name) || exprMentions(tree.stmts[statement].target, name) ||
+            stmtMentions(tree.stmts[statement].init, name) || stmtMentions(tree.stmts[statement].step, name) ||
+            blockMentions(tree.stmts[statement].body, name) || blockMentions(tree.stmts[statement].elseBody, name) ||
+            blockMentions(tree.stmts[statement].defaultBody, name)) {
+            ret true
+        }
+        bool isSwitch = tree.stmts[statement].kind == StmtKind.Switch
+        for (i32 part in tree.stmts[statement].parts) {
+            if (!isSwitch) {
+                if (blockMentions(tree.catches[part].body, name)) {
+                    ret true
+                }
+                continue
+            }
+            for (Pattern pattern in tree.branches[part].patterns) {
+                if (exprMentions(pattern.literal, name)) {
+                    ret true
+                }
+            }
+            if (blockMentions(tree.branches[part].body, name)) {
+                ret true
+            }
+        }
+        ret false
+    }
+
+    bool blockMentions(i32 block, string name) const {
+        if (block < 0) {
+            ret false
+        }
+        for (i32 statement in tree.blocks[block].statements) {
+            if (stmtMentions(statement, name)) {
+                ret true
+            }
+        }
+        ret false
+    }
+
+    // The object reached by a place. A reference is the place it names, so what is
+    // done through it is done to that place.
+    Path pathOf(i32 expr) const {
+        Path path = writtenPath(expr)
+        if (!path.valid || path.variable < 0 || !refPaths.contains(path.variable)) {
+            ret path
+        }
+        Path full = refPaths[path.variable]
+        for (Step step in path.steps) {
+            full.steps.add(step)
+        }
+        ret full
+    }
+
+    // The variable a place starts from, when it is written with one; or -1.
+    i32 rootOf(i32 place) const {
+        i32 at = place
+        for (tree.exprs[at].kind == ExprKind.Field || tree.exprs[at].kind == ExprKind.Index) {
+            at = tree.exprs[at].left
+        }
+        ret tree.exprs[at].kind == ExprKind.Name ? tree.exprs[at].variable : -1
+    }
+
+    // Whether a place is written through a reference, itself or one that goes
+    // through it: what that reference lends is modified through it.
+    bool through(i32 place, i32 reference) const {
+        i32 root = rootOf(place)
+        if (root < 0 || reference < 0) {
+            ret false
+        }
+        ret root == reference || (refChains.contains(root) && has(refChains[root], reference))
+    }
+
+    // `ref T x = place` and `const ref T x = place` (D562): a name for a variable, a
+    // field or an element, until the end of its block. The variable it starts from is
+    // lent until its last use, as the list of a `for` (D101): it is modified through
+    // the reference.
+    void checkReference(i32 decl) {
+        i32 node = tree.stmts[decl].type
+        i32 type = resolveOrError(node, curFile)
+        if (types.isVoid(type)) {
+            error(typeLoc(node, curFile), "a variable cannot be void")
+            type = errorType()
+        }
+        if (!checkNotInterface(type, typeLoc(node, curFile), "a variable")) {
+            type = errorType()
+        }
+        Loc nameLoc = at(curFile, tree.stmts[decl].nameLine, tree.stmts[decl].nameColumn)
+        string declName = tree.stmts[decl].name
+        bool isConst = tree.stmts[decl].isConst
+        i32 place = tree.stmts[decl].value
+        bool ok = false
+        if (place < 0) {
+            error(nameLoc, "a reference names a place: write a variable, a field or an element after '='")
+        } else {
+            i32 found = checkExpr(place, -1)
+            Loc loc = locOf(place)
+            i32 object = tree.exprs[place].kind == ExprKind.Index ? tree.exprs[tree.exprs[place].left].resolved : -1
+            string reason = !types.isError(found) && isPlace(place) && !isConst ? readOnlyReason(place) : ""
+            if (types.isError(found)) {
+                ok = false
+            } else if (!isPlace(place)) {
+                error(loc, "a reference names a variable, a field or an element")
+            } else if (object >= 0 && (isString(object) || types.isVector(object))) {
+                error(loc, "an element of a " + (types.isVector(object) ? "vector" : "string") +
+                    " has no place of its own: copy it into a variable")
+            } else if (tree.exprs[place].kind == ExprKind.Name && !checkNotBlockThread(tree.exprs[place].variable, loc)) {
+                ok = false
+            } else if (reason.len() > 0) {
+                error(loc, "cannot name '" + placeText(place) + "' with 'ref': " + reason + "; 'const ref' reads it")
+            } else if (!types.isError(type) && found != type) {
+                error(typeLoc(node, curFile), "'" + placeText(place) + "' is " + withArticle(name(found)) + ": write " + (isConst ?
+                    "const ref" : "ref") + " " + name(found) + " " + declName)
+            } else if (!isConst && !checkNotBorrowed(place, loc)) {
+                ok = false
+            } else {
+                ok = !types.isError(type)
+            }
+        }
+        i32 variable = declare(declName, ok ? type : errorType(), nameLoc, isConst)
+        tree.stmts[decl].variable = variable
+        if (variable < 0) {
+            ret
+        }
+        tree.variables[variable].kind = VariableKind.Element
+        tree.variables[variable].reference = true
+        if (!ok) {
+            ret
+        }
+        Path path = pathOf(place)
+        list<i32> chain
+        i32 root = rootOf(place)
+        if (root >= 0 && tree.variables[root].reference) {
+            if (refChains.contains(root)) {
+                chain = refChains[root]
+            }
+            chain.add(root)
+        }
+        refPaths[variable] = path
+        refChains[variable] = move chain
+        i64 last = indexNow  // the statement of its last use, in its block
+        if (blockNow >= 0) {
+            for (i64 i = indexNow + 1; i < tree.blocks[blockNow].statements.len(); i++) {
+                if (stmtMentions(tree.blocks[blockNow].statements[i], declName)) {
+                    last = i
+                }
+            }
+        }
+        refEnds[variable] = last
+        LoopBorrow borrow
+        borrow.path = path
+        borrow.reason = "while the reference '" + declName + "' names it"
+        borrow.thread = variable
+        loopBorrows.add(move borrow)
     }
 
     // ---- What the analysis knows (P89) ----

@@ -841,7 +841,7 @@ error: only a 'move' parameter can be const, written 'move const'
 
 ## References live only during a call
 
-`ref` exists only for parameters. There are no references in variables, in fields or in returned values: a reference cannot outlive the object it refers to, because it ends with the call. This single rule replaces the lifetimes and the borrow checker of other languages.
+`ref` is for parameters, and for the names that a block gives to a place, shown below. There are no references in fields or in returned values: a reference cannot outlive the object it refers to, because it ends with the call, or with its block. This single rule replaces the lifetimes and the borrow checker of other languages.
 
 ```cromo error
 struct Cursor {
@@ -858,6 +858,99 @@ error: expected a type, found 'ref'
 ```
 
 When a program needs to point to another object, as a folder to its parent or the nodes of a graph to each other, it keeps an index into a list instead of a pointer: its id. [Ids and handles: pointing to another object](ids.md) shows how, and what it costs.
+
+## A name for a place: `ref` and `const ref`
+
+A long place, as `team.players[0]`, can be given a name inside a block. `ref T name = place` names it to modify it; `const ref T name = place` names it to read it, without a copy. They are `T&` and `const T&` of C++:
+
+```cromo
+struct Player {
+    string name
+    i64 score
+}
+
+struct Team {
+    string name
+    list<Player> players
+}
+
+i32 main() {
+    Team team
+    team.name = "red"
+    Player anna
+    anna.name = "Anna"
+    team.players.add(anna)
+
+    ref Player first = team.players[0]
+    first.score += 10
+    first.name += "!"
+
+    const ref Player shown = team.players[0]
+    println("{} {}", shown.name, shown.score)
+    ret 0
+}
+```
+
+```output
+Anna! 10
+```
+
+The place is a variable, a field or an element, and the type is the one of the place, written exactly. A local reference is not a value that can be kept: an assignment to it writes the place, `ret` and `move` take the value of the place, and it cannot be put in a field. Its name lasts until the end of its block.
+
+What keeps it safe is one rule. From its declaration to its last use, the variable it starts from is lent, as the list of a `for` while the loop goes over it: it can be read, and it is modified only through the reference. So the place cannot go away, or move in memory, under the reference:
+
+```cromo error
+i32 main() {
+    list<i64> values = [1, 2, 3]
+    ref i64 first = values[0]
+    values.add(4)
+    first = 9
+    ret 0
+}
+```
+
+```output
+error: 'values' cannot be modified while the reference 'first' names it
+```
+
+`values.add(4)` could move the elements in memory while `first` still names one of them. After the last use of the reference the variable is free again, with nothing to write:
+
+```cromo
+i32 main() {
+    list<i64> values = [1, 2, 3]
+    ref i64 first = values[0]
+    first = 9
+    values.add(4)
+    println("{:?}", values)
+    ret 0
+}
+```
+
+```output
+[9, 2, 3, 4]
+```
+
+A `const ref` only reads, and says so when it is used to write:
+
+```cromo error
+struct Point {
+    i64 x
+    i64 y
+}
+
+i32 main() {
+    Point p
+    const ref Point shown = p
+    shown.x = 1
+    ret 0
+}
+```
+
+```output
+error: 'shown' is a 'const ref', which only reads: write 'ref Point shown = ...' to modify it
+```
+
+A reference to an element of a list or of a map is found once, at its declaration: it is also the way to read and write the same element several times without looking it up again.
 
 ## Exclusivity
 
@@ -883,7 +976,7 @@ error: 'x' overlaps 'x' in the same call, and the call can modify both
 
 Two arguments overlap when they are the same object, or when one is a part of the other: `ref p` and `ref p.x`, a list and one of its elements. When the compiler cannot know, as in `swap(ref v[i], ref v[j])`, the program checks it while it runs, and a call with `i` equal to `j` stops with a panic: the same element is passed twice to a call that modifies it.
 
-The object of a method that is not `const` counts as an argument passed with `ref`, because the method can modify it. A read argument that overlaps it is accepted when it is a simple value: it is copied, and the method sees the value it had at the moment of the call.
+The object of a method that is not `const` counts as an argument passed with `ref`, because the method can modify it. A read argument that overlaps it is copied, and the method sees the value it had at the moment of the call.
 
 ```cromo
 struct Counter {
@@ -908,9 +1001,9 @@ i32 main() {
 2 100
 ```
 
-A value that owns resources is not copied to make the call work: the overlap is an error.
+A value that owns resources is copied too, with its `copy()`, so the method keeps a value of its own while it changes the object:
 
-```cromo error
+```cromo
 struct Box {
     string label = "box"
 
@@ -922,15 +1015,16 @@ struct Box {
 i32 main() {
     Box b
     b.rename(b.label)
+    println("{}", b.label)
     ret 0
 }
 ```
 
 ```output
-error: 'b.label' overlaps 'b' in the same call, which the call can modify
+box!
 ```
 
-Passing a copy, `b.rename(b.label.copy())`, says that the copy is wanted, and compiles.
+Only a value that cannot be copied, as a struct with a destructor and without `copy()`, makes the overlap an error: `'h.file' overlaps 'h' in the same call, which the call can modify, and values of type File cannot be copied`.
 
 The same rule holds for a `for` that goes over a list: while it runs, the list cannot be modified, not even through another name:
 

@@ -68,7 +68,7 @@ Su Linux gli eseguibili sono statici, a meno che le librerie C del programma non
 | `Clone`, `.clone()` | `copy()`, chiamato da solo dove un valore viene dato senza `move` |
 | tipi `Copy` | tipi semplici: numeri, `bool` e le struct composte solo da questi, senza distruttore |
 | `Result<T, E>` e `?` | eccezioni; enum con dati per i risultati che sono valori ([Errori](errors.md)) |
-| `Option<T>` | un valore convenzionale, un `bool` con un parametro `ref`, oppure un enum generico scritto da te |
+| `Option<T>` | `Option<T>` del core, letto con `switch` o con `has()`, `value()` e `or()` ([Enum e switch](enums.md)) |
 | `match` con pattern | `switch` sui case, dando un nome ai dati; niente pattern annidati ([Enum e switch](enums.md)) |
 | `Drop` | distruttori |
 | `impl Trait for Type` | `struct Type : Interface`, con i metodi dentro la struct |

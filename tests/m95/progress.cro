@@ -1,0 +1,10 @@
+// cromo says what it does while it builds, a line for each step (D568). The harness
+// finds these texts in what the compiler writes.
+// expect-warning: ] Reading progress.cro and its modules
+// expect-warning: ] Checking 2 files
+// expect-warning: [100%] Linking progress
+// expect-warning: Built progress
+// expect-exit: 0
+i32 main() {
+    ret 0
+}

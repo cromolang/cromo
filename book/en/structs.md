@@ -710,50 +710,90 @@ Like a destructor, a `copy()` written by hand cannot let an exception out: the c
 
 ## Comparing structs
 
-`==` and `!=` do not work on structs yet:
+`==` and `!=` compare two values of a struct field by field, in the order of the fields, and so the structs inside them, the strings, the arrays, the lists and the maps:
 
-```cromo error
+```cromo
 struct Point {
     i64 x
     i64 y
 }
 
+struct Segment {
+    Point from
+    Point to
+    string label
+}
+
 i32 main() {
     Point a
+    a.x = 1
     Point b
+    b.x = 1
+    Segment first
+    first.from = a
+    first.label = "side"
+    Segment second
+    second.from = b
+    second.label = "side"
+    println("{} {}", a == b, first == second)
+    second.to.y = 4
+    println("{} {}", first == second, first != second)
+    ret 0
+}
+```
+
+```output
+true true
+false true
+```
+
+Nothing is written for it: the compiler makes the comparison of a struct the first time it is used, as it makes `copy()`. When two values are equal in another way, the struct writes the method `bool equals(Name other) const`, and `==` calls it. It is the same `equals` that a key of a map uses ([Lists, maps and text](collections.md)):
+
+```cromo
+struct Money {
+    i64 units
+    i64 cents
+
+    bool equals(Money other) const {
+        ret units * 100 + cents == other.units * 100 + other.cents
+    }
+}
+
+i32 main() {
+    Money one
+    one.units = 1
+    Money hundred
+    hundred.cents = 100
+    println("{} {}", one == hundred, one != hundred)
+    ret 0
+}
+```
+
+```output
+true false
+```
+
+A function value and a value of an interface cannot be compared, and neither can a struct that holds one, unless it writes its `equals`. The error names the field:
+
+```cromo error
+struct Button {
+    string label
+    func() pressed
+}
+
+i32 main() {
+    Button a
+    Button b
     println("{}", a == b)
     ret 0
 }
 ```
 
 ```output
-error: '==' does not work on structs yet
+error: values of type Button cannot be compared with '==': Button.pressed has type func()
 ```
 
-Until they do, a struct compares its fields in a method. The name `equals` is the one that a key of a map uses ([Lists, maps and text](collections.md)):
-
-```cromo
-struct Point {
-    i64 x
-    i64 y
-
-    bool equals(Point other) const {
-        ret x == other.x && y == other.y
-    }
-}
-
-i32 main() {
-    Point a
-    Point b
-    b.x = 1
-    println("{} {}", a.equals(b), a.equals(a))
-    ret 0
-}
-```
-
-```output
-false true
-```
+`<`, `>` and the others are for numbers and strings: an order between two structs is a method, as `compare` of the interface `Ordered` ([Interfaces and generics](interfaces-generics.md)).
 
 ## Printing a struct
 
@@ -844,5 +884,5 @@ error: struct 'Node' contains itself through field 'next': use a list instead
 - `const` methods do not modify the object, and they are the only ones that can be called on a read-only value.
 - The destructor releases what the object holds, automatically, then the fields end, the last first. It has no parameters and cannot throw.
 - Simple structs are copied byte by byte, the others with a generated `copy()`; a struct with a destructor, or with a field that cannot be copied, is copied only if it writes `T copy() const`.
-- `==` does not work on structs yet: write a method `equals`.
+- `==` and `!=` compare two structs field by field, or with the method `equals` when the struct writes it.
 - `text()` prints a struct with `{}`; `{:?}` prints any value for debugging.

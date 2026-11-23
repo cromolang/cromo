@@ -1,0 +1,29 @@
+// What an extend block cannot hold (D567).
+// expect-error: an extend block adds methods: the fields stay in the declaration of Point
+// expect-error: the constructor stays in the declaration of Point
+// expect-error: the destructor stays in the declaration of Point
+// expect-error: an extend block has no attributes and is not public: each of its methods says whether it is
+struct Point {
+    i32 x
+    i32 y
+}
+
+extend Point {
+    i32 z
+
+    Point() {
+    }
+
+    ~Point() {
+    }
+}
+
+public extend Point {
+    i32 twice() const {
+        ret x * 2
+    }
+}
+
+i32 main() {
+    ret 0
+}

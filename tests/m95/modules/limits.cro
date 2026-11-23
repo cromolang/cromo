@@ -1,0 +1,9 @@
+// The constants of a module that the others see (D564).
+public const i64 limit = 1024
+public const f64 half = 0.5
+public const u8[3] marks = [10, 20, 30]
+const i64 hidden = 7
+
+public i64 twice() {
+    ret limit * 2 + hidden
+}

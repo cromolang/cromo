@@ -123,7 +123,7 @@ A `const` without a value is an error too: `const i32 n` alone has nothing to ke
 
 ### Constants of a module
 
-Outside the functions, a module can declare constants too, as limits and tables of numbers. They hold numbers, `bool` and `char`, or fixed-size arrays of them. Their value is a literal, with `-` in front of a negative number, and for an array a list of literals between square brackets, one for each element. Only their module sees them.
+Outside the functions, a module can declare constants too, as limits and tables of numbers. They hold numbers, `bool` and `char`, or fixed-size arrays of them. Their value is a literal, with `-` in front of a negative number, and for an array a list of literals between square brackets, one for each element. Only their module sees them, unless they are `public` ([Modules and projects](modules.md)).
 
 ```cromo
 const i64 minute = 60

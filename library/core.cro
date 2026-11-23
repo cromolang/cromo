@@ -1172,3 +1172,58 @@ bool sameWord(string text, i64 from, string word) {
     }
     ret true
 }
+
+// A value, or none (D566): what a function returns when it may have no result, as a
+// search that finds nothing. Its default value is 'None'.
+//
+// '''
+// Option<i64> found = indexOf(names, "anna")
+// switch (found) {
+//     case Some(i64 at) {
+//         println("at {}", at)
+//     }
+//     case None {
+//         println("missing")
+//     }
+// }
+// '''
+public enum Option<T> {
+    None
+    Some(T value)
+
+    // Whether there is a value.
+    public bool has() const {
+        switch {
+            case Some {
+                ret true
+            }
+            case None {
+                ret false
+            }
+        }
+    }
+
+    // The value; a panic when there is none: 'has()' tells, or 'or(other)' gives another one.
+    public T value() const {
+        switch {
+            case Some(T value) {
+                ret value
+            }
+            case None {
+                panic("value() of an Option that has none")
+            }
+        }
+    }
+
+    // The value, or 'other' when there is none.
+    public T or(T other) const {
+        switch {
+            case Some(T value) {
+                ret value
+            }
+            case None {
+                ret other
+            }
+        }
+    }
+}

@@ -185,6 +185,31 @@ i32 main() {
 error: function 'newest' is public, but its type Order is private to the module
 ```
 
+### Costanti pubbliche
+
+Una costante di un modulo segue la stessa regola: con `public` la vedono i moduli che lo importano, con il solo nome o con il modulo davanti; senza, solo il suo modulo.
+
+```cromo file=limits.cro
+public const i64 maxUsers = 100
+public const f64 half = 0.5
+const i64 hidden = 7
+```
+
+```cromo file=quota.cro
+import limits
+
+i32 main() {
+    println("{} {}", maxUsers, limits.half)
+    ret 0
+}
+```
+
+```output
+100 0.5
+```
+
+`limits.hidden` in `quota.cro` sarebbe l'errore `the module limits has no public constant 'hidden'`. Una variabile di modulo del dialetto unsafe non è mai pubblica: è stato ([Il dialetto unsafe](unsafe.md)).
+
 ## Gli import
 
 Gli import si scrivono all'inizio del file, prima delle dichiarazioni, un modulo per ogni `import`:
@@ -409,6 +434,61 @@ error: the file shapes/circle.cro is a part of the module shapes: import shapes
 ```
 
 Anche una cartella senza file `.cro`, o solo con file di altri sistemi, è un errore: `the folder empty has no .cro files for this system`.
+
+## I metodi di una struct in più file: extend
+
+Una struct con molti metodi non deve stare in un file solo. Un blocco `extend Nome { ... }` aggiunge metodi a una struct o a un enum dello stesso modulo, in un altro file del modulo o nello stesso:
+
+```cromo file=bank/account.cro
+public struct Account {
+    string owner
+    i64 balance
+
+    public Account(string name) {
+        owner = name
+    }
+
+    public i64 total() const {
+        ret balance
+    }
+}
+```
+
+```cromo file=bank/moves.cro
+extend Account {
+    public void deposit(i64 amount) {
+        balance += amount
+    }
+
+    public bool withdraw(i64 amount) {
+        if (amount > balance) {
+            ret false
+        }
+        balance -= amount
+        ret true
+    }
+}
+```
+
+```cromo file=cash.cro
+import bank
+
+i32 main() {
+    Account account = Account("Anna")
+    account.deposit(100)
+    bool done = account.withdraw(30)
+    println("{} {}", account.total(), done)
+    ret 0
+}
+```
+
+```output
+70 true
+```
+
+Dentro il blocco i metodi si scrivono come nella struct: vedono i suoi campi, anche quelli privati, e ognuno dice se è `public`. I campi, i casi di un enum, il costruttore, il distruttore e le interfacce restano nella dichiarazione, che da sola dice che cos'è la struct. Una struct generica si estende con il solo nome, `extend Stack { ... }`, e i suoi parametri di tipo sono quelli della dichiarazione.
+
+Solo il modulo di una struct può estenderla: `extend` su una struct di un altro modulo è l'errore `there is no struct or enum 'Account' in this module to extend`. `extend` è una parola del linguaggio solo lì, prima di un nome e di un blocco: altrove è un nome come un altro.
 
 ## Dove si trovano i moduli
 

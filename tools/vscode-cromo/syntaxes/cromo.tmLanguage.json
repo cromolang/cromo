@@ -90,7 +90,7 @@
     "keywords": {
       "patterns": [
         {
-          "match": "\\b(struct|interface|enum)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "match": "\\b(struct|interface|enum|extend)\\s+([A-Za-z_][A-Za-z0-9_]*)(?=\\s*[<:{]|\\s*$)",
           "captures": {
             "1": { "name": "storage.type.cromo" },
             "2": { "name": "entity.name.type.cromo" }

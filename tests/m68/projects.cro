@@ -19,7 +19,7 @@ import std.process
 // cromo with its arguments, in the folder of the project: cmd changes the folder.
 process.Output cromo(string work, string args) {
     string command = os.env("CROMO").replace("/", "\\")
-    ret process.run("cmd", ["/c", "cd /d " + work.replace("/", "\\") + " && " + command + " " + args])
+    ret process.run("cmd", ["/c", "cd /d " + work.replace("/", "\\") + " && " + command + " " + args + " --quiet"])  // only the errors (D568)
 }
 
 // `part` when a line of the errors contains it, otherwise all the errors.

@@ -185,6 +185,31 @@ i32 main() {
 error: function 'newest' is public, but its type Order is private to the module
 ```
 
+### Public constants
+
+A constant of a module follows the same rule: with `public` the modules that import it see it, with its name alone or with the module in front; without it, only its module does.
+
+```cromo file=limits.cro
+public const i64 maxUsers = 100
+public const f64 half = 0.5
+const i64 hidden = 7
+```
+
+```cromo file=quota.cro
+import limits
+
+i32 main() {
+    println("{} {}", maxUsers, limits.half)
+    ret 0
+}
+```
+
+```output
+100 0.5
+```
+
+`limits.hidden` in `quota.cro` would be the error `the module limits has no public constant 'hidden'`. A module variable of the unsafe dialect is never public: it is state ([The unsafe dialect](unsafe.md)).
+
 ## Imports
 
 The imports are written at the top of the file, before the declarations, one module for each `import`:
@@ -409,6 +434,61 @@ error: the file shapes/circle.cro is a part of the module shapes: import shapes
 ```
 
 A folder without `.cro` files, or only with files of other systems, is an error too: `the folder empty has no .cro files for this system`.
+
+## The methods of a struct in more files: extend
+
+A struct with many methods does not have to stay in one file. A block `extend Name { ... }` adds methods to a struct or an enum of the same module, in another file of the module or in the same one:
+
+```cromo file=bank/account.cro
+public struct Account {
+    string owner
+    i64 balance
+
+    public Account(string name) {
+        owner = name
+    }
+
+    public i64 total() const {
+        ret balance
+    }
+}
+```
+
+```cromo file=bank/moves.cro
+extend Account {
+    public void deposit(i64 amount) {
+        balance += amount
+    }
+
+    public bool withdraw(i64 amount) {
+        if (amount > balance) {
+            ret false
+        }
+        balance -= amount
+        ret true
+    }
+}
+```
+
+```cromo file=cash.cro
+import bank
+
+i32 main() {
+    Account account = Account("Anna")
+    account.deposit(100)
+    bool done = account.withdraw(30)
+    println("{} {}", account.total(), done)
+    ret 0
+}
+```
+
+```output
+70 true
+```
+
+Inside the block the methods are written as in the struct: they see its fields, also the private ones, and each says whether it is `public`. The fields, the cases of an enum, the constructor, the destructor and the interfaces stay in the declaration, which alone says what the struct is. A generic struct is extended with its name alone, `extend Stack { ... }`, and its type parameters are those of the declaration.
+
+Only the module of a struct can extend it: `extend` on a struct of another module is the error `there is no struct or enum 'Account' in this module to extend`. `extend` is a word of the language only there, before a name and a block: elsewhere it is a name as any other.
 
 ## Where the modules are
 

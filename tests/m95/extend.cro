@@ -1,0 +1,69 @@
+// `extend` adds methods to a struct or an enum of the same module, in the same file
+// or in another one (D567).
+// expect-output: deposit of Anna
+// expect-output: 70 true false
+// expect-output: 3 4 [3, 4]
+// expect-output: round 2 flat
+// expect-output: 12
+// expect-exit: 0
+import modules.bank
+
+struct Stack<T> {
+    list<T> items
+
+    void push(T value) {
+        items.add(value)
+    }
+}
+
+extend Stack {
+    i64 size() const {
+        ret items.len()
+    }
+
+    T top() const {
+        ret items[items.len() - 1]
+    }
+
+    R sum<R>(R start, func(R, T) R add) const {
+        R total = start
+        for (T item in items) {
+            total = add(total, item)
+        }
+        ret total
+    }
+}
+
+enum Shape {
+    Flat
+    Round(i32 sides)
+}
+
+extend Shape {
+    string text() const {
+        switch {
+            case Flat {
+                ret "flat"
+            }
+            case Round(i32 sides) {
+                ret format("round {}", sides)
+            }
+        }
+    }
+}
+
+i32 main() {
+    Account account = Account("Anna")
+    account.deposit(100)
+    bool first = account.withdraw(30)
+    bool second = account.withdraw(500)
+    println("{} {} {}", account.total(), first, second)
+
+    Stack<i32> stack
+    stack.push(3)
+    stack.push(4)
+    println("{} {} {:?}", stack.items[0], stack.top(), stack.items)
+    println("{} {}", Shape.Round(2), Shape.Flat)
+    println("{}", stack.sum<i64>(5, [](i64 total, i32 item) i64 { ret total + i64(item) }))
+    ret 0
+}

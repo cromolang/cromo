@@ -197,7 +197,7 @@ i32 main() {
 2
 ```
 
-There are no optional values in Cromo, so a `null` cannot be kept in an `i64`: a program that must tell a `null` apart from a value declares the field `json.Value`, as shown below.
+An `i64` has no value for nothing, so a `null` cannot be kept in it: a program that must tell a `null` apart from a value declares the field `json.Value`, as shown below.
 
 ### Numbers
 

@@ -710,50 +710,90 @@ Come un distruttore, un `copy()` scritto a mano non può lasciar uscire un'eccez
 
 ## Confrontare le struct
 
-`==` e `!=` non funzionano ancora sulle struct:
+`==` e `!=` confrontano due valori di una struct campo per campo, nell'ordine dei campi, e così le struct che contengono, le stringhe, gli array, le liste e le mappe:
 
-```cromo error
+```cromo
 struct Point {
     i64 x
     i64 y
 }
 
+struct Segment {
+    Point from
+    Point to
+    string label
+}
+
 i32 main() {
     Point a
+    a.x = 1
     Point b
+    b.x = 1
+    Segment first
+    first.from = a
+    first.label = "side"
+    Segment second
+    second.from = b
+    second.label = "side"
+    println("{} {}", a == b, first == second)
+    second.to.y = 4
+    println("{} {}", first == second, first != second)
+    ret 0
+}
+```
+
+```output
+true true
+false true
+```
+
+Non c'è niente da scrivere: il compilatore prepara il confronto di una struct la prima volta che viene usato, come prepara `copy()`. Quando due valori sono uguali in un altro modo, la struct scrive il metodo `bool equals(Nome other) const`, e `==` lo chiama. È lo stesso `equals` che usa una chiave di una mappa ([Liste, mappe e testo](collections.md)):
+
+```cromo
+struct Money {
+    i64 units
+    i64 cents
+
+    bool equals(Money other) const {
+        ret units * 100 + cents == other.units * 100 + other.cents
+    }
+}
+
+i32 main() {
+    Money one
+    one.units = 1
+    Money hundred
+    hundred.cents = 100
+    println("{} {}", one == hundred, one != hundred)
+    ret 0
+}
+```
+
+```output
+true false
+```
+
+Un valore funzione e un valore di un'interfaccia non si possono confrontare, e nemmeno una struct che ne contiene uno, a meno che scriva il suo `equals`. L'errore dice quale campo:
+
+```cromo error
+struct Button {
+    string label
+    func() pressed
+}
+
+i32 main() {
+    Button a
+    Button b
     println("{}", a == b)
     ret 0
 }
 ```
 
 ```output
-error: '==' does not work on structs yet
+error: values of type Button cannot be compared with '==': Button.pressed has type func()
 ```
 
-Finché non funzioneranno, una struct confronta i suoi campi in un metodo. Il nome `equals` è quello che usa una chiave di una mappa ([Liste, mappe e testo](collections.md)):
-
-```cromo
-struct Point {
-    i64 x
-    i64 y
-
-    bool equals(Point other) const {
-        ret x == other.x && y == other.y
-    }
-}
-
-i32 main() {
-    Point a
-    Point b
-    b.x = 1
-    println("{} {}", a.equals(b), a.equals(a))
-    ret 0
-}
-```
-
-```output
-false true
-```
+`<`, `>` e gli altri sono per i numeri e le stringhe: un ordine tra due struct è un metodo, come `compare` dell'interfaccia `Ordered` ([Interfacce e generici](interfaces-generics.md)).
 
 ## Stampare una struct
 
@@ -844,5 +884,5 @@ error: struct 'Node' contains itself through field 'next': use a list instead
 - I metodi `const` non modificano l'oggetto, e sono gli unici che si possono chiamare su un valore in sola lettura.
 - Il distruttore rilascia ciò che l'oggetto detiene, in automatico, poi finiscono i campi, a partire dall'ultimo. Non ha parametri e non può lanciare eccezioni.
 - Le struct semplici si copiano byte per byte, le altre con un `copy()` generato; una struct con un distruttore, o con un campo che non si può copiare, si copia solo se scrive `T copy() const`.
-- `==` non funziona ancora sulle struct: scrivi un metodo `equals`.
+- `==` e `!=` confrontano due struct campo per campo, o con il metodo `equals` quando la struct lo scrive.
 - `text()` stampa una struct con `{}`; `{:?}` stampa qualsiasi valore per il debug.

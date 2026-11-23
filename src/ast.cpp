@@ -140,6 +140,7 @@ StmtPtr clone(const Stmt& stmt) {
         const auto& from = static_cast<const VarDeclStmt&>(stmt);
         auto to = std::make_unique<VarDeclStmt>(from.loc);
         to->isConst = from.isConst;
+        to->isRef = from.isRef;
         to->typeName = from.typeName;
         to->name = from.name;
         to->nameLoc = from.nameLoc;

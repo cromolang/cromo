@@ -515,12 +515,12 @@ cromo @VERSION@ (LLVM 23.1.4)</pre>
     <div class="wrap">
       <div class="kicker">Roadmap</div>
       <h2>Built in the open, <span class="chrome">one milestone at a time</span></h2>
-      <p class="section-lead">Every choice is decided first and written down with its reasons, then implemented with tests on Windows and Linux. Seventy-two milestones, from M0 to M72, are done; M34 is next.</p>
-      <div class="progress-label"><span>M0 – M72 done, but M34</span><span>72 of 73 numbered milestones</span></div>
-      <div class="progress" aria-hidden="true"><div style="width:99%"></div></div>
+      <p class="section-lead">Every choice is decided first and written down with its reasons, then implemented with tests on Windows and Linux. Ninety-six milestones, from M0 to M95, are done; the compiler written in Cromo already has the parser and the whole analysis.</p>
+      <div class="progress-label"><span>M0 – M95 done</span><span>96 of 96 numbered milestones</span></div>
+      <div class="progress" aria-hidden="true"><div style="width:100%"></div></div>
       <div class="roadmap">
         <div class="phase">
-          <h3>Done <span class="badge done">M0 – M94</span></h3>
+          <h3>Done <span class="badge done">M0 – M95</span></h3>
           <ul class="steps">
             <li><b>M0–2</b><span>LLVM backend, numbers, control flow, structs, RAII</span></li>
             <li><b>M3–6</b><span>Ownership, generics, interfaces, lists, strings, enums, exceptions</span></li>
@@ -574,12 +574,14 @@ cromo @VERSION@ (LLVM 23.1.4)</pre>
             <li><b>M87–90</b><span>Packages: <code>cromo get</code>, versions from Git tags, <code>cromo.sum</code>; packages that bring a native library, downloaded and checked by <code>cromo</code>; the first ones, with ONNX Runtime, DuckDB and PDFium</span></li>
             <li><b>M91–93</b><span><code>fma</code>, also of SIMD vectors; <code>std.math</code>, with the same numbers on every system; the manifest and the version of an executable for Windows, from <code>cromo.mod</code>, and the command that signs it</span></li>
             <li><b>M94</b><span><code>cromo ai</code>: what an AI assistant needs to write Cromo, and the reference of each module, from the compiler itself</span></li>
+            <li><b>M34</b><span>The analysis of the compiler written in Cromo: the types of the declarations and of the expressions, and the moves, with the same results as the C++ on every test</span></li>
+            <li><b>M95</b><span>Local references, <code>ref</code> and <code>const ref</code>; <code>==</code> on structs, enums, lists and maps; <code>Option&lt;T&gt;</code>; <code>public const</code>; <code>extend</code>, the methods of a struct in more files; and <code>cromo</code> says what it does while it builds</span></li>
           </ul>
         </div>
         <div class="phase">
           <h3>Next</h3>
           <ul class="steps">
-            <li><b>M34</b><span>Sema in Cromo: the types of the declarations and of the expressions</span></li>
+            <li><b>compiler</b><span>The generation of the code in Cromo, on the way to a compiler that compiles itself</span></li>
             <li><b>macOS</b><span>Programs for macOS, on Apple Silicon and Intel</span></li>
             <li><b>designer</b><span>The properties of each kind of component, and of several together</span></li>
             <li><b>packages</b><span>More of them: models of language with llama.cpp, plugins with WebAssembly, video</span></li>

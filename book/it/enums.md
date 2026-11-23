@@ -842,6 +842,49 @@ cannot: 7 is odd
 
 Un valore si crea scrivendo gli argomenti di tipo, `Outcome<i64>.Done(5)`: `Outcome.Done(5)` è un errore, anche dove il tipo è noto.
 
+## Option: un valore, o nessuno
+
+Una funzione che può non avere un risultato, come una ricerca che non trova niente, restituisce un `Option<T>`: un enum generico del core, con i casi `None` e `Some(T value)`.
+
+```cromo
+Option<i64> indexOf(list<string> names, string wanted) {
+    for (i64 i = 0; i < names.len(); i++) {
+        if (names[i] == wanted) {
+            ret Option<i64>.Some(i)
+        }
+    }
+    ret Option<i64>.None
+}
+
+i32 main() {
+    list<string> names = ["anna", "luca"]
+    Option<i64> found = indexOf(names, "luca")
+    switch (found) {
+        case Some(i64 at) {
+            println("found at {}", at)
+        }
+        case None {
+            println("missing")
+        }
+    }
+    Option<i64> lost = indexOf(names, "ugo")
+    println("{} {}", lost.has(), lost.or(-1))
+    ret 0
+}
+```
+
+```output
+found at 1
+false -1
+```
+
+- `Option<i64>.Some(i)` e `Option<i64>.None` creano i due valori; il valore predefinito di un'opzione è `None`.
+- Uno `switch` la legge, e deve gestire entrambi i casi, così un valore mancante non viene mai dimenticato.
+- `has()` dice se c'è un valore; `value()` lo dà, ed è un panic quando non c'è; `or(other)` dà il valore, oppure `other`.
+- Due opzioni si confrontano con `==`, e `{:?}` le stampa: `Some(7)`, `None`.
+
+Un'opzione è per un risultato che può non esserci. Un'operazione che fallisce per un motivo, come un file che non si può leggere, lancia un'eccezione ([Errori](errors.md)).
+
 ## Riepilogo
 
 - Un enum elenca dei casi, uno per riga; un valore si scrive `Enum.Case`, e il valore predefinito è il primo caso, con i valori predefiniti dei suoi dati.

@@ -2,6 +2,7 @@
 
 #include "target.h"
 
+#include <functional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -20,6 +21,7 @@ struct BackendOptions {
     int optLevel = 2;        // from 0 to 3
     std::string cpu;         // D513: the processor of --cpu, as x86-64-v3 or native; empty for x86-64
     bool keepObject = false; // keep the intermediate object file
+    std::function<void(const std::string&)> progress;  // D568: told what is done next, when someone listens
     bool objectOnly = false; // the runtime in Cromo (D393): only the object, in outputPath, for its archive
     std::vector<std::string> archives;   // static libraries of the extern blocks: name.lib, libname.a (D136, D143)
     std::vector<ImportLibrary> imports;  // DLLs of the extern blocks; kernel32 is always there, for the runtime

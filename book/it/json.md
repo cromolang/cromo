@@ -197,7 +197,7 @@ i32 main() {
 2
 ```
 
-In Cromo non ci sono valori opzionali, quindi un `null` non può essere conservato in un `i64`: un programma che deve distinguere un `null` da un valore dichiara il campo di tipo `json.Value`, come mostrato più avanti.
+Un `i64` non ha un valore per "niente", quindi un `null` non può essere conservato lì: un programma che deve distinguere un `null` da un valore dichiara il campo di tipo `json.Value`, come mostrato più avanti.
 
 ### Numeri
 

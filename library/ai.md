@@ -31,12 +31,12 @@ Save it as `hello.cro` and run `cromo run hello.cro`. Check your code by compili
 14. **No overloading and no default arguments:** each function has its own name.
 15. **A struct without a constructor is made with its default value**, `Point p`, and then its fields are set. `Point(1.0, 2.0)` works only if the struct declares that constructor.
 16. **Fields, methods and declarations are private to their module** unless they say `public`.
-17. **No global variables.** A module has only `const` constants, which are private: give a value to other modules with a function.
+17. **No global variables.** A module has only `const` constants: `public const i64 limit = 1024` is seen by the modules that import it, as `limit` or `geometry.limit`.
 18. **`switch` uses braces, not colons, and does not fall through:** `case A, B { ... }`. On an enum every case must be handled, or `default`; the data of a case are named with their types, `case Circle(f64 r)`.
 19. **Lambdas list their captures:** `[total, ref count, move text](i64 x) { ... }`. A lambda that is kept, as the body of a thread that is detached or a handler of a window, cannot capture with `ref`, and takes strings, lists and structs with `move`.
 20. **A literal alone has no type:** `println("{}", 42)` and `[1, 2, 3]` as an argument are errors. Give it one, `i64(42)`, or put it in a variable first.
-21. **`==` works on numbers, `bool`, strings and enums without data**, not on lists or structs: compare their fields.
-22. **Errors are exceptions**, `throw Error("...")` with `try` and `catch`. `panic` stops the program and cannot be caught. There is no `Result` or `Option`: for "nothing found", return a `bool` and give the value through a `ref` parameter.
+21. **`==` and `!=` work on numbers, `bool`, strings, structs, enums, arrays, lists and maps**, field by field, or with the method `bool equals(Name other) const` of the struct when it has one. A function value and what holds one cannot be compared. `<` and the others are for numbers and strings.
+22. **Errors are exceptions**, `throw Error("...")` with `try` and `catch`. `panic` stops the program and cannot be caught. For "nothing found" return an `Option<T>` of the core: `ret Option<i64>.Some(i)` or `ret Option<i64>.None`, read with `switch` (`case Some(i64 at)`, `case None`) or with `has()`, `value()` and `or(other)`. There is no `Result`, and no `T?`.
 23. **There is no `min`, `max` or `abs` in the core:** `import std.math` for those of `f64`, or write the comparison.
 24. **`string` is UTF-8 bytes:** `text[i]` is a `u8`, `'a'` is a `char`, the same type. `text.slice(from, to)` makes a copy.
 

@@ -68,7 +68,7 @@ On Linux the executables are static, unless the C libraries of the program call 
 | `Clone`, `.clone()` | `copy()`, called by itself where a value is given without `move` |
 | `Copy` types | simple types: numbers, `bool`, and the structs made only of them, without a destructor |
 | `Result<T, E>` and `?` | exceptions; enums with data for results that are values ([Errors](errors.md)) |
-| `Option<T>` | a conventional value, a `bool` with a `ref` parameter, or a generic enum of your own |
+| `Option<T>` | `Option<T>` of the core, read with `switch` or with `has()`, `value()` and `or()` ([Enums and switch](enums.md)) |
 | `match` with patterns | `switch` on cases, with the data named; no nested patterns ([Enums and switch](enums.md)) |
 | `Drop` | destructors |
 | `impl Trait for Type` | `struct Type : Interface`, with the methods in the struct |

@@ -73,7 +73,7 @@ i32 main() {
         }
     }
     fs.writeText(folder + "/main.cro", "import shop_form\ni32 main() {\n    shop_form.Form f = shop_form.Form()\n    ret 0\n}\n")
-    process.Output built = process.run(os.env("CROMO"), ["build", folder + "/main.cro", "-o", folder + "/main.exe"])
+    process.Output built = process.run(os.env("CROMO"), ["build", "--quiet", folder + "/main.cro", "-o", folder + "/main.exe"])
     println("the module compiles: {}", built.code == 0)
 
     refused("itself", folder, form(item("GroupBox", "outer", "O", 0, 0, 100, 100, "inner", 0) + "," +

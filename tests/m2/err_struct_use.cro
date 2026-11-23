@@ -1,7 +1,7 @@
 // expect-error: Point has no constructor: Point() gives its default value
 // expect-error: values of type File cannot be copied
 // expect-error: a Point cannot be printed with {}: give it a method string text() const, or print its form of debug with {:?}
-// expect-error: '==' does not work on structs yet
+// expect-error: '<' does not work on structs yet
 // expect-error: 'x' is a field of Point: choose another name
 // expect-error: cannot call 'shift', which is not const
 // expect-error: method 'peek' is const and cannot modify the fields
@@ -47,7 +47,7 @@ i32 main() {
     File a = File()
     File b = a
     println("{}", p)
-    bool same = p == p
+    bool same = p < p
     const Point origin = Point()
     origin.x = 1.0
     f64 z = p.z

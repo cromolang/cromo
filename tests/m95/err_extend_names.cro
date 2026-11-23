@@ -1,0 +1,38 @@
+// An extend block names a struct of its own module (D567).
+// expect-error: there is no struct or enum 'Missing' in this module to extend
+// expect-error: there is no struct or enum 'Account' in this module to extend
+// expect-error: method 'norm' is already defined in Point
+// expect-error: method 'log' of Account is private to its module: it is not marked public
+import modules.bank
+
+struct Point {
+    i32 x
+    i32 y
+
+    i32 norm() const {
+        ret x + y
+    }
+}
+
+extend Point {
+    i32 norm() const {
+        ret 0
+    }
+}
+
+extend Missing {
+    void nothing() {
+    }
+}
+
+extend Account {
+    void steal() {
+        balance = 0
+    }
+}
+
+i32 main() {
+    Account account = Account("Anna")
+    account.log("x")
+    ret 0
+}

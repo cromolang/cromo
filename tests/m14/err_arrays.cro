@@ -4,7 +4,7 @@
 // expect-error: an array has only len() and copy(), not 'add'
 // expect-error: string[2] cannot be copied: its elements are not simple values, move it instead
 // expect-error: values of type string[2] cannot be copied: write 'move names'
-// expect-error: '==' does not work on values of type i32[4]
+// expect-error: '<' does not work on values of type i32[4]
 // expect-error: the elements of this array are i32: write for (i32 x in ...)
 i32 main() {
     i32[4] a
@@ -14,7 +14,7 @@ i32 main() {
     string[2] names
     string[2] copied = names.copy()
     string[2] other = names
-    bool same = a == a
+    bool same = a < a
     for (i64 x in a) {
     }
     ret 0

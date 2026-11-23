@@ -1,0 +1,14 @@
+// A struct of a module made of the files of a folder (D515), with its methods in
+// another file (D567).
+public struct Account {
+    string owner
+    i64 balance
+
+    public Account(string name) {
+        owner = name
+    }
+
+    public i64 total() const {
+        ret balance
+    }
+}

@@ -232,19 +232,133 @@ struct Path {
     std::vector<Step> steps;
 };
 
-std::optional<Path> pathOf(const Expr& expr) {
+// Whether a part of the program that sema has not checked yet uses a name, as a
+// variable: a reference lends its place until its last use (D562). A name is never
+// hidden by another (D66), so the name alone tells.
+bool mentions(const Block& block, const std::string& name);
+bool mentions(const Stmt& statement, const std::string& name);
+
+bool mentions(const Expr* expr, const std::string& name) {
+    if (!expr) return false;
+    auto any = [&](const std::vector<ExprPtr>& exprs) {
+        for (const ExprPtr& item : exprs) {
+            if (mentions(item.get(), name)) return true;
+        }
+        return false;
+    };
+    switch (expr->kind) {
+    case ExprKind::IntLiteral:
+    case ExprKind::FloatLiteral:
+    case ExprKind::BoolLiteral:
+    case ExprKind::StringLiteral:
+    case ExprKind::TypeRef: return false;
+    case ExprKind::Name: return static_cast<const NameExpr&>(*expr).name == name;
+    case ExprKind::Unary: return mentions(static_cast<const UnaryExpr&>(*expr).operand.get(), name);
+    case ExprKind::Binary: {
+        const auto& node = static_cast<const BinaryExpr&>(*expr);
+        return mentions(node.lhs.get(), name) || mentions(node.rhs.get(), name);
+    }
+    case ExprKind::Conditional: {
+        const auto& node = static_cast<const ConditionalExpr&>(*expr);
+        return mentions(node.condition.get(), name) || mentions(node.whenTrue.get(), name) || mentions(node.whenFalse.get(), name);
+    }
+    case ExprKind::Call: {
+        const auto& node = static_cast<const CallExpr&>(*expr);
+        return node.callee == name || node.module == name || any(node.args);
+    }
+    case ExprKind::Field: return mentions(static_cast<const FieldExpr&>(*expr).object.get(), name);
+    case ExprKind::MethodCall: {
+        const auto& node = static_cast<const MethodCallExpr&>(*expr);
+        return mentions(node.object.get(), name) || any(node.args);
+    }
+    case ExprKind::Move: return mentions(static_cast<const MoveExpr&>(*expr).operand.get(), name);
+    case ExprKind::Ref: return mentions(static_cast<const RefExpr&>(*expr).operand.get(), name);
+    case ExprKind::Index: {
+        const auto& node = static_cast<const IndexExpr&>(*expr);
+        return mentions(node.object.get(), name) || mentions(node.index.get(), name);
+    }
+    case ExprKind::Lambda: {
+        const auto& node = static_cast<const LambdaExpr&>(*expr);
+        for (const Capture& capture : node.captures) {
+            if (capture.name == name) return true;
+        }
+        return mentions(node.function->body, name);
+    }
+    case ExprKind::CallValue: {
+        const auto& node = static_cast<const CallValueExpr&>(*expr);
+        return mentions(node.callee.get(), name) || any(node.args);
+    }
+    case ExprKind::ListLiteral: return any(static_cast<const ListLiteralExpr&>(*expr).elements);
+    default: return true;  // made by sema: not in what is still to check
+    }
+}
+
+bool mentions(const Stmt& statement, const std::string& name) {
+    switch (statement.kind) {
+    case StmtKind::VarDecl: return mentions(static_cast<const VarDeclStmt&>(statement).init.get(), name);
+    case StmtKind::Assign: {
+        const auto& node = static_cast<const AssignStmt&>(statement);
+        return mentions(node.target.get(), name) || mentions(node.value.get(), name);
+    }
+    case StmtKind::IncDec: return mentions(static_cast<const IncDecStmt&>(statement).target.get(), name);
+    case StmtKind::Expr: return mentions(static_cast<const ExprStmt&>(statement).expr.get(), name);
+    case StmtKind::If: {
+        const auto& node = static_cast<const IfStmt&>(statement);
+        return mentions(node.condition.get(), name) || mentions(node.thenBlock, name) ||
+               (node.elseBlock && mentions(*node.elseBlock, name));
+    }
+    case StmtKind::For: {
+        const auto& node = static_cast<const ForStmt&>(statement);
+        return (node.init && mentions(*node.init, name)) || mentions(node.condition.get(), name) ||
+               (node.step && mentions(*node.step, name)) || mentions(node.list.get(), name) || mentions(node.body, name);
+    }
+    case StmtKind::Switch: {
+        const auto& node = static_cast<const SwitchStmt&>(statement);
+        if (mentions(node.value.get(), name)) return true;
+        for (const SwitchBranch& branch : node.branches) {
+            for (const CasePattern& pattern : branch.patterns) {
+                if (mentions(pattern.literal.get(), name)) return true;
+            }
+            if (mentions(branch.body, name)) return true;
+        }
+        return node.defaultBlock && mentions(*node.defaultBlock, name);
+    }
+    case StmtKind::Throw: return mentions(static_cast<const ThrowStmt&>(statement).value.get(), name);
+    case StmtKind::Try: {
+        const auto& node = static_cast<const TryStmt&>(statement);
+        if (mentions(node.body, name)) return true;
+        for (const CatchClause& clause : node.catches) {
+            if (mentions(clause.body, name)) return true;
+        }
+        return node.finallyBlock && mentions(*node.finallyBlock, name);
+    }
+    case StmtKind::Return: return mentions(static_cast<const ReturnStmt&>(statement).value.get(), name);
+    case StmtKind::Break:
+    case StmtKind::Continue: return false;
+    }
+    return true;
+}
+
+bool mentions(const Block& block, const std::string& name) {
+    for (const StmtPtr& statement : block.statements) {
+        if (mentions(*statement, name)) return true;
+    }
+    return false;
+}
+
+std::optional<Path> writtenPath(const Expr& expr) {
     switch (expr.kind) {
     case ExprKind::Name: return Path{static_cast<const NameExpr&>(expr).variable, {}};
     case ExprKind::Self: return Path{};
     case ExprKind::Field: {
         const auto& field = static_cast<const FieldExpr&>(expr);
-        std::optional<Path> path = pathOf(*field.object);
+        std::optional<Path> path = writtenPath(*field.object);
         if (path) path->steps.push_back(Step{field.index, nullptr});
         return path;
     }
     case ExprKind::Index: {
         const auto& element = static_cast<const IndexExpr&>(expr);
-        std::optional<Path> path = pathOf(*element.object);
+        std::optional<Path> path = writtenPath(*element.object);
         if (path) path->steps.push_back(Step{-1, element.index.get()});
         return path;
     }
@@ -488,6 +602,17 @@ private:
                 scope.globals[global.name] = &global;
             }
         }
+        // D567: the methods of the extend blocks go to their struct, of the same module.
+        for (ExtendDecl& extension : module_.extensions) {
+            ModuleScope& scope = modules_[scopeOf(extension.loc.file)];
+            auto found = scope.structs.find(extension.name);
+            if (found == scope.structs.end()) {
+                diag_->error(extension.loc, "there is no struct or enum '" + extension.name + "' in this module to extend");
+                continue;
+            }
+            for (FunctionDecl& member : extension.members) found->second->members.push_back(std::move(member));
+            extension.members.clear();
+        }
     }
 
     // D394: a module variable needs no code to be made, so it holds numbers, bool,
@@ -596,6 +721,13 @@ private:
         const ModuleScope& scope = modules_[scopeOf(loc.file)];
         auto found = scope.globals.find(name);
         return found != scope.globals.end() && found->second->variable ? found->second->variable.get() : nullptr;
+    }
+
+    // The same, or a public constant of an imported module (D564); `module` is the
+    // name written in front, as in `geometry.limit`.
+    Variable* findConstant(const std::string& name, SourceLocation loc, const std::string& module = {}) {
+        GlobalDecl* found = findDecl(&ModuleScope::globals, name, loc, module);
+        return found && found->variable ? found->variable.get() : nullptr;
     }
 
     const ModuleFile& fileOf(int file) const {
@@ -1974,6 +2106,10 @@ private:
                 return "'" + variable->name + "' is captured to be read: capture it with 'ref " + variable->name +
                        "' to modify it";
             }
+            if (variable->reference && variable->isConst) {  // D562
+                return "'" + variable->name + "' is a 'const ref', which only reads: write 'ref " + variable->type.name() + " " +
+                       variable->name + " = ...' to modify it";
+            }
             if (variable->kind == VariableKind::Element && variable->isConst) {
                 return "'" + variable->name + "' is an element of a read-only 'for': write 'for (ref " + variable->type.name() +
                        " " + variable->name + " in ...)' to modify it";
@@ -2162,6 +2298,38 @@ private:
         std::erase_if(activeGroups_, [&](const GroupLog& log) { return log.group == &thread; });
     }
 
+    // The object reached by a place. A reference is the place it names (D562), so
+    // what is done through it is done to that place.
+    std::optional<Path> pathOf(const Expr& expr) const {
+        std::optional<Path> path = writtenPath(expr);
+        if (!path || !path->variable) return path;
+        auto named = refPaths_.find(path->variable);
+        if (named == refPaths_.end()) return path;
+        Path full = named->second;
+        full.steps.insert(full.steps.end(), path->steps.begin(), path->steps.end());
+        return full;
+    }
+
+    // The variable a place starts from, when it is written with one.
+    static const Variable* rootOf(const Expr& place) {
+        const Expr* at = &place;
+        while (at->kind == ExprKind::Field || at->kind == ExprKind::Index) {
+            at = at->kind == ExprKind::Field ? static_cast<const FieldExpr*>(at)->object.get()
+                                             : static_cast<const IndexExpr*>(at)->object.get();
+        }
+        return at->kind == ExprKind::Name ? static_cast<const NameExpr*>(at)->variable : nullptr;
+    }
+
+    // Whether a place is written through a reference, itself or one that goes
+    // through it: what that reference lends is modified through it (D562).
+    bool through(const Expr& place, const Variable* reference) const {
+        const Variable* root = rootOf(place);
+        if (!root || !reference) return false;
+        if (root == reference) return true;
+        auto chain = refChains_.find(root);
+        return chain != refChains_.end() && std::find(chain->second.begin(), chain->second.end(), reference) != chain->second.end();
+    }
+
     // D101: while a `for` goes over the elements of a list, the list cannot be
     // modified, except its elements through the variable of the loop.
     bool checkNotBorrowed(const Expr& place, SourceLocation loc) {
@@ -2169,6 +2337,7 @@ private:
         if (!path) return true;
         for (GroupLog& log : activeGroups_) log.modified.push_back({*path, loc});  // D273
         for (const LoopBorrow& borrow : loopBorrows_) {
+            if (through(place, borrow.thread)) continue;  // D562
             if (overlaps(*path, borrow.path) == Overlap::No) continue;
             diag_->error(loc, "'" + placeText(place) + "' cannot be modified " + borrow.reason);
             return false;
@@ -2307,8 +2476,9 @@ private:
             case VariableKind::Element:
                 if (variable->isConst) {
                     diag_->error(node.loc, "cannot move '" + variable->name + "': " +
-                                              (variable->kind == VariableKind::Element ? "it is an element of a read-only 'for'"
-                                                                                        : "it is read-only data of the case"));
+                                              (variable->reference ? "it is a 'const ref', which only reads"
+                                               : variable->kind == VariableKind::Element ? "it is an element of a read-only 'for'"
+                                                                                         : "it is read-only data of the case"));
                     return Type::error();
                 }
                 node.moveKind = MoveKind::Take;  // D78
@@ -2338,17 +2508,30 @@ private:
         scopes_.emplace_back();
         Flow flow = Flow::Continues;
         bool warned = false;
-        for (StmtPtr& statement : block.statements) {
+        const Block* outerBlock = block_;
+        size_t outerIndex = index_;
+        for (size_t i = 0; i < block.statements.size(); ++i) {
+            StmtPtr& statement = block.statements[i];
             if (flow != Flow::Continues && !warned) {
                 diag_->warning(statement->loc, "unreachable code");
                 warned = true;
             }
+            block_ = &block;
+            index_ = i;
             Flow next = checkStatement(*statement);
             if (flow == Flow::Continues) flow = next;
+            // D562: a reference lends its place until the statement of its last use.
+            for (const auto& [name, variable] : scopes_.back()) {
+                if (!variable->reference) continue;
+                auto last = refEnds_.find(variable);
+                if (last != refEnds_.end() && last->second == i) endThread(*variable);
+            }
         }
+        block_ = outerBlock;
+        index_ = outerIndex;
         // The threads and the groups of this block end with it (D215, D273).
         for (const auto& [name, variable] : scopes_.back()) {
-            if (variable->blockThread || variable->group) endThread(*variable);
+            if (variable->blockThread || variable->group || variable->reference) endThread(*variable);
         }
         scopes_.pop_back();
         return flow;
@@ -2385,7 +2568,68 @@ private:
         return Flow::Continues;
     }
 
+    // `ref T x = place` and `const ref T x = place` (D562): a name for a variable, a
+    // field or an element, until the end of its block. The variable it starts from is
+    // lent meanwhile, as the list of a `for` (D101): it is modified through the reference.
+    void checkReference(VarDeclStmt& decl) {
+        Type type = resolveType(decl.typeName).value_or(Type::error());
+        if (type.isVoid()) {
+            diag_->error(decl.typeName.loc, "a variable cannot be void");
+            type = Type::error();
+        }
+        if (!checkNotInterface(type, decl.typeName.loc, "a variable")) type = Type::error();
+        std::string written = decl.isConst ? "const ref" : "ref";
+        bool ok = false;
+        if (!decl.init) {
+            diag_->error(decl.nameLoc, "a reference names a place: write a variable, a field or an element after '='");
+        } else {
+            Type found = checkExpr(decl.init, std::nullopt);
+            const Expr& place = *decl.init;
+            const Expr* object = place.kind == ExprKind::Index ? static_cast<const IndexExpr&>(place).object.get() : nullptr;
+            std::string reason = !found.isError() && isPlace(place) && !decl.isConst ? readOnlyReason(place) : "";
+            if (found.isError()) {
+            } else if (!isPlace(place)) {
+                diag_->error(place.loc, "a reference names a variable, a field or an element");
+            } else if (object && (isString(object->type) || object->type.isVector())) {
+                diag_->error(place.loc, std::string("an element of a ") + (object->type.isVector() ? "vector" : "string") +
+                                            " has no place of its own: copy it into a variable");
+            } else if (place.kind == ExprKind::Name && !checkNotBlockThread(*static_cast<const NameExpr&>(place).variable, place.loc)) {
+            } else if (!reason.empty()) {
+                diag_->error(place.loc, "cannot name '" + placeText(place) + "' with 'ref': " + reason + "; 'const ref' reads it");
+            } else if (!type.isError() && found != type) {
+                diag_->error(decl.typeName.loc, "'" + placeText(place) + "' is " + withArticle(found.name()) + ": write " + written +
+                                                    " " + found.name() + " " + decl.name);
+            } else if (!decl.isConst && !checkNotBorrowed(place, place.loc)) {
+            } else {
+                ok = !type.isError();
+            }
+        }
+        Variable* variable = declare(decl.name, ok ? type : Type::error(), decl.nameLoc, decl.isConst);
+        decl.variable = variable;
+        if (!variable) return;
+        variable->kind = VariableKind::Element;
+        variable->reference = true;
+        if (!ok) return;
+        const Expr& place = *decl.init;
+        Path path = *pathOf(place);
+        std::vector<const Variable*> chain;
+        if (const Variable* root = rootOf(place); root && root->reference) {
+            auto before = refChains_.find(root);
+            if (before != refChains_.end()) chain = before->second;
+            chain.push_back(root);
+        }
+        refPaths_[variable] = path;
+        refChains_[variable] = chain;
+        size_t last = index_;  // the statement of its last use, in its block
+        for (size_t i = index_ + 1; block_ && i < block_->statements.size(); ++i) {
+            if (mentions(*block_->statements[i], decl.name)) last = i;
+        }
+        refEnds_[variable] = last;
+        loopBorrows_.push_back({path, "while the reference '" + decl.name + "' names it", variable});
+    }
+
     void checkVarDecl(VarDeclStmt& decl) {
+        if (decl.isRef) return checkReference(decl);
         Type type = resolveType(decl.typeName).value_or(Type::error());
         if (type.isVoid()) {
             diag_->error(decl.typeName.loc, "a variable cannot be void");
@@ -3046,6 +3290,12 @@ private:
     Flow checkFor(ForStmt& statement) {
         if (statement.form == ForForm::Each) return checkForEach(statement);
         scopes_.emplace_back();  // the variable of the classic form lives only in the loop
+        if (statement.init && statement.init->kind == StmtKind::VarDecl && static_cast<const VarDeclStmt&>(*statement.init).isRef) {
+            diag_->error(statement.init->loc, "a reference is declared in a block, not in the head of a 'for'");
+            static_cast<VarDeclStmt&>(*statement.init).isRef = false;
+            static_cast<VarDeclStmt&>(*statement.init).isConst = false;
+            static_cast<VarDeclStmt&>(*statement.init).init = nullptr;
+        }
         if (statement.init) checkStatement(*statement.init);
         if (statement.condition) checkCondition(statement.condition);
         if (statement.step) checkStatement(*statement.step);
@@ -3238,7 +3488,7 @@ private:
             expr = std::make_unique<FieldExpr>(loc, std::make_unique<SelfExpr>(loc), field);
             return checkField(expr);
         }
-        if (Variable* global = findGlobal(name.name, name.loc)) {  // D394
+        if (Variable* global = findConstant(name.name, name.loc)) {  // D394, D564
             name.variable = global;
             return global->type;
         }
@@ -3366,6 +3616,21 @@ private:
         auto& field = static_cast<FieldExpr&>(*expr);
         if (std::optional<Type> named = enumNamed(*field.object)) {
             return checkEnumCase(expr, *named, field.field, nullptr, field.loc);
+        }
+        if (field.object->kind == ExprKind::Name) {  // `geometry.limit`: a public constant of a module (D564)
+            const std::string& module = static_cast<const NameExpr&>(*field.object).name;
+            if (!lookup(module) && ownFieldIndex(module) < 0 && importsQualifier(field.loc, module)) {
+                Variable* constant = findConstant(field.field, field.loc, module);
+                if (!constant) {
+                    diag_->error(field.loc, "the module " + module + " has no public constant '" + field.field + "'");
+                    return Type::error();
+                }
+                auto name = std::make_unique<NameExpr>(field.loc, field.field);
+                name->variable = constant;
+                Type type = constant->type;
+                expr = std::move(name);
+                return type;
+            }
         }
         Type object = checkExpr(field.object, std::nullopt);
         if (object.isError()) return object;
@@ -3570,7 +3835,8 @@ private:
                 Overlap overlap = overlaps(first.path, second.path);
                 if (overlap == Overlap::No) continue;
                 const Access& read = first.modifies ? second : first;
-                if (!read.modifies && read.arg >= 0 && !needsDestruction(read.expr->type)) {
+                // D79, D563: a read argument is passed as a copy, with its copy() when it owns resources.
+                if (!read.modifies && read.arg >= 0 && (!needsDestruction(read.expr->type) || canCopy(read.expr->type))) {
                     copied[read.arg] = true;
                     continue;
                 }
@@ -3587,10 +3853,7 @@ private:
                 } else if (read.arg < 0) {
                     message += "which is the object of the method";
                 } else {
-                    message += canCopy(read.expr->type)
-                                   ? "which the call can modify: pass a copy, as " + placeText(*read.expr) + ".copy()"
-                                   : "which the call can modify, and values of type " + read.expr->type.name() +
-                                         " cannot be copied";
+                    message += "which the call can modify, and values of type " + read.expr->type.name() + " cannot be copied";
                 }
                 diag_->error(second.expr->loc, message);
                 ok = false;
@@ -3598,6 +3861,11 @@ private:
         }
         for (size_t i = 0; i < args.size(); ++i) {
             if (!copied[i]) continue;
+            Type type = args[i]->type;
+            if (needsDestruction(type)) {  // D563
+                ok = copyIfNeeded(args[i], type) && ok;
+                continue;
+            }
             SourceLocation argLoc = args[i]->loc;
             args[i] = std::make_unique<CopyExpr>(argLoc, std::move(args[i]));
         }
@@ -4315,15 +4583,11 @@ private:
             return Type::error();
         }
         bool equality = binary.op == BinaryOp::Eq || binary.op == BinaryOp::Ne;
-        if (operand.isStruct() && operand.structDecl->isEnum && equality) {
-            for (const EnumCase& item : operand.structDecl->cases) {
-                if (item.fields.empty()) continue;
-                diag_->error(binary.loc, std::string("'") + spelling(binary.op) +
-                                             "' works on the enums whose cases have no data: tell the case with 'switch'");
-                return Type::error();
-            }
-            return Type::boolType();
+        if (operand.isStruct() && operand.structDecl->isEnum && equality && withoutData(*operand.structDecl) &&
+            !operand.structDecl->methods.count("equals")) {
+            return Type::boolType();  // their cases, as numbers (D112)
         }
+        if (equality && (operand.isStruct() || operand.isArray())) return checkEquality(expr, operand);  // D565
         if (operand.isStruct()) {
             diag_->error(binary.loc, std::string("'") + spelling(binary.op) + "' does not work on structs yet");
             return Type::error();
@@ -4552,6 +4816,167 @@ private:
             if (!problem.empty()) return problem;
         }
         return "";
+    }
+
+    // ---- `==` on structs, enums and arrays (D565) ----
+
+    // Why the values of `type` cannot be compared with `==`, or "" when they can:
+    // all the types but the functions, the interfaces and the vectors, and what
+    // holds them without an equals() of its own.
+    std::string equalProblem(Type type) {
+        std::set<const StructDecl*> visiting;
+        return equalProblem(type, "", visiting);
+    }
+
+    std::string equalProblem(Type type, const std::string& place, std::set<const StructDecl*>& visiting) {
+        auto bad = [&]() {
+            return place.empty() ? std::string("it has no equals()") : place + " has type " + type.name();
+        };
+        if (type.isBool() || type.isNumeric() || type.isError() || type.kind == TypeKind::Addr || type.isParam()) return "";
+        if (type.isArray()) return equalProblem(type.array->element, place.empty() ? "an element" : place + "[i]", visiting);
+        if (!type.isStruct()) return bad();
+        const StructDecl& decl = *type.structDecl;
+        if (&decl == stringDecl_ || decl.methods.count("equals")) return "";
+        if (isList(type)) return equalProblem(elementOf(type), place.empty() ? "an element" : place + "[i]", visiting);
+        if (isMap(type)) return equalProblem(decl.typeArgs[1], place.empty() ? "a value" : place + "[key]", visiting);
+        if (!visiting.insert(&decl).second) return "";  // already being checked: it contains a list of itself
+        std::string base = place.empty() ? decl.name : place;
+        for (const EnumCase& item : decl.cases) {
+            for (const FieldDecl& field : item.fields) {
+                std::string problem = equalProblem(field.resolved, base + "." + item.name, visiting);
+                if (!problem.empty()) return problem;
+            }
+        }
+        for (const FieldDecl& field : decl.fields) {
+            std::string problem = equalProblem(field.resolved, base + "." + field.name, visiting);
+            if (!problem.empty()) return problem;
+        }
+        return "";
+    }
+
+    // `a == b` and `a != b` on two values of a struct, an enum or an array: the call
+    // of its equals(), written or generated, as copy() (D35, D83).
+    Type checkEquality(ExprPtr& expr, Type type) {
+        auto& binary = static_cast<BinaryExpr&>(*expr);
+        SourceLocation loc = binary.loc;
+        bool negate = binary.op == BinaryOp::Ne;
+        Type boolean = Type::boolType();
+        if (isAbstract(type)) return boolean;  // D85: checked in each instance
+        FunctionDecl* method = nullptr;
+        if (type.isStruct()) {
+            auto found = type.structDecl->methods.find("equals");
+            if (found != type.structDecl->methods.end()) {
+                FunctionDecl& written = *found->second;
+                bool fits = written.params.size() == 1 && written.paramTypes.size() == 1 && written.params[0].mode == ParamMode::Read &&
+                            written.paramTypes[0] == type && written.resolvedReturn.isBool() && written.isConst;
+                if (!fits) {
+                    diag_->error(loc, std::string("'") + spelling(binary.op) + "' needs the equals() of " + type.name() +
+                                          " written 'bool equals(" + type.name() + " other) const'");
+                    return Type::error();
+                }
+                method = &written;
+                use(method, loc);
+            }
+        }
+        ExprPtr node;
+        if (method) {
+            auto call = std::make_unique<MethodCallExpr>(loc, std::move(binary.lhs), "equals");
+            call->args.push_back(std::move(binary.rhs));
+            call->function = method;
+            node = std::move(call);
+        } else {
+            std::string problem = equalProblem(type);
+            if (!problem.empty()) {
+                diag_->error(loc, "values of type " + type.name() + " cannot be compared with '" + spelling(binary.op) + "': " +
+                                      problem);
+                return Type::error();
+            }
+            method = generatedEqual(type, loc);
+            if (!method) return Type::error();
+            auto call = std::make_unique<CallExpr>(loc, "equals");
+            call->args.push_back(std::move(binary.lhs));
+            call->args.push_back(std::move(binary.rhs));
+            call->function = method;
+            node = std::move(call);
+        }
+        node->type = boolean;
+        noteCall(method, loc);
+        if (negate) {
+            node = std::make_unique<UnaryExpr>(loc, UnaryOp::Not, std::move(node));
+        }
+        expr = std::move(node);
+        return boolean;
+    }
+
+    // The equals of a type without one, written in Cromo and checked as an instance
+    // with the types of its parts, in the scope of the core; it reads the private
+    // fields too, as copy().
+    FunctionDecl* generatedEqual(Type type, SourceLocation loc) {
+        std::string key = type.isStruct() ? "struct " + std::to_string(reinterpret_cast<uintptr_t>(type.structDecl))
+                                          : type.name();
+        auto found = equalFunctions_.find(key);
+        if (found != equalFunctions_.end()) return found->second;
+        TypeBindings bindings = {{"T", type}};
+        std::string text = equalText(type, bindings);
+        SourceFile& source = generatedSources_.emplace_back(SourceFile{"<equals>", text});
+        Module parsed = parse(tokenize(source, kLibraryFile, *diag_), *diag_);
+        if (parsed.functions.size() != 1) {
+            diag_->error(loc, "internal error: the equals of " + type.name() + " does not parse");
+            return nullptr;
+        }
+        auto function = std::make_unique<FunctionDecl>(std::move(parsed.functions[0]));
+        function->typeBindings = std::move(bindings);
+        function->convertsJson = true;  // the private fields too
+        function->symbol = symbolFor(loc, "equals." + (type.isStruct() ? type.structDecl->symbol : type.name()));
+        FunctionDecl* result = function.get();
+        module_.functionInstances.push_back(std::move(function));
+        equalFunctions_[key] = result;
+        {
+            BindingsScope scope(bindings_, &result->typeBindings);
+            resolveSignature(*result);
+        }
+        schedule(*result, type.isStruct() ? type.structDecl : nullptr, false, type.name(), loc);
+        return result;
+    }
+
+    // The fields one by one; the elements of a list or of an array, and their number;
+    // the keys and the values of a map; the case of an enum and its data.
+    std::string equalText(Type type, TypeBindings& bindings) const {
+        std::string text = "bool equals(T a, T b) {\n";
+        if (type.isArray() || isList(type)) {
+            return text + "if (a.len() != b.len()) {\nret false\n}\nfor (i64 i = 0; i < a.len(); i++) {\n"
+                          "if (a[i] != b[i]) {\nret false\n}\n}\nret true\n}\n";
+        }
+        const StructDecl& decl = *type.structDecl;
+        if (isMap(type)) {
+            bindings.emplace_back("K", decl.typeArgs[0]);
+            bindings.emplace_back("V", decl.typeArgs[1]);
+            return text + "if (a.len() != b.len()) {\nret false\n}\nfor (K key, V value in a) {\n"
+                          "if (!b.contains(key) || b[key] != value) {\nret false\n}\n}\nret true\n}\n";
+        }
+        if (decl.isEnum) {
+            text += "switch (a) {\n";
+            for (size_t c = 0; c < decl.cases.size(); ++c) {
+                const EnumCase& item = decl.cases[c];
+                std::string left;
+                std::string right;
+                std::string same;
+                for (size_t i = 0; i < item.fields.size(); ++i) {
+                    std::string param = "E" + std::to_string(c) + "_" + std::to_string(i);
+                    bindings.emplace_back(param, item.fields[i].resolved);
+                    left += (i ? ", " : "") + param + " x" + std::to_string(i);
+                    right += (i ? ", " : "") + param + " y" + std::to_string(i);
+                    same += (i ? " && x" : "x") + std::to_string(i) + " == y" + std::to_string(i);
+                }
+                bool data = !item.fields.empty();
+                text += "case " + item.name + (data ? "(" + left + ")" : "") + " {\nswitch (b) {\ncase " + item.name +
+                        (data ? "(" + right + ")" : "") + " {\nret " + (data ? same : "true") + "\n}\ndefault {\nret false\n}\n}\n}\n";
+            }
+            return text + "}\n}\n";
+        }
+        std::string same;
+        for (const FieldDecl& field : decl.fields) same += (same.empty() ? "a." : " && a.") + field.name + " == b." + field.name;
+        return text + "ret " + (same.empty() ? "true" : same) + "\n}\n";
     }
 
     // The name in the form of debug: "Box" also for Box<i64>, as Rust prints it.
@@ -6338,6 +6763,7 @@ private:
     std::map<std::string, FunctionDecl*> arrayJsonFunctions_;  // of the fixed arrays, by type
     const InterfaceDecl* debugInterface_ = nullptr;
     std::map<std::string, FunctionDecl*> debugFunctions_;  // the writers of the form of debug (D319)
+    std::map<std::string, FunctionDecl*> equalFunctions_;  // the equals() generated for `==` (D565)
     std::deque<SourceFile> generatedSources_;
     bool selfAllowed_ = false;                // while resolving the methods of interfaces
     std::map<const StructDecl*, int> layoutState_;  // 0 to do, 1 in progress, 2 done
@@ -6359,6 +6785,13 @@ private:
         bool exclusive;  // with `ref`: the block cannot even read it
     };
     std::vector<ThreadBorrow> threadBorrows_;
+    // The references of the blocks (D562): the place each one names, and the
+    // references that place is written through.
+    std::map<const Variable*, Path> refPaths_;
+    std::map<const Variable*, std::vector<const Variable*>> refChains_;
+    std::map<const Variable*, size_t> refEnds_;  // the statement of its block after which its place is free again
+    const Block* block_ = nullptr;               // the block being checked, and which of its statements
+    size_t index_ = 0;
     std::set<const Variable*> startedThreads_;  // the threads of a block with their start() written
     std::map<std::string, SourceLocation> exportedNames_;  // [[export("name")]], by name (D395)
     bool threadLambda_ = false;           // the next lambda checked is given to a thread (D215)

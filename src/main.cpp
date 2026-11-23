@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <deque>
@@ -87,7 +88,8 @@ void printUsage(FILE* out) {
         "               without them stops the program at the start, with a message\n"
         "  --release    no overflow checks: integers wrap around (default: debug, with checks)\n"
         "  -O<n>        optimization level (default: -O2)\n"
-        "  --emit-ir    print the generated LLVM IR instead of producing the executable (build)\n",
+        "  --emit-ir    print the generated LLVM IR instead of producing the executable (build)\n"
+        "  --quiet, -q  no lines for what cromo does, only the errors: for the scripts\n",
         out);
 }
 
@@ -123,6 +125,59 @@ struct Compilation {
     bool camera = false;   // the program makes a gui.Camera: the permission CAMERA (D537)
     std::vector<Executable> executables;  // D517: those of cromo.mod, without a file
     bool sign = false;  // cromo build: with --release, the line sign of cromo.mod is run (D558)
+    bool quiet = false;  // --quiet: no lines for what cromo does (D568)
+};
+
+// What cromo does while it builds, a line for each step on the standard error, as
+// make of CMake writes them: `[ 40%] Checking`, with colors on a terminal (D568).
+class Progress {
+public:
+    Progress(bool quiet, int steps) : quiet_(quiet), steps_(steps), start_(std::chrono::steady_clock::now()) {
+        if (quiet_) return;
+        const char* none = std::getenv("NO_COLOR");
+        bool terminal = false;
+#ifdef _WIN32
+        terminal = _isatty(_fileno(stderr)) != 0;
+        if (terminal) {  // the colors of ANSI, which the console of Windows takes when asked
+            HANDLE console = GetStdHandle(STD_ERROR_HANDLE);
+            DWORD mode = 0;
+            terminal = GetConsoleMode(console, &mode) && SetConsoleMode(console, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+        }
+#else
+        terminal = isatty(fileno(stderr)) != 0;
+#endif
+        color_ = terminal && !(none && *none);
+    }
+
+    void step(const std::string& text, bool strong = false) {
+        if (quiet_) return;
+        if (done_ < steps_) ++done_;
+        int percent = done_ * 100 / steps_;
+        if (color_) {
+            std::fprintf(stderr, "[%3d%%] \x1b[%sm%s\x1b[0m\n", percent, strong ? "1;32" : "32", text.c_str());
+        } else {
+            std::fprintf(stderr, "[%3d%%] %s\n", percent, text.c_str());
+        }
+        std::fflush(stderr);
+    }
+
+    void finish(const std::string& what) {
+        if (quiet_) return;
+        double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start_).count();
+        if (color_) {
+            std::fprintf(stderr, "\x1b[1mBuilt %s\x1b[0m in %.2f s\n", what.c_str(), seconds);
+        } else {
+            std::fprintf(stderr, "Built %s in %.2f s\n", what.c_str(), seconds);
+        }
+        std::fflush(stderr);
+    }
+
+private:
+    bool quiet_;
+    bool color_ = false;
+    int steps_;
+    int done_ = 0;
+    std::chrono::steady_clock::time_point start_;
 };
 
 // D517: a name of cromo.mod, of letters, digits and the characters of `others`.
@@ -308,6 +363,12 @@ int build(Compilation& compilation) {
             cromo::readProjectFile(fs::path(project) / "cromo.mod", projectFile, ignored);
         }
     }
+    // D568: a line for each step, unless it is asked not to or cromo prints something else.
+    bool silent = compilation.quiet || compilation.emitIr || compilation.runtime || !compilation.reference.empty() ||
+                  !compilation.aiModule.empty() || compilation.checkNames || compilation.checkDeclarations ||
+                  compilation.checkTypes || compilation.checkMoves;
+    Progress progress(silent, options.optLevel > 0 ? 6 : 5);
+    progress.step("Reading " + fs::path(sources[0].path).filename().string() + " and its modules");
     cromo::Diagnostics diag(sources[0]);
     diag.addFile(sources[1]);
     bool tests = codegen.tests;
@@ -347,6 +408,7 @@ int build(Compilation& compilation) {
         return diag.hasErrors() ? 1 : 0;
     }
     bool requireMain = !tests && !compilation.runtime;
+    if (!diag.hasErrors()) progress.step("Checking " + std::to_string(sources.size()) + " files");
     if (diag.hasErrors() || !cromo::check(module, diag, requireMain) || !cromo::checkMoves(module, diag)) return 1;
     compilation.camera = module.camera;
     if (tests) {  // in the order of the entry point of the tests (codegen.cpp)
@@ -421,6 +483,7 @@ int build(Compilation& compilation) {
     }
     codegen.optimized = options.optLevel > 0;
     options.debugInfo = !codegen.release;
+    progress.step("Generating the code");
     std::string ir = cromo::generateIR(module, codegen);
     if (compilation.emitIr) {
         std::fwrite(ir.data(), 1, ir.size(), stdout);
@@ -428,8 +491,11 @@ int build(Compilation& compilation) {
     }
 
     std::string error;
-    if (!cromo::buildExecutable(ir, sourceName, options, error) ||
-        !cromo::copyLibraries(libraries.copies, options.outputPath, error)) {
+    std::string built = fs::path(options.outputPath).filename().string();
+    options.progress = [&](const std::string& what) { progress.step(what == "Linking" ? "Linking " + built : what, what == "Linking"); };
+    bool made = cromo::buildExecutable(ir, sourceName, options, error);
+    options.progress = nullptr;  // it names what ends with this function
+    if (!made || !cromo::copyLibraries(libraries.copies, options.outputPath, error)) {
         std::fprintf(stderr, "cromo: %s\n", error.c_str());
         return 1;
     }
@@ -445,6 +511,7 @@ int build(Compilation& compilation) {
             return 1;
         }
     }
+    progress.finish(built);
     return 0;
 }
 
@@ -535,6 +602,8 @@ bool readOptions(const std::vector<std::string>& args, size_t first, size_t last
                 std::fprintf(stderr, "cromo: %s\n", error.c_str());
                 return false;
             }
+        } else if (arg == "--quiet" || arg == "-q") {
+            compilation.quiet = true;  // D568
         } else if (arg == "--release") {
             compilation.codegen.release = true;  // D57
         } else if (arg == "--emit-ir") {
@@ -1099,6 +1168,7 @@ int buildApk(Compilation& compilation) {
 
     Compilation tool;
     tool.inputPath = cromo::libraryFile("tools/apk.cro").string();
+    tool.quiet = true;  // D568: a tool of cromo, not the program of who runs it
     tool.options.outputPath = "apk";
     std::string permissions = compilation.network ? "INTERNET" : "";
     if (compilation.camera) permissions += permissions.empty() ? "CAMERA" : ",CAMERA";
@@ -1224,6 +1294,7 @@ int runAndroid(Compilation& compilation) {
     if (code == 0) {
         Compilation tool;
         tool.inputPath = cromo::libraryFile("tools/android.cro").string();
+        tool.quiet = true;  // D568: a tool of cromo, not the program of who runs it
         tool.options.outputPath = "android";
 #ifdef _WIN32
         std::vector<std::wstring> toolArgs = {fs::path(adb).wstring(), fs::path(apk).wstring(),
@@ -1304,6 +1375,7 @@ int testCommand(Compilation& compilation, bool* unmatched = nullptr) {
 int runTool(const char* file, const std::vector<std::string>& args) {
     Compilation tool;
     tool.inputPath = cromo::libraryFile(file).string();
+    tool.quiet = true;  // D568: a tool of cromo, not the program of who runs it
     tool.options.outputPath = fs::path(file).stem().string();
 #ifdef _WIN32
     std::vector<std::wstring> programArgs;
@@ -1349,6 +1421,7 @@ int main(int argc, char** argv) {
         }
         Compilation compilation;
         compilation.inputPath = cromo::libraryFile("tools/update.cro").string();
+        compilation.quiet = true;  // D568: a tool of cromo, not the program of who runs it
         compilation.options.outputPath = "update";
 #ifdef _WIN32
         std::vector<std::wstring> programArgs(wide.begin() + 2, wide.end());
@@ -1383,6 +1456,7 @@ int main(int argc, char** argv) {
         Compilation compilation;
         // The designer runs this cromo for its preview: CROMO names it.
         compilation.inputPath = cromo::libraryFile("tools/design.cro").string();
+        compilation.quiet = true;  // D568: a tool of cromo, not the program of who runs it
         compilation.options.outputPath = "design";
 #ifdef _WIN32
         _wputenv_s(L"CROMO", cromo::cromoPath().wstring().c_str());

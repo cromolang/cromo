@@ -60,7 +60,15 @@ private:
             diag_.error(attributes[0].loc, "an attribute is written before a field, or [[test]] before a function");
             return skipToNextDeclaration();
         }
-        if (check(TokenKind::KwStruct) || check(TokenKind::KwEnum)) {
+        if (startsExtend()) {  // D567
+            if (isPublic || !attributes.empty()) {
+                diag_.error(isPublic ? peek().loc : attributes[0].loc,
+                            "an extend block has no attributes and is not public: each of its methods says whether it is");
+            }
+            auto decl = parseExtend();
+            if (!decl) return skipToNextDeclaration();
+            module.extensions.push_back(std::move(*decl));
+        } else if (check(TokenKind::KwStruct) || check(TokenKind::KwEnum)) {
             auto decl = check(TokenKind::KwStruct) ? parseStruct() : parseEnum();
             if (!decl) return skipToNextDeclaration();
             decl->isPublic = isPublic;
@@ -71,17 +79,20 @@ private:
             decl->isPublic = isPublic;
             module.interfaces.push_back(std::move(*decl));
         } else if (check(TokenKind::KwConst) || startsModuleVariable()) {
-            if (isPublic || !attributes.empty()) {
+            // D564: a constant can be public; a module variable is state, and never is.
+            if (check(TokenKind::KwConst)) {
+                if (!attributes.empty()) diag_.error(attributes[0].loc, "a constant of a module has no attributes");
+            } else if (isPublic || !attributes.empty()) {
                 diag_.error(isPublic ? peek().loc : attributes[0].loc,
-                            check(TokenKind::KwConst)
-                                ? "a constant of a module has no attributes and is not public: only its module sees it"
-                                : "a module variable has no attributes and is not public: only its module sees it");
+                            "a module variable has no attributes and is not public: only its module sees it");
             }
             StmtPtr decl = parseVarDecl();
             if (!decl) return skipToNextDeclaration();
             auto& variable = static_cast<VarDeclStmt&>(*decl);
+            if (variable.isRef) diag_.error(variable.loc, "a reference lives in a block: a module has none");
             GlobalDecl global;
             global.isConst = variable.isConst;
+            global.isPublic = isPublic && variable.isConst;
             global.typeName = std::move(variable.typeName);
             global.name = std::move(variable.name);
             global.loc = variable.nameLoc;
@@ -653,6 +664,51 @@ private:
 
     // struct := 'struct' name '{' { member } '}'
     // member := field | constructor | destructor | method
+    // `extend` is a word of the language only here, before a name and a block (D567).
+    bool startsExtend() const {
+        return check(TokenKind::Identifier) && peek().text == "extend" && peek(1).kind == TokenKind::Identifier &&
+               peek(2).kind == TokenKind::LBrace;
+    }
+
+    // extend := 'extend' name '{' { method } '}'   (D567)
+    std::optional<ExtendDecl> parseExtend() {
+        advance();  // 'extend'
+        StructDecl decl;  // its members are parsed as those of a struct
+        decl.name = peek().text;
+        decl.loc = peek().loc;
+        advance();
+        advance();  // '{'
+        skipNewlines();
+        while (!check(TokenKind::RBrace) && !check(TokenKind::EndOfFile)) {
+            if (!parseMember(decl)) {
+                skipToNextStatement();
+                skipNewlines();
+                continue;
+            }
+            if (!match(TokenKind::Newline) && !check(TokenKind::RBrace)) {
+                errorAtCurrent("a newline after the member");
+                skipToNextStatement();
+            }
+            skipNewlines();
+        }
+        if (!expect(TokenKind::RBrace, "to close the extend block")) return std::nullopt;
+        ExtendDecl result;
+        result.name = decl.name;
+        result.loc = decl.loc;
+        for (const FieldDecl& field : decl.fields) {
+            diag_.error(field.loc, "an extend block adds methods: the fields stay in the declaration of " + decl.name);
+        }
+        for (FunctionDecl& member : decl.members) {
+            if (member.kind != FunctionKind::Method) {
+                diag_.error(member.loc, std::string(member.kind == FunctionKind::Constructor ? "the constructor" : "the destructor") +
+                                            " stays in the declaration of " + decl.name);
+                continue;
+            }
+            result.members.push_back(std::move(member));
+        }
+        return result;
+    }
+
     std::optional<StructDecl> parseStruct() {
         StructDecl decl;
         advance();  // 'struct'
@@ -890,9 +946,7 @@ private:
             return std::make_unique<BreakStmt>(advance().loc);
         case TokenKind::KwContinue:
             return std::make_unique<ContinueStmt>(advance().loc);
-        case TokenKind::KwRef:
-            diag_.error(peek().loc, "a variable is not a reference: 'ref' is written on parameters and on captures");
-            return nullptr;
+        case TokenKind::KwRef: return parseVarDecl();  // D562
         default:
             if (check(TokenKind::Identifier) && peek().text == "while" && peek(1).kind == TokenKind::LParen) {
                 diag_.error(peek().loc, "Cromo has no while: write the condition in a for, as for (condition)");
@@ -903,10 +957,11 @@ private:
         }
     }
 
-    // declaration := ['const'] type name ['=' expression]
+    // declaration := ['const'] ['ref'] type name ['=' expression]
     StmtPtr parseVarDecl() {
         auto decl = std::make_unique<VarDeclStmt>(peek().loc);
         decl->isConst = match(TokenKind::KwConst);
+        decl->isRef = match(TokenKind::KwRef);  // D562
         if (!parseType(decl->typeName)) return nullptr;
         if (!check(TokenKind::Identifier)) {
             errorAtCurrent("the variable name");

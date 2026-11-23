@@ -1,0 +1,22 @@
+// A public constant is read by the modules that import its module, with its name
+// or with the module in front (D564).
+// expect-output: 1024 0.5 20
+// expect-output: 1024 2055
+// expect-output: 5 3
+// expect-output: 9
+// expect-exit: 0
+import modules.limits
+import modules.sizes
+
+const i64 own = 9
+
+i32 main() {
+    println("{} {} {}", limits.limit, half, marks[1])
+    i64 copy = limits.limit
+    println("{} {}", copy, twice())
+    println("{} {}", sizes.limit, small)
+    // A variable of the program hides a constant of a module, as the other names (D131).
+    i64 small2 = own
+    println("{}", small2)
+    ret 0
+}

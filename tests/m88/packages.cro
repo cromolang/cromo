@@ -214,7 +214,7 @@ i32 main() {
 
     show("get v1", cromo(forge, app, "get example.org/anna/geometry@v1"))
     println("cromo.mod: {}", requires(app))
-    show("run", cromo(forge, app, "run main.cro"))
+    show("run", cromo(forge, app, "run --quiet main.cro"))
     list<string> sums
     string written = fs.isFile(fs.joinPath(app, "cromo.sum")) ? fs.readText(fs.joinPath(app, "cromo.sum")) : "none:"
     for (string line in written.split("\n")) {
@@ -225,13 +225,13 @@ i32 main() {
     println("cromo.sum: {}", join(sums, ", "))
 
     show("get units", cromo(forge, app, "get example.org/bob/units"))
-    show("run", cromo(forge, app, "run main.cro"))
+    show("run", cromo(forge, app, "run --quiet main.cro"))
     show("get again", cromo(forge, app, "get example.org/anna/geometry"))
 
     show("get v2", cromo(forge, app, "get example.org/anna/geometry@v2 geometry2"))
     fs.writeText(fs.joinPath(app, "main.cro"),
         "import geometry\nimport geometry2\n\ni32 main() {\n    println(\"{}, volume {}\", geometry.area(3, 4), geometry2.volume(2, 3, 4))\n    ret 0\n}\n")
-    show("run both", cromo(forge, app, "run main.cro"))
+    show("run both", cromo(forge, app, "run --quiet main.cro"))
     show("no such version", cromo(forge, app, "get example.org/anna/geometry@v3 geometry3"))
 
     // A module of a package, by its path from the name of the package (D383).
@@ -239,12 +239,12 @@ i32 main() {
     fs.createFolders(inner)
     fs.writeText(fs.joinPath(inner, "cromo.mod"), "module example.org/inner\nrequire geo example.org/anna/geometry v1.2.0\n")
     fs.writeText(fs.joinPath(inner, "main.cro"), "import geo.shapes\n\ni32 main() {\n    println(\"rectangle {}\", shapes.rectangle(5, 6))\n    ret 0\n}\n")
-    show("a module of a package", cromo(forge, inner, "run main.cro"))
+    show("a module of a package", cromo(forge, inner, "run --quiet main.cro"))
 
     // The forge gives other files for a version whose hash is in cromo.sum.
     moved.lock([](ref bool m) { m = true })
     fs.removeAll(fs.joinPath(out, "cache"))
-    Ran refused = cromo(forge, app, "run main.cro")
+    Ran refused = cromo(forge, app, "run --quiet main.cro")
     i64 cut = refused.text.find(": its tag")
     println("moved tag: {} {}", refused.code, refused.text.slice(refused.text.find("the files"), cut))
     moved.lock([](ref bool m) { m = false })
@@ -256,10 +256,10 @@ i32 main() {
     fs.createFolders(fs.joinPath(local, "app"))
     fs.writeText(fs.joinPath(local, "app/cromo.mod"), "module example.org/second\nrequire tools ../tools\n")
     fs.writeText(fs.joinPath(local, "app/main.cro"), "import tools\n\ni32 main() {\n    println(\"from the folder {}\", tools.seven())\n    ret 0\n}\n")
-    show("a folder", cromo(forge, fs.joinPath(local, "app"), "run main.cro"))
+    show("a folder", cromo(forge, fs.joinPath(local, "app"), "run --quiet main.cro"))
 
     fs.writeText(fs.joinPath(local, "app/cromo.mod"), "module example.org/second\nrequire geometry ../tools\nrequire geometry ../tools\n")
-    Ran twice = cromo(forge, fs.joinPath(local, "app"), "run main.cro")
+    Ran twice = cromo(forge, fs.joinPath(local, "app"), "run --quiet main.cro")
     println("a name twice: {} {}", twice.code, twice.text.slice(twice.text.find("cromo.mod:3"), twice.text.len()))
     os.exit(0)
     ret 0

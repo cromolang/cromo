@@ -1,0 +1,62 @@
+// The errors of the local references (D562).
+// expect-error: a reference names a place: write a variable, a field or an element after '='
+// expect-error: a reference names a variable, a field or an element
+// expect-error: 'p.x' is an i32: write ref i32 wrong
+// expect-error: cannot name 'fixed' with 'ref': 'fixed' is const and cannot be modified; 'const ref' reads it
+// expect-error: 'reader' is a 'const ref', which only reads: write 'ref Point reader = ...' to modify it
+// expect-error: 'p.y' cannot be modified while the reference 'reader' names it
+// expect-error: 'items' cannot be modified while the reference 'item' names it
+// expect-error: 'items[0].y' cannot be modified while the reference 'item' names it
+// expect-error: an element of a string has no place of its own: copy it into a variable
+// expect-error: a reference is declared in a block, not in the head of a 'for'
+// expect-error: cannot name 'q' with 'ref': parameter 'q' cannot be modified: parameters are read-only; 'const ref' reads it
+// expect-error: unknown name 'gone'
+// expect-error: 'p.x' cannot be modified while the reference 'alias' names it
+struct Point {
+    i32 x
+    i32 y
+}
+
+Point make() {
+    Point p
+    ret p
+}
+
+void both(ref i32 a, ref i32 b) {
+}
+
+void check(Point q) {
+    Point p
+    const Point fixed = make()
+    list<Point> items
+    string text = "abc"
+    i64 at = 0
+    ref Point nothing
+    ref Point temporary = make()
+    ref i64 wrong = p.x
+    ref Point taken = fixed
+    ref Point param = q
+    const ref Point reader = p
+    reader.x = 1
+    p.y = 2
+    println("{}", reader.y)
+    p.y = 3
+    ref Point item = items[at]
+    items.add(p)
+    items[0].y = 2
+    item.x = 1
+    const ref u8 letter = text[0]
+    for (const ref i32 i = p.x; i < 3; at++) {
+    }
+    if (at == 0) {
+        ref Point gone = p
+        gone.y = 1
+    }
+    gone.x = 1
+    ref i32 alias = p.x
+    both(ref alias, ref p.x)
+}
+
+i32 main() {
+    ret 0
+}

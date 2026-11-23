@@ -842,6 +842,49 @@ cannot: 7 is odd
 
 A value is made with the type arguments written, `Outcome<i64>.Done(5)`: `Outcome.Done(5)` is an error, also where the type is known.
 
+## Option: a value, or none
+
+A function that may have no result, as a search that finds nothing, returns an `Option<T>`: a generic enum of the core, with the cases `None` and `Some(T value)`.
+
+```cromo
+Option<i64> indexOf(list<string> names, string wanted) {
+    for (i64 i = 0; i < names.len(); i++) {
+        if (names[i] == wanted) {
+            ret Option<i64>.Some(i)
+        }
+    }
+    ret Option<i64>.None
+}
+
+i32 main() {
+    list<string> names = ["anna", "luca"]
+    Option<i64> found = indexOf(names, "luca")
+    switch (found) {
+        case Some(i64 at) {
+            println("found at {}", at)
+        }
+        case None {
+            println("missing")
+        }
+    }
+    Option<i64> lost = indexOf(names, "ugo")
+    println("{} {}", lost.has(), lost.or(-1))
+    ret 0
+}
+```
+
+```output
+found at 1
+false -1
+```
+
+- `Option<i64>.Some(i)` and `Option<i64>.None` make the two values; the default value of an option is `None`.
+- A `switch` reads it, and must handle both cases, so a missing value is never forgotten.
+- `has()` says whether there is a value; `value()` gives it, and is a panic when there is none; `or(other)` gives the value, or `other`.
+- Two options are compared with `==`, and `{:?}` prints them: `Some(7)`, `None`.
+
+An option is for a result that may not be there. An operation that fails for a reason, as a file that cannot be read, throws an exception ([Errors](errors.md)).
+
 ## Summary
 
 - An enum lists cases, one per line; a value is written `Enum.Case`, and the default value is the first case, with the default values of its data.

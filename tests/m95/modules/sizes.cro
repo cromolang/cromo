@@ -1,0 +1,3 @@
+// Another module with a constant of the same name (D564, D126).
+public const i64 limit = 5
+public const i64 small = 3

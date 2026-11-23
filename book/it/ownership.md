@@ -841,7 +841,7 @@ error: only a 'move' parameter can be const, written 'move const'
 
 ## I riferimenti vivono solo durante una chiamata
 
-`ref` esiste solo per i parametri. Non ci sono riferimenti nelle variabili, nei campi o nei valori restituiti: un riferimento non può sopravvivere all'oggetto a cui si riferisce, perché finisce con la chiamata. Questa sola regola sostituisce i lifetime e il borrow checker di altri linguaggi.
+`ref` è per i parametri, e per i nomi che un blocco dà a un posto, mostrati più avanti. Non ci sono riferimenti nei campi o nei valori restituiti: un riferimento non può sopravvivere all'oggetto a cui si riferisce, perché finisce con la chiamata, o con il suo blocco. Questa sola regola sostituisce i lifetime e il borrow checker di altri linguaggi.
 
 ```cromo error
 struct Cursor {
@@ -858,6 +858,99 @@ error: expected a type, found 'ref'
 ```
 
 Quando un programma deve puntare a un altro oggetto, come una cartella a quella che la contiene o i nodi di un grafo tra loro, tiene un indice in una lista al posto di un puntatore: il suo id. [Id e handle: puntare a un altro oggetto](ids.md) mostra come, e quanto costa.
+
+## Un nome per un posto: `ref` e `const ref`
+
+A un posto lungo, come `team.players[0]`, si può dare un nome dentro un blocco. `ref T nome = posto` gli dà un nome per modificarlo; `const ref T nome = posto` per leggerlo, senza una copia. Sono `T&` e `const T&` del C++:
+
+```cromo
+struct Player {
+    string name
+    i64 score
+}
+
+struct Team {
+    string name
+    list<Player> players
+}
+
+i32 main() {
+    Team team
+    team.name = "red"
+    Player anna
+    anna.name = "Anna"
+    team.players.add(anna)
+
+    ref Player first = team.players[0]
+    first.score += 10
+    first.name += "!"
+
+    const ref Player shown = team.players[0]
+    println("{} {}", shown.name, shown.score)
+    ret 0
+}
+```
+
+```output
+Anna! 10
+```
+
+Il posto è una variabile, un campo o un elemento, e il tipo è quello del posto, scritto esattamente. Un riferimento locale non è un valore che si può conservare: un'assegnazione scrive il posto, `ret` e `move` prendono il valore del posto, e non si può mettere in un campo. Il suo nome dura fino alla fine del blocco.
+
+A tenerlo sicuro è una regola sola. Dalla sua dichiarazione al suo ultimo uso, la variabile da cui parte è prestata, come la lista di un `for` mentre il ciclo la percorre: si può leggere, e si modifica solo attraverso il riferimento. Così il posto non può sparire, né spostarsi in memoria, sotto il riferimento:
+
+```cromo error
+i32 main() {
+    list<i64> values = [1, 2, 3]
+    ref i64 first = values[0]
+    values.add(4)
+    first = 9
+    ret 0
+}
+```
+
+```output
+error: 'values' cannot be modified while the reference 'first' names it
+```
+
+`values.add(4)` potrebbe spostare gli elementi in memoria mentre `first` ne nomina ancora uno. Dopo l'ultimo uso del riferimento la variabile è di nuovo libera, senza scrivere niente:
+
+```cromo
+i32 main() {
+    list<i64> values = [1, 2, 3]
+    ref i64 first = values[0]
+    first = 9
+    values.add(4)
+    println("{:?}", values)
+    ret 0
+}
+```
+
+```output
+[9, 2, 3, 4]
+```
+
+Un `const ref` legge soltanto, e lo dice quando viene usato per scrivere:
+
+```cromo error
+struct Point {
+    i64 x
+    i64 y
+}
+
+i32 main() {
+    Point p
+    const ref Point shown = p
+    shown.x = 1
+    ret 0
+}
+```
+
+```output
+error: 'shown' is a 'const ref', which only reads: write 'ref Point shown = ...' to modify it
+```
+
+Un riferimento a un elemento di una lista o di una mappa viene trovato una volta, alla dichiarazione: è anche il modo di leggere e scrivere più volte lo stesso elemento senza cercarlo di nuovo.
 
 ## Esclusività
 
@@ -883,7 +976,7 @@ error: 'x' overlaps 'x' in the same call, and the call can modify both
 
 Due argomenti si sovrappongono quando sono lo stesso oggetto, o quando uno è una parte dell'altro: `ref p` e `ref p.x`, una lista e uno dei suoi elementi. Quando il compilatore non può saperlo, come in `swap(ref v[i], ref v[j])`, il programma lo controlla durante l'esecuzione, e una chiamata con `i` uguale a `j` si ferma con un panic: lo stesso elemento viene passato due volte a una chiamata che lo modifica.
 
-L'oggetto di un metodo che non è `const` conta come un argomento passato con `ref`, perché il metodo può modificarlo. Un argomento in lettura che vi si sovrappone è accettato quando è un valore semplice: viene copiato, e il metodo vede il valore che aveva al momento della chiamata.
+L'oggetto di un metodo che non è `const` conta come un argomento passato con `ref`, perché il metodo può modificarlo. Un argomento in lettura che vi si sovrappone viene copiato, e il metodo vede il valore che aveva al momento della chiamata.
 
 ```cromo
 struct Counter {
@@ -908,9 +1001,9 @@ i32 main() {
 2 100
 ```
 
-Un valore che possiede risorse non viene copiato per far funzionare la chiamata: la sovrapposizione è un errore.
+Anche un valore che possiede risorse viene copiato, con il suo `copy()`, così il metodo tiene un valore suo mentre cambia l'oggetto:
 
-```cromo error
+```cromo
 struct Box {
     string label = "box"
 
@@ -922,15 +1015,16 @@ struct Box {
 i32 main() {
     Box b
     b.rename(b.label)
+    println("{}", b.label)
     ret 0
 }
 ```
 
 ```output
-error: 'b.label' overlaps 'b' in the same call, which the call can modify
+box!
 ```
 
-Passare una copia, `b.rename(b.label.copy())`, dice che la copia è voluta, e compila.
+Solo un valore che non si può copiare, come una struct con un distruttore e senza `copy()`, rende la sovrapposizione un errore: `'h.file' overlaps 'h' in the same call, which the call can modify, and values of type File cannot be copied`.
 
 La stessa regola vale per un `for` che percorre una lista: finché il `for` è in corso, la lista non si può modificare, nemmeno attraverso un altro nome:
 

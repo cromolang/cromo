@@ -1,0 +1,43 @@
+// What cannot be compared with `==` (D565).
+// expect-error: values of type Handler cannot be compared with '==': Handler.run has type func(i32)
+// expect-error: values of type Holder cannot be compared with '!=': Holder.items[i].run has type func(i32)
+// expect-error: '==' needs the equals() of Odd written 'bool equals(Odd other) const'
+// expect-error: '<' does not work on structs yet
+// expect-error: values of type Event cannot be compared with '==': Event.Call has type func(i32)
+struct Handler {
+    i32 id
+    func(i32) run
+}
+
+struct Holder {
+    list<Handler> items
+}
+
+struct Odd {
+    i32 value
+
+    bool equals(i32 other) const {
+        ret value == other
+    }
+}
+
+struct Plain {
+    i32 value
+}
+
+enum Event {
+    Quit
+    Call(func(i32) run)
+}
+
+void check(Handler a, Holder h, Odd o, Plain p, Event e) {
+    bool one = a == a
+    bool two = h != h
+    bool three = o == o
+    bool four = p < p
+    bool five = e == e
+}
+
+i32 main() {
+    ret 0
+}

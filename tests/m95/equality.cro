@@ -1,0 +1,109 @@
+// `==` and `!=` on structs, enums, arrays, lists and maps: equals(), generated field
+// by field or written (D565).
+// expect-output: true false true
+// expect-output: true false
+// expect-output: false true true
+// expect-output: true false true
+// expect-output: true false
+// expect-output: true true false
+// expect-exit: 0
+struct Point {
+    i32 x
+    i32 y
+}
+
+struct Person {
+    string name
+    list<Point> places
+    map<string, i64> scores
+    i32[3] codes
+    Point home
+    bool active
+}
+
+enum Shape {
+    Empty
+    Circle(f64 radius)
+    Rect(f64 width, f64 height, string label)
+}
+
+// Two amounts are equal when they are worth the same: equals() written by hand.
+struct Money {
+    i64 units
+    i64 cents
+
+    bool equals(Money other) const {
+        ret units * 100 + cents == other.units * 100 + other.cents
+    }
+}
+
+struct Wallet {
+    Money money
+    string owner
+}
+
+struct Pair<A, B> {
+    A first
+    B second
+}
+
+Person make(string name) {
+    Person p
+    p.name = name
+    Point place
+    place.x = 1
+    p.places.add(place)
+    p.scores["a"] = 5
+    p.codes[1] = 7
+    p.active = true
+    ret p
+}
+
+i32 main() {
+    Point a
+    a.x = 1
+    Point b
+    b.x = 1
+    Point c
+    c.y = 2
+    println("{} {} {}", a == b, a == c, a != c)
+
+    Person anna = make("Anna")
+    Person other = make("Anna")
+    bool same = anna == other
+    other.scores["a"] = 6
+    println("{} {}", same, anna == other)
+
+    Shape circle = Shape.Circle(1.5)
+    println("{} {} {}", circle == Shape.Empty, circle == Shape.Circle(1.5), Shape.Rect(1.0, 2.0, "r") != Shape.Rect(1.0, 2.0, "s"))
+
+    Money one
+    one.units = 1
+    Money hundred
+    hundred.cents = 100
+    Wallet first
+    first.money = one
+    Wallet second
+    second.money = hundred
+    println("{} {} {}", one == hundred, one != hundred, first == second)
+
+    list<list<i32>> rows = [[1, 2], [3]]
+    list<list<i32>> again = [[1, 2], [3]]
+    list<list<i32>> shorter = [[1, 2]]
+    println("{} {}", rows == again, rows == shorter)
+
+    Pair<i32, string> p
+    p.second = "x"
+    Pair<i32, string> q
+    q.second = "x"
+    i32[2] left
+    left[1] = 2
+    i32[2] right
+    right[1] = 2
+    map<i32, Point> points
+    map<i32, Point> empty
+    points[1] = a
+    println("{} {} {}", p == q, left == right, points == empty)
+
+    ret 0
+}

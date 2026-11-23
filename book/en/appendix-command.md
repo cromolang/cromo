@@ -22,7 +22,7 @@ The command always comes first: `cromo hello.cro` is an error that shows the rig
 | `cromo design [file.form]` | the designer of the windows: a window composed with the mouse, saved as a form and as a module of Cromo ([Windows and apps](gui.md#designing-a-window-cromo-design)) |
 | `cromo get address[@version] [name]` | adds a package to the `cromo.mod` of the folder, or raises its version ([Modules](modules.md#packages)) |
 | `cromo update [version]` | installs the latest version of Cromo, or the one named, and makes it the active one |
-| `cromo version` | prints the version of `cromo` and of LLVM, as `cromo 0.94.0 (LLVM 23.1.4)` |
+| `cromo version` | prints the version of `cromo` and of LLVM, as `cromo 0.95.0 (LLVM 23.1.4)` |
 | `cromo help` | prints the commands and the options |
 
 ### The program to compile
@@ -44,8 +44,25 @@ The command always comes first: `cromo hello.cro` is an error that shows the rig
 | `--release` | integers wrap around on overflow, instead of stopping the program, and there is no debug information | `build`, `run`, `test` |
 | `-O0`, `-O1`, `-O2`, `-O3` | the level of optimization; the default is `-O2` | `build`, `run`, `test` |
 | `--emit-ir` | prints the LLVM IR of the program instead of writing the executable | `build` |
+| `--quiet`, `-q` | no lines for the steps of the build, only the errors and the warnings | `build`, `run`, `test` |
 
 `cromo run` makes a program for the system on which `cromo` runs, and deletes it when it ends, so `-o`, `--target` and `--emit-ir` are options of `cromo build` only: `cromo run -o x hello.cro` is the error `-o is an option of cromo build`, and `cromo run --target linux` is `cromo run takes only --target android, which runs the app on the phone`. `cromo test` runs the tests on the system where `cromo` runs, with the same rule. The arguments after `--` are only for `cromo run`.
+
+### What cromo writes while it builds
+
+`cromo build`, `run` and `test` write a line for each step, with how far they are, and the time at the end:
+
+```
+[ 16%] Reading hello.cro and its modules
+[ 33%] Checking 2 files
+[ 50%] Generating the code
+[ 66%] Optimizing
+[ 83%] Writing the object
+[100%] Linking hello.exe
+Built hello.exe in 0.10 s
+```
+
+The lines go to the standard error, so the output of a program started by `cromo run` stays its own, and `cromo run x.cro > out.txt` saves only what the program prints. They have colors on a terminal, and none when the standard error goes to a file or the variable `NO_COLOR` of the environment is set. After an error the lines stop at the step that found it, and the errors follow. `--quiet`, or `-q`, writes none of them, only the errors and the warnings: for the scripts.
 
 ### Targets
 

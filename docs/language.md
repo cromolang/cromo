@@ -82,7 +82,8 @@ list<f64> grades        // empty list
 - Variables are mutable by default; `const` makes them immutable (D26).
 - `const` is deep: on a `const` `string` or `list` only `const` methods can be called, and it cannot be passed with `ref`.
 - A `const` variable can be moved with `move`: the value does not change, it only passes to another owner (D26).
-- **Constants of a module** (D414): outside the functions, every module can declare constants of numbers, `bool` and `char`, and fixed-size arrays of them, with literals: `const i64 limit = 1024`, `const u32[4] masks = [0xFF, 0xFF00, 0xFF0000, 0xFF000000]`. They never change, so they hold no state; only their module sees them.
+- **A local reference** (D562) gives a name to a place of the block, a variable, a field or an element: `ref Field f = tree.records[r].fields[i]` to modify it, `const ref Record rec = tree.records[r]` to read it without a copy. The type is the one of the place, exactly. The name lives until the end of its block, and is not a value that can be kept: it is not put in a field or returned as a reference. From its declaration to its last use the variable it starts from is lent, as the list of a `for`: it is modified only through the reference, so the place cannot go away under it.
+- **Constants of a module** (D414): outside the functions, every module can declare constants of numbers, `bool` and `char`, and fixed-size arrays of them, with literals: `const i64 limit = 1024`, `const u32[4] masks = [0xFF, 0xFF00, 0xFF0000, 0xFF000000]`. They never change, so they hold no state. With `public` the modules that import theirs see them, as `limit` or `geometry.limit`; without it only their module does (D564).
 
 ## 5. Functions and parameter passing (D22)
 
@@ -94,7 +95,7 @@ i32 add(i32 a, i32 b) {
 
 A function is exited with `ret` (D18). Every path of a non-`void` function must end with a `ret` of a value of the declared type, otherwise it is a compile error; in a `void` function the final `ret` is optional (D47).
 
-There are no optional types (D47). When a function may have no result, you use a conventional value, an exception, or a `bool` with the result in a `ref` parameter:
+When a function may have no result it returns an `Option<T>` of the core (D566), an enum with the cases `None` and `Some(T value)`: `ret Option<i64>.Some(i)`, `ret Option<i64>.None`. Who calls it reads it with a `switch`, or with its methods `has()`, `value()`, which panics when there is none, and `or(other)`. There is no `T?` in the language (D47). A conventional value, an exception, or a `bool` with the result in a `ref` parameter are still used where they say enough:
 
 ```cromo
 bool find(list<Student> students, string name, ref i64 pos) {
@@ -160,6 +161,8 @@ i32 main(list<string> args) {
 
 On Windows, `[[window]]` before `main` makes a program of the windows, which opens no console when it starts (D426): its standard output and error go nowhere unless they are redirected, and a panic or an exception that leaves `main` is shown in a message box, with the stack trace (D427). An icon next to the file with `main`, with its name (`app.ico` for `app.cro`) or `main.ico`, becomes the icon of the executable (D425). Neither needs options of `cromo build`, and on Linux neither changes anything.
 
+A read argument that overlaps what the same call modifies, as `names.add(names[0])`, is passed as a copy (D79, D563), with its `copy()` when it owns resources; a type that cannot be copied is an error there.
+
 ## 6. Structs, constructors and destructors (RAII)
 
 ```cromo
@@ -209,6 +212,22 @@ The shape of the struct (fields, constructor `Name(...)`, destructor `~Name()`, 
 - Without pointers, `const` is deep: a `const` method cannot modify even the strings and lists contained in the object.
 
 A constructor that fails, for example because the file does not open, throws an exception (D16). The fields already constructed are destroyed and the object does not exist.
+
+### Methods in more files (D567)
+
+A block `extend Name { ... }` adds methods to a struct or an enum of the same module, in the same file or in another one of the module. Inside it the methods are written as in the struct, with its fields and with `public`. The fields, the cases, the constructor, the destructor and the interfaces stay in the declaration; a generic struct is extended with its name alone. `extend` is a word of the language only there, before a name and a block.
+
+```cromo
+extend Account {
+    public void deposit(i64 amount) {
+        balance += amount
+    }
+}
+```
+
+### Equality (D565)
+
+`a == b` and `a != b` work on two values of a struct, an enum, an array, a list or a map: they call the method `bool equals(Name other) const` of the struct when it is written, and otherwise compare the fields one by one, the case of an enum and its data, the elements and their number. A function value and a value of an interface cannot be compared, and neither can what holds one without an `equals()` of its own: the error names the field. `<` and the others are for numbers and strings.
 
 ## 7. Moving and copying (D23, D424)
 

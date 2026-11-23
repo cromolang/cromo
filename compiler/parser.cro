@@ -86,7 +86,19 @@ struct Parser {
             skipToNextDeclaration()
             ret
         }
-        if (check(Kind.KwStruct) || check(Kind.KwEnum)) {
+        if (startsExtend()) {  // D567
+            if (isPublic || attributes.len() > 0) {
+                string message = "an extend block has no attributes and is not public: each of its methods says whether it is"
+                if (isPublic) {
+                    errorAt(at(0), message)
+                } else {
+                    diag.error(attributes[0].line, attributes[0].column, message)
+                }
+            }
+            if (!parseExtend()) {
+                skipToNextDeclaration()
+            }
+        } else if (check(Kind.KwStruct) || check(Kind.KwEnum)) {
             Record decl
             bool ok = false
             if (check(Kind.KwStruct)) {
@@ -111,11 +123,13 @@ struct Parser {
             decl.file = file
             tree.interfaces.add(move decl)
         } else if (check(Kind.KwConst) || startsModuleVariable()) {
-            if (isPublic || attributes.len() > 0) {
-                string message = "a module variable has no attributes and is not public: only its module sees it"
-                if (check(Kind.KwConst)) {
-                    message = "a constant of a module has no attributes and is not public: only its module sees it"
+            // D564: a constant can be public; a module variable is state, and never is.
+            if (check(Kind.KwConst)) {
+                if (attributes.len() > 0) {
+                    diag.error(attributes[0].line, attributes[0].column, "a constant of a module has no attributes")
                 }
+            } else if (isPublic || attributes.len() > 0) {
+                string message = "a module variable has no attributes and is not public: only its module sees it"
                 if (isPublic) {
                     errorAt(at(0), message)
                 } else {
@@ -127,9 +141,14 @@ struct Parser {
                 skipToNextDeclaration()
                 ret
             }
+            if (tree.stmts[declaration].isRef) {
+                diag.error(tree.stmts[declaration].line, tree.stmts[declaration].column,
+                    "a reference lives in a block: a module has none")
+            }
             Global global
             global.file = file
             global.isConst = tree.stmts[declaration].isConst
+            global.isPublic = isPublic && global.isConst
             global.type = tree.stmts[declaration].type
             global.name = tree.stmts[declaration].name.copy()
             global.line = tree.stmts[declaration].nameLine
@@ -922,6 +941,57 @@ struct Parser {
 
     // struct := 'struct' name '{' { member } '}'
     // member := field | constructor | destructor | method
+    // `extend` is a word of the language only here, before a name and a block (D567).
+    bool startsExtend() const {
+        ret check(Kind.Identifier) && tokens[at(0)].text == "extend" && kind(1) == Kind.Identifier && kind(2) == Kind.LBrace
+    }
+
+    // extend := 'extend' name '{' { method } '}'   (D567)
+    bool parseExtend() {
+        advance()    // 'extend'
+        Record decl  // its members are parsed as those of a struct
+        i64 name = advance()
+        decl.name = tokens[name].text.copy()
+        decl.line = tokens[name].line
+        decl.column = tokens[name].column
+        advance()  // '{'
+        skipNewlines()
+        for (!check(Kind.RBrace) && !check(Kind.EndOfFile)) {
+            if (!parseMember(ref decl)) {
+                skipToNextStatement()
+                skipNewlines()
+                continue
+            }
+            if (!match(Kind.Newline) && !check(Kind.RBrace)) {
+                errorAtCurrent("a newline after the member")
+                skipToNextStatement()
+            }
+            skipNewlines()
+        }
+        if (!expect(Kind.RBrace, "to close the extend block")) {
+            ret false
+        }
+        Extension result
+        result.file = file
+        result.name = decl.name.copy()
+        result.line = decl.line
+        result.column = decl.column
+        for (Field field in decl.fields) {
+            diag.error(field.line, field.column, "an extend block adds methods: the fields stay in the declaration of " + decl.name)
+        }
+        for (i32 member in decl.members) {
+            FunctionKind memberKind = tree.functions[member].kind
+            if (memberKind != FunctionKind.Method) {
+                diag.error(tree.functions[member].line, tree.functions[member].column, (memberKind == FunctionKind.Constructor ?
+                    "the constructor" : "the destructor") + " stays in the declaration of " + decl.name)
+                continue
+            }
+            result.members.add(member)
+        }
+        tree.extensions.add(move result)
+        ret true
+    }
+
     bool parseStruct(ref Record decl) {
         advance()  // 'struct'
         if (!check(Kind.Identifier)) {
@@ -1219,8 +1289,7 @@ struct Parser {
                 ret addStmt(stmtAt(StmtKind.Continue, advance()))
             }
             case KwRef {
-                errorAt(at(0), "a variable is not a reference: 'ref' is written on parameters and on captures")
-                ret -1
+                ret parseVarDecl()  // D562
             }
             default {
                 if (check(Kind.Identifier) && tokens[at(0)].text == "while" && kind(1) == Kind.LParen) {
@@ -1239,6 +1308,7 @@ struct Parser {
     i32 parseVarDecl() {
         Stmt node = stmtAt(StmtKind.VarDecl, at(0))
         node.isConst = match(Kind.KwConst)
+        node.isRef = match(Kind.KwRef)  // D562
         node.type = parseType(true)
         if (node.type < 0) {
             ret -1

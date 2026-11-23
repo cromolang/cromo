@@ -1,0 +1,9 @@
+// With --quiet cromo writes only the errors (D568): the warning of this program is
+// there, and no line of the steps before it.
+// cromo-flags: --quiet
+// expect-warning: quiet.cro:8:5: warning: unreachable code
+// expect-exit: 0
+i32 main() {
+    ret 0
+    ret 1
+}

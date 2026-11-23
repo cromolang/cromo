@@ -37,7 +37,7 @@ powershell -ExecutionPolicy Bypass -File build.ps1
 build\cromo.exe version
 ```
 
-The last command prints `cromo 0.94.0 (LLVM 23.1.4)`, with the version of the sources.
+The last command prints `cromo 0.95.0 (LLVM 23.1.4)`, with the version of the sources.
 
 `build.ps1` accepts:
 

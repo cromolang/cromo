@@ -1634,6 +1634,12 @@ private:
 
     void generateVarDecl(const VarDeclStmt& decl) {
         const Variable& variable = *decl.variable;
+        if (decl.isRef) {  // D562: the place it names, found once
+            std::string place = addressOf(*decl.init);
+            addresses_[variable.id] = place;
+            declareVariable(variable, place);
+            return;
+        }
         const std::string& address = addresses_[variable.id];
         Type type = variable.type;
         declareVariable(variable, address);

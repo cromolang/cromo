@@ -162,6 +162,7 @@ public struct Variable {
     public i32 captured = -1      // Captured: the variable outside the lambda
     public i32 blockThread = -1   // a thread or a task of its block (D215, D269): the lambda it runs
     public bool group             // a thread.Group (D273)
+    public bool reference         // `ref T x = place` or `const ref` (D562): of kind Element, the place where it is
 }
 
 // Format specification of a placeholder, as in std::format (D21, D38). A character
@@ -539,6 +540,16 @@ public struct Record {
     public i32 generatedCopy = -1    // made when `copy()` is used (D35)
 }
 
+// `extend Name { ... }` (D567): methods added to a struct or an enum of the same
+// module. The analysis gives them to their struct, with the names of the module.
+public struct Extension {
+    public i32 file
+    public string name
+    public i32 line
+    public i32 column
+    public list<i32> members
+}
+
 public struct Interface {
     public i32 file
     public string name
@@ -558,6 +569,7 @@ public struct Global {
     public i32 column
     public i32 init = -1
     public bool isConst
+    public bool isPublic  // a constant that the modules that import this one see (D564)
     // The analysis.
     public i32 resolved
     public i32 variable = -1  // of kind Module
@@ -590,6 +602,7 @@ public struct Tree {
     public list<Function> functions  // all of them, also the methods and the lambdas
     public list<i32> topFunctions    // the functions of the module, also those of C, in order
     public list<Record> records
+    public list<Extension> extensions
     public list<Interface> interfaces
     public list<Global> globals
     public list<FileInfo> files

@@ -1,0 +1,99 @@
+// A local reference names a place of its block: `ref` to modify it, `const ref`
+// to read it without a copy (D562).
+// expect-output: 7 7
+// expect-output: anna 3 30
+// expect-output: 5 12
+// expect-output: 2 9
+// expect-output: [1, 2, 99]
+// expect-output: 41 42
+// expect-output: 6
+// expect-exit: 0
+struct Field {
+    string name
+    i32 resolved
+}
+
+struct Record {
+    string name
+    list<Field> fields
+    i32[3] codes
+}
+
+struct Tree {
+    list<Record> records
+    map<string, i32> counts
+
+    void mark(i64 r, i64 f, i32 type) {
+        ref Field field = records[r].fields[f]
+        field.resolved = type
+        field.name += "!"
+    }
+
+    i64 total() const {
+        const ref list<Record> all = records
+        i64 sum = 0
+        for (i64 i = 0; i < all.len(); i++) {
+            const ref Record one = all[i]
+            sum += one.fields.len()
+        }
+        ret sum
+    }
+}
+
+void bump(ref i32 value) {
+    value++
+}
+
+i32 main() {
+    i32 number = 5
+    ref i32 alias = number
+    alias = 7
+    println("{} {}", alias, number + 0)
+    number = 8  // the reference is no longer used: the variable is free again
+
+    Tree tree
+    Record made
+    made.name = "anna"
+    Field first
+    first.name = "x"
+    made.fields.add(first)
+    tree.records.add(made)
+    tree.mark(0, 0, 30)
+    const ref Record record = tree.records[0]
+    const ref Field field = record.fields[0]
+    println("{} {} {}", record.name, field.name.len() + 1, field.resolved)
+
+    ref Record changed = tree.records[0]
+    ref Field inner = changed.fields[0]
+    inner.resolved = 5
+    changed.codes[1] = 12
+    println("{} {}", inner.resolved, changed.codes[1])
+
+    tree.counts["a"] = 1
+    ref i32 count = tree.counts["a"]
+    count++
+    bump(ref count)
+    i32 copy = count
+    count = 9
+    println("{} {}", copy - 1, tree.counts["a"])
+
+    list<i32> values = [1, 2, 3]
+    for (i64 i = 0; i < values.len(); i++) {
+        ref i32 value = values[i]
+        if (value == 3) {
+            value = 99
+        }
+    }
+    values.add(4)
+    values.remove(3)
+    println("{:?}", values)
+
+    i32[2] pair
+    ref i32 left = pair[0]
+    ref i32 right = pair[1]
+    left = 41
+    right = left + 1
+    println("{} {}", pair[0], pair[1])
+    println("{}", tree.total() + 5)
+    ret 0
+}

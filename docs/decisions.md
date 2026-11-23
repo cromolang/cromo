@@ -2606,6 +2606,53 @@ i32 total = sum.sum()
 ### D561. The instances of a generic in the compiler in Cromo: copies of the declaration
 *2026-11-23.* Chosen by the author. As the C++ does, an instance of a generic struct or function, as `list<Point>`, is a copy of its declaration added at the end of the tables of the tree (D418), with its own nodes, on which the analysis writes the types of that instance. The errors and their order are those of the C++, so each part of sema is still checked against it (D423). The other way was one body with a table of types for each instance: less memory, but another design than the C++, harder to compare.
 
+### D562. A local reference: `ref` and `const ref` in a block
+*2026-11-23.* Chosen by the author, after the analysis of the compiler was written in Cromo (M34), where a place as `tree.records[r].fields[i]` is written again at every use. It extends D22 and D25. A block can give a name to a place: `ref Field f = tree.records[r].fields[i]` to modify it, which needs a place that can be modified, and `const ref Record rec = tree.records[r]` to read it without a copy, as `T&` and `const T&` of C++. The place is a variable, a field or an element (D35), with the type written exactly. The name lives until the end of its block, and it is not a value: an assignment writes the place, `ret` and `move` take the value of the place, and a reference is not put in a field, so references still live only as long as what they name (D22), with no lifetimes to write. From its declaration to its last use in the block, the variable it starts from is lent, as the list of a `for` (D101): it can be read, and it is modified only through the reference, also with `const ref`, so the place cannot go away or change under the reference. After the last use the variable is free again, as with the borrows of Rust: Cromo has no block alone to end a reference earlier (D32), and a reference that lent until the end of its block would lend until the end of most functions. The other form was `ref` alone, read-only when its place is: one form less, but the code would not say whether it modifies.
+
+```cromo
+ref Field f = tree.records[r].fields[i]
+f.resolved = type
+const ref Record rec = tree.records[r]
+println("{}", rec.name)
+```
+
+### D563. A read argument that overlaps what the call modifies is copied
+*2026-11-23.* Chosen by the author. It extends D79 and follows D424. When a call modifies something and a read argument of the same call overlaps it, as `declare(tree.stmts[d].name)` in a method that modifies its object, the argument is passed as a copy, also when its type owns resources, with its `copy()`: it was an error that asked to write `.copy()`. A type that cannot be copied still is an error, and so are two arguments that the call can both modify. The copy is not written, as the others of D424; it is made only when the places overlap, or may overlap as two elements of a list whose indices are not constants.
+
+### D564. `public const`: the constants that the other modules see
+*2026-11-23.* Chosen by the author. It changes D414, where the constants were private to their module. A constant follows the visibility of the other declarations (D50): `public const i64 limit = 1024` is seen by the modules that import its module, as `limit` or as `geometry.limit` (D126); without `public` it stays private. A module variable (D394) is never public: it is state.
+
+### D565. `==` and `!=` on structs and enums: `equals()`, generated or written
+*2026-11-23.* Chosen by the author. As `copy()` (D35, D83): `a == b` on two values of a struct or of an enum calls its method `bool equals(Self other) const` when it is written, and otherwise the one the compiler generates, which compares the fields one by one, and for an enum the case and its data. It is generated when every field can be compared: numbers, `bool`, `string`, arrays, lists and maps of values that can be compared, and structs and enums that can. A function value and a value of an interface cannot be compared, and neither can what holds one without its own `equals()`: then `==` is an error that says which field. `!=` is the opposite. `<` and the others stay for numbers and strings. The other way asked every struct to declare an interface, as `= default` of C++20 and `derive` of Rust: one word more on each struct.
+
+### D566. `Option<T>`: a value, or none
+*2026-11-23.* Chosen by the author. It changes D47, which had no optionals. The core has the generic enum `Option<T>`, with the cases `Some(T value)` and `None`, as `Option` of Rust and `std::optional` of C++: a function that may have no result returns `Option<i32>`, and who calls it reads it with a `switch`, or with its methods: `has()`, `value()`, which panics when there is none, and `or(T other)`, the value or another one. It needs no new syntax, since the enums with data and their `switch` exist (D104, D107). The conventional values, as `-1` of `find()`, the exceptions and a `bool` with a `ref` parameter stay where the library uses them. The other form was `T?` with `none`, shorter, but a new type of the language with rules of its own. More values returned together, as in Go, and tuples were considered and left out: a struct with the names of its fields says more.
+
+```cromo
+Option<i64> indexOf(list<string> names, string wanted) {
+    for (i64 i = 0; i < names.len(); i++) {
+        if (names[i] == wanted) {
+            ret Option<i64>.Some(i)
+        }
+    }
+    ret Option<i64>.None
+}
+```
+
+### D567. `extend`: the methods of a struct in more files
+*2026-11-23.* Chosen by the author. A block `extend Name { ... }` adds methods to a struct or an enum of the same module, as `impl` of Rust and `extension` of Swift: in another file of the module (D202, D515) or in the same one. Inside it the methods are written as in the struct, with its fields visible and with `public`. The fields, the cases, the constructor, the destructor and the interfaces stay in the declaration, which alone says what the struct is; a generic struct is extended with its name alone, and its type parameters are those of the declaration. A struct of another module cannot be extended. The other form wrote each method outside with the name of the struct in front, as C++: no new word, but the name repeated on every method.
+
+```cromo
+extend Checker {
+    i32 checkCall(i32 expr) {
+        ret 0
+    }
+}
+```
+
+### D568. `cromo` says what it does while it builds
+*2026-11-23.* Chosen by the author. `cromo build`, `run` and `test` write a line for each step, as the `make` of CMake and Ninja: `[ 20%] Checking 14 files`, `[100%] Linking server.exe`, and at the end `Built server.exe in 0.84 s`. The lines go to the standard error, as those of Cargo, so the output of a program started by `cromo run` stays its own; they have colors on a terminal, and none when the output goes to a file or the variable `NO_COLOR` is set. `--quiet`, or `-q`, leaves only the errors, for the scripts. The other way kept `cromo` silent, with the steps only on request: the author wants to see them without asking.
+
 ---
 
 ## Proposed
@@ -3088,6 +3135,18 @@ A component keeps the distances from the edges of its parent, the content of the
 - The type of a string literal given to `print` is one of the types of the language, as in the C++, before it is a `string` of the library.
 - The moves are a module of their own, `compiler/moves.cro`, which takes the tree from the analysis and gives it back.
 - Not done: the value of a float literal, the bytes of the file of `embed`, and the place of a capture in the data of its lambda, which the generation of the code needs.
+
+### P91. The references, equality and the rest of M95 (D562-D567)
+- A reference is a variable of the kind of the element of a `for`, which is where its place is; the generated code finds the address of the place once, at the declaration. What is done through it is done to the place it names: its path is the path of the place, so a call that takes `ref alias` and `ref` the place itself is refused as two overlapping arguments, and a reference made through another one lends what the first names.
+- The last use is the last statement of the block of the reference that names it, also inside a loop, a branch or a lambda of that statement: a name is never hidden by another (D66), so the name alone tells. A reference never used ends at once.
+- A reference is not declared in the head of a `for`, and not outside the functions. An element of a string or of a vector of SIMD has no place of its own, and cannot be named.
+- `==` on a struct, an enum, an array, a list or a map without a written `equals()` calls a function that the compiler writes in Cromo for that type, as those of JSON and of `{:?}` (D251, D319), checked as an instance with the types of its parts: the fields joined by `&&`, a `switch` on the two cases of an enum, a loop on the elements. An enum without data and without `equals()` is still compared as its numbers (D112). In the check of a generic, `==` on a struct that mentions a type parameter is accepted and checked in each instance; on a `T` alone it still needs an interface.
+- The copy of D563 is made for every read argument that overlaps, or may overlap, something the call modifies: a place that could only be told apart when the program runs was a check then, and is a copy now when its type can be copied.
+- A public constant is found as the other public names: the own module first, then the imports, then the core (D131). A variable declared in a function still hides only the names of its own module, so a constant added to a module never breaks a program that imports it.
+- `Option<T>` has `None` first, so the default value of an option is none (D51).
+- `extend` is not a reserved word: `extend Name {` at the start of a declaration is a block, and elsewhere `extend` is a name as any other. Its methods are given to their struct with the names of the module, before anything else is checked.
+- The compiler in Cromo has the same six changes, and gives the same results as the C++ on every test (P89, P90).
+- Not done: `==` on a type parameter with a constraint, the references in the guide, and the grammars of the other editors.
 
 ## Open
 

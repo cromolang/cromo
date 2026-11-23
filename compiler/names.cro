@@ -93,6 +93,22 @@ public list<Scope> declareNames(ref Tree tree, ref Diagnostics diag) {
             scopes[at].globals[name] = i32(i)
         }
     }
+    // D567: the methods of the extend blocks go to their struct, of the same module.
+    for (i64 i = 0; i < tree.extensions.len(); i++) {
+        i32 at = scopeOf(tree, tree.extensions[i].file)
+        string name = tree.extensions[i].name
+        if (!scopes[at].structs.contains(name)) {
+            errorAt(ref diag, tree.extensions[i].file, tree.extensions[i].line, tree.extensions[i].column,
+                "there is no struct or enum '" + name + "' in this module to extend")
+            continue
+        }
+        i32 record = scopes[at].structs[name]
+        list<i32> members = tree.extensions[i].members
+        for (i32 member in members) {
+            tree.records[record].members.add(member)
+        }
+        tree.extensions[i].members.clear()
+    }
     ret scopes
 }
 

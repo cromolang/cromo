@@ -1,0 +1,7 @@
+// value() of an Option that has none is a panic (D566).
+// expect-stderr: value() of an Option that has none
+// expect-exit: 101
+i32 main() {
+    Option<i32> none
+    ret none.value()
+}

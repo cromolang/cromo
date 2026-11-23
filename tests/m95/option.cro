@@ -1,0 +1,61 @@
+// Option<T> of the core: a value, or none (D566).
+// expect-output: 1 true
+// expect-output: missing false
+// expect-output: 1 -1
+// expect-output: anna nobody
+// expect-output: false None Some(7)
+// expect-output: true false
+// expect-exit: 0
+Option<i64> indexOf(list<string> names, string wanted) {
+    for (i64 i = 0; i < names.len(); i++) {
+        if (names[i] == wanted) {
+            ret Option<i64>.Some(i)
+        }
+    }
+    ret Option<i64>.None
+}
+
+Option<string> first(list<string> names) {
+    Option<string> none
+    if (names.len() == 0) {
+        ret none
+    }
+    ret Option<string>.Some(names[0])
+}
+
+struct Settings {
+    Option<i32> port
+    string host
+}
+
+i32 main() {
+    list<string> names = ["anna", "luca"]
+    Option<i64> found = indexOf(names, "luca")
+    switch (found) {
+        case Some(i64 at) {
+            println("{} {}", at, found.has())
+        }
+        case None {
+            println("missing")
+        }
+    }
+    Option<i64> lost = indexOf(names, "ugo")
+    switch (lost) {
+        case Some(i64 at) {
+            println("{}", at)
+        }
+        case None {
+            println("missing {}", lost.has())
+        }
+    }
+    println("{} {}", found.value(), lost.or(-1))
+
+    list<string> empty
+    println("{} {}", first(names).or("nobody"), first(empty).or("nobody"))
+
+    Settings settings
+    println("{} {:?} {:?}", settings.port.has(), settings.port, Option<i32>.Some(7))
+    settings.port = Option<i32>.Some(80)
+    println("{} {}", settings.port == Option<i32>.Some(80), settings.port == Option<i32>.None)
+    ret 0
+}

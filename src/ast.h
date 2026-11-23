@@ -65,6 +65,7 @@ struct Variable {
     // A thread or a task of its block (D215, D269): the lambda it runs.
     const struct LambdaExpr* blockThread = nullptr;
     bool group = false;  // a thread.Group (D273)
+    bool reference = false;  // `ref T x = place` or `const ref` (D562): of kind Element, the place where it is
     std::string symbol;  // Module: its name in the IR, with the module in front (D394)
 };
 
@@ -368,10 +369,11 @@ struct VarDeclStmt : Stmt {
     VarDeclStmt(SourceLocation l) : Stmt(StmtKind::VarDecl, l) {}
 
     bool isConst = false;
+    bool isRef = false;  // `ref T x = place`: a name for a place of the block (D562)
     TypeName typeName;
     std::string name;
     SourceLocation nameLoc;
-    ExprPtr init;                  // null: default value (D31)
+    ExprPtr init;                  // null: default value (D31); the place of a reference
     Variable* variable = nullptr;  // set by sema
 };
 
@@ -732,12 +734,22 @@ struct GlobalDecl {
     SourceLocation loc;  // the name
     ExprPtr init;        // a literal, or null for the default value
     bool isConst = false;  // a constant of the module (D414)
+    bool isPublic = false;  // a constant that the modules that import this one see (D564)
     std::unique_ptr<Variable> variable;  // set by sema, of kind Module
+};
+
+// `extend Name { ... }` (D567): methods added to a struct or an enum of the same
+// module. Sema gives them to their struct, with the names of the module.
+struct ExtendDecl {
+    std::string name;
+    SourceLocation loc;  // the name
+    std::vector<FunctionDecl> members;
 };
 
 struct Module {
     std::vector<InterfaceDecl> interfaces;
     std::vector<StructDecl> structs;
+    std::vector<ExtendDecl> extensions;
     std::vector<FunctionDecl> functions;
     std::vector<GlobalDecl> globals;
     std::vector<ModuleFile> files;  // by SourceLocation::file
@@ -755,6 +767,7 @@ struct Module {
     void append(Module&& other) {
         for (InterfaceDecl& decl : other.interfaces) interfaces.push_back(std::move(decl));
         for (StructDecl& decl : other.structs) structs.push_back(std::move(decl));
+        for (ExtendDecl& decl : other.extensions) extensions.push_back(std::move(decl));
         for (FunctionDecl& function : other.functions) functions.push_back(std::move(function));
         for (GlobalDecl& global : other.globals) globals.push_back(std::move(global));
         if (files.size() < other.files.size()) files.resize(other.files.size());

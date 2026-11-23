@@ -123,7 +123,7 @@ Anche una `const` senza valore è un errore: `const i32 n` da sola non ha nulla 
 
 ### Costanti di un modulo
 
-Fuori dalle funzioni, un modulo può dichiarare anche delle costanti, come limiti e tabelle di numeri. Contengono numeri, `bool` e `char`, o array di dimensione fissa di questi. Il loro valore è un letterale, con `-` davanti a un numero negativo, e per un array una lista di letterali tra parentesi quadre, uno per ogni elemento. Le vede solo il loro modulo.
+Fuori dalle funzioni, un modulo può dichiarare anche delle costanti, come limiti e tabelle di numeri. Contengono numeri, `bool` e `char`, o array di dimensione fissa di questi. Il loro valore è un letterale, con `-` davanti a un numero negativo, e per un array una lista di letterali tra parentesi quadre, uno per ogni elemento. Le vede solo il loro modulo, a meno che siano `public` ([Moduli e progetti](modules.md)).
 
 ```cromo
 const i64 minute = 60

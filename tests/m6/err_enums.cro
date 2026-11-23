@@ -4,7 +4,6 @@
 // expect-error: case 'Rect' has 2 data, but 1 name was given
 // expect-error: the data 'radius' of Circle is f64: write f64 r
 // expect-error: 'r' is data of the case, read-only: write 'ref f64 r' in the case to modify it
-// expect-error: '==' works on the enums whose cases have no data: tell the case with 'switch'
 // expect-error: 'break' cannot be used in a 'switch': a branch ends by itself
 // expect-error: 'switch' needs a value
 // expect-error: 'Shape.Circle' has data: write Shape.Circle(...)

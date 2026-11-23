@@ -1,0 +1,19 @@
+// The methods of Account that move money, in a file of their own (D567).
+extend Account {
+    public void deposit(i64 amount) {
+        balance += amount
+        log("deposit")
+    }
+
+    public bool withdraw(i64 amount) {
+        if (amount > balance) {
+            ret false
+        }
+        balance -= amount
+        ret true
+    }
+
+    void log(string what) {
+        println("{} of {}", what, owner)
+    }
+}

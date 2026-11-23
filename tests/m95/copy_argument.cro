@@ -1,0 +1,54 @@
+// A read argument that overlaps what the call modifies is passed as a copy, also
+// when it owns resources (D563).
+// expect-output: 3 a a
+// expect-output: one one two
+// expect-output: Anna Anna
+// expect-output: 2 [1, 2] 1
+// expect-exit: 0
+struct Group {
+    list<string> names
+    string last
+
+    void add(string name) {
+        names.add(name)
+        last = name
+    }
+
+    void rename(string name) {
+        last = name + " " + name
+        names[0] = name
+    }
+}
+
+void both(ref list<string> items, string first) {
+    items.clear()
+    items.add(first)
+    items.add(first)
+    items.add("two")
+}
+
+void grow(ref list<list<i32>> rows, list<i32> row) {
+    rows.clear()
+    rows.add(row)
+}
+
+i32 main() {
+    list<string> letters = ["a", "b"]
+    letters.add(letters[0])
+    println("{} {} {}", letters.len(), letters[0], letters[2])
+
+    list<string> items = ["one"]
+    both(ref items, items[0])
+    println("{} {} {}", items[0], items[1], items[2])
+
+    Group group
+    group.add("Anna")
+    group.add(group.names[0])
+    println("{} {}", group.names[1], group.last)
+
+    list<list<i32>> rows = [[1, 2], [3]]
+    i64 at = 0
+    grow(ref rows, rows[at])
+    println("{} {:?} {}", rows[0].len(), rows[0], rows.len())
+    ret 0
+}

@@ -1,0 +1,17 @@
+// The errors of the public constants (D564).
+// expect-error: 'limit' is in both limits and sizes: write limits.limit or sizes.limit
+// expect-error: the module limits has no public constant 'hidden'
+// expect-error: the module limits has no public constant 'missing'
+// expect-error: unknown name 'hidden'
+// expect-error: 'half' is const and cannot be modified
+import modules.limits
+import modules.sizes
+
+i32 main() {
+    i64 a = limit
+    i64 b = limits.hidden
+    i64 c = limits.missing
+    i64 d = hidden
+    half = 1.0
+    ret 0
+}
