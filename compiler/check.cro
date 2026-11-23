@@ -17,16 +17,23 @@ import sema
 import std.fs
 
 i32 main(list<string> given) {
-    // `--emit-ir --release`: without the checks of overflow, as cromo build --release.
+    // `--emit-ir --release`: without the checks of overflow, as cromo build --release;
+    // `--target linux`, as its --target.
     list<string> args
     bool release = false
-    for (string arg in given) {
-        if (arg == "--release") {
+    string target = "windows"
+    for (i64 i = 0; i < given.len(); i++) {
+        if (given[i] == "--release") {
             release = true
+        } else if (given[i] == "--target" && i + 1 < given.len()) {
+            target = given[i + 1]
+            i++
         } else {
-            args.add(arg)
+            args.add(given[i])
         }
     }
+    bool linux = target != "windows"
+    bool arm64 = target == "linux-arm64" || target == "android-arm64"
     string option = args.len() == 3 ? args[1] : ""
     bool known = option == "--names" || option == "--declarations" || option == "--list" || option == "--list-types" ||
         option == "--emit-ir"
@@ -45,7 +52,7 @@ i32 main(list<string> given) {
         eprintln("cromo: cannot read {}", core)
         ret 2
     }
-    Program program = load(path, readSource(path), library)
+    Program program = load(path, readSource(path), library, linux, arm64)
     if (program.diag.hasErrors()) {
         ret 1
     }
@@ -64,6 +71,11 @@ i32 main(list<string> given) {
         Options options
         options.sourcePath = path
         options.release = release
+        options.windows = !linux
+        options.arm64 = arm64
+        options.triple = target == "linux" ? "x86_64-unknown-linux-gnu" : target == "linux-arm64" ? "aarch64-unknown-linux-gnu" :
+            target == "android-arm64" ? "aarch64-unknown-linux-android26" :
+            target == "android-x86_64" ? "x86_64-unknown-linux-android26" : "x86_64-pc-windows-msvc"
         options.library = library
         Generator generator = Generator(move options)
         print("{}", generator.run(checked))

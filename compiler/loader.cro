@@ -29,9 +29,11 @@ public string libraryFolder(string program) {
 }
 
 // The program of the file `path`, for Windows x64: its tree and its errors.
-public Program load(string path, string text, string library) {
+public Program load(string path, string text, string library, bool linux, bool arm64) {
     Loader loader
     loader.library = library
+    loader.linux = linux
+    loader.arm64 = arm64
     loader.program.diag = Diagnostics(path, text)
     string core = library + "\\core.cro"
     string coreText = readSource(core)
@@ -65,6 +67,8 @@ public string readSource(string path) {
 }
 
 struct Loader {
+    bool linux  // the system and the architecture of the program (D202, D408)
+    bool arm64
     Program program
     string library
     string root
@@ -78,7 +82,7 @@ struct Loader {
         // D202: the files of the system of the main file join it, as for a module.
         string main = program.diag.path(0)
         string base = parentOf(absolute(main)) + "\\" + stemOf(main)
-        for (string suffix in ownSuffixes()) {
+        for (string suffix in ownSuffixes(linux, arm64)) {
             if (fs.isFile(base + suffix + ".cro")) {
                 loadFile(base + suffix + ".cro", names[0].copy(), 0, 1, 1, 0)
             }
@@ -131,7 +135,7 @@ struct Loader {
         }
         if (isFile) {
             i32 index = loadFile(file, dotted, from, line, column, -1)
-            for (string suffix in ownSuffixes()) {
+            for (string suffix in ownSuffixes(linux, arm64)) {
                 string own = root + "\\" + relative + suffix + ".cro"
                 if (fs.isFile(own)) {
                     loadFile(own, dotted, from, line, column, index)
@@ -148,7 +152,7 @@ struct Loader {
             for (string entry in fs.listFolder(folder)) {
                 string stem = stemOf(entry)
                 if (fs.extension(entry) != ".cro" || !fs.isFile(folder + "\\" + entry) || (stem.len() > 5 && stem.endsWith("_test")) ||
-                    withoutSuffix(stem).other) {
+                    withoutSuffix(stem, linux, arm64).other) {
                     continue
                 }
                 entries.add(entry)
@@ -217,7 +221,7 @@ struct Loader {
             ret files
         }
         i32 first = loadFile(path, dotted, from, line, column, -1)
-        for (string suffix in ownSuffixes()) {
+        for (string suffix in ownSuffixes(linux, arm64)) {
             string own = library + "\\" + base + suffix + ".cro"
             if (fs.isFile(own)) {
                 loadFile(own, dotted, from, line, column, first)
@@ -234,7 +238,7 @@ struct Loader {
             if (fs.extension(entry) != ".cro") {
                 continue
             }
-            Suffixed name = withoutSuffix(stemOf(entry))
+            Suffixed name = withoutSuffix(stemOf(entry), linux, arm64)
             string module = "std." + name.name
             if (name.own || name.other || module == "std.winsock" || module == "std.runtime") {
                 continue
@@ -266,9 +270,13 @@ struct Loader {
     }
 }
 
-// The suffixes of the files that join a module for Windows x64 (D202, D408).
-list<string> ownSuffixes() {
-    ret ["_windows", "_x86_64", "_windows_x86_64"]
+// The suffixes of the files that join a module for a system and an architecture,
+// in the order they are read (D202, D408). Android has the kernel of Linux: its
+// programs use the files of the library for Linux (P43).
+list<string> ownSuffixes(bool linux, bool arm64) {
+    string system = linux ? "_linux" : "_windows"
+    string arch = arm64 ? "_arm64" : "_x86_64"
+    ret [system, arch, system + arch]
 }
 
 struct Suffixed {
@@ -277,7 +285,7 @@ struct Suffixed {
     bool other  // of another system or architecture: left out
 }
 
-Suffixed withoutSuffix(string stem) {
+Suffixed withoutSuffix(string stem, bool linux, bool arm64) {
     Suffixed result
     result.name = stem
     bool mine = true
@@ -285,7 +293,7 @@ Suffixed withoutSuffix(string stem) {
     for (string arch in ["_x86_64", "_arm64"]) {
         if (result.name.len() > arch.len() && result.name.endsWith(arch)) {
             result.name = result.name.slice(0, result.name.len() - arch.len())
-            mine = arch == "_x86_64"
+            mine = arch == (arm64 ? "_arm64" : "_x86_64")
             found = true
             break
         }
@@ -293,7 +301,7 @@ Suffixed withoutSuffix(string stem) {
     for (string system in ["_windows", "_linux"]) {
         if (result.name.len() > system.len() && result.name.endsWith(system)) {
             result.name = result.name.slice(0, result.name.len() - system.len())
-            mine = mine && system == "_windows"
+            mine = mine && system == (linux ? "_linux" : "_windows")
             found = true
             break
         }
