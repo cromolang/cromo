@@ -466,19 +466,19 @@ cromo @VERSION@ (LLVM 23.1.4)</pre>
           <h3>Run time</h3>
           <p class="note">Geometric mean, relative to g++ -O2. Lower is faster.</p>
           <div class="bars">
-            <div class="bar cromo"><span>cromo 0.72</span><i style="width:78%"></i><b>0.88</b></div>
-            <div class="bar"><span>clang++ 18</span><i style="width:85%"></i><b>0.95</b></div>
-            <div class="bar"><span>g++ 14</span><i style="width:89%"></i><b>1.00</b></div>
-            <div class="bar"><span>rustc 1.96</span><i style="width:89%"></i><b>1.00</b></div>
-            <div class="bar"><span>go 1.22</span><i style="width:100%"></i><b>1.12</b></div>
+            <div class="bar cromo"><span>cromo</span><i style="width:78%"></i><b>0.90</b></div>
+            <div class="bar"><span>clang++ 18</span><i style="width:82%"></i><b>0.94</b></div>
+            <div class="bar"><span>rustc 1.96</span><i style="width:85%"></i><b>0.98</b></div>
+            <div class="bar"><span>g++ 14</span><i style="width:87%"></i><b>1.00</b></div>
+            <div class="bar"><span>go 1.22</span><i style="width:100%"></i><b>1.15</b></div>
           </div>
           <h3>Compile time</h3>
           <p class="note">Geometric mean, relative to g++ -O2.</p>
           <div class="bars">
             <div class="bar"><span>go 1.22</span><i style="width:37%"></i><b>0.37</b></div>
-            <div class="bar cromo"><span>cromo 0.72</span><i style="width:44%"></i><b>0.44</b></div>
-            <div class="bar"><span>rustc 1.96</span><i style="width:47%"></i><b>0.47</b></div>
-            <div class="bar"><span>clang++ 18</span><i style="width:87%"></i><b>0.87</b></div>
+            <div class="bar cromo"><span>cromo</span><i style="width:44%"></i><b>0.44</b></div>
+            <div class="bar"><span>rustc 1.96</span><i style="width:46%"></i><b>0.46</b></div>
+            <div class="bar"><span>clang++ 18</span><i style="width:85%"></i><b>0.85</b></div>
             <div class="bar"><span>g++ 14</span><i style="width:100%"></i><b>1.00</b></div>
           </div>
         </div>
@@ -487,27 +487,27 @@ cromo @VERSION@ (LLVM 23.1.4)</pre>
           <p class="note">The median of 5 runs; the fastest of each row is green. The means are of the eleven programs that every language has: <code>http</code> and <code>tasks</code> are against Go alone.</p>
           <div class="table-wrap">
             <table class="times">
-              <thead><tr><th>benchmark</th><th class="cromo">cromo 0.72</th><th>g++ 14</th><th>clang++ 18</th><th>go 1.22</th><th>rustc 1.96</th></tr></thead>
+              <thead><tr><th>benchmark</th><th class="cromo">cromo</th><th>g++ 14</th><th>clang++ 18</th><th>go 1.22</th><th>rustc 1.96</th></tr></thead>
               <tbody>
-                <tr><td>binarytrees</td><td class="cromo">1113</td><td class="best">1067</td><td>1179</td><td>1518</td><td>1822</td></tr>
-                <tr><td>bits</td><td class="cromo best">460</td><td>549</td><td>519</td><td>757</td><td>527</td></tr>
-                <tr><td>collatz</td><td class="cromo best">542</td><td>771</td><td>544</td><td>886</td><td>543</td></tr>
-                <tr><td>fib</td><td class="cromo">532</td><td class="best">389</td><td>568</td><td>1154</td><td>648</td></tr>
-                <tr><td>http</td><td class="cromo best">1554</td><td>–</td><td>–</td><td>2286</td><td>–</td></tr>
-                <tr><td>mandelbrot</td><td class="cromo">876</td><td>851</td><td class="best">846</td><td>865</td><td>879</td></tr>
-                <tr><td>shapes</td><td class="cromo">517</td><td class="best">504</td><td>515</td><td>794</td><td>508</td></tr>
-                <tr><td>sort</td><td class="cromo">545</td><td>617</td><td>634</td><td>652</td><td class="best">543</td></tr>
-                <tr><td>spectralnorm</td><td class="cromo">544</td><td class="best">521</td><td>531</td><td>549</td><td>540</td></tr>
-                <tr><td>strings</td><td class="cromo best">355</td><td>481</td><td>469</td><td>712</td><td>505</td></tr>
-                <tr><td>tasks</td><td class="cromo">476</td><td>–</td><td>–</td><td class="best">328</td><td>–</td></tr>
-                <tr><td>threads</td><td class="cromo">116</td><td>119</td><td class="best">114</td><td>119</td><td>121</td></tr>
-                <tr><td>wordcount</td><td class="cromo">736</td><td>1723</td><td>921</td><td class="best">354</td><td>900</td></tr>
+                <tr><td>binarytrees</td><td class="cromo">954</td><td>899</td><td class="best">880</td><td>1378</td><td>1520</td></tr>
+                <tr><td>bits</td><td class="cromo best">416</td><td>491</td><td>468</td><td>679</td><td>466</td></tr>
+                <tr><td>collatz</td><td class="cromo best">492</td><td>701</td><td>495</td><td>789</td><td>495</td></tr>
+                <tr><td>fib</td><td class="cromo">564</td><td class="best">344</td><td>478</td><td>1065</td><td>563</td></tr>
+                <tr><td>http</td><td class="cromo best">661</td><td>–</td><td>–</td><td>1875</td><td>–</td></tr>
+                <tr><td>mandelbrot</td><td class="cromo">770</td><td>780</td><td class="best">767</td><td>778</td><td>793</td></tr>
+                <tr><td>shapes</td><td class="cromo">454</td><td class="best">445</td><td>463</td><td>714</td><td>463</td></tr>
+                <tr><td>sort</td><td class="cromo">496</td><td>539</td><td>549</td><td>573</td><td class="best">452</td></tr>
+                <tr><td>spectralnorm</td><td class="cromo">487</td><td class="best">469</td><td>484</td><td>485</td><td>485</td></tr>
+                <tr><td>strings</td><td class="cromo best">319</td><td>426</td><td>419</td><td>634</td><td>445</td></tr>
+                <tr><td>tasks</td><td class="cromo">490</td><td>–</td><td>–</td><td class="best">301</td><td>–</td></tr>
+                <tr><td>threads</td><td class="cromo">109</td><td>107</td><td class="best">103</td><td>108</td><td>112</td></tr>
+                <tr><td>wordcount</td><td class="cromo">503</td><td>1200</td><td>616</td><td class="best">290</td><td>492</td></tr>
               </tbody>
             </table>
           </div>
         </div>
       </div>
-      <p class="bench-foot">AMD Ryzen 9 5950X, Ubuntu 20.04 in WSL 2; <code>cromo build --release --target linux</code>, <code>g++ -O2</code>, <code>clang++ -O2</code>, <code>go build</code>, <code>rustc -C opt-level=3</code>. Each program prints a checksum, and all the versions must print the same. The sources and the script are in <code>bench/</code>.</p>
+      <p class="bench-foot">Measured on 23 November 2026 with <code>cromo</code> built from its sources of that day, after 0.95.0: its heap for Linux has a cache for each thread, which halves the time of <code>http</code>. AMD Ryzen 9 5950X, Ubuntu 20.04 in WSL 2; <code>cromo build --release --target linux</code>, <code>g++ -O2</code>, <code>clang++ -O2</code>, <code>go build</code>, <code>rustc -C opt-level=3</code>. Each program prints a checksum, and all the versions must print the same. The sources and the script are in <code>bench/</code>.</p>
     </div>
   </section>
 

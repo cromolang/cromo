@@ -2,6 +2,7 @@
 // whose ids leave holes, every handle still reaches its own component.
 // expect-output: 3 windows, 600 labels, all found
 // expect-output: w1: 1, w2: 2, w3: 3
+// target: windows linux-x86_64
 import std.gui
 
 i32 main() {
