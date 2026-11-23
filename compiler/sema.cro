@@ -970,6 +970,19 @@ public struct Checker {
     // A written type, or -1 after an error. `i32[3][4]` (D196): three arrays of
     // four i32, so that `a[i][j]` has i < 3 and j < 4.
     i32 resolveType(i32 node, i32 file) {
+        i32 type = resolveArrayType(node, file)
+        if (type >= 0) {
+            // The language server shows what it became (D171): in a generic, the first
+            // struct or interface that it names, among its definition and its instances.
+            i32 had = types.baseElement(tree.types[node].resolved)
+            if (!types.isStruct(had) && !types.isInterface(had)) {
+                tree.types[node].resolved = type
+            }
+        }
+        ret type
+    }
+
+    i32 resolveArrayType(i32 node, i32 file) {
         i32 type = resolveNamedType(node, file)
         if (type < 0 || tree.types[node].dimensions.len() == 0) {
             ret type

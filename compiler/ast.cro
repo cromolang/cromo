@@ -15,6 +15,7 @@ public struct TypeNode {
     public bool isFunction
     public list<ParamMode> modes  // of the parameters of a function type
     public i32 result = -1        // of a function type
+    public i32 resolved           // by the analysis: what it became, for the language server (D171)
 }
 
 public struct TypeParam {

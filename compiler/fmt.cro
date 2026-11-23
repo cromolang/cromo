@@ -148,3 +148,15 @@ string normal(string path) {
     }
     ret result
 }
+
+// The text of a source formatted, for the editor; false when it has errors, which are not printed.
+public bool formattedText(string path, string text, ref string out) {
+    Diagnostics quiet = Diagnostics(path, text)
+    quiet.silent = true
+    Formatted formatted = formatSource(path, text, ref quiet)
+    if (!formatted.ok) {
+        ret false
+    }
+    out = formatted.out
+    ret true
+}

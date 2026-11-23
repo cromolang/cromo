@@ -7,8 +7,19 @@ struct Source {
     string text  // without the BOM
 }
 
+// An error or a warning kept for the editor (D175).
+public struct Message {
+    public i32 file
+    public i32 line
+    public i32 column
+    public bool warning
+    public string text
+}
+
 public struct Diagnostics {
-    public bool silent     // the errors are counted, not printed: cromo fmt checks its result so
+    public bool silent   // the errors are counted, not printed: cromo fmt checks its result so
+    public bool collect  // the errors are kept in `messages`, not printed: the language server
+    public list<Message> messages
     public i32 current     // the file of the lexer and of the parser
     public bool muted      // nothing is reported or counted: the analysis checks an expression only to learn its type
     public string context  // added to every message, as the generic being instantiated
@@ -54,9 +65,14 @@ public struct Diagnostics {
             ret
         }
         count++
-        if (!silent) {
-            eprint("{}: error: {}\n", files[0].path, message + context)
+        if (silent) {
+            ret
         }
+        if (collect) {  // about the whole file: at its start
+            keep(0, 1, 1, false, message + context)
+            ret
+        }
+        eprint("{}: error: {}\n", files[0].path, message + context)
     }
 
     public void error(i32 line, i32 column, string message) {
@@ -81,6 +97,10 @@ public struct Diagnostics {
         if (silent) {
             ret
         }
+        if (collect) {
+            keep(file, line, column, kind == "warning", message)
+            ret
+        }
         eprint("{}:{}:{}: {}: {}\n", files[file].path, line, column, kind, message)
         string source = lineAt(file, line)
         if (source.len() == 0) {
@@ -98,6 +118,16 @@ public struct Diagnostics {
             at++
         }
         eprint("    {}\n{}^\n", source, mark)
+    }
+
+    void keep(i32 file, i32 line, i32 column, bool warning, string text) {
+        Message message
+        message.file = file
+        message.line = line
+        message.column = column
+        message.warning = warning
+        message.text = text
+        messages.add(move message)
     }
 
     // The line `line`, from 1, without its end.

@@ -1,0 +1,407 @@
+// The documentation comments of the sources (D473-D475), as src/docs.cpp: the `//`
+// lines right above a declaration, the comment at the end of the line of a field or
+// of a case, and the comment at the beginning of the file for its module; their
+// Markdown for the editor; and the documentation of what the compiler has built in.
+import diagnostics
+import lexer
+import types
+
+// What a line of a source has.
+struct DocLine {
+    string comment  // the text after `//`, empty when there is none
+    i32 column      // of the comment
+    bool hasComment
+    bool code       // a token that is not a comment starts on it
+    bool attribute  // it starts with `[[`
+    bool isImport   // it starts with `import`
+}
+
+// The text of a comment `// text`, without `//` and the space after it.
+string commentText(string comment) {
+    string text = comment.slice(2, comment.len())
+    ret text.startsWith(" ") ? text.slice(1, text.len()) : text
+}
+
+// A letter, a digit or `_`; a byte of UTF-8 counts as a letter. A quote next to
+// one of them is an apostrophe, not the start or the end of code (D474).
+bool isWordChar(u8 c) {
+    ret (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c >= 0x80
+}
+
+string trimmed(string text) {
+    i64 begin = 0
+    for (begin < text.len() && (text[begin] == ' ' || text[begin] == '\t')) {
+        begin++
+    }
+    i64 end = text.len()
+    for (end > begin && (text[end - 1] == ' ' || text[end - 1] == '\t')) {
+        end--
+    }
+    ret text.slice(begin, end)
+}
+
+// A line of text: 'code' becomes a span of code, `<` is escaped (P51).
+string inlineMarkdown(string line) {
+    list<u8> out
+    for (i64 i = 0; i < line.len(); i++) {
+        u8 c = line[i]
+        if (c == '\'' && (i == 0 || !isWordChar(line[i - 1]))) {
+            i64 close = -1
+            for (i64 j = i + 2; j < line.len() && close < 0; j++) {
+                if (line[j] == '\'' && (j + 1 == line.len() || !isWordChar(line[j + 1]))) {
+                    close = j
+                }
+            }
+            if (close >= 0) {
+                string code = line.slice(i + 1, close)
+                string span = code.find("`") < 0 ? "`" + code + "`" : "`` " + code + " ``"
+                for (u8 b in span.bytes()) {
+                    out.add(b)
+                }
+                i = close
+                continue
+            }
+        }
+        if (c == '<') {
+            out.add('\\')
+        }
+        out.add(c)
+    }
+    ret string(out)
+}
+
+// The documentation comments of a source file (D473).
+public struct DocComments {
+    map<i32, DocLine> lines
+    i32 first = -1  // the first line that has something
+
+    public DocComments(string path, string text) {
+        Diagnostics quiet = Diagnostics(path, text)
+        quiet.silent = true
+        list<Token> tokens = tokenize(text, ref quiet, true)
+        for (i64 i = 0; i < tokens.len(); i++) {
+            if (tokens[i].kind == Kind.Newline || tokens[i].kind == Kind.EndOfFile) {
+                continue
+            }
+            i32 number = tokens[i].line
+            if (first < 0 || number < first) {
+                first = number
+            }
+            DocLine line
+            if (lines.contains(number)) {
+                line = lines[number]
+            }
+            if (tokens[i].kind == Kind.Comment && tokens[i].text.startsWith("//")) {
+                line.hasComment = true
+                line.comment = commentText(tokens[i].text)
+                line.column = tokens[i].column
+            } else {
+                if (!line.code) {  // the first token of the line; a comment /* */ counts as code
+                    line.attribute = tokens[i].kind == Kind.LBracket && i + 1 < tokens.len() &&
+                        tokens[i + 1].kind == Kind.LBracket && tokens[i + 1].line == number
+                    line.isImport = tokens[i].kind == Kind.KwImport
+                }
+                line.code = true
+            }
+            lines[number] = line
+        }
+    }
+
+    bool aloneComment(i32 number) const {
+        ret lines.contains(number) && lines[number].hasComment && !lines[number].code
+    }
+
+    // The lines above the declaration on `line`, without `//`; with `trailing`
+    // also the comment at the end of that line, after them.
+    public list<string> of(i32 number, bool trailing) const {
+        list<string> out
+        i32 bottom = number - 1
+        for (lines.contains(bottom) && lines[bottom].attribute && !lines[bottom].hasComment) {  // [[test]]
+            bottom--
+        }
+        i32 top = bottom + 1
+        for (aloneComment(top - 1)) {
+            top--
+        }
+        // P51: the lines that go on with the comment at the end of the line above, in
+        // its column (D168), belong to that one.
+        if (lines.contains(top - 1) && lines[top - 1].hasComment && lines[top - 1].code) {
+            i32 column = lines[top - 1].column
+            for (top <= bottom && lines[top].column == column) {
+                top++
+            }
+        }
+        for (i32 i = top; i <= bottom; i++) {
+            out.add(lines[i].comment)
+        }
+        if (trailing && lines.contains(number) && lines[number].hasComment && lines[number].code) {
+            if (out.len() > 0) {
+                out.add("")
+            }
+            out.add(lines[number].comment)
+            i32 column = lines[number].column
+            for (i32 next = number + 1; aloneComment(next) && lines[next].column == column; next++) {
+                out.add(lines[next].comment)
+            }
+        }
+        ret out
+    }
+
+    // The comment at the beginning of the file, unless a declaration follows it.
+    public list<string> module() const {
+        list<string> out
+        if (first < 0) {
+            ret out
+        }
+        i32 number = first
+        for (aloneComment(number)) {
+            out.add(lines[number].comment)
+            number++
+        }
+        if (lines.contains(number) && lines[number].code && !lines[number].isImport) {  // the documentation of a declaration
+            list<string> none
+            ret none
+        }
+        ret out
+    }
+}
+
+bool isDigit(u8 c) {
+    ret c >= '0' && c <= '9'
+}
+
+// The end of a list of decisions that starts at `at`, as " (D504)" or
+// " (D37, D98, P13)" or "(D365-D374)", or -1.
+i64 decisionsEnd(string line, i64 at) {
+    i64 i = at
+    if (i < line.len() && line[i] == ' ') {
+        i++
+    }
+    if (i >= line.len() || line[i] != '(') {
+        ret -1
+    }
+    i++
+    i64 items = 0
+    for (true) {
+        if (i >= line.len() || (line[i] != 'D' && line[i] != 'P')) {
+            break
+        }
+        i64 k = i + 1
+        if (k >= line.len() || !isDigit(line[k])) {
+            break
+        }
+        for (k < line.len() && isDigit(line[k])) {
+            k++
+        }
+        if (k < line.len() && line[k] >= 'a' && line[k] <= 'z') {
+            // A letter after the number, unless what follows needs it elsewhere.
+            k++
+        }
+        if (k < line.len() && line[k] == '-') {
+            i64 m = k + 1
+            if (m < line.len() && (line[m] == 'D' || line[m] == 'P')) {
+                m++
+            }
+            if (m < line.len() && isDigit(line[m])) {
+                for (m < line.len() && isDigit(line[m])) {
+                    m++
+                }
+                k = m
+            }
+        }
+        if (k < line.len() && line[k] == ',') {
+            k++
+            if (k < line.len() && line[k] == ' ') {
+                k++
+            }
+        }
+        i = k
+        items++
+    }
+    if (items == 0 || i >= line.len() || line[i] != ')') {
+        ret -1
+    }
+    ret i + 1
+}
+
+// D520: the decisions that a comment cites, as " (D504)" or " (D37, D98, P13)", are
+// for who works on Cromo, not for the documentation that the editor shows.
+string withoutDecisions(string line) {
+    if (line.find("(") < 0) {
+        ret line
+    }
+    string out
+    i64 start = 0
+    i64 i = 0
+    for (i < line.len()) {
+        i64 end = line[i] == ' ' || line[i] == '(' ? decisionsEnd(line, i) : -1
+        if (end < 0) {
+            i++
+            continue
+        }
+        out += line.slice(start, i)
+        start = end
+        i = end
+    }
+    ret out + line.slice(start, line.len())
+}
+
+// The documentation as Markdown for the editor (D474): 'code' becomes a span of
+// code and the lines ''' a block of Cromo; `<` is escaped out of them.
+public string markdownOf(list<string> lines) {
+    string out
+    bool block = false
+    for (string line in lines) {
+        if (trimmed(line) == "'''") {
+            out += block ? "```\n" : "```cromo\n"
+            block = !block
+        } else if (block) {
+            out += line + "\n"
+        } else {
+            out += inlineMarkdown(withoutDecisions(line)) + "\n"
+        }
+    }
+    if (block) {
+        out += "```\n"
+    }
+    i64 end = out.len()
+    for (end > 0 && (out[end - 1] == '\n' || out[end - 1] == ' ')) {
+        end--
+    }
+    ret out.slice(0, end)
+}
+
+// The signature and the documentation of a built-in function, as `println`, or of
+// a built-in type, as `i64` (D475).
+public struct BuiltinDoc {
+    public string name
+    public string signature  // empty for a type
+    public string text       // Markdown with the conventions of D474
+}
+
+BuiltinDoc builtin(string name, string signature, string text) {
+    BuiltinDoc doc
+    doc.name = name
+    doc.signature = signature
+    doc.text = text
+    ret doc
+}
+
+// Every function and type that the compiler has built in, in their order, without
+// the vectors (D519).
+public list<BuiltinDoc> builtinDocs() {
+    list<BuiltinDoc> docs
+    docs.add(builtin("print", "void print(string format, ...)",
+        "Writes 'format' on the standard output, with the arguments in place of its placeholders, and no newline.\n" +
+        "The format is a string literal, which the compiler checks against the arguments, as 'std::format' of C++:\n" +
+        "\n" +
+        "- '{}' a value as it is; a struct or an enum with 'string text() const' as its text\n" +
+        "- '{0}' the argument at that position, from 0\n" +
+        "- '{:>8}', '{:<8}', '{:^8}' the value in 8 characters, on the right, on the left or at the center\n" +
+        "- '{:.2f}' a number with 2 decimals; '{:x}', '{:b}', '{:o}' an integer in hexadecimal, binary or octal\n" +
+        "- '{:?}' the form for debugging of any value, as 'Point { x: 1, y: 2 }' or a string between quotes\n" +
+        "- '{{' and '}}' the braces themselves"))
+    docs.add(builtin("println", "void println(string format, ...)",
+        "Writes 'format' on the standard output as 'print' does, and then a newline.\n" +
+        "\n" +
+        "'''\n" +
+        "println(\"Hello {}, you are {} years old\", name, age)\n" +
+        "println(\"average: {:.2f}\", average)\n" +
+        "'''"))
+    docs.add(builtin("eprint", "void eprint(string format, ...)",
+        "Writes 'format' on the standard error as 'print' does, without a newline."))
+    docs.add(builtin("eprintln", "void eprintln(string format, ...)",
+        "Writes 'format' on the standard error as 'println' does, with a newline: for errors and messages that must not mix with the output of the program."))
+    docs.add(builtin("format", "string format(string format, ...)",
+        "The text that 'print' would write, with the same placeholders, in a new string.\n" +
+        "\n" +
+        "'''\n" +
+        "string s = format(\"{} + {} = {}\", 2, 3, 5)   // \"2 + 3 = 5\"\n" +
+        "'''"))
+    docs.add(builtin("panic", "void panic(string reason)",
+        "Stops the program on purpose, as an index out of range does: it writes 'panic:' with the reason, the place and the calls that led there on the standard error, and ends with the exit code 101. It is for the errors of the program, and cannot be caught; for an error that the caller can handle, throw an exception."))
+    docs.add(builtin("assert", "void assert(bool condition)",
+        "Stops the program with a panic when 'condition' is false. The panic writes the condition as it is written and, for a comparison of numbers, the values of its sides: 'assertion failed: total == 7 (total is 6)'. It works also with '--release', and the tests use it to check their results."))
+    docs.add(builtin("wrapAdd", "T wrapAdd(T a, T b)",
+        "The sum of two integers of the same type, keeping the low bits when it goes out of the range, without the check of overflow, also in debug: for hashes, checksums and random numbers."))
+    docs.add(builtin("wrapSub", "T wrapSub(T a, T b)",
+        "The difference of two integers of the same type, keeping the low bits when it goes out of the range, without the check of overflow, also in debug."))
+    docs.add(builtin("wrapMul", "T wrapMul(T a, T b)",
+        "The product of two integers of the same type, keeping the low bits when it goes out of the range, without the check of overflow, also in debug: for hashes, checksums and random numbers."))
+    docs.add(builtin("countOnes", "i32 countOnes(T x)",
+        "The bits at 1 of an integer, of any type: 'countOnes(u8(0b1011))' is 3. It is one instruction of the processor, for the boards of bits and the sets of bits."))
+    docs.add(builtin("trailingZeros", "i32 trailingZeros(T x)",
+        "The bits at 0 under the lowest bit at 1 of an integer: the index of that bit, from 0. 'trailingZeros(u32(8))' is 3, and for 0 it is the bits of the type, 64 for an i64."))
+    docs.add(builtin("leadingZeros", "i32 leadingZeros(T x)",
+        "The bits at 0 over the highest bit at 1 of an integer: 'leadingZeros(u32(1))' is 31, and for 0 it is the bits of the type."))
+    docs.add(builtin("rotateLeft", "T rotateLeft(T x, n)",
+        "The bits of an integer turned to the left by n: those that go out on the left come in on the right. n is an integer of any type, taken modulo the bits of the type, so a negative n turns to the right."))
+    docs.add(builtin("rotateRight", "T rotateRight(T x, n)",
+        "The bits of an integer turned to the right by n: those that go out on the right come in on the left. n is an integer of any type, taken modulo the bits of the type."))
+    docs.add(builtin("fma", "T fma(T a, T b, T c)",
+        "a * b + c with one rounding at the end, where the product and the sum by themselves round twice: for three f64 or three f32, or three vectors of them as f32x8. It is one instruction of the processor with '--cpu x86-64-v3' and on ARM64, and a slower function with the same result elsewhere."))
+    docs.add(builtin("embed", "list<u8> embed(string path)",
+        "The bytes of a file that the compiler reads and puts in the program: images and data that the program carries with it, also in the APK of Android. 'path' is a string literal, from the folder of the source file that writes it; a file that is not there is an error of the compiler, and a file changed needs the program compiled again. Each call gives a copy of its own, which the program can change. For a text: 'string(embed(\"help.txt\"))'.\n" +
+        "\n" +
+        "'''\n" +
+        "list<u8> logo = embed(\"images/logo.png\")\n" +
+        "'''"))
+    docs.add(builtin("bool", "",
+        "A truth value, 'true' or 'false', in a byte."))
+    docs.add(builtin("char", "",
+        "A byte, the same type as 'u8', for the characters of ASCII. Its literals are written between single quotes, as in C, with the same escapes for a newline, a tab or a byte in hexadecimal."))
+    docs.add(builtin("i8", "",
+        "An integer with sign of 8 bits, from -128 to 127. Out of the range, an operation stops the program in debug, and wraps around with '--release'."))
+    docs.add(builtin("i16", "",
+        "An integer with sign of 16 bits, from -32768 to 32767. Out of the range, an operation stops the program in debug, and wraps around with '--release'."))
+    docs.add(builtin("i32", "",
+        "An integer with sign of 32 bits, from -2147483648 to 2147483647, 'int' of C. Out of the range, an operation stops the program in debug, and wraps around with '--release'."))
+    docs.add(builtin("i64", "",
+        "An integer with sign of 64 bits, from -9223372036854775808 to 9223372036854775807: the lengths and the indices of lists and strings. Out of the range, an operation stops the program in debug, and wraps around with '--release'."))
+    docs.add(builtin("u8", "",
+        "An integer without sign of 8 bits, from 0 to 255: a byte. Out of the range, an operation stops the program in debug, and wraps around with '--release'."))
+    docs.add(builtin("u16", "",
+        "An integer without sign of 16 bits, from 0 to 65535. Out of the range, an operation stops the program in debug, and wraps around with '--release'."))
+    docs.add(builtin("u32", "",
+        "An integer without sign of 32 bits, from 0 to 4294967295. Out of the range, an operation stops the program in debug, and wraps around with '--release'."))
+    docs.add(builtin("u64", "",
+        "An integer without sign of 64 bits, from 0 to 18446744073709551615. Out of the range, an operation stops the program in debug, and wraps around with '--release'."))
+    docs.add(builtin("f32", "",
+        "A floating-point number of 32 bits, 'float' of C, with about 7 digits."))
+    docs.add(builtin("f64", "",
+        "A floating-point number of 64 bits, 'double' of C, with about 16 digits."))
+    ret docs
+}
+
+// The documentation of a built-in function or type; false for the other names.
+public bool builtinDoc(string name, ref BuiltinDoc out) {
+    for (BuiltinDoc doc in builtinDocs()) {
+        if (doc.name == name) {
+            out = doc
+            ret true
+        }
+    }
+    // A vector of SIMD (D505): one text for all of them, as `i16x16` or `f32x8`.
+    Types known = makeTypes()
+    i32 type = known.findBuiltin(name)
+    if (type < 0 || !known.isVector(type)) {
+        ret false
+    }
+    i32 element = known.items[type].element
+    i64 count = known.items[type].count
+    i64 bits = i64(known.items[element].bits)
+    string number = (known.isFloat(element) ? "f" : known.items[element].isSigned ? "i" : "u") + format("{}", bits)
+    out.name = name
+    out.signature = ""
+    out.text = format("A vector of SIMD: {} numbers ", count) + number + format(", {} bits, on which the operators act number by number ", bits * count) +
+        "in one instruction of the processor, AVX2, SSE or NEON. '+', '-', '*', '/' of the floats, the " +
+        "operators of the bits of the integers and the shifts; a number on one side is in each number. " +
+        "A comparison gives a mask, -1 where true and 0 where false, with 'all()', 'any()' and " +
+        "'select(a, b)'.\n" +
+        "\n" +
+        "'" + name + "(x)' has x in each number, '" + name + ".load(values, at)' reads from a list or an " +
+        "array, 'v.store(ref values, at)' writes; 'v[i]' is a number. 'sum()', 'smallest()', " +
+        "'largest()', 'abs()', 'min(w)', 'max(w)', 'len()', and 'low()' and 'high()' for the halves " +
+        "of 256 bits. The integers wrap around, without the checks of overflow."
+    ret true
+}

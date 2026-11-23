@@ -1,0 +1,374 @@
+// The reference of the library, as src/reference.cpp: the public declarations of the
+// core and of its modules, with their signatures as written and their documentation
+// (D473, D474), as JSON for the pages of the site (D519) and as Markdown for
+// `cromo ai` (D559). It reads the tree as the parser leaves it.
+import std.fs
+import ast
+import diagnostics
+import docs
+
+// A type as the library writes it: `list<T>`, `func(i64, ref T) bool`, `u8[4]`.
+string written(Tree tree, i32 node) {
+    if (node < 0) {
+        ret "void"
+    }
+    const ref TypeNode type = tree.types[node]
+    string text
+    if (type.isFunction) {
+        text = "func("
+        for (i64 i = 0; i < type.args.len(); i++) {
+            ParamMode mode = i < type.modes.len() ? type.modes[i] : ParamMode.Read
+            text += (i > 0 ? ", " : "") + (mode == ParamMode.Ref ? "ref " : mode == ParamMode.Move ? "move " : "") +
+                written(tree, type.args[i])
+        }
+        text += ")"
+        if (type.result >= 0) {
+            text += " " + written(tree, type.result)
+        }
+    } else {
+        text = (type.module.len() == 0 ? "" : type.module + ".") + (type.name.len() == 0 ? "void" : type.name)
+        if (type.args.len() > 0) {
+            text += "<"
+            for (i64 i = 0; i < type.args.len(); i++) {
+                text += (i > 0 ? ", " : "") + written(tree, type.args[i])
+            }
+            text += ">"
+        }
+    }
+    for (i64 size in type.dimensions) {
+        text += format("[{}]", size)
+    }
+    ret text
+}
+
+string typeParams(Tree tree, list<TypeParam> params) {
+    if (params.len() == 0) {
+        ret ""
+    }
+    string text = "<"
+    for (i64 i = 0; i < params.len(); i++) {
+        text += (i > 0 ? ", " : "") + params[i].name
+        for (i64 k = 0; k < params[i].constraints.len(); k++) {
+            text += (k > 0 ? " + " : " : ") + written(tree, params[i].constraints[k])
+        }
+    }
+    ret text + ">"
+}
+
+string parameters(Tree tree, i32 function) {
+    string text = "("
+    for (i64 i = 0; i < tree.functions[function].params.len(); i++) {
+        const ref Param param = tree.functions[function].params[i]
+        string mode = param.mode == ParamMode.Ref ? "ref " : param.mode == ParamMode.Move ? (param.isConst ? "move const " : "move ") :
+            (param.isConst ? "const " : "")
+        text += (i > 0 ? ", " : "") + mode + written(tree, param.type) + " " + param.name
+    }
+    ret text + ")"
+}
+
+// A function, a method or a constructor as it is declared, without `public`.
+string signature(Tree tree, i32 function, string owner) {
+    const ref Function decl = tree.functions[function]
+    if (decl.kind == FunctionKind.Constructor) {
+        ret owner + parameters(tree, function)
+    }
+    string text = written(tree, decl.returnType) + " " + decl.name + typeParams(tree, decl.typeParams) + parameters(tree, function)
+    ret decl.isConst ? text + " const" : text
+}
+
+// A text between the quotes of JSON.
+string quotedJson(string text) {
+    list<u8> out = ['"']
+    string hex = "0123456789abcdef"
+    for (u8 c in text.bytes()) {
+        if (c == '"' || c == '\\') {
+            out.add('\\')
+            out.add(c)
+        } else if (c == '\n') {
+            out.add('\\')
+            out.add('n')
+        } else if (c == '\r') {
+            continue
+        } else if (c == '\t') {
+            out.add('\\')
+            out.add('t')
+        } else if (c < 0x20) {
+            for (u8 b in "\\u00".bytes()) {
+                out.add(b)
+            }
+            out.add(hex[i64(c >> 4)])
+            out.add(hex[i64(c & 0xF)])
+        } else {
+            out.add(c)
+        }
+    }
+    out.add('"')
+    ret string(out)
+}
+
+// A member of a declaration of the reference: a field, a case, a constructor, a method.
+struct Member {
+    string kind
+    string name
+    string signature
+    string doc
+}
+
+// A declaration of the reference, with its members.
+struct Item {
+    string module
+    string kind  // function, struct, enum, interface, builtin, type
+    string name
+    string signature
+    string doc
+    list<Member> members
+    bool part  // in a file of a system; then its file and its line: the order
+    i32 file
+    i32 line
+}
+
+bool before(Item a, Item b) {
+    if (a.part != b.part) {
+        ret !a.part
+    }
+    if (a.file != b.file) {
+        ret a.file < b.file
+    }
+    ret a.line < b.line
+}
+
+string memberJson(Member member) {
+    ret "{\"kind\":" + quotedJson(member.kind) + ",\"name\":" + quotedJson(member.name) + ",\"signature\":" +
+        quotedJson(member.signature) + ",\"doc\":" + quotedJson(member.doc) + "}"
+}
+
+string itemJson(Item item) {
+    string out = "{\"kind\":" + quotedJson(item.kind) + ",\"name\":" + quotedJson(item.name) + ",\"signature\":" +
+        quotedJson(item.signature) + ",\"doc\":" + quotedJson(item.doc)
+    if (item.members.len() > 0) {
+        out += ",\"members\":["
+        for (i64 i = 0; i < item.members.len(); i++) {
+            out += (i > 0 ? "," : "") + memberJson(item.members[i])
+        }
+        out += "]"
+    }
+    ret out + "}"
+}
+
+struct Reference {
+    list<DocComments> comments  // of each file of the library
+    list<string> names          // the modules shown, in the order of their names
+    map<string, i32> firsts     // the first file of each
+    list<Item> items
+
+    string moduleOf(Tree tree, i32 file) const {
+        ret tree.files[file].part >= 0 ? tree.files[tree.files[file].part].name : tree.files[file].name
+    }
+
+    bool library(Tree tree, i32 file) const {
+        ret file >= 0 && i64(file) < tree.files.len() && tree.files[file].isLibrary && moduleOf(tree, file).len() > 0
+    }
+
+    string docOf(i32 file, i32 line, bool trailing) const {
+        ret markdownOf(comments[file].of(line, trailing))
+    }
+
+    void add(Tree tree, string kind, string name, string text, i32 file, i32 line, move list<Member> members) {
+        Item item
+        item.module = moduleOf(tree, file)
+        item.kind = kind
+        item.name = name
+        item.signature = text
+        item.doc = docOf(file, line, false)
+        item.members = move members
+        item.part = tree.files[file].part >= 0
+        item.file = file
+        item.line = line
+        items.add(move item)
+    }
+
+    Member member(string kind, string name, string text, i32 file, i32 line, bool trailing) const {
+        Member made
+        made.kind = kind
+        made.name = name
+        made.signature = text
+        made.doc = docOf(file, line, trailing)
+        ret made
+    }
+
+    // The public declarations of each module shown, and the first file of each.
+    void collect(Tree tree, Diagnostics diag, list<string> modules) {
+        for (i32 i = 0; i < i32(tree.files.len()); i++) {
+            if (i > 0 && tree.files[i].isLibrary) {
+                comments.add(DocComments(diag.path(i), diag.text(i)))
+            } else {
+                comments.add(DocComments("", ""))
+            }
+        }
+        // The modules of the library, by the first of their files (D202).
+        for (i32 i = 1; i < i32(tree.files.len()); i++) {  // 0 is the program that imports them
+            string name = tree.files[i].name
+            bool shown = name == "std"
+            for (string module in modules) {
+                shown = shown || module == name
+            }
+            if (tree.files[i].isLibrary && tree.files[i].part < 0 && shown && !firsts.contains(name)) {
+                firsts[name] = i
+                names.add(name)
+            }
+        }
+        sort(ref names)
+        // The functions and the types that the compiler knows, in the core (D475).
+        for (BuiltinDoc builtin in builtinDocs()) {
+            Item item
+            item.module = "std"
+            item.kind = builtin.signature.len() > 0 ? "builtin" : "type"
+            item.name = builtin.name
+            item.signature = builtin.signature.len() > 0 ? builtin.signature : builtin.name
+            item.doc = markdownOf(builtin.text.split("\n"))
+            item.file = -1
+            items.add(move item)
+        }
+        for (i32 function in tree.topFunctions) {
+            const ref Function decl = tree.functions[function]
+            if (!decl.isPublic || decl.isExtern || !library(tree, decl.file)) {
+                continue
+            }
+            list<Member> none
+            add(tree, "function", decl.name, signature(tree, function, ""), decl.file, decl.line, move none)
+        }
+        for (i64 r = 0; r < tree.records.len(); r++) {
+            const ref Record decl = tree.records[r]
+            if (!decl.isPublic || !library(tree, decl.file)) {
+                continue
+            }
+            string head = (decl.isEnum ? "enum " : "struct ") + decl.name + typeParams(tree, decl.typeParams)
+            for (i64 i = 0; i < decl.interfaces.len(); i++) {
+                head += (i > 0 ? ", " : " : ") + written(tree, decl.interfaces[i])
+            }
+            list<Member> members
+            for (Case item in decl.cases) {
+                string text = item.name
+                if (item.fields.len() > 0) {
+                    text += "("
+                    for (i64 i = 0; i < item.fields.len(); i++) {
+                        text += (i > 0 ? ", " : "") + written(tree, item.fields[i].type) + " " + item.fields[i].name
+                    }
+                    text += ")"
+                }
+                members.add(member("case", item.name, text, decl.file, item.line, true))
+            }
+            for (Field field in decl.fields) {
+                if (field.isPublic) {
+                    members.add(member("field", field.name, written(tree, field.type) + " " + field.name, decl.file, field.line, true))
+                }
+            }
+            for (i32 function in decl.members) {
+                const ref Function method = tree.functions[function]
+                if (!method.isPublic || method.kind == FunctionKind.Destructor) {
+                    continue
+                }
+                string kind = method.kind == FunctionKind.Constructor ? "constructor" : "method"
+                members.add(member(kind, method.name, signature(tree, function, decl.name), method.file, method.line, false))
+            }
+            add(tree, decl.isEnum ? "enum" : "struct", decl.name, head, decl.file, decl.line, move members)
+        }
+        for (i64 r = 0; r < tree.interfaces.len(); r++) {
+            const ref Interface decl = tree.interfaces[r]
+            if (!decl.isPublic || !library(tree, decl.file)) {
+                continue
+            }
+            list<Member> members
+            for (i32 function in decl.methods) {
+                const ref Function method = tree.functions[function]
+                members.add(member("method", method.name, signature(tree, function, decl.name), method.file, method.line, false))
+            }
+            add(tree, "interface", decl.name, "interface " + decl.name, decl.file, decl.line, move members)
+        }
+    }
+
+    // The declarations of a module, in their order.
+    list<Item> of(string module) const {
+        list<Item> found
+        for (Item item in items) {
+            if (item.module == module) {
+                found.add(item)
+            }
+        }
+        sortBy(ref found, [](Item a, Item b) bool { ret before(a, b) })
+        ret found
+    }
+
+    string aboutOf(string module) const {
+        ret markdownOf(comments[firsts[module]].module())
+    }
+
+    // D559: the declarations of one module as Markdown, for `cromo ai`: each with its
+    // signature in a block of code and its documentation.
+    string text(string wanted) const {
+        string out = "# " + (wanted == "std" ? "The core: what every program sees without an import" : wanted) + "\n\n"
+        string about = aboutOf(wanted)
+        if (about.len() > 0) {
+            out += about + "\n\n"
+        }
+        for (Item item in of(wanted)) {
+            out += "## " + item.name + "\n\n```cromo\n" + item.signature + "\n```\n\n"
+            if (item.doc.len() > 0) {
+                out += item.doc + "\n\n"
+            }
+            for (Member each in item.members) {
+                out += "- `" + each.signature + "`"
+                if (each.doc.len() > 0) {
+                    // On one line: the first paragraph says what it does, and the rest follows it.
+                    out += ": " + each.doc.replace("\n", " ")
+                }
+                out += "\n"
+            }
+            if (item.members.len() > 0) {
+                out += "\n"
+            }
+        }
+        ret out
+    }
+
+    string json() const {
+        string out = "{\"modules\":["
+        for (i64 m = 0; m < names.len(); m++) {
+            out += (m > 0 ? "," : "") + "{\"name\":" + quotedJson(names[m]) + ",\"doc\":" + quotedJson(aboutOf(names[m])) + ",\"items\":["
+            list<Item> found = of(names[m])
+            list<string> parts
+            for (Item item in found) {
+                parts.add(itemJson(item))
+            }
+            out += join(parts, ",") + "]}"
+        }
+        ret out + "]}\n"
+    }
+}
+
+// D519: writes the reference of the core and of `modules` as JSON. False with the
+// reason in `error` when the file cannot be written.
+public bool writeReference(Tree tree, Diagnostics diag, list<string> modules, string path, ref string error) {
+    Reference reference
+    reference.collect(tree, diag, modules)
+    try {
+        fs.writeText(path, reference.json())
+    } catch (Exception e) {
+        error = "cannot write " + path
+        ret false
+    }
+    ret true
+}
+
+// D559: the public declarations of one module of the library, `name` as it is imported
+// or "std" for the core, as Markdown: what `cromo ai std.fs` prints. False for a
+// module that is not among those loaded.
+public bool moduleReference(Tree tree, Diagnostics diag, string name, ref string out) {
+    Reference reference
+    reference.collect(tree, diag, [name])
+    if (!reference.firsts.contains(name)) {
+        ret false
+    }
+    out = reference.text(name)
+    ret true
+}

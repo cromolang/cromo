@@ -1,0 +1,582 @@
+// The names of a checked program for the language server (D171), as src/index.cpp:
+// for each name in the sources, what the editor shows under the mouse and where it
+// is declared.
+import ast
+import diagnostics
+import sema
+import types
+
+// A declaration whose documentation the hover shows (D475): above it, and at the
+// end of its line for a field or a case (D473).
+public struct DocPlace {
+    public i32 file
+    public i32 line
+    public bool trailing
+}
+
+// A name in the source that the language server knows.
+public struct Mention {
+    public i32 file  // where its first character is
+    public i32 line
+    public i32 column
+    public i32 length    // in characters
+    public string hover  // a line of Cromo: a declaration or a signature
+    public bool hasTarget
+    public i32 targetFile  // where it is declared
+    public i32 targetLine
+    public i32 targetColumn
+    public i32 type  // of a variable or a field: what follows a dot (D179)
+    public list<DocPlace> docs
+}
+
+bool isIdentChar(u8 c) {
+    ret (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_'
+}
+
+// A type as it is written, for the declarations that the analysis has not checked;
+// the type parameters of an instance become its type arguments.
+public string writtenType(Tree tree, Types known, i32 node, list<TypeBinding> bindings) {
+    if (node < 0) {
+        ret ""
+    }
+    const ref TypeNode name = tree.types[node]
+    if (name.module.len() == 0 && name.args.len() == 0) {
+        for (TypeBinding binding in bindings) {
+            if (binding.name == name.name) {
+                ret typeName(tree, known, binding.type)
+            }
+        }
+    }
+    string text = (name.module.len() == 0 ? "" : name.module + ".") + name.name
+    if (name.args.len() > 0) {
+        text += "<"
+        for (i64 i = 0; i < name.args.len(); i++) {
+            text += (i > 0 ? ", " : "") + writtenType(tree, known, name.args[i], bindings)
+        }
+        text += ">"
+    }
+    ret text
+}
+
+string typeText(Tree tree, Types known, i32 type, i32 node, list<TypeBinding> bindings) {
+    ret known.isError(type) ? writtenType(tree, known, node, bindings) : typeName(tree, known, type)
+}
+
+string modePrefix(ParamMode mode, bool isConst) {
+    if (mode == ParamMode.Ref) {
+        ret "ref "
+    }
+    if (mode == ParamMode.Move) {
+        ret isConst ? "move const " : "move "
+    }
+    ret isConst ? "const " : ""  // `const func` (D253)
+}
+
+// `struct Point : Shape`, `interface Shape`, or the name of another type.
+string declarationOf(Tree tree, Types known, i32 type) {
+    if (known.isInterface(type)) {
+        ret "interface " + tree.interfaces[known.decl(type)].name
+    }
+    if (!known.isStruct(type)) {
+        ret typeName(tree, known, type)
+    }
+    ret recordHead(tree, known, known.decl(type))
+}
+
+string recordHead(Tree tree, Types known, i32 record) {
+    const ref Record decl = tree.records[record]
+    string text = (decl.isEnum ? "enum " : "struct ") + decl.name
+    list<TypeBinding> none
+    for (i64 i = 0; i < decl.interfaces.len(); i++) {
+        text += (i > 0 ? ", " : " : ") + writtenType(tree, known, decl.interfaces[i], none)
+    }
+    ret text
+}
+
+// A function as it is declared: `i32 sum(list<i32> values, ref i64 count)`. The
+// methods of an instance of a generic that the analysis has not checked yet are
+// written with the type arguments of `owner`, the struct of the function when -1.
+public string signatureOf(Tree tree, Types known, i32 function, i32 owner) {
+    const ref Function decl = tree.functions[function]
+    i32 record = owner >= 0 ? owner : decl.owner
+    list<TypeBinding> bindings
+    if (record >= 0 && tree.records[record].generic >= 0) {
+        bindings = tree.records[record].bindings
+    }
+    string params
+    for (i64 i = 0; i < decl.params.len(); i++) {
+        const ref Param param = decl.params[i]
+        string type = i < decl.paramTypes.len() ? typeText(tree, known, decl.paramTypes[i], param.type, bindings) :
+            writtenType(tree, known, param.type, bindings)
+        params += (i > 0 ? ", " : "") + modePrefix(param.mode, param.isConst) + type + " " + param.name
+    }
+    string name = record >= 0 ? tree.records[record].name : ""
+    if (decl.kind == FunctionKind.Constructor) {
+        ret name + "(" + params + ")"
+    }
+    if (decl.kind == FunctionKind.Destructor) {
+        ret "~" + name + "()"
+    }
+    string text = typeText(tree, known, decl.resolvedReturn, decl.returnType, bindings) + " " + (name.len() == 0 ? "" : name + ".") +
+        decl.name + "(" + params + ")"
+    if (decl.isConst) {
+        text += " const"
+    }
+    if (decl.isExtern) {
+        text = "extern \"" + decl.library + "\" " + text
+    }
+    ret text
+}
+
+// The type of a field as it is written, with the type arguments of its struct.
+public string fieldTypeOf(Tree tree, Types known, i32 record, i64 field) {
+    list<TypeBinding> bindings
+    if (tree.records[record].generic >= 0) {
+        bindings = tree.records[record].bindings
+    }
+    ret typeText(tree, known, tree.records[record].fields[field].resolved, tree.records[record].fields[field].type, bindings)
+}
+
+struct Indexer {
+    list<string> texts          // of each file
+    list<list<i64>> lineStarts  // of each file
+    map<string, bool> seen
+    list<Mention> mentions
+
+    // The identifier that starts at a place, or an empty text.
+    string identifierAt(i32 file, i32 line, i32 column) const {
+        if (file < 0 || i64(file) >= texts.len() || line < 1 || i64(line) > lineStarts[file].len()) {
+            ret ""
+        }
+        i64 pos = lineStarts[file][line - 1]
+        i64 size = texts[file].len()
+        for (i32 at = 1; at < column && pos < size && texts[file][pos] != '\n'; at++) {
+            pos++
+            for (pos < size && (texts[file][pos] & 0xC0) == 0x80) {
+                pos++
+            }
+        }
+        i64 end = pos
+        for (end < size && isIdentChar(texts[file][end])) {
+            end++
+        }
+        ret texts[file].slice(pos, end)
+    }
+
+    // Only where the source really has the name: the analysis also makes nodes that
+    // are not written, as the `append` of `s += t`.
+    void add(i32 file, i32 line, i32 column, string name, string hover, i32 targetFile, i32 targetLine, i32 targetColumn, i32 type,
+        move list<DocPlace> docs) {
+        if (name.len() == 0 || identifierAt(file, line, column) != name) {
+            ret
+        }
+        string key = format("{}:{}:{}", file, line, column)
+        if (seen.contains(key)) {  // the instances of a generic
+            ret
+        }
+        seen[key] = true
+        Mention mention
+        mention.file = file
+        mention.line = line
+        mention.column = column
+        mention.length = i32(name.len())
+        mention.hover = hover
+        mention.hasTarget = true
+        mention.targetFile = targetFile
+        mention.targetLine = targetLine
+        mention.targetColumn = targetColumn
+        mention.type = type
+        mention.docs = move docs
+        mentions.add(move mention)
+    }
+
+    list<DocPlace> docAt(i32 file, i32 line, bool trailing) const {
+        DocPlace place
+        place.file = file
+        place.line = line
+        place.trailing = trailing
+        list<DocPlace> docs
+        docs.add(place)
+        ret docs
+    }
+
+    void typeNode(Checker c, i32 node, i32 file) {
+        typeNodeAs(c, node, errorType(), file)
+    }
+
+    // A written type and what it is where it is written: `known`, the type of the
+    // parameter, of the field or of the variable declared with it, since the
+    // instances of a generic share what they write; without it, what the analysis
+    // left on the written type.
+    void typeNodeAs(Checker c, i32 node, i32 known, i32 file) {
+        if (node < 0) {
+            ret
+        }
+        i32 type = c.types.baseElement(c.types.isError(known) ? c.tree.types[node].resolved : known)  // `Point[4]` leads to Point
+        i32 line = c.tree.types[node].line
+        i32 column = c.tree.types[node].column
+        if (c.types.isStruct(type)) {
+            const ref Record decl = c.tree.records[c.types.decl(type)]
+            add(file, line, column, c.tree.types[node].name, declarationOf(c.tree, c.types, type), decl.file, decl.line, decl.column,
+                errorType(), docAt(decl.file, decl.line, false))
+        }
+        if (c.types.isInterface(type)) {
+            const ref Interface decl = c.tree.interfaces[c.types.decl(type)]
+            add(file, line, column, c.tree.types[node].name, declarationOf(c.tree, c.types, type), decl.file, decl.line, decl.column,
+                errorType(), docAt(decl.file, decl.line, false))
+        }
+        list<i32> args = c.tree.types[node].args
+        list<i32> inner
+        if (c.types.isFunction(type)) {
+            inner = c.types.items[type].params
+        } else if (c.types.isStruct(type)) {
+            inner = c.tree.records[c.types.decl(type)].typeArgs
+        }
+        for (i64 i = 0; i < args.len(); i++) {
+            typeNodeAs(c, args[i], i < inner.len() && !c.types.isError(known) ? inner[i] : errorType(), file)
+        }
+    }
+
+    i32 typeOfVariable(Checker c, i32 variable) const {
+        ret variable >= 0 ? c.tree.variables[variable].type : errorType()
+    }
+
+    void variable(Checker c, i32 variable, i32 file, i32 line, i32 column, string prefix) {
+        if (variable < 0) {
+            ret
+        }
+        const ref Variable decl = c.tree.variables[variable]
+        string mode = prefix
+        if (mode.len() == 0 && decl.kind == VariableKind.RefParam) {
+            mode = "ref "
+        }
+        if (mode.len() == 0 && decl.kind == VariableKind.MoveParam) {
+            mode = "move "
+        }
+        string hover = mode + (decl.isConst ? "const " : "") + typeName(c.tree, c.types, decl.type) + " " + decl.name
+        list<DocPlace> none
+        add(file, line, column, decl.name, hover, decl.file, decl.line, decl.column, decl.type, move none)
+    }
+
+    void caseOf(Checker c, i32 record, i32 index, i32 file, i32 line, i32 column) {
+        if (record < 0 || index < 0 || i64(index) >= c.tree.records[record].cases.len()) {
+            ret
+        }
+        const ref Record decl = c.tree.records[record]
+        const ref Case item = decl.cases[index]
+        string hover = decl.name + "." + item.name
+        list<TypeBinding> none
+        if (item.fields.len() > 0) {
+            hover += "("
+            for (i64 i = 0; i < item.fields.len(); i++) {
+                hover += (i > 0 ? ", " : "") + typeText(c.tree, c.types, item.fields[i].resolved, item.fields[i].type, none) + " " +
+                    item.fields[i].name
+            }
+            hover += ")"
+        }
+        add(file, line, column, item.name, hover, decl.file, item.line, item.column, errorType(), docAt(decl.file, item.line, true))
+    }
+
+    void record(Checker c, i32 record) {
+        i32 file = c.tree.records[record].file
+        string name = c.tree.records[record].name
+        if (c.tree.records[record].typeParams.len() == 0 || c.tree.records[record].generic >= 0) {
+            i32 line = c.tree.records[record].line
+            i32 column = c.tree.records[record].column
+            add(file, line, column, name, recordHead(c.tree, c.types, record), file, line, column, errorType(), docAt(file, line, false))
+        }
+        list<i32> interfaces = c.tree.records[record].interfaces
+        for (i32 node in interfaces) {
+            typeNode(c, node, file)
+        }
+        list<TypeBinding> none
+        for (i64 i = 0; i < c.tree.records[record].fields.len(); i++) {
+            i32 type = c.tree.records[record].fields[i].type
+            i32 resolved = c.tree.records[record].fields[i].resolved
+            i32 line = c.tree.records[record].fields[i].line
+            i32 column = c.tree.records[record].fields[i].column
+            string field = c.tree.records[record].fields[i].name
+            typeNodeAs(c, type, resolved, file)
+            add(file, line, column, field, typeText(c.tree, c.types, resolved, type, none) + " " + name + "." + field, file, line, column,
+                resolved, docAt(file, line, true))
+        }
+        for (i64 i = 0; i < c.tree.records[record].cases.len(); i++) {
+            caseOf(c, record, i32(i), file, c.tree.records[record].cases[i].line, c.tree.records[record].cases[i].column)
+            list<i32> nodes
+            list<i32> resolved
+            for (Field field in c.tree.records[record].cases[i].fields) {
+                nodes.add(field.type)
+                resolved.add(field.resolved)
+            }
+            for (i64 k = 0; k < nodes.len(); k++) {
+                typeNodeAs(c, nodes[k], resolved[k], file)
+            }
+        }
+        list<i32> members = c.tree.records[record].members
+        for (i32 member in members) {
+            declaration(c, member, c.tree.functions[member].bodyChecked)
+        }
+    }
+
+    // The parameters and the body of a function or of a lambda.
+    void inside(Checker c, i32 function) {
+        i32 file = c.tree.functions[function].file
+        typeNodeAs(c, c.tree.functions[function].returnType, c.tree.functions[function].resolvedReturn, file)
+        for (i64 i = 0; i < c.tree.functions[function].params.len(); i++) {
+            Param param = c.tree.functions[function].params[i]
+            i32 known = i < c.tree.functions[function].paramTypes.len() ? c.tree.functions[function].paramTypes[i] : errorType()
+            typeNodeAs(c, param.type, known, file)
+            if (i < c.tree.functions[function].variables.len()) {
+                variable(c, c.tree.functions[function].variables[i], file, param.line, param.column, modePrefix(param.mode, param.isConst))
+            }
+        }
+        block(c, c.tree.functions[function].body, file)
+    }
+
+    void declaration(Checker c, i32 function, bool checked) {
+        const ref Function decl = c.tree.functions[function]
+        string name = decl.name
+        if (decl.kind == FunctionKind.Constructor || decl.kind == FunctionKind.Destructor) {
+            name = decl.owner >= 0 ? c.tree.records[decl.owner].name : ""
+        }
+        add(decl.file, decl.line, decl.column, name, signatureOf(c.tree, c.types, function, -1), decl.file, decl.line, decl.column,
+            errorType(), docAt(decl.file, decl.line, false))
+        if (checked) {
+            inside(c, function)
+        }
+    }
+
+    void block(Checker c, i32 body, i32 file) {
+        if (body < 0) {
+            ret
+        }
+        list<i32> statements = c.tree.blocks[body].statements
+        for (i32 statement in statements) {
+            stmt(c, statement, file)
+        }
+    }
+
+    void stmt(Checker c, i32 statement, i32 file) {
+        if (statement < 0) {
+            ret
+        }
+        const ref Stmt node = c.tree.stmts[statement]
+        switch (node.kind) {
+            case VarDecl {
+                typeNodeAs(c, node.type, typeOfVariable(c, node.variable), file)
+                variable(c, node.variable, file, node.nameLine, node.nameColumn, "")
+                expr(c, node.value, file)
+            }
+            case Assign {
+                expr(c, node.target, file)
+                expr(c, node.value, file)
+                expr(c, node.call, file)
+            }
+            case IncDec {
+                expr(c, node.target, file)
+            }
+            case Expression, Throw, Return {
+                expr(c, node.value, file)
+            }
+            case If {
+                expr(c, node.value, file)
+                block(c, node.body, file)
+                block(c, node.elseBody, file)
+            }
+            case For {
+                stmt(c, node.init, file)
+                if (node.form != ForForm.Each) {
+                    expr(c, node.value, file)
+                }
+                stmt(c, node.step, file)
+                if (node.form == ForForm.Each) {
+                    typeNodeAs(c, node.type, typeOfVariable(c, node.variable), file)
+                    variable(c, node.variable, file, node.nameLine, node.nameColumn, node.isRef ? "ref " : "")
+                    if (node.hasValue) {  // a map (D197)
+                        typeNodeAs(c, node.valueType, typeOfVariable(c, node.valueVariable), file)
+                        variable(c, node.valueVariable, file, node.valueLine, node.valueColumn, node.valueIsRef ? "ref " : "")
+                    }
+                    expr(c, node.value, file)
+                }
+                block(c, node.body, file)
+            }
+            case Switch {
+                expr(c, node.value, file)
+                i32 subject = node.value >= 0 ? c.tree.exprs[node.value].resolved : errorType()
+                i32 enumOf = c.types.isStruct(subject) && c.tree.records[c.types.decl(subject)].isEnum ? c.types.decl(subject) : -1
+                for (i32 part in node.parts) {
+                    for (Pattern pattern in c.tree.branches[part].patterns) {
+                        if (enumOf >= 0) {
+                            caseOf(c, enumOf, pattern.caseIndex, file, pattern.line, pattern.column)
+                        }
+                        for (Binding binding in pattern.bindings) {
+                            typeNodeAs(c, binding.type, typeOfVariable(c, binding.variable), file)
+                            variable(c, binding.variable, file, binding.line, binding.column, binding.isRef ? "ref " : "")
+                        }
+                        expr(c, pattern.literal, file)
+                    }
+                    block(c, c.tree.branches[part].body, file)
+                }
+                block(c, node.defaultBody, file)
+            }
+            case Try {
+                block(c, node.body, file)
+                for (i32 part in node.parts) {
+                    const ref Catch clause = c.tree.catches[part]
+                    typeNodeAs(c, clause.type, typeOfVariable(c, clause.variable), file)
+                    variable(c, clause.variable, file, clause.nameLine, clause.nameColumn, "")
+                    block(c, clause.body, file)
+                }
+                block(c, node.elseBody, file)
+            }
+            default {
+            }
+        }
+    }
+
+    void exprs(Checker c, list<i32> items, i32 file) {
+        for (i32 item in items) {
+            expr(c, item, file)
+        }
+    }
+
+    void called(Checker c, i32 expression, i32 file) {
+        const ref Expr node = c.tree.exprs[expression]
+        if (node.target < 0) {
+            ret
+        }
+        const ref Function target = c.tree.functions[node.target]
+        add(file, node.line, node.column, node.text, signatureOf(c.tree, c.types, node.target, -1), target.file, target.line, target.column,
+            errorType(), docAt(target.file, target.line, false))
+    }
+
+    void expr(Checker c, i32 expression, i32 file) {
+        if (expression < 0) {
+            ret
+        }
+        const ref Expr node = c.tree.exprs[expression]
+        switch (node.kind) {
+            case Name {
+                variable(c, node.variable, file, node.line, node.column, "")
+            }
+            case Unary, Conversion, Move, Ref, Copy {
+                expr(c, node.left, file)
+            }
+            case Binary, Index {
+                expr(c, node.left, file)
+                expr(c, node.right, file)
+            }
+            case Conditional {
+                expr(c, node.left, file)
+                expr(c, node.right, file)
+                expr(c, node.other, file)
+            }
+            case Call {
+                called(c, expression, file)
+                for (i64 i = 0; i < node.typeArgs.len(); i++) {
+                    i32 known = node.target >= 0 && i < c.tree.functions[node.target].bindings.len() ?
+                        c.tree.functions[node.target].bindings[i].type : errorType()
+                    typeNodeAs(c, node.typeArgs[i], known, file)
+                }
+                exprs(c, node.items, file)
+            }
+            case Print, ListLiteral {
+                exprs(c, node.items, file)
+            }
+            case Field {
+                expr(c, node.left, file)
+                i32 owner = node.left >= 0 ? c.tree.exprs[node.left].resolved : errorType()
+                if (c.types.isStruct(owner) && node.index >= 0 && i64(node.index) < c.tree.records[c.types.decl(owner)].fields.len()) {
+                    const ref Record record = c.tree.records[c.types.decl(owner)]
+                    const ref Field decl = record.fields[node.index]
+                    list<TypeBinding> none
+                    add(file, node.line, node.column, node.text,
+                        typeText(c.tree, c.types, decl.resolved, decl.type, none) + " " + record.name + "." + decl.name, record.file,
+                        decl.line, decl.column, decl.resolved, docAt(record.file, decl.line, true))
+                }
+            }
+            case MethodCall {
+                expr(c, node.left, file)
+                called(c, expression, file)
+                exprs(c, node.items, file)
+            }
+            case Construct {
+                if (node.decl >= 0) {
+                    const ref Record decl = c.tree.records[node.decl]
+                    string hover = recordHead(c.tree, c.types, node.decl)
+                    list<DocPlace> docs = docAt(decl.file, decl.line, false)
+                    for (i32 member in decl.members) {
+                        if (c.tree.functions[member].kind != FunctionKind.Constructor) {
+                            continue
+                        }
+                        hover = signatureOf(c.tree, c.types, member, -1)
+                        DocPlace place
+                        place.file = c.tree.functions[member].file
+                        place.line = c.tree.functions[member].line
+                        docs.add(place)
+                    }
+                    add(file, node.line, node.column, decl.name, hover, decl.file, decl.line, decl.column, errorType(), move docs)
+                }
+                exprs(c, node.items, file)
+            }
+            case EnumCase {
+                caseOf(c, node.decl, node.index, file, node.line, node.column)
+                exprs(c, node.items, file)
+            }
+            case TypeRef {
+                typeNode(c, node.type, file)
+            }
+            case Lambda {
+                for (Capture capture in node.captures) {
+                    variable(c, capture.outer, file, capture.line, capture.column, "")
+                }
+                if (node.function >= 0 && c.tree.functions[node.function].bodyChecked) {
+                    inside(c, node.function)
+                }
+            }
+            case CallValue {
+                expr(c, node.left, file)
+                exprs(c, node.items, file)
+            }
+            default {
+            }
+        }
+    }
+}
+
+// The names of a checked program, in its files. A name that the analysis did not
+// resolve, as in a generic never used, is not there.
+public list<Mention> indexProgram(Checker c) {
+    Indexer indexer
+    for (i32 file = 0; file < c.diag.fileCount(); file++) {
+        string text = c.diag.text(file)
+        list<i64> starts = [0]
+        for (i64 i = 0; i < text.len(); i++) {
+            if (text[i] == '\n') {
+                starts.add(i + 1)
+            }
+        }
+        indexer.texts.add(move text)
+        indexer.lineStarts.add(move starts)
+    }
+    for (i64 i = 0; i < c.tree.interfaces.len(); i++) {
+        const ref Interface decl = c.tree.interfaces[i]
+        indexer.add(decl.file, decl.line, decl.column, decl.name, "interface " + decl.name, decl.file, decl.line, decl.column, errorType(),
+            indexer.docAt(decl.file, decl.line, false))
+        for (i32 method in decl.methods) {
+            indexer.declaration(c, method, false)
+        }
+    }
+    for (i64 i = 0; i < c.tree.records.len(); i++) {
+        indexer.record(c, i32(i))
+    }
+    for (i32 function in c.tree.topFunctions) {
+        indexer.declaration(c, function, c.tree.functions[function].typeParams.len() == 0)
+    }
+    for (i32 function in c.made) {
+        if (!c.tree.functions[function].convertsJson) {  // its text is not in a file (D251)
+            indexer.declaration(c, function, true)
+        }
+    }
+    ret move indexer.mentions
+}

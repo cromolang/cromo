@@ -18,6 +18,8 @@ extern "cromollvm" {
     i64 sysconf(i32 name)
     addr signal(i32 number, addr handler)
     addr realpath(addr path, addr resolved)
+    i64 read(i32 descriptor, addr buffer, i64 size)
+    i32 poll(addr descriptors, u64 count, i32 milliseconds)
 }
 
 // The path of the executable of cromo.
@@ -161,6 +163,30 @@ public i32 runInterruptible(string program, list<string> args, ref bool interrup
 // Its process, or 0.
 public i64 startQuiet(string program, list<string> args, string outputPath) {
     ret startProcess(program, args, outputPath)
+}
+
+// Reads what the standard input has, at most 64 KB, waiting when it has nothing:
+// the bytes are added to `into`. False at its end.
+public bool readInputBytes(ref list<u8> into) {
+    addr buffer = alloc(65536)
+    i64 done = read(0, buffer, 65536)
+    for (i64 i = 0; i < done; i++) {
+        into.add(copyAt<u8>(offset(buffer, i)))
+    }
+    free(buffer)
+    ret done > 0
+}
+
+// Whether a read of the standard input would not wait: it has bytes, or it is at
+// its end, or it cannot be asked.
+public bool inputIsReady() {
+    addr asked = alloc(8)  // struct pollfd: the descriptor, what is asked, what is there
+    put<i32>(asked, 0)
+    put<u16>(offset(asked, 4), 1)  // POLLIN
+    put<u16>(offset(asked, 6), 0)
+    i32 ready = poll(asked, 1, 0)
+    free(asked)
+    ret ready != 0
 }
 
 // Waits for the first of the processes to end: its place in the list, and its exit

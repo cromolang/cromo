@@ -32,13 +32,24 @@ public string libraryFolder(string program) {
 
 // The program of the file `path`, for Windows x64: its tree and its errors.
 public Program load(string path, string text, string library, Target system, bool tests) {
+    map<string, string> none
+    ret loadWith(path, text, library, system, tests, none, false)
+}
+
+// The same, with the open documents of an editor, which come before the files on
+// the disk (D173): their texts, by the key of their paths. With `collect` the
+// errors are kept for the editor, not printed.
+public Program loadWith(string path, string text, string library, Target system, bool tests, map<string, string> overlay,
+    bool collect) {
     Loader loader
+    loader.overlay = overlay
     loader.library = library
     loader.tests = tests
     loader.system = system
     loader.linux = isLinux(system)
     loader.arm64 = isArm64(system)
     loader.program.diag = Diagnostics(path, text)
+    loader.program.diag.collect = collect
     string core = library + sep() + "core.cro"
     string coreText = readSource(core)
     loader.program.diag.addFile(core, coreText)
@@ -92,6 +103,7 @@ struct Loader {
     bool arm64
     bool tests  // with the files name_test.cro, for cromo test (D350)
     Target system
+    map<string, string> overlay  // the open documents of the editor, by sourceKey (D173)
     Program program
     string library
     string root
@@ -108,7 +120,7 @@ struct Loader {
         string main = program.diag.path(0)
         string base = parentOf(absolute(main)) + sep() + stemOf(main)
         for (string suffix in ownSuffixes(linux, arm64)) {
-            if (fs.isFile(base + suffix + ".cro")) {
+            if (fs.isFile(base + suffix + ".cro") || overlay.contains(sourceKey(base + suffix + ".cro"))) {
                 loadFile(base + suffix + ".cro", names[0].copy(), 0, 1, 1, 0, 0)
             }
         }
@@ -184,7 +196,7 @@ struct Loader {
         }
         string file = home + sep() + relative + ".cro"
         string folder = path.len() == 0 ? home : home + sep() + relative
-        bool isFile = path.len() > 0 && fs.isFile(file)
+        bool isFile = path.len() > 0 && (fs.isFile(file) || overlay.contains(sourceKey(file)))
         bool isFolder = fs.isFolder(folder)
         if (isFile && isFolder) {
             program.diag.errorIn(from, line, column, "both " + shown + ".cro and the folder " + shown +
@@ -256,7 +268,7 @@ struct Loader {
             ret
         }
         string path = parentOf(file) + sep() + stemOf(file) + "_test.cro"
-        if (fs.isFile(path)) {
+        if (fs.isFile(path) || overlay.contains(sourceKey(path))) {
             loadFile(path, name, index, 1, 1, index, 0)
         }
     }
@@ -277,10 +289,14 @@ struct Loader {
         }
         string text
         bool read = true
-        try {
-            text = fs.readText(path)
-        } catch (Exception e) {
-            read = false
+        if (overlay.contains(sourceKey(path))) {
+            text = overlay[sourceKey(path)]
+        } else {
+            try {
+                text = fs.readText(path)
+            } catch (Exception e) {
+                read = false
+            }
         }
         if (text.startsWith("\u{FEFF}")) {
             text = text.slice(3, text.len())
@@ -359,6 +375,34 @@ struct Loader {
     }
 }
 
+// The path of a file as a key to compare: from the root and, on Windows, in lower case.
+public string sourceKey(string path) {
+    ret sep() == "/" ? absolute(path) : absolute(path).lower()  // on Windows the names have no case
+}
+
+// The modules of lib/std for the programs, as std.fs, in the order of their names.
+public list<string> libraryModuleNames(string library) {
+    list<string> modules
+    list<string> entries
+    try {
+        entries = fs.listFolder(library + sep() + "std")
+    } catch (Exception e) {
+    }
+    for (string entry in entries) {
+        if (fs.extension(entry) != ".cro") {
+            continue
+        }
+        Suffixed name = withoutSuffix(stemOf(entry), false, false)
+        string module = "std." + name.name
+        if (name.own || name.other || module == "std.winsock" || module == "std.runtime") {
+            continue
+        }
+        modules.add(module)
+    }
+    sort(ref modules)
+    ret modules
+}
+
 // The suffixes of the files that join a module for a system and an architecture,
 // in the order they are read (D202, D408). Android has the kernel of Linux: its
 // programs use the files of the library for Linux (P43).
@@ -424,7 +468,7 @@ public string projectFolder(string folder) {
 }
 
 // The name of a file without its folder and its extension.
-string stemOf(string path) {
+public string stemOf(string path) {
     string name = fs.fileName(path)
     i64 point = name.findLast(".")
     ret point > 0 ? name.slice(0, point) : name

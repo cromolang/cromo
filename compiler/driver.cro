@@ -11,9 +11,11 @@ import host
 import libraries
 import llvmc
 import loader
+import lsp
 import moves
 import packages
 import progress
+import reference
 import sema
 import targets
 import version
@@ -44,6 +46,8 @@ public struct Compilation {
     public bool emitIr
     public bool runtime            // --runtime: the object of std.runtime, for the archive of the runtime (D393)
     public bool quiet              // D568
+    public string reference        // --reference <file>: the documentation of the library, for the site (D519)
+    public string aiModule         // cromo ai <module>: its reference on the standard output (D559)
     public list<string> testNames  // of the tests of the program, in the order of its entry point
 }
 
@@ -404,6 +408,17 @@ public i32 build(ref Compilation compilation) {
         text = "import std.runtime\n"
         compilation.release = true
         compilation.options.objectOnly = true
+    } else if (compilation.aiModule.len() > 0 || compilation.reference.len() > 0) {
+        // D559: a program that imports the module asked for, never compiled; the core
+        // needs none. D519: one that imports every module of the library.
+        path = fs.joinPath(library, "reference.cro")
+        if (compilation.aiModule.len() > 0) {
+            text = compilation.aiModule == "std" ? "" : "import " + compilation.aiModule + "\n"
+        } else {
+            for (string name in libraryModuleNames(library)) {
+                text += "import " + name + "\n"
+            }
+        }
     } else {
         if (!fs.isFile(path)) {
             eprintln("cromo: cannot read {}", path)
@@ -412,7 +427,8 @@ public i32 build(ref Compilation compilation) {
         text = readSource(path)
     }
     ProjectFile projectFile
-    if (!compilation.runtime && !inLibrary(library, path)) {
+    bool documents = compilation.aiModule.len() > 0 || compilation.reference.len() > 0
+    if (!compilation.runtime && !documents && !inLibrary(library, path)) {
         string project = projectFolder(parentOf(absolute(path)))
         if (project.len() > 0 && !preparePackages(project, library, target, compilation.depth + 1)) {
             ret 1
@@ -423,12 +439,28 @@ public i32 build(ref Compilation compilation) {
         }
     }
     // D568: a line for each step, unless it is asked not to or cromo prints something else.
-    bool silent = compilation.quiet || compilation.emitIr || compilation.runtime
+    bool silent = compilation.quiet || compilation.emitIr || compilation.runtime || documents
     Progress steps = Progress(silent, compilation.options.optLevel > 0 ? 6 : 5)
     steps.step("Reading " + fs.fileName(path) + " and its modules", false)
     bool tests = compilation.tests
     Program program = load(path, text, library, target, tests)
     if (program.diag.hasErrors()) {
+        ret 1
+    }
+    if (compilation.aiModule.len() > 0) {
+        string printed
+        if (!moduleReference(program.tree, program.diag, compilation.aiModule, ref printed)) {
+            ret 1
+        }
+        print("{}", printed)
+        ret 0
+    }
+    if (compilation.reference.len() > 0) {
+        string problem
+        if (writeReference(program.tree, program.diag, libraryModuleNames(library), compilation.reference, ref problem)) {
+            ret 0
+        }
+        eprintln("cromo: {}", problem)
         ret 1
     }
     for (i64 i = 0; i < program.tree.files.len(); i++) {
@@ -761,6 +793,9 @@ public bool readOptions(list<string> args, i64 first, i64 last, bool isRun, ref 
             compilation.tests = true  // D572: the IR of cromo test, not in the help
         } else if (arg == "--runtime" && !isRun && !test) {
             compilation.runtime = true  // D393: only for the build of cromo, not in the help
+        } else if (arg == "--reference" && !isRun && !test && i + 1 < last) {
+            i++
+            compilation.reference = args[i]  // D519: for tools/book.py, not in the help
         } else if (arg.len() == 3 && arg.startsWith("-O") && arg[2] >= '0' && arg[2] <= '3') {
             compilation.options.optLevel = i32(arg[2]) - 48
         } else if (!arg.startsWith("-") && compilation.inputPath.len() == 0 && (!test || fs.extension(arg) == ".cro")) {
@@ -774,6 +809,9 @@ public bool readOptions(list<string> args, i64 first, i64 last, bool isRun, ref 
         }
     }
     bool windows = compilation.options.target == Target.Windows
+    if (compilation.reference.len() > 0) {
+        ret true  // the modules of the library, without a program
+    }
     if (compilation.options.cpu.len() > 0 && isArm64(compilation.options.target) && !compilation.apk) {
         eprintln("cromo: --cpu names a processor of x86-64, and {} is ARM64", targetName(compilation.options.target))
         ret false
@@ -858,6 +896,53 @@ public bool readOptions(list<string> args, i64 first, i64 last, bool isRun, ref 
         ret false
     }
     ret true
+}
+
+// D559: `cromo ai` prints lib/ai.md, what an AI needs to write Cromo, and the names of
+// the modules; `cromo ai std.fs` the reference of a module, and `cromo ai core` that of
+// the core, from the declarations and the documentation of the library itself.
+i32 aiCommand(list<string> args, string library) {
+    if (library.len() == 0) {
+        eprintln("cromo: cannot find the library: lib/ is missing next to the folder of cromo")
+        ret 2
+    }
+    list<string> names = libraryModuleNames(library)
+    string listed = "core"
+    for (string name in names) {
+        listed += ", " + name
+    }
+    if (args.len() == 2) {
+        string text
+        try {
+            text = fs.readText(fs.joinPath(library, "ai.md"))
+        } catch (Exception e) {
+            eprintln("cromo: cannot read ai.md in the library")
+            ret 2
+        }
+        if (text.startsWith("\u{FEFF}")) {
+            text = text.slice(3, text.len())
+        }
+        print("{}", text)
+        print("\n## The modules\n\n`cromo ai <module>` prints the reference of one of them: {}.\n", listed)
+        ret 0
+    }
+    if (args.len() != 3) {
+        eprintln("cromo: ai takes nothing, or the name of one module, as cromo ai std.fs")
+        ret 2
+    }
+    string wanted = args[2] == "core" ? "std" : args[2]
+    if (wanted != "std" && !wanted.startsWith("std.")) {
+        wanted = "std." + wanted  // cromo ai fs
+    }
+    if (wanted == "std.runtime" || (wanted != "std" && !hasText(names, wanted))) {
+        eprintln("cromo: the library has no module {}: it has {}", args[2], listed)
+        ret 2
+    }
+    Compilation compilation
+    compilation.options.library = library
+    compilation.options.target = hostTarget()
+    compilation.aiModule = wanted
+    ret build(ref compilation)
 }
 
 // The help, on the standard output or on the standard error.
@@ -965,9 +1050,11 @@ public i32 command(list<string> args) {
     if (name == "fmt") {
         ret formatCommand(args, 2)
     }
-    if (name == "ai" || name == "lsp") {
-        eprintln("cromo: cromo {} is not yet in the cromo written in Cromo", name)
-        ret 2
+    if (name == "ai") {
+        ret aiCommand(args, library)
+    }
+    if (name == "lsp") {
+        ret runLanguageServer(library)  // D170
     }
     if (name == "rls") {
         eprintln("cromo: the language server is cromo lsp")

@@ -215,3 +215,31 @@ void zero(addr memory, i64 size) {
         put<u8>(offset(memory, i), 0)
     }
 }
+
+extern "kernel32" {
+    i64 GetStdHandle(u32 which)
+    i32 ReadFile(i64 file, addr data, u32 size, ref u32 done, addr overlapped)
+    i32 PeekNamedPipe(i64 pipe, addr buffer, u32 size, addr read, ref u32 available, addr left)
+}
+
+// Reads what the standard input has, at most 64 KB, waiting when it has nothing:
+// the bytes are added to `into`. False at its end.
+public bool readInputBytes(ref list<u8> into) {
+    i64 input = GetStdHandle(0xFFFFFFF6)  // STD_INPUT_HANDLE
+    addr buffer = alloc(65536)
+    u32 done = 0
+    bool read = ReadFile(input, buffer, 65536, ref done, addr(0)) != 0 && done > 0
+    for (i64 i = 0; read && i < i64(done); i++) {
+        into.add(copyAt<u8>(offset(buffer, i)))
+    }
+    free(buffer)
+    ret read
+}
+
+// Whether a read of the standard input would not wait: it has bytes, or it is at
+// its end, or it is not a pipe and cannot be asked.
+public bool inputIsReady() {
+    i64 input = GetStdHandle(0xFFFFFFF6)
+    u32 available = 0
+    ret PeekNamedPipe(input, addr(0), 0, addr(0), ref available, addr(0)) == 0 || available > 0
+}

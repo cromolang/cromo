@@ -1,0 +1,1691 @@
+// `cromo lsp`: the language server, on the standard input and output (D170-D182,
+// D473-D477), as src/lsp.cpp. The messages are JSON with a Content-Length header;
+// the documents open in the editor come before the files on the disk, and a
+// program is analyzed again a pause after its last change (D173).
+import std.fs
+import std.json
+import std.time
+import ast
+import diagnostics
+import docs
+import fmt
+import host
+import index
+import lexer
+import loader
+import moves
+import packages
+import parser
+import sema
+import targets
+import types
+import version
+
+// ---- Values of JSON ----
+
+json.Value jText(string value) {
+    ret json.Value.Text(value)
+}
+
+json.Value jInt(i64 value) {
+    ret json.Value.Int(value)
+}
+
+json.Value jBool(bool value) {
+    ret json.Value.Bool(value)
+}
+
+// A member of an object; a missing member is null.
+json.Value member(json.Value value, string name) {
+    if (value.has(name)) {
+        ret value.get(name)
+    }
+    ret json.Value.Null
+}
+
+string textOf(json.Value value) {
+    switch (value) {
+        case Text(string text) {
+            ret text
+        }
+        default {
+            ret ""
+        }
+    }
+}
+
+i64 intOf(json.Value value) {
+    switch (value) {
+        case Int(i64 number) {
+            ret number
+        }
+        case UInt(u64 number) {
+            ret i64(number)
+        }
+        case Float(f64 number) {
+            ret i64(number)
+        }
+        default {
+            ret 0
+        }
+    }
+}
+
+bool isNull(json.Value value) {
+    switch (value) {
+        case Null {
+            ret true
+        }
+        default {
+            ret false
+        }
+    }
+}
+
+list<json.Value> itemsOf(json.Value value) {
+    switch (value) {
+        case Array(list<json.Value> items) {
+            ret items
+        }
+        default {
+            list<json.Value> none
+            ret none
+        }
+    }
+}
+
+// The uri of the textDocument of a request.
+string uriOf(json.Value params) {
+    ret textOf(member(member(params, "textDocument"), "uri"))
+}
+
+// ---- Messages: JSON with a Content-Length header (LSP, D170) ----
+
+// The messages of the standard input, read as they come.
+struct Inbox {
+    list<u8> buffer
+    i64 start  // of what is not read yet
+    bool ended
+
+    // The next message whole in the buffer, taken out of it; false when it is not there yet.
+    bool take(ref string body) {
+        i64 at = start
+        i64 length = 0
+        for (true) {
+            i64 end = at
+            for (end < buffer.len() && buffer[end] != '\n') {
+                end++
+            }
+            if (end >= buffer.len()) {
+                ret false
+            }
+            i64 last = end > at && buffer[end - 1] == '\r' ? end - 1 : end
+            if (last == at) {
+                at = end + 1
+                break
+            }
+            // Anywhere in the line: some clients write a UTF-8 BOM before the first header.
+            string name = "Content-Length:"
+            for (i64 i = at; i + name.len() <= last; i++) {
+                bool found = true
+                for (i64 k = 0; found && k < name.len(); k++) {
+                    found = buffer[i + k] == name[k]
+                }
+                if (found) {
+                    i64 digit = i + name.len()
+                    for (digit < last && (buffer[digit] == ' ' || buffer[digit] == '\t')) {
+                        digit++
+                    }
+                    length = 0
+                    for (digit < last && buffer[digit] >= '0' && buffer[digit] <= '9') {
+                        length = length * 10 + i64(buffer[digit] - '0')
+                        digit++
+                    }
+                    break
+                }
+            }
+            at = end + 1
+        }
+        if (buffer.len() - at < length) {
+            ret false
+        }
+        list<u8> bytes
+        for (i64 i = at; i < at + length; i++) {
+            bytes.add(buffer[i])
+        }
+        start = at + length
+        if (start == buffer.len()) {
+            list<u8> none
+            buffer = move none
+            start = 0
+        }
+        body = ""
+        try {
+            body = string(bytes)
+        } catch (Exception e) {
+        }
+        ret true
+    }
+
+    // 0 with a message in `body`; 1 when `timed` and nothing comes within 300 ms
+    // of `since`; 2 at the end of the input.
+    i32 next(bool timed, Instant since, ref string body) {
+        for (true) {
+            if (take(ref body)) {
+                ret 0
+            }
+            if (ended) {
+                ret 2
+            }
+            if (timed) {
+                for (!inputIsReady()) {
+                    if (since.elapsed().milliseconds() >= 300) {
+                        ret 1
+                    }
+                    time.msleep(5)
+                }
+            }
+            if (!readInputBytes(ref buffer)) {
+                ended = true
+            }
+        }
+        ret 2
+    }
+}
+
+void send(json.Value message) {
+    string body = json.encode(message)
+    print("Content-Length: {}\r\n\r\n{}", body.len(), body)
+}
+
+json.Value response(json.Value id, move json.Value result) {
+    json.Value message = json.object()
+    message.set("jsonrpc", jText("2.0"))
+    message.set("id", id.copy())
+    message.set("result", move result)
+    ret message
+}
+
+// ---- Files and positions ----
+
+i64 hexDigit(u8 c) {
+    if (c >= '0' && c <= '9') {
+        ret i64(c - '0')
+    }
+    if (c >= 'a' && c <= 'f') {
+        ret i64(c - 'a') + 10
+    }
+    if (c >= 'A' && c <= 'F') {
+        ret i64(c - 'A') + 10
+    }
+    ret 0
+}
+
+string pathFromUri(string uri) {
+    string text = uri.startsWith("file://") ? uri.slice(7, uri.len()) : uri
+    list<u8> decoded
+    for (i64 i = 0; i < text.len(); i++) {
+        if (text[i] == '%' && i + 2 < text.len()) {
+            decoded.add(u8(hexDigit(text[i + 1]) * 16 + hexDigit(text[i + 2])))
+            i += 2
+        } else {
+            decoded.add(text[i])
+        }
+    }
+    string path
+    try {
+        path = string(decoded)
+    } catch (Exception e) {
+    }
+    if (path.len() > 2 && path[0] == '/' && path[2] == ':') {  // /c:/dati
+        path = path.slice(1, path.len())
+    }
+    ret fs.separator() == "\\" ? path.replace("/", "\\") : path
+}
+
+string uriFromPath(string path) {
+    string generic = absolute(path).replace("\\", "/")
+    list<u8> out
+    for (u8 c in "file://".bytes()) {
+        out.add(c)
+    }
+    if (generic.len() == 0 || generic[0] != '/') {
+        out.add('/')
+    }
+    string hex = "0123456789ABCDEF"
+    for (i64 i = 0; i < generic.len(); i++) {
+        u8 c = generic[i]
+        if (i == 0 && c >= 'A' && c <= 'Z') {
+            c = c - 'A' + 'a'  // the drive, as VS Code writes it
+        }
+        bool plain = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '.' || c == '_' ||
+            c == '~' || c == '/'
+        if (plain) {
+            out.add(c)
+        } else {
+            out.add('%')
+            out.add(hex[i64(c >> 4)])
+            out.add(hex[i64(c & 0xF)])
+        }
+    }
+    ret string(out)
+}
+
+// A place in a file: its line and its column, from 1.
+struct Place {
+    i32 line = 1
+    i32 column = 1
+    i32 file
+}
+
+Place placeOf(i32 line, i32 column, i32 file) {
+    Place place
+    place.line = line
+    place.column = column
+    place.file = file
+    ret place
+}
+
+// The start of a line of a text, from 1, or the end of the text.
+i64 lineStart(string text, i32 line) {
+    i64 pos = 0
+    for (i32 i = 1; i < line && pos < text.len(); i++) {
+        i64 next = text.findFrom("\n", pos)
+        if (next < 0) {
+            ret text.len()
+        }
+        pos = next + 1
+    }
+    ret pos
+}
+
+i64 utf8Length(u8 lead) {
+    ret lead >= 0xF0 ? 4 : lead >= 0xE0 ? 3 : lead >= 0xC0 ? 2 : 1
+}
+
+// LSP counts lines from 0 and UTF-16 units; cromo counts lines and characters from 1.
+json.Value position(string text, Place loc) {
+    i64 pos = lineStart(text, loc.line)
+    i64 units = 0
+    for (i32 column = 1; column < loc.column && pos < text.len() && text[pos] != '\n'; column++) {
+        i64 size = utf8Length(text[pos])
+        units += size == 4 ? 2 : 1
+        pos += size
+    }
+    json.Value out = json.object()
+    out.set("line", jInt(i64(loc.line) - 1))
+    out.set("character", jInt(units))
+    ret out
+}
+
+Place locationAt(string text, json.Value at, i32 file) {
+    Place loc = placeOf(i32(intOf(member(at, "line"))) + 1, 1, file)
+    i64 pos = lineStart(text, loc.line)
+    i64 units = intOf(member(at, "character"))
+    for (units > 0 && pos < text.len() && text[pos] != '\n') {
+        i64 size = utf8Length(text[pos])
+        units -= size == 4 ? 2 : 1
+        pos += size
+        loc.column++
+    }
+    ret loc
+}
+
+// The range of `length` characters from `loc`.
+json.Value range(string text, Place loc, i32 length) {
+    Place end = loc
+    end.column += length
+    json.Value out = json.object()
+    out.set("start", position(text, loc))
+    out.set("end", position(text, end))
+    ret out
+}
+
+bool isIdentChar(u8 c) {
+    ret (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_'
+}
+
+// The byte of a text at an LSP position.
+i64 offsetAt(string text, json.Value at) {
+    i64 pos = lineStart(text, i32(intOf(member(at, "line"))) + 1)
+    i64 units = intOf(member(at, "character"))
+    for (units > 0 && pos < text.len() && text[pos] != '\n') {
+        i64 size = utf8Length(text[pos])
+        units -= size == 4 ? 2 : 1
+        pos += size
+    }
+    ret pos
+}
+
+// The line and the column, from 1, of a byte of a text.
+Place locationOf(string text, i64 at, i32 file) {
+    Place loc = placeOf(1, 1, file)
+    i64 i = 0
+    for (i < at && i < text.len()) {
+        if (text[i] == '\n') {
+            loc.line++
+            loc.column = 1
+        } else {
+            loc.column++
+        }
+        i += utf8Length(text[i])
+    }
+    ret loc
+}
+
+// The length of the name at `loc`, or 1 for anything else.
+i32 tokenLength(string text, Place loc) {
+    i64 pos = lineStart(text, loc.line)
+    for (i32 column = 1; column < loc.column && pos < text.len() && text[pos] != '\n'; column++) {
+        pos += utf8Length(text[pos])
+    }
+    i32 length = 0
+    for (pos < text.len() && isIdentChar(text[pos])) {
+        pos++
+        length++
+    }
+    ret length > 0 ? length : 1
+}
+
+// ---- The analysis of a program (D172) ----
+
+struct Document {
+    string uri
+    string path
+    string text
+}
+
+// The documentation comments of the files of an analysis, read when the editor asks (D473).
+struct DocCache {
+    map<i32, DocComments> comments
+}
+
+struct Analysis {
+    string rootKey
+    string rootPath
+    bool requireMain = true
+    Checker c  // the program: its files, its tree and, when checked, its types
+    list<Message> messages
+    list<Mention> mentions
+    list<string> keys  // sourceKey of each file; empty for the standard library
+    bool checked       // it reached the analysis
+    list<string> published
+
+    i32 fileOf(string key) const {
+        for (i64 i = 0; i < keys.len(); i++) {
+            if (keys[i] == key) {
+                ret i32(i)
+            }
+        }
+        ret -1
+    }
+
+    // The path of the module of a file, as `std.fs`.
+    string moduleOf(i32 file) const {
+        if (file < 0 || i64(file) >= c.tree.files.len()) {
+            ret ""
+        }
+        ret c.tree.files[file].name
+    }
+
+    // The files of the modules that `file` imports with the name `name` before the
+    // dot, with those for the system (D202): true at their places, or nothing.
+    list<bool> filesOf(i32 file, string name) const {
+        list<bool> files
+        bool any = false
+        for (i64 i = 0; i < c.tree.files.len(); i++) {
+            files.add(false)
+        }
+        for (i64 k = 0; k < c.tree.files[file].imports.len(); k++) {
+            list<string> path = c.tree.files[file].imports[k].path
+            if (path[path.len() - 1] != name) {
+                continue
+            }
+            list<i32> first = c.tree.files[file].imports[k].files
+            for (i64 i = 0; i < c.tree.files.len(); i++) {
+                for (i32 each in first) {
+                    if (each == i32(i) || c.tree.files[i].part == each) {
+                        files[i] = true
+                        any = true
+                    }
+                }
+            }
+        }
+        if (!any) {
+            list<bool> none
+            ret none
+        }
+        ret files
+    }
+}
+
+// The documentation of the declaration at a place, as Markdown (D474).
+string docOf(ref DocCache cache, Analysis a, i32 file, i32 line, bool trailing) {
+    if (file < 0 || file >= a.c.diag.fileCount()) {
+        ret ""
+    }
+    if (!cache.comments.contains(file)) {
+        cache.comments[file] = DocComments(a.c.diag.path(file), a.c.diag.text(file))
+    }
+    ret markdownOf(cache.comments[file].of(line, trailing))
+}
+
+// P51: the documentation of a module, that of the first of its files that has one.
+string moduleDoc(ref DocCache cache, Analysis a, list<i32> files) {
+    for (i32 file in files) {
+        if (file < 0 || file >= a.c.diag.fileCount()) {
+            continue
+        }
+        if (!cache.comments.contains(file)) {
+            cache.comments[file] = DocComments(a.c.diag.path(file), a.c.diag.text(file))
+        }
+        list<string> lines = cache.comments[file].module()
+        if (lines.len() > 0) {
+            ret markdownOf(lines)
+        }
+    }
+    ret ""
+}
+
+// The Markdown of a hover or of a signature: Cromo code, then the documentation
+// under a line (D475).
+string withDoc(string code, string doc) {
+    ret code + (doc.len() == 0 ? "" : "\n\n---\n\n" + doc)
+}
+
+string cromoBlock(string code) {
+    ret "```cromo\n" + code + "\n```"
+}
+
+json.Value markdown(string value) {
+    json.Value out = json.object()
+    out.set("kind", jText("markdown"))
+    out.set("value", jText(value))
+    ret out
+}
+
+// LSP kinds: 2 method, 3 function, 5 field, 8 interface, 13 enum, 20 enum member,
+// 22 struct. The documentation is shown next to the signature (D475).
+json.Value entry(string label, i64 kind, string detail, string doc) {
+    json.Value out = json.object()
+    out.set("label", jText(label))
+    out.set("kind", jInt(kind))
+    out.set("detail", jText(detail))
+    if (doc.len() > 0) {
+        out.set("documentation", markdown(doc))
+    }
+    ret out
+}
+
+// D181: what the module of `file` can use of a struct: the public members, or all
+// of them in the module of the type (D132); a method that implements an interface too.
+void members(ref DocCache cache, Analysis a, i32 record, i32 file, ref json.Value items) {
+    const ref Record decl = a.c.tree.records[record]
+    bool own = decl.file == file
+    for (i64 i = 0; i < decl.fields.len(); i++) {
+        if (own || decl.fields[i].isPublic) {
+            items.add(entry(decl.fields[i].name, 5,
+                fieldTypeOf(a.c.tree, a.c.types, record, i) + " " + decl.name + "." + decl.fields[i].name,
+                docOf(ref cache, a, decl.file, decl.fields[i].line, true)))
+        }
+    }
+    map<string, bool> fromInterfaces
+    for (i32 node in decl.interfaces) {
+        i32 resolved = a.c.tree.types[node].resolved
+        if (!a.c.types.isInterface(resolved)) {
+            continue
+        }
+        for (i32 method in a.c.tree.interfaces[a.c.types.decl(resolved)].methods) {
+            fromInterfaces[a.c.tree.functions[method].name] = true
+        }
+    }
+    for (i32 function in decl.members) {
+        const ref Function method = a.c.tree.functions[function]
+        if (method.kind != FunctionKind.Method) {
+            continue
+        }
+        if (own || method.isPublic || fromInterfaces.contains(method.name)) {
+            items.add(entry(method.name, 2, signatureOf(a.c.tree, a.c.types, function, record),
+                docOf(ref cache, a, method.file, method.line, false)))
+        }
+    }
+}
+
+string typeParamsOf(list<TypeParam> params) {
+    if (params.len() == 0) {
+        ret ""
+    }
+    string text = "<"
+    for (i64 i = 0; i < params.len(); i++) {
+        text += (i > 0 ? ", " : "") + params[i].name
+    }
+    ret text + ">"
+}
+
+// D476: after the name of an imported module, its public names, without the
+// instances of the generics, the tests and the C functions (P51).
+void moduleMembers(ref DocCache cache, Analysis a, i32 file, string name, ref json.Value items) {
+    if (file < 0 || i64(file) >= a.c.tree.files.len()) {
+        ret
+    }
+    list<bool> files = a.filesOf(file, name)
+    if (files.len() == 0) {
+        ret
+    }
+    for (i32 function in a.c.tree.topFunctions) {
+        const ref Function decl = a.c.tree.functions[function]
+        if (!files[decl.file] || !decl.isPublic || decl.isExtern || decl.isTest) {
+            continue
+        }
+        items.add(entry(decl.name, 3, signatureOf(a.c.tree, a.c.types, function, -1), docOf(ref cache, a, decl.file, decl.line, false)))
+    }
+    for (i64 r = 0; r < a.c.tree.records.len(); r++) {
+        const ref Record decl = a.c.tree.records[r]
+        if (decl.generic >= 0 || !files[decl.file] || !decl.isPublic) {
+            continue
+        }
+        items.add(entry(decl.name, decl.isEnum ? 13 : 22, (decl.isEnum ? "enum " : "struct ") + decl.name + typeParamsOf(decl.typeParams),
+            docOf(ref cache, a, decl.file, decl.line, false)))
+    }
+    for (i64 r = 0; r < a.c.tree.interfaces.len(); r++) {
+        const ref Interface decl = a.c.tree.interfaces[r]
+        if (!files[decl.file] || !decl.isPublic) {
+            continue
+        }
+        items.add(entry(decl.name, 8, "interface " + decl.name, docOf(ref cache, a, decl.file, decl.line, false)))
+    }
+}
+
+// What calleeOf found.
+struct Callee {
+    bool found
+    string label
+    string doc
+}
+
+Callee constructorOf(ref DocCache cache, Analysis a, i32 record) {
+    Callee callee
+    for (i32 function in a.c.tree.records[record].members) {
+        if (a.c.tree.functions[function].kind != FunctionKind.Constructor) {
+            continue
+        }
+        callee.found = true
+        callee.label = signatureOf(a.c.tree, a.c.types, function, -1)
+        callee.doc = docOf(ref cache, a, a.c.tree.records[record].file, a.c.tree.records[record].line, false)
+        string more = docOf(ref cache, a, a.c.tree.functions[function].file, a.c.tree.functions[function].line, false)
+        if (more.len() > 0) {
+            callee.doc += (callee.doc.len() == 0 ? "" : "\n\n") + more
+        }
+        break
+    }
+    ret callee
+}
+
+Callee functionOf(ref DocCache cache, Analysis a, i32 function, i32 owner) {
+    Callee callee
+    callee.found = true
+    callee.label = signatureOf(a.c.tree, a.c.types, function, owner)
+    callee.doc = docOf(ref cache, a, a.c.tree.functions[function].file, a.c.tree.functions[function].line, false)
+    ret callee
+}
+
+// The names of the file and of its module come first (D126), then the core, then
+// the public names of the other modules.
+i32 rankOf(Analysis a, i32 at, bool isPublic, i32 file) {
+    if (at == file) {
+        ret 0
+    }
+    if (a.moduleOf(at) == a.moduleOf(file)) {
+        ret 1
+    }
+    if (!isPublic) {
+        ret 9
+    }
+    ret at == 1 ? 2 : 3
+}
+
+// The signature and the documentation of what `receiver.name(` or `name(` calls,
+// found as the completion finds the members (D477).
+Callee calleeOf(ref DocCache cache, Analysis a, i32 file, string receiver, string name, Place receiverAt) {
+    Callee none
+    if (receiver.len() == 0) {
+        BuiltinDoc builtin
+        if (builtinDoc(name, ref builtin)) {
+            if (builtin.signature.len() == 0) {
+                ret none
+            }
+            Callee callee
+            callee.found = true
+            callee.label = builtin.signature
+            callee.doc = markdownOf(builtin.text.split("\n"))
+            ret callee
+        }
+        i32 best = -1
+        i32 bestRank = 9
+        for (i32 function in a.c.tree.topFunctions) {
+            const ref Function candidate = a.c.tree.functions[function]
+            if (candidate.name != name || candidate.isTest) {
+                continue
+            }
+            i32 rank = rankOf(a, candidate.file, candidate.isPublic, file)
+            if (rank < bestRank) {
+                best = function
+                bestRank = rank
+            }
+        }
+        if (best >= 0) {
+            ret functionOf(ref cache, a, best, -1)
+        }
+        bestRank = 9
+        for (i64 r = 0; r < a.c.tree.records.len(); r++) {
+            const ref Record candidate = a.c.tree.records[r]
+            if (candidate.generic >= 0 || candidate.name != name) {
+                continue
+            }
+            i32 rank = rankOf(a, candidate.file, candidate.isPublic, file)
+            if (rank < bestRank) {
+                best = i32(r)
+                bestRank = rank
+            }
+        }
+        if (best >= 0) {
+            ret constructorOf(ref cache, a, best)
+        }
+        ret none
+    }
+    // `geometry.area(`: a function or a constructor of an imported module (D126).
+    if (file >= 0 && i64(file) < a.c.tree.files.len()) {
+        list<bool> files = a.filesOf(file, receiver)
+        if (files.len() > 0) {
+            for (i32 function in a.c.tree.topFunctions) {
+                const ref Function candidate = a.c.tree.functions[function]
+                if (candidate.name == name && candidate.isPublic && files[candidate.file]) {
+                    ret functionOf(ref cache, a, function, -1)
+                }
+            }
+            for (i64 r = 0; r < a.c.tree.records.len(); r++) {
+                const ref Record candidate = a.c.tree.records[r]
+                if (candidate.generic < 0 && candidate.name == name && candidate.isPublic && files[candidate.file]) {
+                    ret constructorOf(ref cache, a, i32(r))
+                }
+            }
+            ret none
+        }
+    }
+    // `Shape.Circle(`: a case with data.
+    for (i64 r = 0; r < a.c.tree.records.len(); r++) {
+        const ref Record decl = a.c.tree.records[r]
+        if (decl.generic >= 0 || decl.name != receiver || !decl.isEnum || (decl.file != file && !decl.isPublic)) {
+            continue
+        }
+        for (Case item in decl.cases) {
+            if (item.name != name || item.fields.len() == 0) {
+                continue
+            }
+            Callee callee
+            callee.found = true
+            callee.label = decl.name + "." + item.name + "("
+            for (i64 i = 0; i < item.fields.len(); i++) {
+                string type = a.c.types.isError(item.fields[i].resolved) ? a.c.tree.types[item.fields[i].type].name :
+                    typeName(a.c.tree, a.c.types, item.fields[i].resolved)
+                callee.label += (i > 0 ? ", " : "") + type + " " + item.fields[i].name
+            }
+            callee.label += ")"
+            callee.doc = docOf(ref cache, a, decl.file, item.line, true)
+            ret callee
+        }
+        ret none
+    }
+    // `c.area(`: a method of the type of the name before the dot (D180).
+    for (Mention mention in a.mentions) {
+        if (mention.file != file || mention.line != receiverAt.line || mention.column != receiverAt.column) {
+            continue
+        }
+        if (a.c.types.isStruct(mention.type)) {
+            i32 record = a.c.types.decl(mention.type)
+            for (i32 function in a.c.tree.records[record].members) {
+                if (a.c.tree.functions[function].kind == FunctionKind.Method && a.c.tree.functions[function].name == name) {
+                    ret functionOf(ref cache, a, function, record)
+                }
+            }
+        }
+        if (a.c.types.isInterface(mention.type)) {
+            for (i32 function in a.c.tree.interfaces[a.c.types.decl(mention.type)].methods) {
+                if (a.c.tree.functions[function].name == name) {
+                    ret functionOf(ref cache, a, function, -1)
+                }
+            }
+        }
+        ret none
+    }
+    ret none
+}
+
+// The signature with the places of its parameters in the label.
+json.Value signatureInformation(string label, string name, string doc, ref i64 count) {
+    json.Value parameters = json.array()
+    count = 0
+    i64 open = -1
+    string call = name + "("
+    i64 at = label.find(call)
+    for (at >= 0 && open < 0) {
+        if (at == 0 || !isIdentChar(label[at - 1])) {
+            open = at + name.len()
+        } else {
+            at = label.findFrom(call, at + 1)
+        }
+    }
+    if (open >= 0) {
+        i64 depth = 0
+        i64 start = open + 1
+        for (i64 i = open + 1; i < label.len(); i++) {
+            u8 c = label[i]
+            if (c == '(' || c == '<' || c == '[') {
+                depth++
+            } else if ((c == ')' || c == '>' || c == ']') && depth > 0) {
+                depth--
+            } else if ((c == ',' || c == ')') && depth == 0) {
+                for (start < i && label[start] == ' ') {
+                    start++
+                }
+                if (i > start) {
+                    json.Value place = json.array()
+                    place.add(jInt(start))
+                    place.add(jInt(i))
+                    json.Value parameter = json.object()
+                    parameter.set("label", move place)
+                    parameters.add(move parameter)
+                    count++
+                }
+                start = i + 1
+                if (c == ')') {
+                    break
+                }
+            }
+        }
+    }
+    json.Value signature = json.object()
+    signature.set("label", jText(label))
+    if (doc.len() > 0) {
+        signature.set("documentation", markdown(doc))
+    }
+    signature.set("parameters", move parameters)
+    ret signature
+}
+
+json.Value symbol(string text, string name, i64 kind, i32 line, i32 column, string detail) {
+    json.Value item = json.object()
+    item.set("name", jText(name))
+    if (detail.len() > 0) {
+        item.set("detail", jText(detail))
+    }
+    item.set("kind", jInt(kind))
+    Place loc = placeOf(line, column, 0)
+    item.set("range", range(text, loc, tokenLength(text, loc)))
+    item.set("selectionRange", range(text, loc, tokenLength(text, loc)))
+    item.set("children", json.array())
+    ret item
+}
+
+// A text parsed alone, without its errors.
+Tree parsedAlone(string path, string text) {
+    Diagnostics quiet = Diagnostics(path, text)
+    quiet.silent = true
+    list<Token> tokens = tokenize(text, ref quiet, false)
+    map<i64, bool> angles
+    ret parser.parse(ref tokens, ref quiet, ref angles)
+}
+
+void publish(string uri, move json.Value errors) {
+    json.Value params = json.object()
+    params.set("uri", jText(uri))
+    params.set("diagnostics", move errors)
+    json.Value message = json.object()
+    message.set("jsonrpc", jText("2.0"))
+    message.set("method", jText("textDocument/publishDiagnostics"))
+    message.set("params", move params)
+    send(message)
+}
+
+struct Server {
+    string library
+    Inbox inbox
+    bool shutdown
+    string workspace
+    list<string> documentKeys  // by sourceKey, in their order
+    list<Document> documents
+    list<string> dirty       // changed since the last analysis
+    list<Analysis> analyses  // in the order of the sourceKey of their main files
+
+    i64 documentOf(string key) const {
+        for (i64 i = 0; i < documentKeys.len(); i++) {
+            if (documentKeys[i] == key) {
+                ret i
+            }
+        }
+        ret -1
+    }
+
+    i32 run() {
+        bool timed = false
+        Instant since = time.now()
+        for (true) {
+            string body
+            i32 wait = inbox.next(timed, since, ref body)
+            if (wait == 2) {
+                ret shutdown ? 0 : 1
+            }
+            if (wait == 1) {  // D173: the pause after the last change
+                timed = false
+                analyzeDirty()
+                continue
+            }
+            json.Value message
+            try {
+                message = json.parse(body)
+            } catch (Exception e) {
+                continue
+            }
+            string method = textOf(member(message, "method"))
+            json.Value id = member(message, "id")
+            json.Value params = member(message, "params")
+            if (method == "exit") {
+                ret shutdown ? 0 : 1
+            }
+            if (method == "textDocument/didChange") {
+                change(params)
+                timed = true
+                since = time.now()
+                continue
+            }
+            if (method == "textDocument/didOpen") {
+                open(params)
+                analyzeDirty()  // D176: at once
+                continue
+            }
+            if (method == "textDocument/didClose") {
+                close(params)
+                continue
+            }
+            if (isNull(id)) {
+                continue  // the other notifications
+            }
+
+            analyzeDirty()  // D176: a request sees the last text
+            timed = false
+            if (method == "initialize") {
+                send(response(id, initialize(params)))
+            } else if (method == "shutdown") {
+                shutdown = true
+                send(response(id, json.Value.Null))
+            } else if (method == "textDocument/hover") {
+                send(response(id, hover(params)))
+            } else if (method == "textDocument/definition") {
+                send(response(id, definition(params)))
+            } else if (method == "textDocument/documentSymbol") {
+                send(response(id, symbols(params)))
+            } else if (method == "textDocument/formatting") {
+                send(response(id, formatting(params)))
+            } else if (method == "textDocument/completion") {
+                send(response(id, completion(params)))
+            } else if (method == "textDocument/signatureHelp") {
+                send(response(id, signatureHelp(params)))
+            } else {
+                json.Value error = json.object()
+                error.set("code", jInt(-32601))
+                error.set("message", jText("cromo lsp does not support " + method))
+                json.Value reply = json.object()
+                reply.set("jsonrpc", jText("2.0"))
+                reply.set("id", id.copy())
+                reply.set("error", move error)
+                send(reply)
+            }
+        }
+        ret 1
+    }
+
+    json.Value initialize(json.Value params) {
+        json.Value root = member(params, "rootUri")
+        list<json.Value> folders = itemsOf(member(params, "workspaceFolders"))
+        if (!isNull(root)) {
+            workspace = pathFromUri(textOf(root))
+        } else if (folders.len() > 0) {
+            workspace = pathFromUri(textOf(member(folders[0], "uri")))
+        }
+        json.Value sync = json.object()
+        sync.set("openClose", jBool(true))
+        sync.set("change", jInt(1))  // D174: the whole text
+        json.Value capabilities = json.object()
+        capabilities.set("textDocumentSync", move sync)
+        capabilities.set("hoverProvider", jBool(true))
+        capabilities.set("definitionProvider", jBool(true))
+        capabilities.set("documentSymbolProvider", jBool(true))
+        capabilities.set("documentFormattingProvider", jBool(true))
+        json.Value completions = json.object()
+        json.Value triggers = json.array()
+        triggers.add(jText("."))
+        completions.set("triggerCharacters", move triggers)
+        capabilities.set("completionProvider", move completions)  // D179
+        json.Value signature = json.object()
+        json.Value opening = json.array()
+        opening.add(jText("("))
+        opening.add(jText(","))
+        signature.set("triggerCharacters", move opening)
+        json.Value again = json.array()
+        again.add(jText(")"))
+        signature.set("retriggerCharacters", move again)
+        capabilities.set("signatureHelpProvider", move signature)  // D477
+        json.Value info = json.object()
+        info.set("name", jText("cromo"))
+        info.set("version", jText(cromoVersion()))
+        json.Value result = json.object()
+        result.set("capabilities", move capabilities)
+        result.set("serverInfo", move info)
+        ret result
+    }
+
+    void markDirty(string key) {
+        i64 at = 0
+        for (at < dirty.len() && dirty[at].compare(key) < 0) {
+            at++
+        }
+        if (at == dirty.len() || dirty[at] != key) {
+            dirty.insert(at, key)
+        }
+    }
+
+    void open(json.Value params) {
+        json.Value item = member(params, "textDocument")
+        Document document
+        document.uri = textOf(member(item, "uri"))
+        document.path = pathFromUri(document.uri)
+        document.text = textOf(member(item, "text"))
+        string key = sourceKey(document.path)
+        i64 found = documentOf(key)
+        if (found >= 0) {
+            documents[found] = move document
+        } else {
+            i64 at = 0
+            for (at < documentKeys.len() && documentKeys[at].compare(key) < 0) {
+                at++
+            }
+            documentKeys.insert(at, key)
+            documents.insert(at, move document)
+        }
+        markDirty(key)
+    }
+
+    void change(json.Value params) {
+        string key = sourceKey(pathFromUri(uriOf(params)))
+        i64 found = documentOf(key)
+        list<json.Value> changes = itemsOf(member(params, "contentChanges"))
+        if (found < 0 || changes.len() == 0) {
+            ret
+        }
+        documents[found].text = textOf(member(changes[changes.len() - 1], "text"))
+        markDirty(key)
+    }
+
+    void close(json.Value params) {
+        string uri = uriOf(params)
+        string key = sourceKey(pathFromUri(uri))
+        i64 found = documentOf(key)
+        if (found >= 0) {
+            documentKeys.remove(found)
+            documents.remove(found)
+        }
+        for (i64 i = 0; i < dirty.len(); i++) {
+            if (dirty[i] == key) {
+                dirty.remove(i)
+                break
+            }
+        }
+        publish(uri, json.array())
+        // The programs that no open document needs are forgotten.
+        i64 at = 0
+        for (at < analyses.len()) {
+            bool needed = false
+            for (string documentKey in documentKeys) {
+                needed = needed || analyses[at].fileOf(documentKey) >= 0
+            }
+            if (needed) {
+                at++
+                continue
+            }
+            list<string> uris
+            for (string published in analyses[at].published) {
+                if (published != key) {
+                    uris.add(uriFor(published, analyses[at]))
+                }
+            }
+            for (string each in uris) {
+                publish(each, json.array())
+            }
+            analyses.remove(at)
+        }
+    }
+
+    // D172: the file itself if it has main, else the nearest main.cro above it, else
+    // the first executable of the cromo.mod of its project (D517), else the file alone.
+    string findRoot(string path, string text, ref bool requireMain) const {
+        Tree alone = parsedAlone(path, text)
+        for (i32 function in alone.topFunctions) {
+            if (alone.functions[function].name == "main" && !alone.functions[function].isExtern) {
+                requireMain = true
+                ret path
+            }
+        }
+        string documentKey = sourceKey(path)
+        string workspaceKey = workspace.len() == 0 ? "" : sourceKey(workspace)
+        string folder = parentOf(absolute(path))
+        for (true) {
+            string candidate = folder + fs.separator() + "main.cro"
+            string key = sourceKey(candidate)
+            if (key != documentKey && (documentOf(key) >= 0 || fs.isFile(candidate))) {
+                requireMain = true
+                ret candidate
+            }
+            if (sourceKey(folder) == workspaceKey) {
+                break  // not above the workspace
+            }
+            string parent = parentOf(folder)
+            if (parent == folder) {
+                break
+            }
+            folder = parent
+        }
+        string project = projectFolder(parentOf(absolute(path)))
+        if (project.len() > 0) {
+            for (string line in linesOf(readSource(project + fs.separator() + "cromo.mod"))) {
+                list<string> words = wordsOf(line)
+                if (words.len() < 3 || words[0] != "bin") {
+                    continue
+                }
+                string main = project + fs.separator() + words[2].replace("/", fs.separator())
+                if (sourceKey(main) != documentKey && fs.isFile(main)) {
+                    requireMain = true
+                    ret main
+                }
+            }
+        }
+        requireMain = false
+        ret path
+    }
+
+    // `replacedKey`, if not empty, is a document with another text: the completion
+    // analyzes a text that is not in the editor (D179).
+    Analysis analyze(string rootPath, bool requireMain, string replacedKey, string replacedText) const {
+        Analysis analysis
+        analysis.rootKey = sourceKey(rootPath)
+        analysis.rootPath = rootPath
+        analysis.requireMain = requireMain
+        map<string, string> overlay
+        for (i64 i = 0; i < documents.len(); i++) {
+            overlay[documentKeys[i]] = documents[i].text
+        }
+        if (replacedKey.len() > 0) {
+            overlay[replacedKey] = replacedText
+        }
+        string text = overlay.contains(analysis.rootKey) ? overlay[analysis.rootKey] : readSource(rootPath)
+        Program program = loadWith(rootPath, text, library, hostTarget(), false, overlay, true)
+        analysis.checked = !program.diag.hasErrors()
+        if (analysis.checked) {
+            analysis.c = checkProgram(move program.tree, move program.diag, requireMain)
+            if (!analysis.c.diag.hasErrors()) {
+                checkMoves(ref analysis.c)
+            }
+            analysis.mentions = indexProgram(analysis.c)
+        } else {
+            analysis.c.tree = move program.tree
+            analysis.c.diag = move program.diag
+        }
+        analysis.messages = analysis.c.diag.messages
+        for (i32 i = 0; i < analysis.c.diag.fileCount(); i++) {
+            analysis.keys.add(i == 1 ? "" : sourceKey(analysis.c.diag.path(i)))
+        }
+        ret analysis
+    }
+
+    i64 analysisAt(string rootKey) const {
+        for (i64 i = 0; i < analyses.len(); i++) {
+            if (analyses[i].rootKey == rootKey) {
+                ret i
+            }
+        }
+        ret -1
+    }
+
+    void store(move Analysis analysis) {
+        i64 old = analysisAt(analysis.rootKey)
+        if (old >= 0) {
+            // D177: with syntax errors, hover and definition use the last analysis without them.
+            if (!analysis.checked && analyses[old].checked) {
+                analysis.mentions = analyses[old].mentions
+                for (i64 i = 0; i < analysis.mentions.len(); i++) {
+                    analysis.mentions[i].type = errorType()  // of the types of the old analysis
+                }
+            }
+            list<string> uris
+            for (string key in analyses[old].published) {
+                if (analysis.fileOf(key) < 0) {
+                    uris.add(uriFor(key, analyses[old]))
+                }
+            }
+            for (string each in uris) {
+                publish(each, json.array())
+            }
+        }
+        publishAll(ref analysis)
+        if (old >= 0) {
+            analyses[old] = move analysis
+            ret
+        }
+        i64 at = 0
+        for (at < analyses.len() && analyses[at].rootKey.compare(analysis.rootKey) < 0) {
+            at++
+        }
+        analyses.insert(at, move analysis)
+    }
+
+    void analyzeDirty() {
+        if (dirty.len() == 0) {
+            ret
+        }
+        // The programs to analyze again: their main files, in the order of their keys.
+        list<string> rootKeys
+        list<string> rootPaths
+        list<bool> rootMains
+        list<string> changed = dirty
+        list<string> none
+        dirty = move none
+        for (string key in changed) {
+            for (i64 i = 0; i < analyses.len(); i++) {
+                if (analyses[i].fileOf(key) >= 0) {
+                    setRoot(ref rootKeys, ref rootPaths, ref rootMains, analyses[i].rootKey, analyses[i].rootPath, analyses[i].requireMain)
+                }
+            }
+            i64 document = documentOf(key)
+            if (document < 0) {
+                continue
+            }
+            bool requireMain = true
+            string root = findRoot(documents[document].path, documents[document].text, ref requireMain)
+            setRoot(ref rootKeys, ref rootPaths, ref rootMains, sourceKey(root), root, requireMain)
+        }
+        for (i64 i = 0; i < rootKeys.len(); i++) {
+            Analysis analysis = analyze(rootPaths[i], rootMains[i], "", "")
+            analysis.rootKey = rootKeys[i]
+            store(move analysis)
+        }
+        // A module that its main.cro does not import is analyzed alone.
+        for (i64 i = 0; i < documentKeys.len(); i++) {
+            string key = documentKeys[i]
+            if (analysisOf(key) >= 0) {
+                continue
+            }
+            Analysis analysis = analyze(documents[i].path, false, "", "")
+            analysis.rootKey = key
+            store(move analysis)
+        }
+    }
+
+    void setRoot(ref list<string> keys, ref list<string> paths, ref list<bool> mains, string key, string path, bool requireMain) const {
+        i64 at = 0
+        for (at < keys.len() && keys[at].compare(key) < 0) {
+            at++
+        }
+        if (at < keys.len() && keys[at] == key) {
+            paths[at] = path
+            mains[at] = requireMain
+            ret
+        }
+        keys.insert(at, key)
+        paths.insert(at, path)
+        mains.insert(at, requireMain)
+    }
+
+    // The analysis with the document as its main file, or another that contains it; -1 for none.
+    i64 analysisOf(string key) const {
+        i64 own = analysisAt(key)
+        if (own >= 0 && analyses[own].fileOf(key) >= 0) {
+            ret own
+        }
+        for (i64 i = 0; i < analyses.len(); i++) {
+            if (analyses[i].fileOf(key) >= 0) {
+                ret i
+            }
+        }
+        ret -1
+    }
+
+    string uriFor(string key, Analysis analysis) const {
+        i64 document = documentOf(key)
+        if (document >= 0) {
+            ret documents[document].uri
+        }
+        i32 file = analysis.fileOf(key)
+        ret uriFromPath(file >= 0 ? analysis.c.diag.path(file) : key)
+    }
+
+    // D175: every file of the program gets its errors, also when it is not open.
+    void publishAll(ref Analysis analysis) const {
+        for (i32 file = 0; file < analysis.c.diag.fileCount(); file++) {
+            if (file == 1) {
+                continue
+            }
+            string text = analysis.c.diag.text(file)
+            json.Value errors = json.array()
+            for (Message message in analysis.messages) {
+                if (message.file != file) {
+                    continue
+                }
+                Place loc = placeOf(message.line, message.column, file)
+                json.Value item = json.object()
+                item.set("range", range(text, loc, tokenLength(text, loc)))
+                item.set("severity", jInt(message.warning ? 2 : 1))
+                item.set("source", jText("cromo"))
+                item.set("message", jText(message.text))
+                errors.add(move item)
+            }
+            string key = analysis.keys[file]
+            publish(uriFor(key, analysis), move errors)
+            i64 at = 0  // in the order of the keys
+            for (at < analysis.published.len() && analysis.published[at].compare(key) < 0) {
+                at++
+            }
+            if (at == analysis.published.len() || analysis.published[at] != key) {
+                analysis.published.insert(at, key)
+            }
+        }
+    }
+
+    // The name under the cursor of a request, in an analysis that contains its
+    // document: its place among the names of the analysis, or -1.
+    i64 mentionAt(json.Value params, i64 analysis, i32 file) const {
+        string text = analyses[analysis].c.diag.text(file)
+        Place at = locationAt(text, member(params, "position"), file)
+        for (i64 i = 0; i < analyses[analysis].mentions.len(); i++) {
+            if (analyses[analysis].mentions[i].file == file && analyses[analysis].mentions[i].line == at.line &&
+                analyses[analysis].mentions[i].column <= at.column &&
+                at.column < analyses[analysis].mentions[i].column + analyses[analysis].mentions[i].length) {
+                ret i
+            }
+        }
+        ret -1
+    }
+
+    json.Value hover(json.Value params) const {
+        string key = sourceKey(pathFromUri(uriOf(params)))
+        i64 analysis = analysisOf(key)
+        i32 file = analysis >= 0 ? analyses[analysis].fileOf(key) : -1
+        i64 found = analysis >= 0 ? mentionAt(params, analysis, file) : -1
+        if (found < 0) {
+            ret hoverOfName(params)
+        }
+        Mention mention = analyses[analysis].mentions[found]
+        string code = cromoBlock(mention.hover)
+        // D475: the module above the signature, when it is another one; the core has none.
+        if (mention.docs.len() > 0 && mention.targetFile != 1) {
+            string module = analyses[analysis].moduleOf(mention.targetFile)
+            if (module.len() > 0 && module != analyses[analysis].moduleOf(file)) {
+                code = cromoBlock(module) + "\n" + code
+            }
+        }
+        DocCache cache
+        string doc
+        for (DocPlace place in mention.docs) {
+            string text = docOf(ref cache, analyses[analysis], place.file, place.line, place.trailing)
+            if (text.len() > 0) {
+                doc += (doc.len() == 0 ? "" : "\n\n") + text
+            }
+        }
+        json.Value result = json.object()
+        result.set("contents", markdown(withDoc(code, doc)))
+        result.set("range", range(analyses[analysis].c.diag.text(file), placeOf(mention.line, mention.column, file), mention.length))
+        ret result
+    }
+
+    // D475: the names that the analysis does not index: the built-in functions and
+    // types, and the name of an imported module, in its import or before a dot.
+    json.Value hoverOfName(json.Value params) const {
+        string key = sourceKey(pathFromUri(uriOf(params)))
+        i64 document = documentOf(key)
+        if (document < 0) {
+            ret json.Value.Null
+        }
+        string text = documents[document].text
+        i64 cursor = offsetAt(text, member(params, "position"))
+        Diagnostics quiet = Diagnostics(documents[document].path, text)
+        quiet.silent = true
+        list<Token> tokens = tokenize(text, ref quiet, true)
+        i64 at = 0
+        for (at < tokens.len() && !(tokens[at].begin <= cursor && cursor < tokens[at].end)) {
+            at++
+        }
+        if (at == tokens.len() || tokens[at].kind != Kind.Identifier) {
+            ret json.Value.Null
+        }
+        string value
+        BuiltinDoc builtin
+        if (builtinDoc(tokens[at].text, ref builtin)) {
+            value = withDoc(cromoBlock(builtin.signature.len() > 0 ? builtin.signature : builtin.name), markdownOf(builtin.text.split("\n")))
+        }
+        i64 analysis = analysisOf(key)
+        i32 file = analysis >= 0 ? analyses[analysis].fileOf(key) : -1
+        if (value.len() == 0 && file >= 0 && i64(file) < analyses[analysis].c.tree.files.len()) {
+            bool beforeDot = at + 1 < tokens.len() && tokens[at + 1].kind == Kind.Dot
+            DocCache cache
+            for (Import item in analyses[analysis].c.tree.files[file].imports) {
+                bool inImport = item.line == tokens[at].line
+                if (!inImport && !(beforeDot && item.path[item.path.len() - 1] == tokens[at].text)) {
+                    continue
+                }
+                value = withDoc(cromoBlock("import " + join(item.path, ".")), moduleDoc(ref cache, analyses[analysis], item.files))
+                break
+            }
+        }
+        if (value.len() == 0) {
+            ret json.Value.Null
+        }
+        json.Value result = json.object()
+        result.set("contents", markdown(value))
+        result.set("range", range(text, placeOf(tokens[at].line, tokens[at].column, 0), i32(tokens[at].text.len())))
+        ret result
+    }
+
+    json.Value definition(json.Value params) const {
+        string key = sourceKey(pathFromUri(uriOf(params)))
+        i64 analysis = analysisOf(key)
+        i32 file = analysis >= 0 ? analyses[analysis].fileOf(key) : -1
+        i64 found = analysis >= 0 ? mentionAt(params, analysis, file) : -1
+        // D177: the standard library is inside cromo, it has no file to open.
+        if (found < 0 || !analyses[analysis].mentions[found].hasTarget || analyses[analysis].mentions[found].targetFile == 1) {
+            ret json.Value.Null
+        }
+        Mention mention = analyses[analysis].mentions[found]
+        i32 target = mention.targetFile
+        string text = analyses[analysis].c.diag.text(target)
+        Place place = placeOf(mention.targetLine, mention.targetColumn, target)
+        json.Value location = json.object()
+        location.set("uri", jText(uriFor(analyses[analysis].keys[target], analyses[analysis])))
+        location.set("range", range(text, place, tokenLength(text, place)))
+        ret location
+    }
+
+    // The analysis of a text of a document that is not the one in the editor, as
+    // the code being written with a call in place of what is missing (D180).
+    Analysis analyzeText(i64 document, string key, string text, ref i32 file) const {
+        bool requireMain = true
+        string root = findRoot(documents[document].path, text, ref requireMain)
+        Analysis analysis = analyze(root, requireMain, key, text)
+        file = analysis.fileOf(key)
+        if (file < 0) {  // a module that main.cro does not import
+            analysis = analyze(documents[document].path, false, key, text)
+            file = analysis.fileOf(key)
+        }
+        ret analysis
+    }
+
+    // D179: the members of the type of the name before the dot. The text with the
+    // dot is not complete: it is analyzed with a call to a method that does not
+    // exist in place of the member being written (D180).
+    json.Value completion(json.Value params) const {
+        json.Value items = json.array()
+        string key = sourceKey(pathFromUri(uriOf(params)))
+        i64 document = documentOf(key)
+        if (document < 0) {
+            ret items
+        }
+        string text = documents[document].text
+        i64 cursor = offsetAt(text, member(params, "position"))
+        i64 start = cursor
+        for (start > 0 && isIdentChar(text[start - 1])) {
+            start--
+        }
+        if (start == 0 || text[start - 1] != '.') {
+            ret items  // D182: only after a dot, for now
+        }
+        i64 dot = start - 1
+        i64 begin = dot
+        for (begin > 0 && isIdentChar(text[begin - 1])) {
+            begin--
+        }
+        if (begin == dot) {
+            ret items  // D180: not after a call or an index
+        }
+        i64 end = cursor
+        for (end < text.len() && isIdentChar(text[end])) {
+            end++
+        }
+        string name = text.slice(begin, dot)
+        string repaired = text.slice(0, dot) + ".cromo_complete" + (end < text.len() && text[end] == '(' ? "" : "()") +
+            text.slice(end, text.len())
+
+        i32 file = -1
+        Analysis analysis = analyzeText(document, key, repaired, ref file)
+        if (file < 0) {
+            ret items
+        }
+        DocCache cache
+        Place at = locationOf(repaired, begin, file)
+        for (Mention mention in analysis.mentions) {
+            if (mention.file != file || mention.line != at.line || mention.column != at.column) {
+                continue
+            }
+            i32 type = mention.type
+            if (analysis.c.types.isStruct(type)) {
+                members(ref cache, analysis, analysis.c.types.decl(type), file, ref items)
+            }
+            if (analysis.c.types.isArray(type)) {  // D196
+                items.add(entry("len", 2, "i64 len()", ""))
+                if (!needsDestruction(analysis.c.tree, analysis.c.types, type)) {
+                    items.add(entry("copy", 2, typeName(analysis.c.tree, analysis.c.types, type) + " copy()", ""))
+                }
+            }
+            if (analysis.c.types.isInterface(type)) {
+                for (i32 function in analysis.c.tree.interfaces[analysis.c.types.decl(type)].methods) {
+                    items.add(entry(analysis.c.tree.functions[function].name, 2,
+                        signatureOf(analysis.c.tree, analysis.c.types, function, -1),
+                        docOf(ref cache, analysis, analysis.c.tree.functions[function].file, analysis.c.tree.functions[function].line, false)))
+                }
+            }
+            ret items
+        }
+        // D181: after the name of an enum, its cases.
+        for (i64 r = 0; r < analysis.c.tree.records.len(); r++) {
+            const ref Record decl = analysis.c.tree.records[r]
+            if (decl.generic >= 0 || decl.name != name || !decl.isEnum || (decl.file != file && !decl.isPublic)) {
+                continue
+            }
+            for (Case item in decl.cases) {
+                items.add(entry(item.name, 20, decl.name + "." + item.name, docOf(ref cache, analysis, decl.file, item.line, true)))
+            }
+            ret items
+        }
+        moduleMembers(ref cache, analysis, file, name, ref items)
+        ret items
+    }
+
+    // ---- The help on the signature (D477) ----
+
+    json.Value signatureHelp(json.Value params) const {
+        string key = sourceKey(pathFromUri(uriOf(params)))
+        i64 document = documentOf(key)
+        if (document < 0) {
+            ret json.Value.Null
+        }
+        string text = documents[document].text
+        i64 cursor = offsetAt(text, member(params, "position"))
+        Diagnostics quiet = Diagnostics(documents[document].path, text)
+        quiet.silent = true
+        list<Token> tokens = tokenize(text, ref quiet, false)
+
+        // The parenthesis of the call around the cursor, and the commas before it.
+        i64 last = -1
+        for (i64 i = 0; i < tokens.len() && tokens[i].kind != Kind.EndOfFile && tokens[i].begin < cursor; i++) {
+            last = i
+        }
+        i64 depth = 0
+        i64 commas = 0
+        i64 open = -1
+        for (i64 i = last; i >= 0; i--) {
+            Kind kind = tokens[i].kind
+            if (kind == Kind.RParen || kind == Kind.RBracket || kind == Kind.RBrace) {
+                depth++
+            } else if (kind == Kind.LParen || kind == Kind.LBracket || kind == Kind.LBrace) {
+                if (depth == 0) {
+                    if (kind == Kind.LParen) {
+                        open = i
+                    }
+                    break
+                }
+                depth--
+            } else if (depth == 0 && kind == Kind.Comma) {
+                commas++
+            } else if (depth == 0 && kind == Kind.Newline) {
+                break
+            }
+        }
+        if (open < 1 || tokens[open - 1].kind != Kind.Identifier) {
+            ret json.Value.Null
+        }
+        string name = tokens[open - 1].text
+        string receiver
+        i64 receiverBegin = 0
+        if (open >= 3 && tokens[open - 2].kind == Kind.Dot) {
+            if (tokens[open - 3].kind != Kind.Identifier) {
+                ret json.Value.Null  // after a call or an index (D180)
+            }
+            receiver = tokens[open - 3].text
+            receiverBegin = tokens[open - 3].begin
+        }
+
+        // P51: the text with the call without its arguments, which can be analyzed.
+        i64 close = -1
+        i64 level = 0
+        for (i64 i = open + 1; i < tokens.len() && tokens[i].kind != Kind.EndOfFile; i++) {
+            Kind kind = tokens[i].kind
+            if (kind == Kind.LParen || kind == Kind.LBracket || kind == Kind.LBrace) {
+                level++
+            } else if (kind == Kind.RParen || kind == Kind.RBracket || kind == Kind.RBrace) {
+                if (level == 0) {
+                    if (kind == Kind.RParen) {
+                        close = tokens[i].end
+                    }
+                    break
+                }
+                level--
+            } else if (level == 0 && kind == Kind.Newline) {
+                break
+            }
+        }
+        if (close < 0 || close < cursor) {
+            close = text.findFrom("\n", cursor)
+            if (close < 0) {
+                close = text.len()
+            }
+        }
+        string repaired = text.slice(0, tokens[open].end) + ")" + text.slice(close, text.len())
+        i32 file = -1
+        Analysis analysis = analyzeText(document, key, repaired, ref file)
+        if (file < 0) {
+            ret json.Value.Null
+        }
+
+        DocCache cache
+        Callee callee = calleeOf(ref cache, analysis, file, receiver, name, locationOf(repaired, receiverBegin, file))
+        if (!callee.found) {
+            ret json.Value.Null
+        }
+        i64 count = 0
+        json.Value signature = signatureInformation(callee.label, name, callee.doc, ref count)
+        i64 active = count == 0 ? 0 : commas < count - 1 ? commas : count - 1
+        signature.set("activeParameter", jInt(active))
+        json.Value signatures = json.array()
+        signatures.add(move signature)
+        json.Value result = json.object()
+        result.set("signatures", move signatures)
+        result.set("activeSignature", jInt(0))
+        result.set("activeParameter", jInt(active))
+        ret result
+    }
+
+    // D175: from the document alone, so they are there also when the program has errors.
+    json.Value symbols(json.Value params) const {
+        json.Value result = json.array()
+        i64 document = documentOf(sourceKey(pathFromUri(uriOf(params))))
+        if (document < 0) {
+            ret result
+        }
+        string text = documents[document].text
+        Tree alone = parsedAlone(documents[document].path, text)
+        Types known = makeTypes()
+        list<TypeBinding> none
+        // LSP kinds: 6 method, 8 field, 9 constructor, 10 enum, 11 interface, 12 function, 22 enum member, 23 struct.
+        for (i64 i = 0; i < alone.interfaces.len(); i++) {
+            json.Value item = symbol(text, alone.interfaces[i].name, 11, alone.interfaces[i].line, alone.interfaces[i].column, "")
+            json.Value children = json.array()
+            for (i32 method in alone.interfaces[i].methods) {
+                children.add(symbol(text, alone.functions[method].name, 6, alone.functions[method].line, alone.functions[method].column,
+                    signatureOf(alone, known, method, -1)))
+            }
+            item.set("children", move children)
+            result.add(move item)
+        }
+        for (i64 i = 0; i < alone.records.len(); i++) {
+            const ref Record decl = alone.records[i]
+            json.Value item = symbol(text, decl.name, decl.isEnum ? 10 : 23, decl.line, decl.column, "")
+            json.Value children = json.array()
+            for (Case each in decl.cases) {
+                children.add(symbol(text, each.name, 22, each.line, each.column, ""))
+            }
+            for (Field field in decl.fields) {
+                children.add(symbol(text, field.name, 8, field.line, field.column, writtenType(alone, known, field.type, none)))
+            }
+            for (i32 function in decl.members) {
+                bool constructor = alone.functions[function].kind == FunctionKind.Constructor
+                string name = constructor ? decl.name : alone.functions[function].kind == FunctionKind.Destructor ? "~" + decl.name :
+                    alone.functions[function].name
+                children.add(symbol(text, name, constructor ? 9 : 6, alone.functions[function].line, alone.functions[function].column,
+                    signatureOf(alone, known, function, -1)))
+            }
+            item.set("children", move children)
+            result.add(move item)
+        }
+        for (i32 function in alone.topFunctions) {
+            result.add(symbol(text, alone.functions[function].name, 12, alone.functions[function].line, alone.functions[function].column,
+                signatureOf(alone, known, function, -1)))
+        }
+        ret result
+    }
+
+    json.Value formatting(json.Value params) const {
+        json.Value edits = json.array()
+        i64 document = documentOf(sourceKey(pathFromUri(uriOf(params))))
+        if (document < 0) {
+            ret edits
+        }
+        string text = documents[document].text
+        string out
+        if (!formattedText(documents[document].path, text, ref out) || out == text) {
+            ret edits
+        }
+        // The whole text: from the start to after its last character.
+        Place end = locationOf(text, text.len(), 0)
+        json.Value whole = json.object()
+        whole.set("start", position(text, placeOf(1, 1, 0)))
+        whole.set("end", position(text, end))
+        json.Value edit = json.object()
+        edit.set("range", move whole)
+        edit.set("newText", jText(out))
+        edits.add(move edit)
+        ret edits
+    }
+}
+
+// `cromo lsp`, with the library of cromo. Returns the exit code.
+public i32 runLanguageServer(string library) {
+    Server server
+    server.library = library
+    ret server.run()
+}
