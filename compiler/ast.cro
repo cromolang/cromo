@@ -473,6 +473,7 @@ public struct Function {
     public bool convertsJson  // generated for JSON (D251) or for {:?} (D319)
     public bool bodyChecked
     public bool canThrow        // an exception can leave it (D36)
+    public string symbol        // its name in the generated code, when it is not the one of its module and name (D134)
     public list<i32> variables  // its variables, the parameters first
 }
 

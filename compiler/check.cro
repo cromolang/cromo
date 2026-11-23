@@ -53,8 +53,8 @@ i32 main(list<string> args) {
         }
         Options options
         options.sourcePath = path
-        Generator generator = Generator(move checked, move options)
-        print("{}", generator.run())
+        Generator generator = Generator(move options)
+        print("{}", generator.run(checked))
         ret 0
     }
     if (option == "" || option == "--list-types") {

@@ -1,6 +1,9 @@
 // The generation of the code in Cromo (D572), as src/codegen.cpp: from the tree
 // that the analysis leaves to the IR of LLVM as text, the same text as the C++. It
 // comes in parts: what is not generated yet ends the text with a line that says so.
+//
+// The generator holds what it writes; the program it reads, with its types, is the
+// parameter `c` of its methods, so that a method writes while it reads the tree.
 import ast
 import sema
 import types
@@ -53,61 +56,24 @@ public struct Options {
 }
 
 public struct Generator {
-    Checker checked
     Options options
     string out
     public bool complete = true  // false when a part is not generated yet
 
-    public Generator(move Checker result, move Options asked) {
-        checked = move result
+    public Generator(move Options asked) {
         options = move asked
     }
 
-    // The module of a file and a dot, in front of the names of its declarations.
-    string moduleOf(i32 file) const {
-        ret checked.tree.files[file].name
+    string recordSymbol(Checker c, i32 record) const {
+        ret c.recordSymbol(record)
     }
 
-    string symbolFor(i32 file, string name) const {
-        string module = moduleOf(file)
-        ret module.len() == 0 ? name : module + "." + name
+    string structName(Checker c, i32 record) const {
+        ret llvmName("%", "struct." + recordSymbol(c, record))
     }
 
-    // The symbol of a struct (D134): its module and its name, and for an instance
-    // of a generic the symbols of its type arguments.
-    string recordSymbol(i32 record) const {
-        const ref Record decl = checked.tree.records[record]
-        if (decl.generic < 0) {
-            ret symbolFor(decl.file, decl.name)
-        }
-        string result = recordSymbol(decl.generic) + "<"
-        for (i64 i = 0; i < decl.typeArgs.len(); i++) {
-            if (i > 0) {
-                result += ", "
-            }
-            result += typeSymbol(decl.typeArgs[i])
-        }
-        ret result + ">"
-    }
-
-    string typeSymbol(i32 type) const {
-        TypeKind kind = checked.types.items[type].kind
-        if (kind == TypeKind.Struct) {
-            ret recordSymbol(checked.types.items[type].decl)
-        }
-        if (kind == TypeKind.Interface) {
-            const ref Interface decl = checked.tree.interfaces[checked.types.items[type].decl]
-            ret symbolFor(decl.file, decl.name)
-        }
-        ret typeName(checked.tree, checked.types, type)
-    }
-
-    string structName(i32 record) const {
-        ret llvmName("%", "struct." + recordSymbol(record))
-    }
-
-    string llvmType(i32 type) const {
-        const ref TypeInfo info = checked.types.items[type]
+    string llvmType(Checker c, i32 type) const {
+        const ref TypeInfo info = c.types.items[type]
         switch (info.kind) {
             case Void {
                 ret "void"
@@ -125,16 +91,16 @@ public struct Generator {
                 ret "ptr"
             }
             case Struct {
-                ret structName(info.decl)
+                ret structName(c, info.decl)
             }
             case Interface, Function {
                 ret "{ ptr, ptr }"
             }
             case Array {
-                ret format("[{} x {}]", info.count, llvmType(info.element))
+                ret format("[{} x {}]", info.count, llvmType(c, info.element))
             }
             case Vector {
-                ret format("<{} x {}>", info.count, llvmType(info.element))
+                ret format("<{} x {}>", info.count, llvmType(c, info.element))
             }
             default {
                 ret "<invalid>"
@@ -149,22 +115,22 @@ public struct Generator {
         ret align >= 8 ? "i64" : "i32"
     }
 
-    string enumTypeBody(i32 record) const {
-        const ref Record decl = checked.tree.records[record]
+    string enumTypeBody(Checker c, i32 record) const {
+        const ref Record decl = c.tree.records[record]
         string body = format("{{ [0 x {}], i32, [{} x i8]", alignmentType(decl.align), decl.payloadOffset - 4)
         for (Field field in decl.cases[0].fields) {
-            body += ", " + llvmType(field.resolved)
+            body += ", " + llvmType(c, field.resolved)
         }
         ret body + format(", [{} x i8] }}", decl.size - decl.payloadOffset - decl.cases[0].size)
     }
 
-    string fieldTypes(list<Field> fields) const {
+    string fieldTypes(Checker c, list<Field> fields) const {
         string body = "{ "
         for (i64 i = 0; i < fields.len(); i++) {
             if (i > 0) {
                 body += ", "
             }
-            body += llvmType(fields[i].resolved)
+            body += llvmType(c, fields[i].resolved)
         }
         ret body + (fields.len() == 0 ? "}\n" : " }\n")
     }
@@ -196,9 +162,9 @@ public struct Generator {
 
     // The constant of a literal of a type (D73): the initial value of a field, of a
     // variable or of a constant of a module.
-    string literalConstant(i32 expr, i32 type) const {
-        const ref Expr node = checked.tree.exprs[expr]
-        const ref TypeInfo info = checked.types.items[type]
+    string literalConstant(Checker c, i32 expr, i32 type) const {
+        const ref Expr node = c.tree.exprs[expr]
+        const ref TypeInfo info = c.types.items[type]
         switch (node.kind) {
             case IntLiteral {
                 if (info.kind == TypeKind.Float) {
@@ -216,9 +182,9 @@ public struct Generator {
             }
             case Conversion {
                 if (info.kind == TypeKind.Addr) {
-                    ret "inttoptr (i64 " + literalConstant(node.left, intType(64, true)) + " to ptr)"
+                    ret "inttoptr (i64 " + literalConstant(c, node.left, intType(64, true)) + " to ptr)"
                 }
-                ret literalConstant(node.left, type)
+                ret literalConstant(c, node.left, type)
             }
             default {
                 ret "undef"
@@ -228,47 +194,251 @@ public struct Generator {
 
     // The variables and the constants of the modules (D394, D414): their default
     // value, or the literal they start from.
-    void writeGlobals() {
-        for (Global global in checked.tree.globals) {
+    void writeGlobals(Checker c) {
+        for (Global global in c.tree.globals) {
             if (global.variable < 0) {
                 continue
             }
-            i32 type = checked.tree.variables[global.variable].type
-            if (checked.types.items[type].kind == TypeKind.Error) {
+            i32 type = c.tree.variables[global.variable].type
+            if (c.types.items[type].kind == TypeKind.Error) {
                 continue
             }
-            string value = global.init >= 0 ? literalConstant(global.init, type) : "zeroinitializer"
-            if (global.isConst && checked.types.items[type].kind == TypeKind.Array) {
-                i32 element = checked.types.items[type].element
+            string value = global.init >= 0 ? literalConstant(c, global.init, type) : "zeroinitializer"
+            if (global.isConst && c.types.items[type].kind == TypeKind.Array) {
+                i32 element = c.types.items[type].element
                 value = "["
-                for (i64 i = 0; i < checked.tree.exprs[global.init].items.len(); i++) {
+                for (i64 i = 0; i < c.tree.exprs[global.init].items.len(); i++) {
                     if (i > 0) {
                         value += ", "
                     }
-                    value += llvmType(element) + " " + literalConstant(checked.tree.exprs[global.init].items[i], element)
+                    value += llvmType(c, element) + " " + literalConstant(c, c.tree.exprs[global.init].items[i], element)
                 }
                 value += "]"
             }
-            out += llvmName("@", symbolFor(global.file, global.name)) + (global.isConst ? " = internal constant " : " = internal global ") +
-                llvmType(type) + " " + value + "\n"
+            out += llvmName("@", c.symbolFor(global.file, global.name)) + (global.isConst ? " = internal constant " : " = internal global ") +
+                llvmType(c, type) + " " + value + "\n"
         }
-        if (checked.tree.globals.len() > 0) {
+        if (c.tree.globals.len() > 0) {
             out += "\n"
+        }
+    }
+
+    // ---- What a type is in memory ----
+
+    i64 sizeOf(Checker c, i32 type) const {
+        const ref TypeInfo info = c.types.items[type]
+        switch (info.kind) {
+            case Bool {
+                ret 1
+            }
+            case Int, Float {
+                ret i64(info.bits / 8)
+            }
+            case Struct {
+                ret i64(c.tree.records[info.decl].size)
+            }
+            case Interface, Function {
+                ret 16
+            }
+            case Addr {
+                ret 8
+            }
+            case Array, Vector {
+                ret info.count * sizeOf(c, info.element)
+            }
+            default {
+                ret 0
+            }
+        }
+    }
+
+    bool isAggregate(Checker c, i32 type) const {
+        ret c.types.isStruct(type) || c.types.isArray(type)
+    }
+
+    // A Mutex, a Channel, an Atomic, or a value that holds one: other threads write it
+    // through its address (D216, D326, D328).
+    bool isAddressed(Checker c, i32 type) const {
+        i32 base = c.types.baseElement(type)
+        ret c.types.isStruct(base) && c.tree.records[c.types.items[base].decl].addressed
+    }
+
+    // Structs and arrays larger than 16 bytes are passed and returned through a pointer,
+    // and so are the values whose address matters (D216).
+    bool byPointer(Checker c, i32 type) const {
+        ret isAggregate(c, type) && (sizeOf(c, type) > 16 || isAddressed(c, type))
+    }
+
+    // A `ref` parameter is always an address; the others are when they are large (D22).
+    // A parameter of interface type is always a pair of pointers passed by value (D49).
+    bool byAddress(Checker c, ParamMode mode, i32 type) const {
+        ret !c.types.isInterface(type) && (mode == ParamMode.Ref || byPointer(c, type))
+    }
+
+    // ---- The symbols of the functions ----
+
+    string methodSymbol(Checker c, i32 record, string method) const {
+        ret llvmName("@", recordSymbol(c, record) + "." + method)
+    }
+
+    string dropSymbol(Checker c, i32 record) const {
+        ret llvmName("@", recordSymbol(c, record) + "..drop")
+    }
+
+    string symbolOf(Checker c, i32 function) const {
+        const ref Function decl = c.tree.functions[function]
+        switch (decl.kind) {
+            case Free {
+                ret llvmName("@", c.functionSymbol(function))
+            }
+            case Method {  // an instance with type arguments of its own has its own name (D92)
+                ret decl.genericMethod ? llvmName("@", decl.symbol) : methodSymbol(c, decl.owner, decl.name)
+            }
+            case Constructor {
+                ret llvmName("@", recordSymbol(c, decl.owner) + "..new")
+            }
+            case Destructor {
+                ret dropSymbol(c, decl.owner)
+            }
+        }
+    }
+
+    // A method that implements a method of an interface: it is also called through
+    // a method table, which knows nothing of hidden parameters.
+    bool implementsInterfaceMethod(Checker c, i32 function) const {
+        const ref Function decl = c.tree.functions[function]
+        if (decl.owner < 0 || decl.kind != FunctionKind.Method) {
+            ret false
+        }
+        for (i32 iface in c.tree.records[decl.owner].implements) {
+            for (i32 method in c.tree.interfaces[iface].methods) {
+                if (c.tree.functions[method].name == decl.name) {
+                    ret true
+                }
+            }
+        }
+        ret false
+    }
+
+    // The functions of the core of the library receive where they were called from,
+    // and their panics report it (D102).
+    bool tracksCaller(Checker c, i32 function) const {
+        const ref Function decl = c.tree.functions[function]
+        ret decl.file == 1 && decl.kind != FunctionKind.Destructor && !decl.isGenerated && !decl.isExtern && !decl.isLambda &&
+            !decl.isExported && !implementsInterfaceMethod(c, function)
+    }
+
+    // ---- Functions ----
+
+    // The first line of a function: the exclusivity rules (D22, D79) make every
+    // address parameter `noalias`.
+    string signature(Checker c, i32 function) const {
+        const ref Function decl = c.tree.functions[function]
+        i32 result = decl.resolvedReturn
+        list<string> params
+        if (byPointer(c, result)) {
+            params.add("ptr noalias sret(" + llvmType(c, result) + ") %ret")
+        }
+        if (decl.owner >= 0 && c.tree.records[decl.owner].addressed) {  // other threads write it too (D216)
+            params.add("ptr %self")
+        } else if (decl.owner >= 0) {
+            params.add(decl.isConst ? "ptr noalias readonly %self" : "ptr noalias %self")
+        }
+        if (decl.isLambda) {
+            params.add("ptr %env")  // the captured data (D183)
+        }
+        for (i64 i = 0; i < decl.paramTypes.len(); i++) {
+            i32 type = decl.paramTypes[i]
+            ParamMode mode = decl.params[i].mode
+            string arg = format("%arg.{}", i)
+            if (byAddress(c, mode, type) && isAddressed(c, type)) {  // a mutex is written by other threads (D216)
+                params.add("ptr " + arg)
+            } else if (byAddress(c, mode, type)) {
+                params.add((mode == ParamMode.Read ? "ptr noalias readonly " : "ptr noalias ") + arg)
+            } else {
+                // The bool of C is a byte with 0 or 1 (D129).
+                params.add(llvmType(c, type) + (decl.isExported && c.types.isBool(type) ? " zeroext " : " ") + arg)
+            }
+        }
+        if (tracksCaller(c, function)) {
+            params.add("ptr %caller")
+        }
+        if (decl.canThrow) {
+            params.add("ptr %raised")  // where an exception goes (D36)
+        }
+        string returned = byPointer(c, result) ? "void" : llvmType(c, result)
+        if (decl.isExported && c.types.isBool(result)) {
+            returned = "zeroext " + returned
+        }
+        ret define(returned, symbolOf(c, function), params, decl.isExported, decl.isCold)
+    }
+
+    // Internal: a function that nothing calls is removed, with the C code that only
+    // it uses. An exported one is called by C (D395).
+    string define(string returned, string symbol, list<string> params, bool exported, bool cold) const {
+        ret (exported ? "define " : "define internal ") + returned + " " + symbol + "(" + join(params, ", ") + ") nounwind uwtable" +
+            (cold ? " cold" : "")
+    }
+
+    void notYet(string head) {
+        complete = false
+        out += head + " {\n; not generated yet\n}\n\n"
+    }
+
+    void writeFunctions(Checker c, list<i32> records) {
+        for (i32 record in records) {
+            const ref Record decl = c.tree.records[record]
+            for (i32 member in decl.members) {
+                if (c.tree.functions[member].bodyChecked) {  // D103: only the methods used
+                    notYet(signature(c, member))
+                }
+            }
+            // Without a destructor of its own, a struct still destroys its fields.
+            if (decl.needsDestruction && decl.destructor < 0) {
+                list<string> self = ["ptr noalias %self"]
+                notYet(define("void", dropSymbol(c, record), self, false, false))
+            }
+            if (decl.generatedCopy >= 0) {
+                i32 type = c.types.knownStruct(record)
+                list<string> params
+                if (byPointer(c, type)) {
+                    params.add("ptr noalias sret(" + llvmType(c, type) + ") %ret")
+                }
+                params.add("ptr noalias readonly %self")
+                notYet(define(byPointer(c, type) ? "void" : llvmType(c, type), methodSymbol(c, record, "copy"), params, false, false))
+            }
+        }
+        for (i32 function in c.tree.topFunctions) {
+            const ref Function decl = c.tree.functions[function]
+            if (!decl.isExtern && decl.typeParams.len() == 0) {
+                notYet(signature(c, function))
+            }
+        }
+        for (i32 function in c.made) {
+            if (!c.tree.functions[function].isAbstract) {
+                notYet(signature(c, function))
+            }
+        }
+        for (i32 lambda in c.tree.lambdas) {
+            i32 function = c.tree.exprs[lambda].function
+            if (!c.tree.functions[function].isAbstract && c.tree.functions[function].bodyChecked) {
+                notYet(signature(c, function))
+            }
         }
     }
 
     // The structs that are emitted: generics only through their instances with
     // real types (D39).
-    list<i32> emittedRecords() const {
+    list<i32> emittedRecords(Checker c) const {
         list<i32> records
-        for (i64 i = 0; i < checked.tree.records.len(); i++) {
-            const ref Record decl = checked.tree.records[i]
+        for (i64 i = 0; i < c.tree.records.len(); i++) {
+            const ref Record decl = c.tree.records[i]
             if (decl.generic < 0 && decl.typeParams.len() == 0) {
                 records.add(i32(i))
             }
         }
-        for (i64 i = 0; i < checked.tree.records.len(); i++) {
-            const ref Record decl = checked.tree.records[i]
+        for (i64 i = 0; i < c.tree.records.len(); i++) {
+            const ref Record decl = c.tree.records[i]
             if (decl.generic >= 0 && !decl.isAbstract) {
                 records.add(i32(i))
             }
@@ -276,31 +446,31 @@ public struct Generator {
         ret records
     }
 
-    public string run() {
+    public string run(Checker c) {
         out = "; Generated by cromo\n"
         out += "source_filename = " + quoted(options.sourcePath) + "\n"
         out += "target triple = \"" + options.triple + "\"\n"
         if (!options.runtime) {
             out += "module asm \".text\"\nmodule asm \".globl cromo_code\"\nmodule asm \"cromo_code:\"\n\n"
         }
-        list<i32> records = emittedRecords()
+        list<i32> records = emittedRecords(c)
         for (i32 record in records) {
-            const ref Record decl = checked.tree.records[record]
+            const ref Record decl = c.tree.records[record]
             if (decl.isEnum) {
-                out += structName(record) + " = type " + enumTypeBody(record) + "\n"
+                out += structName(c, record) + " = type " + enumTypeBody(c, record) + "\n"
                 for (Case item in decl.cases) {
-                    out += llvmName("%", "case." + recordSymbol(record) + "." + item.name) + " = type " + fieldTypes(item.fields)
+                    out += llvmName("%", "case." + recordSymbol(c, record) + "." + item.name) + " = type " + fieldTypes(c, item.fields)
                 }
                 continue
             }
-            out += structName(record) + " = type " + fieldTypes(decl.fields)
+            out += structName(c, record) + " = type " + fieldTypes(c, decl.fields)
         }
         if (records.len() > 0) {
             out += "\n"
         }
-        writeGlobals()
-        complete = false
-        out += "; not generated yet: the functions\n"
+        writeGlobals(c)
+        out += "; not generated yet: the types of the data of the lambdas\n"
+        writeFunctions(c, records)
         ret out
     }
 }

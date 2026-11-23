@@ -138,6 +138,12 @@ public struct Types {
         ret named(TypeKind.Struct, "S", record)
     }
 
+    // The type of a struct that the analysis has already met: the generator of the
+    // code reads the table, and does not add to it.
+    public i32 knownStruct(i32 record) const {
+        ret known[format("S{}", record)]
+    }
+
     public i32 interfaceType(i32 decl) {
         ret named(TypeKind.Interface, "I", decl)
     }
