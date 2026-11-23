@@ -21,7 +21,7 @@ Save it as `hello.cro` and run `cromo run hello.cro`. Check your code by compili
 4. **No pointers, no `null`, no `new`, no references in variables or fields.** A parameter is read-only by default; `ref` lets the function modify the caller's value; `move` gives it away. The same word is written in the call: `fill(ref numbers)`, `take(move text)`.
 5. **A moved variable cannot be used again.** A struct with a destructor is not copied: pass it with `ref` or `move`.
 6. **No shadowing.** A local cannot have the name of another variable, parameter, field or constant that is visible there.
-7. **Keywords are not names:** `move`, `ref`, `in`, `ret`, `case`, `default`, `func`, `public`, `unsafe`, `const`... A variable called `move` is an error; write `mv`.
+7. **Keywords are not names:** `move`, `ref`, `in`, `ret`, `case`, `default`, `func`, `public`, `unsafe`, `const`... A variable called `move` is an error; write `mv`. `extend` and `Self` are not names either, nor the words reserved for later: `while`, `do`, `goto`, `return`, `yield`, `defer`, `class`, `trait`, `impl`, `typedef`, `namespace`, `using`, `operator`, `static`, `virtual`, `override`, `null`, `this`, `delete`, `as`, `is`, `auto`, `let`, `var`, `mut`, `async`, `await`, `private`, `protected`, `macro`.
 8. **No block without a statement in front of it:** `{ ... }` alone is an error.
 9. **Assignments are statements**, not expressions: no `if (a = b)`, no `x = y = 0`, and `i++` only on a line of its own or as the step of a `for`.
 10. **Numbers do not mix.** Signed and unsigned never mix, and a conversion that can lose something is written: `i32(x)`, `f64(n)`, `u8(c)`. Lengths and indices are `i64`.

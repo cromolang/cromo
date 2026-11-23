@@ -16,6 +16,7 @@ Queste parole non si possono usare come nomi:
 | `default` | il ramo di uno `switch` per i valori non elencati | [Enum e switch](enums.md) |
 | `else` | l'alternativa di un `if` | [Concetti comuni](common-concepts.md) |
 | `enum` | dichiara un enum | [Enum e switch](enums.md) |
+| `extend` | aggiunge metodi a una struct o a un enum del suo modulo | [Moduli e progetti](modules.md) |
 | `extern` | dichiara funzioni C, con `import unsafe` | [Chiamare il C](c-interop.md) |
 | `false`, `true` | i valori di `bool` | [Concetti comuni](common-concepts.md) |
 | `finally` | viene eseguito a ogni uscita da un `try` | [Errori](errors.md) |
@@ -35,6 +36,16 @@ Queste parole non si possono usare come nomi:
 | `try` | il blocco di cui si gestiscono le eccezioni | [Errori](errors.md) |
 | `unsafe` | `import unsafe`: il dialetto delle funzioni C e della memoria grezza | [Il dialetto unsafe](unsafe.md) |
 | `void` | nessun risultato | [Concetti comuni](common-concepts.md) |
+
+Nemmeno `Self`, il tipo che implementa un'interfaccia ([Interfacce e generici](interfaces-generics.md)), è un nome.
+
+### Parole riservate
+
+Cromo tiene da parte alcune parole per ciò che potrà aggiungere in futuro, così che un programma scritto oggi compili anche allora. Non hanno ancora un significato, e non si possono usare come nomi: `i64 class = 1` è l'errore `'class' is a reserved word: choose another name`.
+
+`while`, `do`, `goto`, `return`, `yield`, `defer`, `class`, `trait`, `impl`, `typedef`, `namespace`, `using`, `operator`, `static`, `virtual`, `override`, `null`, `this`, `delete`, `as`, `is`, `auto`, `let`, `var`, `mut`, `async`, `await`, `private`, `protected`, `macro`.
+
+Una parola dentro un nome più lungo, come `classes` o `nullable`, non è la parola.
 
 Non esistono `while`, `do`, `goto`, `class`, `new`, `delete`, `null` né `this`. Le funzioni integrate, come `println`, e i tipi integrati, come `i64`, sono nomi, non parole chiave; tuttavia un programma non può dichiarare una funzione, una struct o un'interfaccia con il nome di una funzione integrata o di un tipo dei numeri, di `bool` o di `char`.
 
@@ -244,7 +255,7 @@ error: [[window]] is only for main of the program, whose executable opens no con
 
 ## Riepilogo
 
-- 28 parole chiave; `println`, `i64` e gli altri nomi integrati non sono parole chiave, ma un programma non può dichiararli di nuovo.
+- 29 parole chiave e `Self`, e 30 parole riservate per il futuro; `println`, `i64` e gli altri nomi integrati non sono parole chiave, ma un programma non può dichiararli di nuovo.
 - Gli operatori hanno l'ordine del C, con quelli bit a bit sopra i confronti e `c ? a : b` il più debole, che raggruppa da destra; gli assegnamenti, `++` e `--` sono istruzioni.
 - Le funzioni integrate stampano, fermano il programma, fanno l'aritmetica che ricomincia dall'estremo opposto, contano e ruotano i bit, e incorporano file; i nomi dei tipi convertono; il nucleo aggiunge `sort`, `sortBy`, `join`, `Exception`, `Error`, `Key`, `Ordered` e `Debug`.
 - Sette attributi: `[[test]]`, `[[json(...)]]`, `[[window]]`, `[[android(...)]]`, e `[[export(...)]]` e `[[cold]]` del dialetto unsafe.

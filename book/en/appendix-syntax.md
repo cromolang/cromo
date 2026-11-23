@@ -16,6 +16,7 @@ These words cannot be used as names:
 | `default` | the branch of a `switch` for the values not listed | [Enums and switch](enums.md) |
 | `else` | the alternative of an `if` | [Common concepts](common-concepts.md) |
 | `enum` | declares an enum | [Enums and switch](enums.md) |
+| `extend` | adds methods to a struct or an enum of its module | [Modules and projects](modules.md) |
 | `extern` | declares C functions, with `import unsafe` | [Calling C](c-interop.md) |
 | `false`, `true` | the values of `bool` | [Common concepts](common-concepts.md) |
 | `finally` | runs at every exit of a `try` | [Errors](errors.md) |
@@ -35,6 +36,16 @@ These words cannot be used as names:
 | `try` | the block whose exceptions are handled | [Errors](errors.md) |
 | `unsafe` | `import unsafe`: the dialect of C functions and raw memory | [The unsafe dialect](unsafe.md) |
 | `void` | no result | [Common concepts](common-concepts.md) |
+
+`Self`, the type that implements an interface ([Interfaces and generics](interfaces-generics.md)), is not a name either.
+
+### Reserved words
+
+Cromo keeps some words for what it may add later, so that a program written today still compiles then. They have no meaning yet, and cannot be used as names: `i64 class = 1` is the error `'class' is a reserved word: choose another name`.
+
+`while`, `do`, `goto`, `return`, `yield`, `defer`, `class`, `trait`, `impl`, `typedef`, `namespace`, `using`, `operator`, `static`, `virtual`, `override`, `null`, `this`, `delete`, `as`, `is`, `auto`, `let`, `var`, `mut`, `async`, `await`, `private`, `protected`, `macro`.
+
+A word inside a longer name, as `classes` or `nullable`, is not the word.
 
 There is no `while`, `do`, `goto`, `class`, `new`, `delete`, `null` or `this`. The built-in functions, as `println`, and the built-in types, as `i64`, are names, not keywords; still, a program cannot declare a function, a struct or an interface named as a built-in function or as a type of numbers, `bool` or `char`.
 
@@ -244,7 +255,7 @@ error: [[window]] is only for main of the program, whose executable opens no con
 
 ## Summary
 
-- 28 keywords; `println`, `i64` and the other built-in names are not keywords, but a program cannot declare them again.
+- 29 keywords and `Self`, and 30 words reserved for later; `println`, `i64` and the other built-in names are not keywords, but a program cannot declare them again.
 - The operators have the order of C, with the bitwise ones above the comparisons and `c ? a : b` the weakest, grouping from the right; assignments, `++` and `--` are statements.
 - The built-in functions print, stop the program, wrap, count and turn bits, and embed files; the types convert; the core adds `sort`, `sortBy`, `join`, `Exception`, `Error`, `Key`, `Ordered` and `Debug`.
 - Seven attributes: `[[test]]`, `[[json(...)]]`, `[[window]]`, `[[android(...)]]`, and `[[export(...)]]` and `[[cold]]` of the unsafe dialect.
