@@ -58,6 +58,8 @@ function New-Stage([string]$Name, [string]$Compiler, [string]$Executable) {
     Copy-Item $Compiler (Join-Path $folder "bin\$Executable")
     Copy-Item -Recurse $library (Join-Path $folder 'lib')
     Copy-Item $extension.FullName (Join-Path $folder 'extension')
+    # What shows the values of Cromo in a debugger (D580), also for who has no Visual Studio Code.
+    Copy-Item (Join-Path $root 'tools\vscode-cromo\debug\*') (Join-Path $folder 'extension')
     # The licenses of Cromo and of the software of others it contains.
     foreach ($file in 'LICENSE-MIT', 'LICENSE-APACHE', 'THIRD-PARTY-NOTICES.md') { Copy-Item (Join-Path $root $file) $folder }
     New-Item -ItemType Directory -Force (Join-Path $folder 'licenses') | Out-Null

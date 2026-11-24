@@ -1,0 +1,26 @@
+// D580: cromo test --list prints the names of the tests, in the order of the executable,
+// and runs none: the second would fail.
+// cromo-command: test
+// target: windows
+// cromo-flags: --list
+// expect-output: first
+// expect-output: second
+// expect-output: third
+[[test]]
+void first() {
+    assert(true)
+}
+
+[[test]]
+void second() {
+    assert(false)
+}
+
+[[test]]
+void third() {
+    assert(true)
+}
+
+i32 main() {
+    ret 0
+}

@@ -159,6 +159,10 @@ Se `cromo` non riesce a partire, un messaggio lo segnala, con un pulsante che ap
 
 ### Che cosa offre
 
+- **Run e Debug.** Un file `.cro` ha i pulsanti in alto a destra nell'editor, la riga *Run | Debug* sopra `main`, e *Run*, *Debug* e *Guide* nella barra di stato; `Ctrl+F5` esegue e `F5` avvia il debug. *Run* è `cromo run` nel pannello del terminale: il file dell'editor quando ha `main`, altrimenti il progetto del `cromo.mod` che lo contiene. *Debug* compila il programma con `-O0` e lo avvia nel debugger, dove si ferma ai breakpoint messi nei file `.cro`: vedi [Debug](#debug).
+- **Test.** Sopra ogni `[[test]]` le righe *Run test* e *Debug test*; i test dell'intero file dal menu del pulsante in alto a destra.
+- **La Guida di Cromo** in un pannello accanto al codice, con il libro in alto a destra o il comando *Cromo: Open the Cromo Guide*. Viene letta da cromolang.org, nella lingua di Visual Studio Code quando la guida esiste in quella lingua, altrimenti in inglese; l'impostazione `cromo.guideLanguage` ne sceglie un'altra, come `it`.
+
 - **Colori** per parole chiave, tipi, numeri, stringhe con i loro segnaposto, `{}` e `{:.2f}`, commenti e attributi; `Ctrl+/` commenta le righe, le parentesi si chiudono da sole e la riga dopo `{` viene rientrata.
 - **Errori mentre scrivi.** Circa 300 millisecondi dopo che smetti di scrivere, il server analizza il testo nell'editor, anche quando non è salvato, e sottolinea gli errori e gli avvisi, come `unreachable code`. Controlla soltanto il programma, senza generare codice, quindi è veloce. Ogni file del programma riceve i suoi errori, anche i file che non sono aperti.
 - **Hover.** Il mouse sopra un nome mostra che cos'è: per una variabile il suo tipo e il suo nome; per una funzione o un metodo la sua firma, con `ref` e `move`; per un campo il suo tipo e la sua struct; per un tipo se è una struct, un enum o un'interfaccia; per un caso il suo enum; per un modulo, nel suo `import` o davanti a un nome, la sua documentazione. Sopra compare il nome del modulo in cui è dichiarato, quando è un altro, e sotto la documentazione della dichiarazione. Anche le funzioni integrate, come `println` e `assert`, e i tipi dei numeri hanno la loro documentazione. Dentro una funzione generica un valore di tipo `T` mostra `T`; in una chiamata, la funzione mostra i tipi di quella chiamata, come `i64 first<i64>(list<i64> items)`.
@@ -288,7 +292,9 @@ con `t`, `to` e il blocco come codice, e *new* in corsivo. Sopra `Fahrenheit` mo
 
 Un programma compilato senza `--release` porta con sé le informazioni che servono a un debugger: le funzioni, le righe, le variabili e i loro tipi. Su Windows sono in un file PDB accanto all'eseguibile, `hello.pdb` accanto a `hello.exe`, che leggono Visual Studio, WinDbg e l'estensione C/C++ di Visual Studio Code; su Linux sono in formato DWARF, dentro l'eseguibile, per gdb e lldb. I file sono indicati con il loro percorso completo, quindi il debugger li trova da qualsiasi cartella. Un programma compilato con `--release` non le ha: mantiene i suoi stack trace, ma un debugger vede solo il codice macchina.
 
-`cromo run` cancella l'eseguibile quando il programma termina: per fare il debug, compila il programma con `cromo build` ed esegui l'eseguibile nel debugger.
+In Visual Studio Code fa tutto l'estensione: `F5`, o *Debug* sopra `main`, compila il programma con `-O0` e lo avvia nel debugger dell'[estensione C/C++](https://marketplace.visualstudio.com/items?itemName=ms-vscode.cpptools) di Microsoft, che propone di installare la prima volta. *Debug test* sopra un `[[test]]` fa lo stesso con un solo test.
+
+A mano: `cromo run` cancella l'eseguibile quando il programma termina, quindi compila il programma con `cromo build` ed esegui l'eseguibile nel debugger.
 
 ### Che cosa mostra il debugger
 
@@ -318,7 +324,7 @@ clicks 3
 
 - Le variabili e i parametri hanno i loro nomi, e le struct i loro campi.
 - In un metodo, l'oggetto non ha un nome in Cromo, perché i suoi campi si usano direttamente: il debugger lo mostra come `this`, come in C++.
-- Una `string` e una `list` mostrano i loro tre campi: `data`, l'indirizzo dei byte o degli elementi, `length` e `capacity`. Una vista del loro testo e dei loro elementi non è ancora disponibile.
+- Una `string`, una `list` e una `map` sono fatte di un indirizzo, una lunghezza e una capacità, e un debugger da solo mostra quelli: `data`, `length` e `capacity`. Con i due file dell'estensione mostra una `string` come il suo testo, una `list` come i suoi elementi e una `map` come le sue chiavi e i suoi valori: `cromo.natvis` per i debugger di Microsoft, e `cromo_gdb.py` per gdb, dove `source cromo_gdb.py` lo carica. L'estensione li passa al debugger da sola; sono anche nella cartella `extension` di un'installazione di `cromo`.
 - Nelle informazioni di debug le funzioni hanno davanti il loro modulo, anche quelle del file principale: `add` è `dbg.Counter.add`, che è il nome da dare a un breakpoint.
 
 Con gdb, su Linux, una sessione sul programma qui sopra, compilato con `cromo build -O0 dbg.cro`, si ferma in `add` ed esamina i valori:

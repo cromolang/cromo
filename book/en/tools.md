@@ -159,6 +159,10 @@ If `cromo` cannot start, a message says so, with a button that opens the setting
 
 ### What it offers
 
+- **Run and Debug.** A `.cro` file has the buttons at the top right of the editor, the line *Run | Debug* above `main`, and *Run*, *Debug* and *Guide* in the status bar; `Ctrl+F5` runs and `F5` debugs. *Run* is `cromo run` in the terminal panel: the file of the editor when it has `main`, else the project of the `cromo.mod` above it. *Debug* builds the program with `-O0` and starts it in the debugger, where it stops at the breakpoints set in the `.cro` files: see [Debugging](#debugging).
+- **Tests.** Above each `[[test]]` the lines *Run test* and *Debug test*; the tests of the whole file from the menu of the button at the top right.
+- **The Cromo Guide** in a panel next to the code, with the book at the top right or the command *Cromo: Open the Cromo Guide*. It is read from cromolang.org, in the language of Visual Studio Code when the guide has it, else in English; the setting `cromo.guideLanguage` chooses another, as `it`.
+
 - **Colors** for keywords, types, numbers, strings with their placeholders, `{}` and `{:.2f}`, comments and attributes; `Ctrl+/` comments out lines, brackets close by themselves and the line after `{` is indented.
 - **Errors while you write.** About 300 milliseconds after you stop typing, the server analyzes the text in the editor, also when it is not saved, and underlines the errors and the warnings, as `unreachable code`. It only checks the program, without generating code, so it is fast. Every file of the program gets its errors, also the files that are not open.
 - **Hover.** The mouse over a name shows what it is: a variable its type and name; a function or a method its signature, with `ref` and `move`; a field its type and its struct; a type whether it is a struct, an enum or an interface; a case its enum; a module, in its `import` or in front of a name, its documentation. The name of the module where it is declared comes above, when it is another one, and the documentation of the declaration below. The built-in functions, as `println` and `assert`, and the types of numbers have their documentation too. Inside a generic function a value of type `T` shows `T`; at a call, the function shows the types of that call, as `i64 first<i64>(list<i64> items)`.
@@ -288,7 +292,9 @@ with `t`, `to` and the block as code, and *new* in italics. Over `Fahrenheit` it
 
 A program built without `--release` carries the information that a debugger needs: the functions, the lines, the variables and their types. On Windows it is a PDB file next to the executable, `hello.pdb` next to `hello.exe`, which Visual Studio, WinDbg and the C/C++ extension of Visual Studio Code read; on Linux it is DWARF, inside the executable, for gdb and lldb. The debug information names the source files with their full path, so the debugger finds them from any folder. A program built with `--release` has none: it keeps its stack traces, but a debugger sees only the machine code.
 
-`cromo run` deletes the executable when the program ends: to debug, build it with `cromo build`, and run the executable in the debugger.
+In Visual Studio Code the extension does it all: `F5`, or *Debug* above `main`, builds the program with `-O0` and starts it in the debugger of the [C/C++ extension](https://marketplace.visualstudio.com/items?itemName=ms-vscode.cpptools) of Microsoft, which it offers to install the first time. *Debug test* above a `[[test]]` does the same with one test.
+
+By hand: `cromo run` deletes the executable when the program ends, so build it with `cromo build`, and run the executable in the debugger.
 
 ### What the debugger shows
 
@@ -318,7 +324,7 @@ clicks 3
 
 - The variables and the parameters have their names, and the structs their fields.
 - In a method, the object has no name in Cromo, since its fields are used directly: the debugger shows it as `this`, as in C++.
-- A `string` and a `list` show their three fields: `data`, the address of the bytes or of the elements, `length` and `capacity`. A view of their text and of their elements is not available yet.
+- A `string`, a `list` and a `map` are made of an address, a length and a capacity, and a debugger alone shows those: `data`, `length` and `capacity`. With the two files of the extension it shows a `string` as its text, a `list` as its elements and a `map` as its keys and values: `cromo.natvis` for the debuggers of Microsoft, and `cromo_gdb.py` for gdb, where `source cromo_gdb.py` loads it. The extension gives them to the debugger by itself; they are also in the folder `extension` of an installation of `cromo`.
 - In the debug information the functions have their module in front, also those of the main file: `add` is `dbg.Counter.add`, which is the name to give to a breakpoint.
 
 With gdb, on Linux, a session on the program above, built with `cromo build -O0 dbg.cro`, stops in `add` and looks at the values:

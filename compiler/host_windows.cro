@@ -74,7 +74,12 @@ string quoteArgument(string arg) {
         }
         out += "\\".repeat(arg[i] == '"' ? backslashes * 2 + 1 : backslashes)
         backslashes = 0
-        out += arg.slice(i, i + 1)
+        i64 end = i + 1  // the whole character, of one byte or more
+        for (end < arg.len() && arg[end] & 0xC0 == 0x80) {
+            end++
+        }
+        out += arg.slice(i, end)
+        i = end - 1
     }
     ret out + "\\".repeat(backslashes * 2) + "\""
 }

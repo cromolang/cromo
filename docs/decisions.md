@@ -2753,6 +2753,14 @@ A branch whose type is not simple, as a `string`, gives a new value, also a copy
 - After it, against the C library of Windows and glibc: the copies and the fills up to 256 bytes take the same time or less; between 512 bytes and 4 KB up to twice; `memcmp` from the same to half the time on Windows, and up to twice that of glibc, which uses AVX2, from 4 KB.
 - A version with AVX2 chosen when the program starts was left out: it is the copy of the code for each processor that D513 does not want, for what remains to gain in the middle sizes. ARM64 is not measured yet.
 
+### D580. Run, Debug and the guide in the editor; the debuggers that exist, with the values of Cromo
+*2026-11-24.* Chosen by the author. The extension for Visual Studio Code shows what a program of Cromo needs where it is seen: Run, Debug and the tests at the top right of a `.cro` file, above `main` and above each `[[test]]`, and in the status bar; the Cromo Guide in a panel.
+- A program is debugged by the debuggers that exist, not by one of `cromo`: the one of the C/C++ extension of Microsoft, on the executable of `cromo build -O0`, with the PDB on Windows and gdb with DWARF on Linux. The extension offers to install it, and gives it two files, `debug/cromo.natvis` and `debug/cromo_gdb.py`, which show a `string` as its text, a `list` as its elements and a `map` as its keys and values.
+- For that file on Windows `cromo` writes in the debug information the names of its numbers, `i8` to `u64`, `f32`, `f64` and `addr`, as names of the types of C with their size: CodeView keeps of a number only its size and its sign, and the elements of a `list<i64>` are read through the name `i64` in that of the list. Only for Windows and not in `--release`, whose executable has the lines alone.
+- A test is debugged too: `cromo test --list` prints the names of the tests in the order of their executable, as `go test -list` and `cargo test -- --list`, and runs none, so that the extension knows the number of a test, which the executable of `cromo build --tests` takes as its argument.
+- A debugger written in Cromo, `cromo debug` with the protocol of the editors, is for after 1.0: it would see the tasks and need nothing else installed, and it is a work of several milestones for each system.
+- The guide is read from cromolang.org, not carried by the extension: in the language of Visual Studio Code when the guide has it, else in English, or in that of the setting `cromo.guideLanguage`, so that a new language of the guide needs no new version of the extension.
+
 ---
 
 ## Proposed

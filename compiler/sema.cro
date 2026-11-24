@@ -9187,7 +9187,12 @@ string quoted(string text) {
         } else if (c < 32) {
             result += "\\x" + digits.slice(i64(c >> 4), i64(c >> 4) + 1) + digits.slice(i64(c & 15), i64(c & 15) + 1)
         } else {
-            result += text.slice(i, i + 1)
+            i64 end = i + 1  // the whole character, of one byte or more
+            for (end < text.len() && text[end] & 0xC0 == 0x80) {
+                end++
+            }
+            result += text.slice(i, end)
+            i = end - 1
         }
     }
     ret result + "\""
@@ -9266,26 +9271,34 @@ bool parseSpec(string text, ref FormatSpec spec) {
 }
 
 // A string literal as {:?} prints it, as debugString of the core writes the others.
+// The bytes that need no escape are copied in runs, which end at a byte of ASCII: a
+// character of more bytes stays whole.
 string debugForm(string value) {
     string digits = "0123456789abcdef"
     string text = "\""
+    i64 run = 0
     for (i64 i = 0; i < value.len(); i++) {
         u8 c = value[i]
-        if (c == '"' || c == '\\') {
-            text += "\\" + value.slice(i, i + 1)
+        string escape
+        if (c == '"') {
+            escape = "\\\""
+        } else if (c == '\\') {
+            escape = "\\\\"
         } else if (c == '\n') {
-            text += "\\n"
+            escape = "\\n"
         } else if (c == '\r') {
-            text += "\\r"
+            escape = "\\r"
         } else if (c == '\t') {
-            text += "\\t"
+            escape = "\\t"
         } else if (c < 32 || c == 127) {
-            text += "\\x" + digits.slice(i64(c >> 4), i64(c >> 4) + 1) + digits.slice(i64(c & 15), i64(c & 15) + 1)
+            escape = "\\x" + digits.slice(i64(c >> 4), i64(c >> 4) + 1) + digits.slice(i64(c & 15), i64(c & 15) + 1)
         } else {
-            text += value.slice(i, i + 1)
+            continue
         }
+        text += value.slice(run, i) + escape
+        run = i + 1
     }
-    ret text + "\""
+    ret text + value.slice(run, value.len()) + "\""
 }
 
 bool isPrintFunction(string name) {

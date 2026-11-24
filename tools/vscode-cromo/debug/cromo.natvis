@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The values of Cromo in the debugger of Visual Studio and of the C/C++ extension of
+     Visual Studio Code: a string as its text, a list as its elements, a map as its keys
+     and values, in place of the address, the length and the capacity they are made of.
+     The extension for Visual Studio Code gives it to the debugger on Windows. The names
+     of the numbers, as i64, are types that cromo writes in the debug information. -->
+<AutoVisualizer xmlns="http://schemas.microsoft.com/vstudio/debugger/natvis/2010">
+
+  <!-- `length` bytes of UTF-8 at `data`. -->
+  <Type Name="string">
+    <DisplayString Condition="length == 0">""</DisplayString>
+    <DisplayString>{(char*)data,[length]s8}</DisplayString>
+    <StringView>(char*)data,[length]s8</StringView>
+    <Expand>
+      <Item Name="length">length</Item>
+      <Item Name="capacity">capacity</Item>
+    </Expand>
+  </Type>
+
+  <!-- `length` elements at `data`. -->
+  <Type Name="list&lt;*&gt;">
+    <DisplayString>{{ length={length} }}</DisplayString>
+    <Expand>
+      <Item Name="length">length</Item>
+      <Item Name="capacity">capacity</Item>
+      <ArrayItems>
+        <Size>length</Size>
+        <ValuePointer>($T1*)data</ValuePointer>
+      </ArrayItems>
+    </Expand>
+  </Type>
+
+  <!-- `capacity` slots at `slots`: the hash in 8 bytes, with its highest bit set when the
+       slot is full, the key, and the value at a multiple of 8. -->
+  <Type Name="map&lt;*,*&gt;">
+    <DisplayString>{{ length={length} }}</DisplayString>
+    <Expand>
+      <Item Name="length">length</Item>
+      <CustomListItems MaxItemsPerView="5000">
+        <Variable Name="slot" InitialValue="(unsigned char*)slots"/>
+        <Variable Name="index" InitialValue="0"/>
+        <Variable Name="valueOffset" InitialValue="8 + (sizeof($T1) + 7) / 8 * 8"/>
+        <Variable Name="slotSize" InitialValue="8 + (sizeof($T1) + 7) / 8 * 8 + (sizeof($T2) + 7) / 8 * 8"/>
+        <Loop>
+          <Break Condition="index >= capacity"/>
+          <If Condition="*(unsigned __int64*)slot >= 0x8000000000000000">
+            <Item Name="[{*($T1*)(slot + 8)}]">*($T2*)(slot + valueOffset)</Item>
+          </If>
+          <Exec>slot += slotSize</Exec>
+          <Exec>index++</Exec>
+        </Loop>
+      </CustomListItems>
+    </Expand>
+  </Type>
+
+</AutoVisualizer>

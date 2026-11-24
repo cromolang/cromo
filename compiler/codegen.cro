@@ -4473,14 +4473,36 @@ extend Generator {
         subroutineType = metadata("!DISubroutineType(types: !{null})")
     }
 
+    // D580: the names of the numbers of Cromo, as i64, for the PDB of a debugger of
+    // Windows: CodeView keeps of a number only its size and its sign, and what shows a
+    // list<i64> as its elements reads the name of the element in that of the list.
+    string numberNames() {
+        list<string> names = ["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64"]
+        list<i64> sizes = [8, 16, 32, 64, 8, 16, 32, 64, 32, 64]
+        string nodes
+        for (i64 i = 0; i < names.len(); i++) {
+            string encoding = names[i].startsWith("i") ? "DW_ATE_signed" : names[i].startsWith("u") ? "DW_ATE_unsigned" : "DW_ATE_float"
+            string number = metadata(format("!DIBasicType(name: \"{}\", size: {}, encoding: {})", names[i], sizes[i], encoding))
+            nodes += (i == 0 ? "" : ", ") +
+                metadata(format("!DIDerivedType(tag: DW_TAG_typedef, name: \"{}\", baseType: {})", names[i], number))
+        }
+        string address = metadata("!DIDerivedType(tag: DW_TAG_pointer_type, baseType: null, size: 64)")
+        nodes += ", " + metadata("!DIDerivedType(tag: DW_TAG_typedef, name: \"addr\", baseType: " + address + ")")
+        ret metadata("!{" + nodes + "}")
+    }
+
     string finishDebug(Checker c) {
         string file = fileNode(c, 0)
+        string retained
+        if (options.windows && !options.release && !options.runtime) {
+            retained = ", retainedTypes: " + numberNames()
+        }
         defineMetadata(compileUnit, "distinct !DICompileUnit(language: DW_LANG_C_plus_plus, file: " + file +
             ", producer: \"cromo\", isOptimized: " + (options.optimized ? "true" : "false") +
             ", runtimeVersion: 0, emissionKind: " +
             // With only the lines LLVM leaves out the functions that inline nothing,
             // unless the information is for profiling: the stack traces need them.
-            (options.release ? "LineTablesOnly, debugInfoForProfiling: true" : "FullDebug") + ", nameTableKind: None)")
+            (options.release ? "LineTablesOnly, debugInfoForProfiling: true" : "FullDebug") + retained + ", nameTableKind: None)")
         // DWARF on both systems, for the table of the stack traces; on Windows also
         // CodeView, for the PDB of a debugger.
         string flags = metadata("!{i32 2, !\"Debug Info Version\", i32 3}")

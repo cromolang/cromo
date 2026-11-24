@@ -15,14 +15,14 @@ The command always comes first: `cromo hello.cro` is an error that shows the rig
 |---|---|
 | `cromo build [file.cro \| name]` | compiles the program into an executable |
 | `cromo run [file.cro \| name] [-- arguments]` | compiles the program into a temporary folder, runs it with the arguments that follow `--`, and ends with its exit code |
-| `cromo test [file.cro] [names]` | runs the `[[test]]` functions of the program and of its modules; the names choose the tests that contain them ([Tests](tests.md)) |
+| `cromo test [file.cro] [names]` | runs the `[[test]]` functions of the program and of its modules; the names choose the tests that contain them, and `--list` prints their names without running them ([Tests](tests.md)) |
 | `cromo fmt [--check] [files and folders \| -]` | formats the code, by default of the current folder and its subfolders ([Tools](tools.md)) |
 | `cromo lsp` | the language server, for editors, on the standard input and output ([Tools](tools.md)) |
 | `cromo ai` | what an AI needs to write Cromo: the rules that are easy to get wrong, the syntax and whole programs as examples. `cromo ai std.fs` prints the reference of a module, `cromo ai core` that of the core |
 | `cromo design [file.form]` | the designer of the windows: a window composed with the mouse, saved as a form and as a module of Cromo ([Windows and apps](gui.md#designing-a-window-cromo-design)) |
 | `cromo get address[@version] [name]` | adds a package to the `cromo.mod` of the folder, or raises its version ([Modules](modules.md#packages)) |
 | `cromo update [version]` | installs the latest version of Cromo, or the one named, and makes it the active one |
-| `cromo version` | prints the version of `cromo` and of LLVM, as `cromo 0.98.0 (LLVM 23.1.4)` |
+| `cromo version` | prints the version of `cromo` and of LLVM, as `cromo 0.98.1 (LLVM 23.1.4)` |
 | `cromo help` | prints the commands and the options |
 
 ### The program to compile

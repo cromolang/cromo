@@ -698,7 +698,12 @@ string quoted(string text) {
         if (c == 10) {
             out = out + "\\n"
         } else {
-            out = out + text.slice(i, i + 1)
+            i64 end = i + 1  // the whole character, of one byte or more
+            for (end < text.len() && text[end] & 0xC0 == 0x80) {
+                end++
+            }
+            out = out + text.slice(i, end)
+            i = end - 1
         }
     }
     ret out + "\""

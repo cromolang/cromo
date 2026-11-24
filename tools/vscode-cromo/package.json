@@ -1,8 +1,8 @@
 {
   "name": "cromo",
   "displayName": "Cromo",
-  "description": "The Cromo language: syntax highlighting, errors as you type, hover, go to definition, outline, completion and formatting, with the language server of cromo",
-  "version": "0.17.0",
+  "description": "The Cromo language: run, debug and test from the editor, the Cromo Guide in a panel, syntax highlighting, errors as you type, hover, go to definition, outline, completion and formatting, with the language server of cromo",
+  "version": "0.18.0",
   "publisher": "cromolang",
   "license": "(MIT OR Apache-2.0)",
   "icon": "images/icon.png",
@@ -31,11 +31,18 @@
   },
   "categories": [
     "Programming Languages",
-    "Formatters"
+    "Formatters",
+    "Debuggers"
   ],
   "main": "./extension.js",
   "activationEvents": [
-    "onLanguage:cromo"
+    "onLanguage:cromo",
+    "workspaceContains:cromo.mod",
+    "onCommand:cromo.run",
+    "onCommand:cromo.debug",
+    "onCommand:cromo.test",
+    "onCommand:cromo.guide",
+    "onCommand:cromo.guideInBrowser"
   ],
   "contributes": {
     "languages": [
@@ -69,7 +76,12 @@
         "cromo.path": {
           "type": "string",
           "default": "",
-          "description": "The cromo executable that runs the language server, for example C:\\cromo\\bin\\cromo.exe. Empty: build\\cromo.exe in a folder of the workspace, if there is one, else cromo from PATH."
+          "description": "The cromo executable that runs the programs and the language server, for example C:\\cromo\\bin\\cromo.exe. Empty: build\\cromo.exe in a folder of the workspace, if there is one, else cromo from PATH."
+        },
+        "cromo.guideLanguage": {
+          "type": "string",
+          "default": "",
+          "description": "The language of the Cromo Guide in its panel, as it or en. Empty: the language of Visual Studio Code, when the guide has it, else English."
         }
       }
     },
@@ -77,6 +89,115 @@
       "[cromo]": {
         "editor.formatOnSave": true
       }
-    }
+    },
+    "commands": [
+      {
+        "command": "cromo.run",
+        "title": "Run",
+        "category": "Cromo",
+        "icon": "$(play)"
+      },
+      {
+        "command": "cromo.debug",
+        "title": "Debug",
+        "category": "Cromo",
+        "icon": "$(debug-alt)"
+      },
+      {
+        "command": "cromo.test",
+        "title": "Run the Tests of the File",
+        "category": "Cromo",
+        "icon": "$(beaker)"
+      },
+      {
+        "command": "cromo.guide",
+        "title": "Open the Cromo Guide",
+        "category": "Cromo",
+        "icon": "$(book)"
+      },
+      {
+        "command": "cromo.guideInBrowser",
+        "title": "Open the Cromo Guide in the Browser",
+        "category": "Cromo"
+      }
+    ],
+    "menus": {
+      "editor/title/run": [
+        {
+          "command": "cromo.run",
+          "when": "resourceLangId == cromo",
+          "group": "navigation@1"
+        },
+        {
+          "command": "cromo.debug",
+          "when": "resourceLangId == cromo",
+          "group": "navigation@2"
+        },
+        {
+          "command": "cromo.test",
+          "when": "resourceLangId == cromo",
+          "group": "navigation@3"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "cromo.guide",
+          "when": "resourceLangId == cromo",
+          "group": "navigation@9"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "cromo.run",
+          "when": "resourceLangId == cromo",
+          "group": "cromo@1"
+        },
+        {
+          "command": "cromo.debug",
+          "when": "resourceLangId == cromo",
+          "group": "cromo@2"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "cromo.run",
+          "when": "resourceExtname == .cro",
+          "group": "cromo@1"
+        },
+        {
+          "command": "cromo.debug",
+          "when": "resourceExtname == .cro",
+          "group": "cromo@2"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "cromo.run",
+        "key": "ctrl+f5",
+        "when": "editorLangId == cromo && !inDebugMode"
+      },
+      {
+        "command": "cromo.debug",
+        "key": "f5",
+        "when": "editorLangId == cromo && !inDebugMode"
+      }
+    ],
+    "breakpoints": [
+      {
+        "language": "cromo"
+      }
+    ],
+    "taskDefinitions": [
+      {
+        "type": "cromo",
+        "properties": {
+          "label": {
+            "type": "string",
+            "description": "What cromo does"
+          }
+        }
+      }
+    ]
   }
 }

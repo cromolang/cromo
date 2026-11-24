@@ -8,6 +8,8 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
+const run = require('./run');
+const guide = require('./guide');
 
 // The cromo to run: the setting cromo.path; without it, the one built in a folder
 // of the workspace (build/cromo.exe, while developing cromo), else cromo from PATH.
@@ -327,6 +329,10 @@ function activate(context) {
             },
         },
     );
+
+    // Run, Debug and Test, and the guide in a panel.
+    run.register(context, findCromo);
+    guide.register(context);
 
     if (vscode.workspace.textDocuments.some((document) => document.languageId === 'cromo')) server.start();
 }

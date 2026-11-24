@@ -1,0 +1,11 @@
+// cromo run gives the program its arguments as they are, also one with a space and with
+// characters of more bytes: cromo in Cromo cut such a character while it quoted it.
+// cromo-command: run
+// target: windows
+// program-arg: due parole città
+// program-arg: 日本
+// expect-output: [due parole città] [日本]
+i32 main(list<string> args) {
+    println("[{}] [{}]", args[1], args[2])
+    ret 0
+}

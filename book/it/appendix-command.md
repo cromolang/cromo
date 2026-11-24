@@ -15,14 +15,14 @@ Il comando viene sempre per primo: `cromo hello.cro` è un errore che mostra la 
 |---|---|
 | `cromo build [file.cro \| name]` | compila il programma in un eseguibile |
 | `cromo run [file.cro \| name] [-- arguments]` | compila il programma in una cartella temporanea, lo esegue con gli argomenti che seguono `--` e termina con il suo codice di uscita |
-| `cromo test [file.cro] [names]` | esegue le funzioni `[[test]]` del programma e dei suoi moduli; i nomi scelgono i test che li contengono ([Test](tests.md)) |
+| `cromo test [file.cro] [names]` | esegue le funzioni `[[test]]` del programma e dei suoi moduli; i nomi scelgono i test che li contengono, e `--list` ne stampa i nomi senza eseguirli ([Test](tests.md)) |
 | `cromo fmt [--check] [files and folders \| -]` | formatta il codice, di default quello della cartella corrente e delle sue sottocartelle ([Strumenti: formattazione, editor e debugger](tools.md)) |
 | `cromo lsp` | il language server, per gli editor, su standard input e standard output ([Strumenti: formattazione, editor e debugger](tools.md)) |
 | `cromo ai` | ciò che serve a un'IA per scrivere Cromo: le regole su cui è facile sbagliare, la sintassi e programmi interi come esempi, in inglese. `cromo ai std.fs` stampa il riferimento di un modulo, `cromo ai core` quello del core |
 | `cromo design [file.form]` | il designer delle finestre: una finestra composta con il mouse, salvata come form e come modulo di Cromo ([Finestre e app](gui.md#disegnare-una-finestra-cromo-design)) |
 | `cromo get indirizzo[@versione] [nome]` | aggiunge un pacchetto al `cromo.mod` della cartella, o ne alza la versione ([Moduli](modules.md#pacchetti)) |
 | `cromo update [version]` | installa l'ultima versione di Cromo, o quella indicata, e la rende attiva |
-| `cromo version` | stampa la versione di `cromo` e di LLVM, come `cromo 0.98.0 (LLVM 23.1.4)` |
+| `cromo version` | stampa la versione di `cromo` e di LLVM, come `cromo 0.98.1 (LLVM 23.1.4)` |
 | `cromo help` | stampa i comandi e le opzioni |
 
 ### Il programma da compilare

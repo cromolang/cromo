@@ -1002,6 +1002,7 @@ FAIL  areaOfTheUnit
 
 - A test is a function `[[test]] void name()`, without parameters (D349). It can be in the file of the code, or in a file `shapes_test.cro` next to it, which is a part of the module and sees its private names (D350); `cromo build` leaves them out.
 - `assert(condition)` is a built-in function, as `panic`: when the condition is false it stops with a panic that writes the condition as written and, for a comparison of numbers or bools, the values of its sides that are not literals, each computed once (D351, D353). It works in any function, also with `--release`.
+- `cromo test --list [file.cro]` prints the names of the tests, in the order of their executable, and runs none (D580).
 - `cromo test [file.cro] [names]` builds one executable with the tests of the program and of its modules, and runs each in a process of its own, as many at a time as the processors: a panic, an exception or a stack overflow stops only its test (D352). It writes `ok` or `FAIL` for each test, in the order of the files, with the output of the tests that failed, and the count; its exit code is 1 if one failed (D354). The names after the file choose the tests whose name contains one of them (D355). The tests of a module are named after it: `geometry.areaOfSquare` (D356).
 
 ## 24. Packages (D376–D391)

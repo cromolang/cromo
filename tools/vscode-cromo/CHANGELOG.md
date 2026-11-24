@@ -1,5 +1,13 @@
 # Changes
 
+## 0.18.0
+
+- Run and Debug: the buttons at the top right of a `.cro` file, the lines above `main`, the status bar, F5 and Ctrl+F5. A program runs with `cromo run`; it is debugged with the debugger of the C/C++ extension of Microsoft, which the extension offers to install.
+- In the debugger a `string` is its text, a `list` its elements and a `map` its keys and values.
+- Run test and Debug test above each `[[test]]`, and the tests of a file from the button of the title. Debugging a test needs cromo 0.98.1, for `cromo test --list`.
+- The Cromo Guide in a panel next to the code, read from cromolang.org: the book of the title of the editor, or *Cromo: Open the Cromo Guide*. It is in the language of Visual Studio Code when the guide has it, or in the one of the setting `cromo.guideLanguage`.
+- A breakpoint can be set in a `.cro` file.
+
 ## 0.15.0
 
 - The color of `fma`.

@@ -4,6 +4,9 @@ Support for [Cromo](https://cromolang.org), a general-purpose language with the 
 
 ## Features
 
+- **Run and Debug** from the editor: the buttons at the top right of a `.cro` file, the lines *Run | Debug* above `main`, the status bar, `Ctrl+F5` and `F5`. A program runs with `cromo run` in the terminal panel. It is debugged, with breakpoints in the `.cro` files, by the debugger of the [C/C++ extension](https://marketplace.visualstudio.com/items?itemName=ms-vscode.cpptools) of Microsoft, which the extension offers to install the first time; a `string` is shown as its text, a `list` as its elements and a `map` as its keys and values.
+- **Tests**: *Run test | Debug test* above each `[[test]]`, and the tests of the file from the button of the title.
+- **The Cromo Guide** in a panel next to the code, read from [cromolang.org](https://cromolang.org/book/): the book at the top right, or *Cromo: Open the Cromo Guide*. It is in the language of Visual Studio Code when the guide has it, as Italian, else in English; the setting `cromo.guideLanguage` chooses another.
 - **Syntax highlighting** of the `.cro` files: keywords, types, numbers, strings with their format placeholders (`{}`, `{:.2f}`), comments, attributes and functions.
 - **Errors as you type**, from the compiler itself.
 - **Hover**: the type of a value or the signature of a function under the mouse, with its documentation: the `//` comments above its declaration, for the standard library and for your code.
@@ -32,6 +35,7 @@ The installers also install this extension, when the command `code` is there.
 | Setting | Meaning |
 |---|---|
 | `cromo.path` | The `cromo` executable that runs the language server. Empty: `build\cromo.exe` in a folder of the workspace, as while working on Cromo itself, else `cromo` from `PATH`. |
+| `cromo.guideLanguage` | The language of the Cromo Guide in its panel, as `it` or `en`. Empty: the language of Visual Studio Code, when the guide has it, else English. |
 | `cromo.trace` | Writes every message between VS Code and `cromo lsp` in the *Cromo* output panel. |
 
 Files of Cromo are formatted when they are saved (`editor.formatOnSave`); turn it off for `[cromo]` in the settings, if you prefer.

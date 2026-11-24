@@ -46,6 +46,7 @@ public struct Compilation {
     public bool emitIr
     public bool runtime            // --runtime: the object of std.runtime, for the archive of the runtime (D393)
     public bool quiet              // D568
+    public bool listTests          // cromo test --list: the names, without running them (D580)
     public string reference        // --reference <file>: the documentation of the library, for the site (D519)
     public string aiModule         // cromo ai <module>: its reference on the standard output (D559)
     public list<string> testNames  // of the tests of the program, in the order of its entry point
@@ -196,6 +197,7 @@ public bool preparePackages(string project, string library, Target target, i64 d
 // Compiles a program of the library, as tools/get.cro, and runs it with these arguments.
 public i32 runTool(string library, string file, list<string> args, i64 depth) {
     Compilation tool
+    tool.options.target = hostTarget()  // a tool of cromo runs where cromo runs
     tool.depth = depth
     tool.options.library = library
     tool.inputPath = fs.joinPath(library, file.replace("/", fs.separator()))
@@ -375,6 +377,15 @@ public i32 testCommand(ref Compilation compilation, bool several, ref bool unmat
         }
         println("{}", compilation.testNames.len() == 0 ? "no tests: write them as [[test]] void name()" : "no test has those names")
         ret compilation.testNames.len() == 0 ? 0 : 1
+    }
+    if (compilation.listTests) {
+        // D580: the names alone, in the order of the executable: the number of a test,
+        // which the executable takes as its argument, is its line when no name chooses.
+        for (TestRun test in tests) {
+            println("{}", test.name)
+        }
+        removeFolder(folder)
+        ret 0
     }
     runTests(compilation.options.outputPath, ref tests)
     i64 failed = 0
@@ -714,6 +725,7 @@ public i32 runAndroid(ref Compilation compilation) {
     if (code == 0) {
         // The tool is built as by cromo run, then run while cromo ignores Ctrl+C.
         Compilation tool
+        tool.options.target = hostTarget()  // a tool of cromo runs where cromo runs
         tool.options.library = library
         tool.depth = compilation.depth + 1
         tool.inputPath = fs.joinPath(fs.joinPath(library, "tools"), "android.cro")
@@ -789,6 +801,8 @@ public bool readOptions(list<string> args, i64 first, i64 last, bool isRun, ref 
             compilation.release = true  // D57
         } else if (arg == "--emit-ir") {
             compilation.emitIr = true
+        } else if (arg == "--list" && test) {
+            compilation.listTests = true  // D580
         } else if (arg == "--tests" && !isRun && !test) {
             compilation.tests = true  // D572: the IR of cromo test, not in the help
         } else if (arg == "--runtime" && !isRun && !test) {
@@ -956,7 +970,8 @@ public void printUsage(bool toError) {
         "             executable of cromo.mod\n" +
         "  test       runs the [[test]] functions of file.cro, or of main.cro of this folder, and\n" +
         "             of the files name_test.cro of its modules; the names after the file choose\n" +
-        "             the tests that contain them\n" +
+        "             the tests that contain them, and --list prints their names without\n" +
+        "             running them\n" +
         "  run        compiles and runs the program, or an executable of cromo.mod by its name;\n" +
         "             its arguments come after --\n" +
         "  fmt        formats the .cro files, by default of this folder and its subfolders;\n" +

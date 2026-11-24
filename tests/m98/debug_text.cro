@@ -1,0 +1,7 @@
+// The form of debug of a string literal with characters of more bytes and with
+// escapes: cromo in Cromo cut a character in two while it wrote it.
+// expect-output: "città" "a\"b\\c\n\té" "日本" ""
+i32 main() {
+    println("{:?} {:?} {:?} {:?}", "città", "a\"b\\c\n\té", "日本", "")
+    ret 0
+}

@@ -91,6 +91,8 @@ $contentTypes = @"
   <Default Extension=".md" ContentType="text/markdown" />
   <Default Extension=".txt" ContentType="text/plain" />
   <Default Extension=".png" ContentType="image/png" />
+  <Default Extension=".py" ContentType="text/x-python" />
+  <Default Extension=".natvis" ContentType="text/xml" />
   <Default Extension=".vsixmanifest" ContentType="text/xml" />
 </Types>
 "@
@@ -110,7 +112,8 @@ function Add-TextEntry($zip, $name, $text) {
 }
 
 # Entry names must use forward slashes, or VS Code rejects the package.
-$files = 'package.json', 'extension.js', 'language-configuration.json', 'README.md', 'CHANGELOG.md', 'syntaxes/cromo.tmLanguage.json', $pkg.icon
+$files = 'package.json', 'extension.js', 'run.js', 'guide.js', 'language-configuration.json', 'README.md', 'CHANGELOG.md',
+         'syntaxes/cromo.tmLanguage.json', 'debug/cromo.natvis', 'debug/cromo_gdb.py', $pkg.icon
 
 $zip = [System.IO.Compression.ZipFile]::Open($vsix, 'Create')
 try {
