@@ -11,6 +11,8 @@ extern "kernel32" {
     i32 GetConsoleMode(i64 console, ref u32 mode)
     i32 ReadConsoleW(i64 console, addr buffer, u32 count, ref u32 read, addr control)
     i32 ReadFile(i64 file, addr data, u32 size, ref u32 done, addr overlapped)
+    u32 GetModuleFileNameW(addr module, addr buffer, u32 size)
+    u32 GetActiveProcessorCount(u16 group)
 }
 
 // The name of the system: "windows", or "linux", also on Android.
@@ -61,6 +63,36 @@ public string currentFolder() {
     string folder = narrow(buffer, i32(length))
     free(buffer)
     ret folder
+}
+
+// The absolute path of the executable of this program: its folder is where a program
+// finds the files installed next to it.
+public string programPath() {
+    addr none
+    addr buffer = alloc(65536)
+    u32 length = GetModuleFileNameW(none, buffer, 32768)
+    string path = narrow(buffer, i32(length))
+    free(buffer)
+    ret path
+}
+
+// How many processors this program can use, at least 1: how many threads can work at
+// the same time.
+public i64 processors() {
+    i64 count = i64(GetActiveProcessorCount(0xFFFF))  // all the groups
+    ret count < 1 ? 1 : count
+}
+
+// Whether a standard stream of this program is a terminal, and not a file or a pipe:
+// 0 for the input, 1 for the output, 2 for the errors, as the descriptors of C. A
+// program asks it before it writes colors, or a line that it rewrites.
+public bool isTerminal(i32 stream) {
+    if (stream < 0 || stream > 2) {
+        ret false
+    }
+    i64 handle = GetStdHandle(stream == 0 ? 0xFFFFFFF6 : stream == 1 ? 0xFFFFFFF5 : 0xFFFFFFF4)
+    u32 mode = 0
+    ret GetConsoleMode(handle, ref mode) != 0
 }
 
 // The text in UTF-16 with a zero at the end, for Windows: to be freed.

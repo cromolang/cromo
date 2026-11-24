@@ -2,6 +2,9 @@
 
 enum Call {
     Read = 0
+    Ioctl = 16
     GetPid = 39
     GetCwd = 79
+    SchedGetAffinity = 204
+    ReadlinkAt = 267
 }

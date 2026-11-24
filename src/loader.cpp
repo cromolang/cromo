@@ -116,6 +116,10 @@ public:
         loaded_[fs::weakly_canonical(main)] = 0;
         names_ = {main.stem().string(), "std"};
         contexts_ = {0, 0};
+        if (names_[0] == "llvm" || names_[0].compare(0, 5, "llvm.") == 0) {  // D573
+            diag_.error(SourceLocation{1, 1, 0}, "a file cannot be called " + main.filename().string() +
+                                                     ": LLVM keeps the names that start with llvm");
+        }
         if (inProject_) {
             // D376-D391: the packages of cromo.mod, already in the cache: cromo build
             // downloads those that are missing before it comes here.
@@ -200,6 +204,12 @@ private:
         if (!front.empty()) {
             dotted = front;
             for (const std::string& part : path) dotted += "." + part;
+        }
+        // D573: LLVM keeps the names that start with `llvm.`, and the symbols of a
+        // module start with its name.
+        if (dotted == "llvm" || dotted.compare(0, 5, "llvm.") == 0) {
+            diag_.error(import.loc, "a module cannot be called llvm: LLVM keeps the names that start with it");
+            return {};
         }
         fs::path file = root / relative;
         file += ".cro";

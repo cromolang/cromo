@@ -1,0 +1,69 @@
+// D575: what a program asks of its system: os.programPath, os.processors, os.isTerminal,
+// os.readInputBytes, fs.tempFolder, fs.absolute, fs.canonical and process.status.
+// program-input: first line
+// program-input: abcdef
+// expect-output: path true
+// expect-output: processors true
+// expect-output: terminal false false
+// expect-output: line first line
+// expect-output: bytes 97 98 99
+// expect-output: bytes 3 true
+// expect-output: temp true
+// expect-output: absolute true true
+// expect-output: canonical true true
+// expect-output: missing cannot resolve
+// expect-output: child here
+// expect-output: status 7
+import std.fs
+import std.os
+import std.process
+
+i32 main(list<string> args) {
+    if (args.len() > 1 && args[1] == "child") {
+        println("child here")
+        ret 7
+    }
+    string own = os.programPath()
+    println("path {}", fs.isFile(own) && fs.absolute(own) == own)
+    println("processors {}", os.processors() >= 1)
+    println("terminal {} {}", os.isTerminal(1), os.isTerminal(7))
+
+    string line
+    os.readLine(ref line)
+    println("line {}", line)
+    list<u8> some = os.readInputBytes(3)
+    println("bytes {} {} {}", some[0], some[1], some[2])
+    list<u8> more = os.readInputBytes(3)
+    for (os.readInputBytes(100).len() > 0) {
+    }
+    println("bytes {} {}", more.len(), os.readInputBytes(100).len() == 0)
+
+    string temp = fs.tempFolder()
+    println("temp {}", fs.isFolder(temp))
+
+    string here = os.currentFolder()
+    string there = fs.absolute(fs.joinPath("a", fs.joinPath("..", fs.joinPath(".", "b.txt"))))
+    println("absolute {} {}", there == fs.joinPath(here, "b.txt"), fs.absolute(here) == here)
+
+    string folder = fs.joinPath(temp, format("cromo-m98-system-{}", os.processId()))
+    fs.createFolders(fs.joinPath(folder, "inner"))
+    string file = fs.joinPath(folder, "file.txt")
+    fs.writeText(file, "x")
+    string link = fs.joinPath(folder, "link")
+    fs.createLink(fs.joinPath(folder, "inner"), link)
+    string real = fs.canonical(file)
+    string through = fs.canonical(fs.joinPath(link, fs.joinPath("..", "file.txt")))
+    string inner = fs.canonical(link)
+    println("canonical {} {}", fs.fileName(real) == "file.txt" && real == fs.canonical(real),
+        fs.fileName(inner) == "inner" && fs.parent(inner) == fs.parent(real) && through.len() > 0)
+    try {
+        fs.canonical(fs.joinPath(folder, "nothing"))
+    } catch (Exception e) {
+        println("missing {}", e.message().slice(0, 14))
+    }
+    fs.removeAll(folder)
+
+    i32 code = process.status(own, ["child"])
+    println("status {}", code)
+    ret 0
+}

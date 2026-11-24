@@ -339,7 +339,7 @@ i32 main() {
 my own join
 ```
 
-Since the last name of a module is written in front of its names, two imports with the same last name in one file are an error, and so is a variable or a parameter with the name of an imported module. Cromo has no way to rename an import: rename one of the modules.
+Since the last name of a module is written in front of its names, two imports with the same last name in one file are an error. Cromo has no way to rename an import: rename one of the modules.
 
 ```cromo file=plot/geometry.cro
 public f64 scale() {
@@ -360,17 +360,21 @@ i32 main() {
 error: another import is also called geometry
 ```
 
-```cromo error
-import geometry
+A variable, a parameter or a field can have the name of an imported module: where it is visible, the name is the variable, as in Go. A module cannot be called `llvm`, and neither can the file of a program: LLVM keeps that name for its own symbols.
+
+```cromo
+import tile
 
 i32 main() {
-    i32 geometry = 3
-    ret geometry
+    f64 before = tile.area(2.0)
+    f64 tile = 3.0  // from here to the end of the block, tile is the variable
+    println("{} {}", before, tile)
+    ret 0
 }
 ```
 
 ```output
-error: 'geometry' is the name of an imported module
+4 3
 ```
 
 ## A folder is a module

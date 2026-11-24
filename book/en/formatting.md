@@ -51,7 +51,7 @@ Each call writes its whole text at once: when several threads print, their lines
 
 The format string is a literal, written in the call. The compiler counts its placeholders, checks that every value is used, and checks that each value can be printed in the way the placeholder asks. A text held in a variable is printed with a placeholder, `println("{}", text)`: so a `{` inside the text is never taken for a placeholder.
 
-A number literal among the values needs its type, since nothing else says which type it is: `println("{}", i64(5))`, or a variable.
+A number literal among the values is printed as an `i64`, or as an `f64` when it has a point: `println("{}", 5)` prints `5`. Write its type when another one is meant, as `u8(200)` with `{:b}`.
 
 ```cromo error
 i32 main() {
@@ -59,7 +59,6 @@ i32 main() {
     println(message)
     println("{} of {}", message)
     println("{}", message, message)
-    println("{}", 5)
     ret 0
 }
 ```
@@ -68,7 +67,6 @@ i32 main() {
 error: the first argument of println must be a string literal with the format
 error: the format string needs at least 2 arguments, but 1 were given
 error: this argument is not used by the format string
-error: the type of this literal cannot be deduced: write it explicitly, for example i32(5)
 ```
 
 ## Placeholders
@@ -541,6 +539,48 @@ i32 main() {
 
 ```output
 error: this argument is printed both with {} and with {:?}: pass it twice
+```
+
+## Your own functions with a format: [[format]]
+
+A function of the program can take a format and its values as `println` does. `[[format]]` before a function, or a method, whose last parameter is a `string` says that a call gives there a format with its arguments: the compiler checks them as it does for `println`, and the function receives the text already made.
+
+```cromo
+[[format]]
+void warning(i64 line, string message) {
+    println("line {}: warning: {}", line, message)
+}
+
+i32 main() {
+    warning(12, "{} is not used", "total")
+    warning(30, "nothing to do")
+    string text = "a text made elsewhere"
+    warning(31, text)
+    ret 0
+}
+```
+
+```output
+line 12: warning: total is not used
+line 30: warning: nothing to do
+line 31: warning: a text made elsewhere
+```
+
+A string literal there is always a format, so its braces are written `{{` and `}}`; a value that is not a literal, as `text`, is given as it is. The functions of `std.log` are made this way, `log.info("{} users", count)`, and so is the method `format` of a string, which replaces its text:
+
+```cromo
+i32 main() {
+    i64 done = 3
+    i64 total = 7
+    string status
+    status.format("{} of {}", done, total)
+    println("{}", status)
+    ret 0
+}
+```
+
+```output
+3 of 7
 ```
 
 ## Summary

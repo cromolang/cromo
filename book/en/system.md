@@ -72,6 +72,8 @@ A program rarely sees these rules: the shell, and `std.process` when it starts a
 
 A path is a `string`: absolute, or relative to the current folder, which `os.currentFolder()` gives. The names in a path are separated by `/` on every system, and on Windows by `\` too, so `"data/notes.txt"` works everywhere.
 
+`fs.absolute(path)` gives the absolute path of a path, with the current folder in front of a relative one and without the names `.` and `..`; the file may not exist. `fs.canonical(path)` gives the absolute path of a file or a folder that exists, with every link followed, so that two paths of the same file give the same text; it throws when the path does not exist. `fs.tempFolder()` is the folder of the temporary files: that of the user on Windows, and on Linux the one of the variable `TMPDIR`, or `/tmp`.
+
 `std.fs` takes a path apart, without looking at the disk:
 
 ```cromo
@@ -454,6 +456,8 @@ The mapping ends with its variable, and, as a `File`, it cannot be copied. On An
 - `os.name()` is `"windows"` or `"linux"`; on Android it is `"linux"` too.
 - `os.env(name)` is the value of a variable of the environment, or `""` when it is not set; `os.hasEnv(name)` tells a variable set to `""` from one that is missing. On Windows the names do not distinguish upper and lower case: `os.env("path")` is the `PATH`.
 - `os.currentFolder()` is the absolute path of the current folder, from which the relative paths start. `os.processId()` is the number that the system gives to the program.
+- `os.programPath()` is the absolute path of the executable of the program: its folder is where a program finds the files installed next to it. `os.processors()` is how many processors the program can use, at least 1.
+- `os.isTerminal(stream)` says whether a standard stream is a terminal, and not a file or a pipe: 0 is the input, 1 the output, 2 the errors. A program asks it before it writes colors, or a line that it rewrites.
 
 ```cromo norun
 import std.fs
@@ -548,6 +552,7 @@ i32 main() {
 The rules:
 
 - A last line without `\n` is read too; at the end, `readLine` gives `false` and leaves `line` empty. At the end `readInput` gives `""`.
+- `os.readInputBytes(most)` gives up to `most` bytes of the input as they are, as soon as some arrive, and an empty list at the end: for an input that is not text.
 - The input must be UTF-8: a line that is not is an exception, as for `fs.readText`. On a console of Windows the text arrives in UTF-16, and is converted.
 - From a terminal, the input ends with Ctrl+D on Linux, and on Windows with Ctrl+Z at the start of a line and Enter.
 - The standard input is read from one thread at a time.
@@ -711,6 +716,16 @@ i32 main() {
 
 ```output
 cannot start 'no-such-program': no such program
+```
+
+`process.status(program, args)` runs a program to its end with the standard input, output and error of this program, as a shell runs a command: who uses the program sees what the other prints, and answers what it asks. It gives the exit code, and throws when the program cannot start:
+
+```cromo norun
+import std.process
+
+i32 main() {
+    ret process.status("git", ["commit"])
+}
 ```
 
 ### A program that runs alongside
@@ -1077,7 +1092,7 @@ i32 main() {
 {"time":"2026-11-12T10:03:12.251+01:00","level":"WARN","message":"slow answer","request":"7f3b","user":42}
 ```
 
-- `log.info`, `log.warn` and `log.error` write a line of their level on the standard error. The message is one string: `format` makes it from the values.
+- `log.info`, `log.warn` and `log.error` write a line of their level on the standard error. The message is a text, or a format with its values, as that of `println`: `log.info("{} users", count)`.
 - A `log.Logger` has the same functions, and `debug`, and it says where and how its lines are written. One declared without a value writes text on the standard error, from the level `Info` on.
 - `setLevel(level)` sets the lowest level that the logger writes, among `log.Level.Debug`, `Info`, `Warn` and `Error`.
 - `setJson(true)` makes each line an object of JSON, with `time`, `level`, `message` and the fields: the format that the tools that collect the logs of the services read.

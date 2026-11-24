@@ -208,7 +208,7 @@ public i32 runTool(string library, string file, list<string> args, i64 depth) {
 // D156: compiles the program in a temporary folder, runs it with its arguments
 // and deletes the folder. Returns the exit code of the program.
 public i32 run(ref Compilation compilation, list<string> programArgs) {
-    string folder = fs.joinPath(tempFolder(), format("cromo-run-{}", os.processId()) +
+    string folder = fs.joinPath(fs.tempFolder(), format("cromo-run-{}", os.processId()) +
         (compilation.depth == 0 ? "" : format("-{}", compilation.depth)))
     try {
         fs.createFolders(folder)
@@ -299,7 +299,7 @@ string shownText(list<u8> bytes) {
 
 // D352: each test in its own process, as many at a time as the processors.
 void runTests(string exe, ref list<TestRun> tests) {
-    i64 width = processors()
+    i64 width = host.processors()
     list<i64> running
     list<i64> which
     i64 next = 0
@@ -338,7 +338,7 @@ void runTests(string exe, ref list<TestRun> tests) {
 // `unmatched`, with the executables of cromo.mod and `several`: set when no test has
 // the names given, which is an error only if no executable has one (D517).
 public i32 testCommand(ref Compilation compilation, bool several, ref bool unmatched) {
-    string folder = fs.joinPath(tempFolder(), format("cromo-test-{}", os.processId()))
+    string folder = fs.joinPath(fs.tempFolder(), format("cromo-test-{}", os.processId()))
     try {
         fs.createFolders(folder)
     } catch (Exception e) {
@@ -429,7 +429,7 @@ public i32 build(ref Compilation compilation) {
     ProjectFile projectFile
     bool documents = compilation.aiModule.len() > 0 || compilation.reference.len() > 0
     if (!compilation.runtime && !documents && !inLibrary(library, path)) {
-        string project = projectFolder(parentOf(absolute(path)))
+        string project = projectFolder(parentOf(loader.absolute(path)))
         if (project.len() > 0 && !preparePackages(project, library, target, compilation.depth + 1)) {
             ret 1
         }
@@ -545,7 +545,7 @@ public i32 build(ref Compilation compilation) {
     // folder where cromo is installed, and a debugger finds a file from anywhere (D338).
     for (i32 file = 0; file < checked.diag.fileCount(); file++) {
         compilation.options.shownPaths.add(generator.shownPath(checked, file))
-        compilation.options.debugPaths.add(absolute(checked.diag.path(file)))
+        compilation.options.debugPaths.add(loader.absolute(checked.diag.path(file)))
     }
     compilation.options.debugInfo = !compilation.release
     steps.step("Generating the code", false)
@@ -591,9 +591,9 @@ public i32 build(ref Compilation compilation) {
 // of the name of the file, and the icon next to it (D455).
 public i32 buildApk(ref Compilation compilation) {
     string library = compilation.options.library
-    string folder = fs.joinPath(tempFolder(), format("cromo-apk-{}", os.processId()))
+    string folder = fs.joinPath(fs.tempFolder(), format("cromo-apk-{}", os.processId()))
     string source = compilation.inputPath
-    string output = absolute(compilation.options.outputPath)
+    string output = loader.absolute(compilation.options.outputPath)
     list<string> entries
     string dex = fs.joinPath(fs.joinPath(library, "android"), "classes.dex")
     if (!fs.isFile(dex)) {
@@ -650,7 +650,7 @@ public i32 buildApk(ref Compilation compilation) {
     string main = source.slice(0, source.len() - fs.fileName(source).len()) + "main.png"
     for (string candidate in [named, main]) {
         if (icon == "-" && fs.isFile(candidate)) {
-            icon = absolute(candidate)
+            icon = loader.absolute(candidate)
         }
     }
     string permissions = compilation.network ? "INTERNET" : ""
@@ -700,7 +700,7 @@ public i32 runAndroid(ref Compilation compilation) {
         eprintln("cromo: adb not found: install the platform tools of the SDK of Android, and set ANDROID_HOME or put adb in PATH")
         ret 1
     }
-    string folder = fs.joinPath(tempFolder(), format("cromo-android-{}", os.processId()))
+    string folder = fs.joinPath(fs.tempFolder(), format("cromo-android-{}", os.processId()))
     try {
         fs.createFolders(folder)
     } catch (Exception e) {
@@ -742,8 +742,8 @@ public i32 runAndroid(ref Compilation compilation) {
 // Whether a file is in the library of cromo.
 bool inLibrary(string library, string path) {
     bool windows = fs.separator() == "\\"  // where the names have no case
-    string file = windows ? absolute(path).lower() : absolute(path)
-    ret file.startsWith((windows ? absolute(library).lower() : absolute(library)) + fs.separator())
+    string file = windows ? loader.absolute(path).lower() : loader.absolute(path)
+    ret file.startsWith((windows ? loader.absolute(library).lower() : loader.absolute(library)) + fs.separator())
 }
 
 // Reads the options of build, run and test, from `args[first]` to `args[last]`
@@ -1001,7 +1001,7 @@ public i32 command(list<string> args) {
         printUsage(true)
         ret 2
     }
-    string library = canonical(libraryFolder(programPath()))
+    string library = host.canonical(libraryFolder(os.programPath()))
     string name = args[1]
     if (name == "help" || name == "-h" || name == "--help") {
         printUsage(false)
@@ -1020,7 +1020,7 @@ public i32 command(list<string> args) {
             ret 2
         }
         if (name == "design") {
-            setEnv("CROMO", programPath())  // the designer runs this cromo for its preview
+            setEnv("CROMO", os.programPath())  // the designer runs this cromo for its preview
         }
         list<string> programArgs
         for (i64 i = 2; i < args.len(); i++) {

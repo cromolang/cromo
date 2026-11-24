@@ -56,7 +56,7 @@ Non esistono `while`, `do`, `goto`, `class`, `new`, `delete`, `null` né `this`.
 | `{ }` | i blocchi, e i corpi di funzioni, struct, enum, interfacce e blocchi `extern` |
 | `( )` | parametri e argomenti; le condizioni di `if`, `for` e `switch`; il raggruppamento nelle espressioni |
 | `[ ]` | un indice, `v[i]`; un letterale lista, `[1, 2, 3]`; le catture di una lambda, `[ref total]`; la dimensione di un array, `i32[4]` |
-| `[[ ]]` | un attributo, `[[test]]` |
+| `[[ ]]` | un attributo, `[[test]]`, `[[format]]` |
 | `< >` | i parametri e gli argomenti di tipo dei generici, `list<T>`, `max<T : Ordered>` |
 | `:` | le interfacce di una struct o di un enum, `struct Circle : Shape`; un vincolo, `T : Key`; l'espressione condizionale |
 | `+` | tra i vincoli, `T : Key + Debug`, oltre all'addizione |

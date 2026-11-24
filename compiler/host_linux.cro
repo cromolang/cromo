@@ -1,5 +1,4 @@
-// What cromo asks of Linux and the library does not give: where its executable is,
-// the temporary folder, a program started with the terminal of cromo or with its
+// What cromo asks of Linux and the library does not give: a program started with the terminal of cromo or with its
 // output in a file, and the wait for the first of several to end. cromo for Linux is
 // linked with glibc, as every program with LLVM inside it (D428): these are its
 // functions, found by the linker with those that `cromollvm` calls.
@@ -22,39 +21,13 @@ extern "cromollvm" {
     i32 poll(addr descriptors, u64 count, i32 milliseconds)
 }
 
-// The path of the executable of cromo.
-public string programPath() {
-    try {
-        ret fs.readLink("/proc/self/exe")
-    } catch (Exception e) {
-    }
-    ret ""
-}
-
 // A path without its symbolic links, as the library of cromo in a build is one.
 public string canonical(string path) {
-    addr buffer = alloc(4097)  // PATH_MAX and its zero
-    string result = path
-    if (realpath(path.cstring(), buffer) != addr(0)) {
-        i64 length = 0
-        for (copyAt<u8>(offset(buffer, length)) != 0) {
-            length++
-        }
-        result = string(buffer, length)
+    try {
+        ret fs.canonical(path)
+    } catch (Exception e) {
     }
-    free(buffer)
-    ret result
-}
-
-// The folder of the temporary files, without a separator at its end.
-public string tempFolder() {
-    for (string name in ["TMPDIR", "TMP", "TEMP", "TEMPDIR"]) {
-        string folder = os.env(name)
-        if (folder.len() > 0) {
-            ret folder.len() > 1 && folder.endsWith("/") ? folder.slice(0, folder.len() - 1) : folder
-        }
-    }
-    ret "/tmp"
+    ret path
 }
 
 public void setEnv(string name, string value) {
@@ -63,8 +36,7 @@ public void setEnv(string name, string value) {
 
 // How many programs run at a time: the processors.
 public i64 processors() {
-    i64 count = sysconf(84)  // _SC_NPROCESSORS_ONLN
-    ret count < 1 ? 1 : count
+    ret os.processors()
 }
 
 // A text of C, to free.

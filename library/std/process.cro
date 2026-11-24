@@ -22,9 +22,10 @@
 // The module std.process (D307): other programs, with their standard input,
 // output and error. The calls of the system are in process_windows.cro and
 // process_linux.cro (D202), with:
-//   void launch(ref Process p, string program, list<string> args, bool errors)
-//       starts the program, with pipes for its input and output, and for its
-//       errors too when 'errors'; otherwise it writes them where this program does
+//   void launch(ref Process p, string program, list<string> args, i32 pipes)
+//       starts the program, with pipes for its input and output when 'pipes' is 2,
+//       for its errors too when 3, and with none when 0; what has no pipe is that
+//       of this program
 //   i64 readSome(i64 pipe, addr data, i64 most)   0 at the end
 //   void writeAll(i64 pipe, addr data, i64 size)
 //   void closePipe(i64 pipe)
@@ -170,7 +171,7 @@ public struct Process {
 // the program cannot start, as when it does not exist.
 public Output run(string program, list<string> args) {
     Process p
-    launch(ref p, program, args, true)
+    launch(ref p, program, args, 3)
     p.closeInput()
     // The errors are read at the same time as the output: a program that fills
     // one of the two pipes would otherwise wait for ever.
@@ -192,8 +193,22 @@ public Output run(string program, list<string> args) {
 // cannot start, as when it does not exist.
 public Process start(string program, list<string> args) {
     Process p
-    launch(ref p, program, args, false)
+    launch(ref p, program, args, 2)
     ret p
+}
+
+// Runs a program to its end with the standard input, output and error of this
+// program, as a shell runs a command: who uses this program sees what it prints and
+// answers what it asks. Its exit code; throws if the program cannot start, as when it
+// does not exist.
+//
+// '''
+// i32 code = process.status("git", ["commit"])
+// '''
+public i32 status(string program, list<string> args) {
+    Process p
+    launch(ref p, program, args, 0)
+    ret p.wait()
 }
 
 list<u8> readEverything(i64 pipe) {

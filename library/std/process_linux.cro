@@ -9,7 +9,7 @@ extern "cromo" {
     i64 cromo_fork()  // the fork of the runtime: on Android that of Bionic
 }
 
-void launch(ref Process p, string program, list<string> args, bool errors) {
+void launch(ref Process p, string program, list<string> args, i32 pipes) {
     string path = findProgram(program)
     if (path.len() == 0) {
         throw startError(program, "no such program")
@@ -36,19 +36,24 @@ void launch(ref Process p, string program, list<string> args, bool errors) {
     }
 
     addr fds = alloc(32)  // four pipes of two descriptors of 4 bytes
-    makePipe(fds, 0)
-    makePipe(fds, 8)
-    if (errors) {
-        makePipe(fds, 16)
+    makePipe(fds, 24)     // closed by execve: a failure of execve writes its error there
+    // What has no pipe is that of this program.
+    i64 childInput = -1
+    i64 parentInput = -1
+    i64 parentOutput = -1
+    i64 childOutput = -1
+    if (pipes >= 2) {
+        makePipe(fds, 0)
+        makePipe(fds, 8)
+        childInput = i64(copyAt<i32>(fds))
+        parentInput = i64(copyAt<i32>(offset(fds, 4)))
+        parentOutput = i64(copyAt<i32>(offset(fds, 8)))
+        childOutput = i64(copyAt<i32>(offset(fds, 12)))
     }
-    makePipe(fds, 24)  // closed by execve: a failure of execve writes its error there
-    i64 childInput = i64(copyAt<i32>(fds))
-    i64 parentInput = i64(copyAt<i32>(offset(fds, 4)))
-    i64 parentOutput = i64(copyAt<i32>(offset(fds, 8)))
-    i64 childOutput = i64(copyAt<i32>(offset(fds, 12)))
     i64 parentErrors = -1
     i64 childErrors = -1
-    if (errors) {
+    if (pipes >= 3) {
+        makePipe(fds, 16)
         parentErrors = i64(copyAt<i32>(offset(fds, 16)))
         childErrors = i64(copyAt<i32>(offset(fds, 20)))
     }
@@ -63,8 +68,10 @@ void launch(ref Process p, string program, list<string> args, bool errors) {
     i64 pid = cromo_fork()
     if (pid == 0) {
         // The child: its standard descriptors, SIGPIPE as by default, the program.
-        systemCall(i64(Call.Dup3), childInput, 0, 0, 0, 0, 0)
-        systemCall(i64(Call.Dup3), childOutput, 1, 0, 0, 0, 0)
+        if (childInput >= 0) {
+            systemCall(i64(Call.Dup3), childInput, 0, 0, 0, 0, 0)
+            systemCall(i64(Call.Dup3), childOutput, 1, 0, 0, 0, 0)
+        }
         if (childErrors >= 0) {
             systemCall(i64(Call.Dup3), childErrors, 2, 0, 0, 0, 0)
         }

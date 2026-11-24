@@ -2,6 +2,7 @@
 // unlinkat, mkdirat, renameat2, getdents64, symlinkat, readlinkat and fchmodat,
 // whose numbers are in fs_linux_x86_64.cro and fs_linux_arm64.cro (D408, P23).
 // -100 is AT_FDCWD: a path from the current folder.
+import std.os
 import unsafe
 
 extern "cromo" {
@@ -311,6 +312,84 @@ public string readLink(string path) {
     ret target
 }
 
+// The folder of the temporary files of the system, without a separator at its end: that
+// of the user on Windows, and on Linux the one of the variable TMPDIR, or "/tmp".
+public string tempFolder() {
+    string path = os.env("TMPDIR")
+    if (path.len() == 0) {
+        ret "/tmp"
+    }
+    for (path.len() > 1 && path.endsWith("/")) {
+        path = path.slice(0, path.len() - 1)
+    }
+    ret path
+}
+
+// The absolute path of a path: one from the current folder is joined to it, and the
+// names "." and ".." are taken out. The file may not exist, and the links stay as
+// they are: see canonical.
+public string absolute(string path) {
+    string full = path.startsWith("/") ? path.copy() : os.currentFolder() + "/" + path
+    list<string> names
+    for (string name in full.split("/")) {
+        if (name == "..") {
+            if (names.len() > 0) {
+                names.remove(names.len() - 1)
+            }
+        } else if (name.len() > 0 && name != ".") {
+            names.add(name)
+        }
+    }
+    ret "/" + join(names, "/")
+}
+
+// The absolute path of a file or a folder that exists, with every link followed: two
+// paths of the same file give the same text. Throws if the path does not exist.
+public string canonical(string path) {
+    // The names still to follow, the next one last; a link puts its own before them.
+    list<string> left
+    list<string> written = absolute(path).split("/")
+    for (i64 i = written.len() - 1; i >= 0; i--) {
+        left.add(written[i])
+    }
+    string done
+    i64 links = 0
+    for (left.len() > 0) {
+        string name = left[left.len() - 1]
+        left.remove(left.len() - 1)
+        if (name.len() == 0 || name == ".") {
+            continue
+        }
+        if (name == "..") {
+            i64 cut = done.findLast("/")
+            done = done.slice(0, cut < 0 ? 0 : cut)
+            continue
+        }
+        string next = done + "/" + name
+        i64 bits = linkMode(next)
+        if (bits < 0) {
+            throw failure("resolve", path, bits)
+        }
+        if (bits & 0xF000 != 0xA000) {  // not S_IFLNK
+            done = next
+            continue
+        }
+        links++
+        if (links > 40) {
+            throw fileError("resolve", path, "too many links")
+        }
+        string target = readLink(next)
+        if (target.startsWith("/")) {
+            done = ""
+        }
+        list<string> more = target.split("/")
+        for (i64 i = more.len() - 1; i >= 0; i--) {
+            left.add(more[i])
+        }
+    }
+    ret done.len() == 0 ? "/" : done
+}
+
 // Makes a file executable: on Linux it adds the permission to run it for those who
 // can read it, as chmod +x does; on Windows, which runs a file by its extension,
 // nothing changes. Throws if the file does not exist.
@@ -324,6 +403,15 @@ public void makeExecutable(string path) {
     if (status < 0) {
         throw failure("make executable", path, status)
     }
+}
+
+// The st_mode of what is at the path, a link too, or -errno.
+i64 linkMode(string path) {
+    addr info = alloc(144)
+    i64 status = systemCall(i64(Call.NewFstatAt), -100, path.cstring(), info, 0x100, 0, 0)  // AT_SYMLINK_NOFOLLOW
+    i64 bits = modeOf(info)
+    free(info)
+    ret status < 0 ? status : bits
 }
 
 // The st_mode of the file, or -errno.

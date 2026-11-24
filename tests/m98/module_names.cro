@@ -1,0 +1,35 @@
+// D574: a variable, a parameter or a field can have the name of an imported module, and
+// hides it where it is visible. D573: only the first name of a module cannot be llvm.
+// expect-output: 4 4 7
+// expect-output: 3
+import modules.shapes
+import modules.more.llvm
+
+struct Drawing {
+    shapes.Shape shapes
+
+    i64 count() const {
+        ret shapes.sides
+    }
+}
+
+i64 sides(shapes.Shape shapes) {
+    ret shapes.sides
+}
+
+i32 main() {
+    shapes.Shape square
+    square.sides = 4
+    i64 before = shapes.corners(square)
+    Drawing d
+    d.shapes = square
+    i64 total = 0
+    for (i64 i = 0; i < 1; i++) {
+        shapes.Shape shapes  // the type is still that of the module
+        shapes.sides = 7
+        total = shapes.sides
+    }
+    println("{} {} {}", before, sides(square) + d.count() - 4, total)
+    println("{}", llvm.three())
+    ret 0
+}

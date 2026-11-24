@@ -1678,7 +1678,18 @@ private:
             }
         }
 
+        for (StructDecl& decl : module_.structs) {
+            for (FunctionDecl& member : decl.members) {
+                readFormat(member);
+                if (!member.attributes.empty()) {
+                    diag_->error(member.attributes[0].loc,
+                                 "unknown attribute '" + member.attributes[0].name + "': a method has only [[format]]");
+                    member.attributes.clear();
+                }
+            }
+        }
         for (FunctionDecl& function : module_.functions) {
+            readFormat(function);
             readCold(function);
             readWindow(function);
             readAndroid(function);
@@ -1779,6 +1790,32 @@ private:
                 diag_->error(it->loc, "the function '" + function.name + "' already has [[cold]]");
             } else {
                 function.isCold = true;
+            }
+            it = attributes.erase(it);
+        }
+    }
+
+    // `[[format]]` (D577): the last parameter, a string, takes in a call a format and
+    // its arguments, as println: `log.info("{} users", count)`. Like [[cold]], it goes
+    // with the other attributes and is taken out of the list.
+    void readFormat(FunctionDecl& function) {
+        std::vector<Attribute>& attributes = function.attributes;
+        for (auto it = attributes.begin(); it != attributes.end();) {
+            if (it->name != "format") {
+                ++it;
+                continue;
+            }
+            const Param* last = function.params.empty() ? nullptr : &function.params.back();
+            if (!it->args.empty()) {
+                diag_->error(it->loc, "[[format]] takes no arguments");
+            } else if (function.isFormat) {
+                diag_->error(it->loc, "the function '" + function.name + "' already has [[format]]");
+            } else if (function.isExtern || function.kind == FunctionKind::Constructor || function.kind == FunctionKind::Destructor ||
+                       !last || last->mode != ParamMode::Read || last->type.name != "string" || !last->type.module.empty() ||
+                       last->type.isFunction || !last->type.args.empty()) {
+                diag_->error(it->loc, "[[format]] is for a function or a method whose last parameter is a string: the text that the format gives");
+            } else {
+                function.isFormat = true;
             }
             it = attributes.erase(it);
         }
@@ -2064,10 +2101,6 @@ private:
     Variable* declare(const std::string& name, Type type, SourceLocation loc, bool isConst) {
         if (findBuiltinType(name) || findDecl(&ModuleScope::structs, name, loc)) {
             diag_->error(loc, "'" + name + "' is a type name");
-            return nullptr;
-        }
-        if (importsQualifier(loc, name)) {
-            diag_->error(loc, "'" + name + "' is the name of an imported module");
             return nullptr;
         }
         if (ownFieldIndex(name) >= 0) {
@@ -3770,6 +3803,19 @@ private:
     bool checkArgs(std::vector<ExprPtr>& args, const FunctionDecl& function, const std::string& what, SourceLocation loc,
                    OverlapChecks* overlapChecks, const Expr* object = nullptr, Type self = Type::error()) {
         size_t expected = function.params.size();
+        // D577: after the other arguments, a literal is a format, with its arguments:
+        // they become one argument, `format("...", a, b)`.
+        if (function.isFormat && args.size() >= expected && args[expected - 1]) {
+            if (args[expected - 1]->kind == ExprKind::StringLiteral) {
+                auto format = std::make_unique<CallExpr>(args[expected - 1]->loc, "format");
+                for (size_t i = expected - 1; i < args.size(); ++i) format->args.push_back(std::move(args[i]));
+                args.resize(expected - 1);
+                args.push_back(std::move(format));
+            } else if (args.size() > expected) {
+                diag_->error(args[expected - 1]->loc, "the text of " + what + " must be a string literal with the format, when arguments follow it");
+                return false;
+            }
+        }
         if (args.size() != expected) {
             diag_->error(loc, what + " takes " + std::to_string(expected) + (expected == 1 ? " argument, but " : " arguments, but ") +
                                  std::to_string(args.size()) + " were given");
@@ -6428,8 +6474,8 @@ private:
             } else {
                 Type type = checkExpr(arg, std::nullopt);
                 if (type.isUntyped()) {
-                    diag_->error(arg->loc, "the type of this literal cannot be deduced: write it explicitly, for example i32(5)");
-                    ok = false;
+                    // D578: a number without a type is printed as i64, or f64 with a point.
+                    ok = coerce(arg, type.kind == TypeKind::UntypedInt ? Type::intType(64, true) : Type::floatType(64)) && ok;
                 } else if (type.isVoid()) {
                     diag_->error(arg->loc, "this call does not return a value");
                     ok = false;

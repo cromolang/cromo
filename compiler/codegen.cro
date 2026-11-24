@@ -843,9 +843,9 @@ extend Generator {
         }
         // From the folder of the main file, as that one was given: tests/m14/main.cro
         // shows its module as tests/m14/modules/kit/tool.cro.
-        list<string> folder = absolute(main).split(fs.separator())
+        list<string> folder = loader.absolute(main).split(fs.separator())
         folder.remove(folder.len() - 1)
-        list<string> full = absolute(path).split(fs.separator())
+        list<string> full = loader.absolute(path).split(fs.separator())
         i64 common = 0
         for (common < folder.len() && common < full.len() &&
             (windows ? folder[common].lower() == full[common].lower() : folder[common] == full[common])) {
@@ -4497,7 +4497,7 @@ extend Generator {
             fileNodes.add("")
         }
         if (fileNodes[i64(file)].len() == 0) {
-            fileNodes[i64(file)] = metadata("!DIFile(filename: " + quoted(absolute(c.diag.path(file))) + ", directory: \"\")")
+            fileNodes[i64(file)] = metadata("!DIFile(filename: " + quoted(loader.absolute(c.diag.path(file))) + ", directory: \"\")")
         }
         ret fileNodes[i64(file)]
     }

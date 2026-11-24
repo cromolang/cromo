@@ -464,6 +464,7 @@ public struct Function {
     public bool genericMethod
     public bool scheduled
     public bool isCold
+    public bool isFormat  // [[format]]: its last parameter takes a format (D577)
     public bool isWindow
     public bool isTest
     public bool isExported

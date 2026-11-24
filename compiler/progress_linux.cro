@@ -1,12 +1,8 @@
 // The terminal of Linux, for the colors of the steps (D568). cromo for Linux is
 // linked with glibc, as every program with LLVM inside it (D428).
-import unsafe
-
-extern "cromollvm" {
-    i32 isatty(i32 descriptor)
-}
+import std.os
 
 // Whether the standard error is a terminal.
 bool errorIsTerminal() {
-    ret isatty(2) != 0
+    ret os.isTerminal(2)
 }

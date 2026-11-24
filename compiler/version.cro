@@ -1,5 +1,5 @@
 // The version of cromo (D157): that of CMakeLists.txt, changed with it at a release.
 
 public string cromoVersion() {
-    ret "0.96.0"
+    ret "0.98.0"
 }

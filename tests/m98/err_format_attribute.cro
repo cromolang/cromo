@@ -1,0 +1,34 @@
+// D577: where [[format]] goes, and what its calls give.
+// expect-error: [[format]] is for a function or a method whose last parameter is a string: the text that the format gives
+// expect-error: [[format]] takes no arguments
+// expect-error: unknown attribute 'json': a method has only [[format]]
+// expect-error: the text of 'note' must be a string literal with the format, when arguments follow it
+// expect-error: 'note' takes 1 argument, but 0 were given
+// expect-error: the format string needs at least 2 arguments, but 1 were given
+[[format]]
+void count(i64 n) {
+}
+
+[[format("x")]]
+void named(string text) {
+}
+
+[[format]]
+void note(string message) {
+}
+
+struct Method {
+    [[json("m")]] void run() {
+    }
+
+    [[format]] void change(ref string text) {
+    }
+}
+
+i32 main() {
+    string text = "{}"
+    note(text, i32(1))
+    note()
+    note("{} {}", i32(1))
+    ret 0
+}

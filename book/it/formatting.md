@@ -51,7 +51,7 @@ Ogni chiamata scrive tutto il suo testo in una volta: quando più thread stampan
 
 La stringa di formato è un letterale, scritto nella chiamata. Il compilatore ne conta i segnaposto, controlla che ogni valore venga usato e che ciascuno si possa stampare nel modo chiesto dal suo segnaposto. Un testo contenuto in una variabile si stampa con un segnaposto, `println("{}", text)`: così una `{` dentro il testo non viene mai scambiata per un segnaposto.
 
-Un letterale numerico tra i valori ha bisogno del suo tipo, perché nient'altro dice quale sia: `println("{}", i64(5))`, oppure una variabile.
+Un letterale numerico tra i valori viene stampato come un `i64`, o come un `f64` quando ha il punto: `println("{}", 5)` stampa `5`. Scrivi il suo tipo quando ne intendi un altro, come `u8(200)` con `{:b}`.
 
 ```cromo error
 i32 main() {
@@ -59,7 +59,6 @@ i32 main() {
     println(message)
     println("{} of {}", message)
     println("{}", message, message)
-    println("{}", 5)
     ret 0
 }
 ```
@@ -68,7 +67,6 @@ i32 main() {
 error: the first argument of println must be a string literal with the format
 error: the format string needs at least 2 arguments, but 1 were given
 error: this argument is not used by the format string
-error: the type of this literal cannot be deduced: write it explicitly, for example i32(5)
 ```
 
 ## Segnaposto
@@ -541,6 +539,48 @@ i32 main() {
 
 ```output
 error: this argument is printed both with {} and with {:?}: pass it twice
+```
+
+## Le proprie funzioni con un formato: [[format]]
+
+Una funzione del programma può prendere un formato e i suoi valori come fa `println`. `[[format]]` davanti a una funzione, o a un metodo, il cui ultimo parametro è una `string` dice che una chiamata passa lì un formato con i suoi argomenti: il compilatore li controlla come per `println`, e la funzione riceve il testo già composto.
+
+```cromo
+[[format]]
+void warning(i64 line, string message) {
+    println("line {}: warning: {}", line, message)
+}
+
+i32 main() {
+    warning(12, "{} is not used", "total")
+    warning(30, "nothing to do")
+    string text = "a text made elsewhere"
+    warning(31, text)
+    ret 0
+}
+```
+
+```output
+line 12: warning: total is not used
+line 30: warning: nothing to do
+line 31: warning: a text made elsewhere
+```
+
+Un letterale stringa lì è sempre un formato, quindi le sue graffe si scrivono `{{` e `}}`; un valore che non è un letterale, come `text`, viene passato così com'è. Le funzioni di `std.log` sono fatte così, `log.info("{} users", count)`, e anche il metodo `format` di una stringa, che ne sostituisce il testo:
+
+```cromo
+i32 main() {
+    i64 done = 3
+    i64 total = 7
+    string status
+    status.format("{} of {}", done, total)
+    println("{}", status)
+    ret 0
+}
+```
+
+```output
+3 of 7
 ```
 
 ## Riepilogo

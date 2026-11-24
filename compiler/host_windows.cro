@@ -1,11 +1,9 @@
-// What cromo asks of Windows and the library does not give: where its executable is,
-// the temporary folder, a program started with the terminal of cromo or with its
+// What cromo asks of Windows and the library does not give: a program started with the terminal of cromo or with its
 // output in a file, and the wait for the first of several to end.
+import std.os
 import unsafe
 
 extern "kernel32" {
-    u32 GetModuleFileNameW(addr module, addr buffer, u32 size)
-    u32 GetTempPathW(u32 size, addr buffer)
     i32 CreateProcessW(addr application, addr commandLine, addr processAttributes, addr threadAttributes, i32 inherit, u32 flags,
         addr environment, addr folder, addr startup, addr information)
     u32 WaitForSingleObject(i64 handle, u32 milliseconds)
@@ -17,7 +15,6 @@ extern "kernel32" {
     i32 MultiByteToWideChar(u32 page, u32 flags, addr text, i32 size, addr wide, i32 wideSize)
     i32 WideCharToMultiByte(u32 page, u32 flags, addr wide, i32 size, addr text, i32 textSize, addr fallback, addr used)
     i32 SetEnvironmentVariableW(addr name, addr value)
-    u32 GetActiveProcessorCount(u16 group)
     i32 SetConsoleCtrlHandler(addr handler, i32 add)
 }
 
@@ -43,29 +40,8 @@ string narrow(addr text, i64 count) {
     ret result
 }
 
-// The path of the executable of cromo.
-public string programPath() {
-    addr buffer = alloc(65536)
-    u32 length = GetModuleFileNameW(addr(0), buffer, 32768)
-    string path = narrow(buffer, i64(length))
-    free(buffer)
-    ret path
-}
-
 // A path without its symbolic links: on Windows, as it is.
 public string canonical(string path) {
-    ret path
-}
-
-// The folder of the temporary files, without a separator at its end.
-public string tempFolder() {
-    addr buffer = alloc(1040)
-    u32 length = GetTempPathW(520, buffer)
-    string path = narrow(buffer, i64(length))
-    free(buffer)
-    for (path.len() > 3 && (path.endsWith("\\") || path.endsWith("/"))) {
-        path = path.slice(0, path.len() - 1)
-    }
     ret path
 }
 
@@ -79,8 +55,8 @@ public void setEnv(string name, string value) {
 
 // How many programs run at a time: the processors, and no more than Windows waits for.
 public i64 processors() {
-    i64 count = i64(GetActiveProcessorCount(0xFFFF))
-    ret count < 1 ? 1 : count > 64 ? 64 : count
+    i64 count = os.processors()
+    ret count > 64 ? 64 : count
 }
 
 // Writes an argument in a command line so that the program reads it back as it

@@ -117,7 +117,7 @@ Consequences:
 - **Windows** has no stable system calls: the functions of `kernel32.dll` are used (`ExitProcess`, `WriteFile`, `HeapAlloc`, …). They are the system API, not libc. **Linux** uses direct system calls.
 - **Startup:** a custom entry point is needed, instead of the C runtime startup.
 - **Symbols expected by LLVM:** `memcpy`, `memmove`, `memset` and `memcmp` must be provided anyway, because the optimizer can generate calls to these functions. On Windows `__chkstk` and `_fltused` are also needed.
-- **`memcpy` and `memset` are written in assembly** (2026-10-28). This also avoids a known problem: if they were written in Cromo or in LLVM IR, the optimizer could recognize the loop and turn it into a call to themselves.
+- **`memcpy` and `memset` are written in assembly** (2026-10-28); with SSE2 since D579. This also avoids a known problem: if they were written in Cromo or in LLVM IR, the optimizer could recognize the loop and turn it into a call to themselves.
 - **Exceptions:** they do not rely on the C++ runtime (D36).
 - **Low-level code:** it is written in the `unsafe` dialect of the standard library (D37).
 
@@ -470,7 +470,7 @@ A panic writes `panic: <reason> at <file>:<line>:<column>` on stderr and termina
 
 ### D64. Literals without a context
 *2026-10-28.*
-A literal whose type cannot be deduced from the context, for example `println("{}", 5)`, is a compile error (D54, D55): you write `println("{}", i32(5))`.
+A literal whose type cannot be deduced from the context, for example `println("{}", 5)`, is a compile error (D54, D55): you write `println("{}", i32(5))`. Amended by D578 for the values of `print`: there a literal is an `i64` or an `f64`.
 
 ### D65. Strings in M1
 *2026-10-28.*
@@ -843,7 +843,7 @@ extern "kernel32" {
 *2026-10-29.*
 - The imports come at the top of the file, before the declarations, and they are not public: each module writes its own. They are not transitive: a module sees only what it imports itself.
 - Two modules can import each other: the program is compiled all together.
-- The name in front is the last name of the path: after `import a.shapes` it is `shapes.area(c)`. Two imports with the same last name in a file are an error, and so is a variable with the name of an imported module.
+- The name in front is the last name of the path: after `import a.shapes` it is `shapes.area(c)`. Two imports with the same last name in a file are an error. A variable with the name of an imported module was an error too: amended by D574.
 - A name is looked for in the module itself, then in the imported modules, then in the standard library. So a name added to the library never breaks a program, as the prelude of Rust.
 
 ### D132. `public` on members
@@ -2701,6 +2701,58 @@ A branch whose type is not simple, as a `string`, gives a new value, also a copy
 - The debug information comes among the last parts: until then the two texts are compared without the `!dbg` of the instructions and without the lines of the metadata.
 - It is the milestone M97, and the version 0.97.0 at its end. LLVM is not touched: the way to it is D291.
 
+### D573. No module and no program called `llvm`
+*2026-11-24.* Chosen by the author. The symbols of a module start with its name (D50), and LLVM keeps for itself the names that start with `llvm.`: a module `llvm`, or a folder `llvm` with modules, was refused by LLVM with words about intrinsics, not by `cromo`. Now `import llvm` and `import llvm.part` are errors of `cromo`, `a module cannot be called llvm`, and so is a program in `llvm.cro`. Only the first name counts: `import parsers.llvm` is fine, since its symbols start with `parsers.`. The other way gave such a module other symbols: a rule of the names of the symbols for one name, which the stack traces and the debugger would show.
+
+### D574. A variable can have the name of an imported module
+*2026-11-24.* Chosen by the author. It amends D131. A variable, a parameter or a field with the name of an imported module is no longer an error: where it is visible the name is the variable, and `shapes.sides` reads its field; before its declaration and outside its block `shapes.area(c)` is the function of the module, and the type `shapes.Shape` can be written everywhere. It is what Go does with the name of a package, and in C++ and Rust a variable and a namespace do not collide either. Writing `cromo` in Cromo met the error again and again: `target`, `progress`, `index` and `docs` are the names of modules and the natural names of their values. A field already could have such a name.
+
+### D575. What a program asks of its system: more of `std.os`, `std.fs` and `std.process`
+*2026-11-24.* Chosen by the author, after `cromo` in Cromo had to write them for itself (M98). Each has the meaning it has in Rust and in Go.
+- `os.programPath()`: the absolute path of the executable of the program, as `std::env::current_exe` and `os.Executable`.
+- `os.processors()`: the processors the program can use, at least 1, as `available_parallelism` and `runtime.NumCPU`.
+- `os.isTerminal(stream)`: whether the standard input, output or error, 0, 1 or 2 as the descriptors of C and `isatty`, is a terminal.
+- `os.readInputBytes(most)`: up to `most` bytes of the standard input as they are, empty at its end, after what `readLine` and `readInput` have read; `Process.read(most)` is the same for the output of a program.
+- `fs.tempFolder()`: the folder of the temporary files, that of the user on Windows, and on Linux `TMPDIR` or `/tmp`.
+- `fs.absolute(path)`: the absolute path, without `.` and `..`, of a file that may not exist; `fs.canonical(path)`: that of a file that exists, with every link followed, as `realpath`, and an exception when it does not exist.
+- `process.status(program, args)`: runs a program to its end with the standard input, output and error of this program, and gives its exit code, as `Command::status` of Rust.
+- Left out, since Rust and Go do not have them either, or they need a state of the whole program (the library has none): a program with its output in a file, the wait for the first of several programs, a variable of the environment set for this program, and the question whether the standard input has bytes. `cromo` keeps them in its module `host` (D576).
+
+### D576. `cromo` written in Cromo, and when it takes the place of the C++
+*2026-11-24.* Chosen by the author, who confirms the proposal P92 and the recommendation on the passage. It completes D291: `compiler/cromo.cro` is the whole of `cromo`, it gives the same executables as the C++, and it compiles itself into the file it was built from, on Windows and on Linux (M98).
+- The archives of version 0.98.0 hold the `cromo` written in Cromo, built by the one in C++, the last time that one is used: `tools\package.ps1` takes it from `stage1`. From the version after, `cromo` is built by the `cromo` of the version before, as Rust and Go are, and the C++ of the compiler is removed: what stays is `compiler/shim/shim.cpp`. The other way kept the C++ as the first stage for ever: two compilers to keep the same.
+- What the C API of LLVM does not give is in `compiler/shim/shim.cpp`, the only C++ of the compiler: LLD; the passes of a level, with the functions of C that LLVM may call (D19); the levels of position independent code; the lines of an object, from its DWARF, for the table of the stack traces (D339); the names of an archive, of a DLL and of a shared library; the import library of a DLL (D136); whether a processor is known and has a feature (D513). Each is a function of C that takes and gives numbers, addresses and texts. Everything else of `src/backend.cpp` and `src/libraries.cpp` is in Cromo, `compiler/backend.cro` and `compiler/libraries.cro`, which call LLVM-C through `extern "cromollvm"` in `compiler/llvmc.cro`: the IR is read, checked, given its machine and written as an object with the functions of LLVM-C.
+- `cromollvm` is one static library, `compiler/cromollvm.lib`, found next to its module as any C library (D136): the shim, the libraries of LLVM and of LLD that `cromo.exe` is linked with, and the static runtime of C and C++ of MSVC, which the linker of a program of Cromo does not add by itself. `tools/llvm-archive.ps1` makes it, called by `build.ps1`; it is not in the repository.
+- A program of Cromo starts at `cromo_start`, not at the start of the C runtime: `shim_start()`, the first thing the compiler calls before LLVM, does what `mainCRTStartup` does before `main`: the C runtime, its tables of the functions of the exit, and the constructors of C++. The linker and the entry point of the programs do not change.
+- The runtime gives its stack probe the second name `_alloca_probe`, that of the code of MSVC, so that the C runtime does not bring its own, with the same name `__chkstk`.
+- `build.ps1` compiles `compiler/cromo.cro` with the `cromo` in C++ into `build\stage1\cromo.exe`, which finds `build\lib` as that one does. It is checked as the IR was: the two build every program of the tests at the same path, and the executables must have the same bytes, apart from the time of the build that `lld-link` writes in them.
+- On Linux the library is `compiler/libcromollvm.a`, made in WSL by `tools/llvm-archive.sh`, called by `build-linux.sh`: the shim, the libraries of LLVM and of LLD of the link of `cromo`, and the static runtime of C++ of the compiler of WSL. glibc stays outside: the executable is linked with it by itself, as any program whose C libraries call it (D428), and its constructors of C++ are run by the start of the runtime for glibc. The functions of glibc that `cromo` needs for itself, as `fork`, `execvp` and `waitpid`, are declared in the same `extern "cromollvm"`, in `compiler/host_linux.cro`: the linker finds them with those that LLVM calls.
+- What `cromo` leaves out of LLVM, the targets it does not compile for and libxml2 on Linux, is `compiler/shim/llvm_trims.cpp`, as before: the `cromo` in C++ compiles it, and the shim includes it in its object, which every program with LLVM has, so that the linker has its names before it meets those of the libraries.
+- What `cromo` asks of the system it runs on and the library does not give is in the module `host`, with a file for each system (D202): a program started with its output in a file, the wait for the first of several programs to end, a variable of the environment set, and the wait for bytes of the standard input. The path of its executable, the temporary folder, the number of the processors, whether the errors go to a terminal and a path without its links are asked of the library (D575).
+- `cromo run --target android` on Ctrl+C: `cromo` starts the tool, then ignores Ctrl+C while it waits, and knows from how the tool ended that it was interrupted; the `cromo` in C++ has a handler, which a program of Cromo cannot give to the system.
+- The version of `cromo` is in `compiler/version.cro`, to change with that of `CMakeLists.txt`; that of LLVM is asked of LLVM.
+- `tests\run-stage.ps1` and, in WSL, `tests/run-stage.sh` compare the executables of the two; `cromo` in Cromo that compiles itself gives the executable it was built from, on both systems.
+- The language server and the reference of the library are in Cromo too, with three differences from the C++ that the tests do not see: `cromo ai` writes `\n` where the C++ writes `\r\n` on Windows, as every program of Cromo; the messages of the server are written by `std.json`, with the same values and other escapes; the server has no thread that reads, and waits for the pause after a change by asking the system whether the input has bytes. The written type of a place inside a generic is kept on its node by the analysis, `TypeNode.resolved`, for the hovers.
+
+### D577. `[[format]]`: a function that takes a format and its arguments
+*2026-11-24.* Chosen by the author, who wanted `log.info("the value of a is {}", a)` and `s.format("{}", a)`. The language has no functions with any number of arguments, and the format of `println` is read by the compiler (D21, D200): so the mechanism is an attribute, as `__attribute__((format))` of C says of a function of the program what the compiler knows of `printf`.
+- `[[format]]` goes before a function or a method whose last parameter is a `string` that it reads. In a call, a string literal in the place of that parameter is a format, and the arguments after it are its values: the compiler checks them as those of `println`, and the function receives the text, as if the call had `format("...", a, b)` there. The function itself is written as any other, and does not know.
+- A value that is not a literal is given as it is, a text and not a format, so `log.info(message)` stays what it was; with arguments after it, it is an error. A literal is always a format: `{{` and `}}` are its braces.
+- The functions and the methods of `std.log` have it, `debug`, `info`, `warn` and `error`, and so can those of a program.
+- `string` has the method `format`, with the attribute: `s.format("{} of {}", done, total)` replaces the text of `s` with the one of the format, as `CString::Format`. `format(...)` stays the function that gives a new string, and `print` the `println` without the end of the line (D21).
+- An attribute before a method was an error of the parser; now a method has `[[format]]`, and nothing else.
+- The other ways were to make the compiler know the names of `std.log`, which a program could not do for its own functions, and functions with any number of arguments, which touch the generics and ownership: too much before 1.0.
+
+### D578. A number literal printed is an `i64`, or an `f64`
+*2026-11-24.* Chosen by the author, who wants `println("{}", 3)` to work. It amends D64. Among the values of `print`, `println`, `eprint`, `eprintln` and `format`, and so of a function with `[[format]]` (D577), a number literal, also with its minus, is an `i64`, and an `f64` when it has a point or an exponent: the type of the indices of the language (D12), which holds every literal that C, Rust and Go take as their `int`. Another type is written, `u8(200)`. Elsewhere a literal without a context stays an error (D64), and so do `2 * 3` and `ok ? 1 : 0` in a print, operations whose type is asked before the print sees them: only in a print nothing but the text depends on the type.
+
+### D579. `memcpy`, `memmove`, `memset` and `memcmp` with SSE2
+*2026-11-24.* Chosen by the author, after the measures. The four functions of the runtime for x86-64 (D19) were `rep movsb`, `rep stosb` and a loop of 8 bytes: against those of the C library, on a Ryzen 9 5950X, a copy or a fill under 1 KB took from 2 to 10 times the time, since the instruction has a fixed cost of about 5 ns, and so did those of 1 MB and more; a comparison from 2 to 7 times.
+- Now they use SSE2, which every x86-64 has, so the processor is not asked what it has, and the executable still has one copy of the code (D513). Up to 64 bytes a copy reads everything before it writes, with loads that overlap, and there is no loop; more are copied 64 bytes at a time. `memmove` is the same code as `memcpy`: from the end when the destination overlaps the end of the source. `memset` fills 64 bytes at a time at aligned addresses. `memcmp` compares 64 bytes at a time, then 16, and finds the first byte that differs.
+- From 1 KB to 512 KB a copy, and from 2 KB to 512 KB a fill, are still `rep movsb` and `rep stosb`: there the processor is as fast as the C library, and the loop of SSE2 half as fast. The limits are those measured on that processor.
+- After it, against the C library of Windows and glibc: the copies and the fills up to 256 bytes take the same time or less; between 512 bytes and 4 KB up to twice; `memcmp` from the same to half the time on Windows, and up to twice that of glibc, which uses AVX2, from 4 KB.
+- A version with AVX2 chosen when the program starts was left out: it is the copy of the code for each processor that D513 does not want, for what remains to gain in the middle sizes. ARM64 is not measured yet.
+
 ---
 
 ## Proposed
@@ -3168,22 +3220,6 @@ A component keeps the distances from the edges of its parent, the content of the
 - The type of a string literal given to `print` is one of the types of the language, as in the C++, before it is a `string` of the library.
 - The moves are a module of their own, `compiler/moves.cro`, which takes the tree from the analysis and gives it back.
 - Not done: the value of a float literal, the bytes of the file of `embed`, and the place of a capture in the data of its lambda, which the generation of the code needs.
-
-### P92. `cromo` in Cromo: the way to LLVM and to LLD (D291)
-- What the C API of LLVM does not give is in `compiler/shim/shim.cpp`, the only C++ of the compiler: LLD; the passes of a level, with the functions of C that LLVM may call (D19); the levels of position independent code; the lines of an object, from its DWARF, for the table of the stack traces (D339); the names of an archive, of a DLL and of a shared library; the import library of a DLL (D136); whether a processor is known and has a feature (D513). Each is a function of C that takes and gives numbers, addresses and texts. Everything else of `src/backend.cpp` and `src/libraries.cpp` is in Cromo, `compiler/backend.cro` and `compiler/libraries.cro`, which call LLVM-C through `extern "cromollvm"` in `compiler/llvmc.cro`: the IR is read, checked, given its machine and written as an object with the functions of LLVM-C.
-- `cromollvm` is one static library, `compiler/cromollvm.lib`, found next to its module as any C library (D136): the shim, the libraries of LLVM and of LLD that `cromo.exe` is linked with, and the static runtime of C and C++ of MSVC, which the linker of a program of Cromo does not add by itself. `tools/llvm-archive.ps1` makes it, called by `build.ps1`; it is not in the repository.
-- A program of Cromo starts at `cromo_start`, not at the start of the C runtime: `shim_start()`, the first thing the compiler calls before LLVM, does what `mainCRTStartup` does before `main`: the C runtime, its tables of the functions of the exit, and the constructors of C++. The linker and the entry point of the programs do not change.
-- The runtime gives its stack probe the second name `_alloca_probe`, that of the code of MSVC, so that the C runtime does not bring its own, with the same name `__chkstk`.
-- `build.ps1` compiles `compiler/cromo.cro` with the `cromo` in C++ into `build\stage1\cromo.exe`, which finds `build\lib` as that one does. It is checked as the IR was: the two build every program of the tests at the same path, and the executables must have the same bytes, apart from the time of the build that `lld-link` writes in them.
-- On Linux the library is `compiler/libcromollvm.a`, made in WSL by `tools/llvm-archive.sh`, called by `build-linux.sh`: the shim, the libraries of LLVM and of LLD of the link of `cromo`, and the static runtime of C++ of the compiler of WSL. glibc stays outside: the executable is linked with it by itself, as any program whose C libraries call it (D428), and its constructors of C++ are run by the start of the runtime for glibc. The functions of glibc that `cromo` needs for itself, as `fork`, `execvp` and `waitpid`, are declared in the same `extern "cromollvm"`, in `compiler/host_linux.cro`: the linker finds them with those that LLVM calls.
-- What `cromo` leaves out of LLVM, the targets it does not compile for and libxml2 on Linux, is `compiler/shim/llvm_trims.cpp`, as before: the `cromo` in C++ compiles it, and the shim includes it in its object, which every program with LLVM has, so that the linker has its names before it meets those of the libraries.
-- What `cromo` asks of the system it runs on and the library does not give is in the module `host`, with a file for each system (D202): the path of its executable, the temporary folder, a program started with the terminal of `cromo` or with its output in a file, the wait for the first of several programs to end, a variable of the environment set, the number of the processors, a path without its symbolic links. Whether the library should give them is to be decided.
-- `cromo run --target android` on Ctrl+C: `cromo` starts the tool, then ignores Ctrl+C while it waits, and knows from how the tool ended that it was interrupted; the `cromo` in C++ has a handler, which a program of Cromo cannot give to the system.
-- The version of `cromo` is in `compiler/version.cro`, to change with that of `CMakeLists.txt`; that of LLVM is asked of LLVM.
-- `tests\run-stage.ps1` and, in WSL, `tests/run-stage.sh` compare the executables of the two; `cromo` in Cromo that compiles itself gives the executable it was built from, on both systems.
-- The language server and the reference of the library are in Cromo too, with three differences from the C++ that the tests do not see: `cromo ai` writes `\n` where the C++ writes `\r\n` on Windows, as every program of Cromo; the messages of the server are written by `std.json`, with the same values and other escapes; the server has no thread that reads, and waits for the pause after a change by asking the system whether the input has bytes. The written type of a place inside a generic is kept on its node by the analysis, `TypeNode.resolved`, for the hovers.
-- A module cannot be called `llvm` today: its functions get symbols that start with `llvm.`, which LLVM keeps for its own, and the module is refused by LLVM, not by `cromo`. The module of the compiler is `llvmc`; what `cromo` should do with such a name is to be decided.
-- A parameter cannot have the name of an imported module, so the module of the systems is `targets`, and a `Progress` is a parameter called `steps`.
 
 ## Open
 

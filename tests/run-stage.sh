@@ -1,5 +1,5 @@
 #!/bin/sh
-# Checks cromo written in Cromo on Linux (D291, P92), as tests\run-stage.ps1 does on
+# Checks cromo written in Cromo on Linux (D291, D576), as tests\run-stage.ps1 does on
 # Windows: build-linux/stage1/cromo must build every program of tests/, examples/ and
 # bench/ as cromo in C++ does: the same exit code and the same errors for those that
 # are refused, and for the others an executable with the same bytes at the same path.

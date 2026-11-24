@@ -244,7 +244,7 @@ string pathFromUri(string uri) {
 }
 
 string uriFromPath(string path) {
-    string generic = absolute(path).replace("\\", "/")
+    string generic = loader.absolute(path).replace("\\", "/")
     list<u8> out
     for (u8 c in "file://".bytes()) {
         out.add(c)
@@ -1077,7 +1077,7 @@ struct Server {
         }
         string documentKey = sourceKey(path)
         string workspaceKey = workspace.len() == 0 ? "" : sourceKey(workspace)
-        string folder = parentOf(absolute(path))
+        string folder = parentOf(loader.absolute(path))
         for (true) {
             string candidate = folder + fs.separator() + "main.cro"
             string key = sourceKey(candidate)
@@ -1094,7 +1094,7 @@ struct Server {
             }
             folder = parent
         }
-        string project = projectFolder(parentOf(absolute(path)))
+        string project = projectFolder(parentOf(loader.absolute(path)))
         if (project.len() > 0) {
             for (string line in linesOf(readSource(project + fs.separator() + "cromo.mod"))) {
                 list<string> words = wordsOf(line)

@@ -47,6 +47,49 @@ public string currentFolder() {
     ret folder
 }
 
+// The absolute path of the executable of this program: its folder is where a program
+// finds the files installed next to it.
+public string programPath() {
+    addr buffer = alloc(4096)
+    i64 length = systemCall(i64(Call.ReadlinkAt), -100, "/proc/self/exe".cstring(), buffer, 4096, 0, 0)
+    string path
+    if (length > 0) {
+        path = string(buffer, length)
+    }
+    free(buffer)
+    ret path
+}
+
+// How many processors this program can use, at least 1: how many threads can work at
+// the same time.
+public i64 processors() {
+    addr mask = alloc(1024)
+    i64 size = systemCall(i64(Call.SchedGetAffinity), 0, 1024, mask, 0, 0, 0)
+    i64 count = 0
+    for (i64 i = 0; i < size; i++) {
+        u8 bits = copyAt<u8>(offset(mask, i))
+        for (bits != 0) {
+            count += i64(bits & 1)
+            bits >>= 1
+        }
+    }
+    free(mask)
+    ret count < 1 ? 1 : count
+}
+
+// Whether a standard stream of this program is a terminal, and not a file or a pipe:
+// 0 for the input, 1 for the output, 2 for the errors, as the descriptors of C. A
+// program asks it before it writes colors, or a line that it rewrites.
+public bool isTerminal(i32 stream) {
+    if (stream < 0 || stream > 2) {
+        ret false
+    }
+    addr settings = alloc(64)                                                         // struct termios
+    i64 status = systemCall(i64(Call.Ioctl), i64(stream), 0x5401, settings, 0, 0, 0)  // TCGETS
+    free(settings)
+    ret status == 0
+}
+
 // The index of "name=value" among the variables of the environment, or -1.
 i64 envIndex(string name) {
     addr none

@@ -1,0 +1,4 @@
+// A module whose last name is the one that LLVM keeps, not its first: allowed (D573).
+public i64 three() {
+    ret 3
+}

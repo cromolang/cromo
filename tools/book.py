@@ -1,6 +1,6 @@
 """The Cromo Guide: from the Markdown of book/<language>/ to the pages of the site.
 
-    python tools/book.py [--out dist/site] [--check] [--pdf [--press [--spine 21]]] [--cromo build/cromo.exe]
+    python tools/book.py [--out dist/site] [--check] [--pdf [--spine 21]] [--cromo build/cromo.exe]
 
 Each language is a folder of book/ with SUMMARY.md, the list of its chapters:
 
@@ -40,7 +40,7 @@ book of 165 x 240 mm: a cover, the contents with the pages, and a chapter on eac
 new page. It prints more than once: the pages of the chapters and of their sections
 come from the PDF before, from the destinations of its links.
 
---pdf --press also makes the file that a printer asks for, <file>-press.pdf: first
+--pdf always makes the file that a printer asks for too, <file>-press.pdf: first
 the cover open, with the back, the spine and the front on one sheet, then the inside
 of the cover, white, then the pages one by one, starting from a title page. Every
 sheet has 3 mm of bleed on its four sides, so a page is 171 x 246 mm, and texts and
@@ -1009,7 +1009,7 @@ def press_pdf(exe, profile, out, language, pages, paper, spine, barcode):
     try:
         from pypdf import PdfReader, PdfWriter
     except ImportError:
-        sys.exit('--press needs pypdf: pip install pypdf')
+        sys.exit('the file for a printer needs pypdf: pip install pypdf')
     words = LANGUAGES[language]
     book_title = PRINT[language][0]
     folder = os.path.abspath(os.path.join(out, 'book', language))
@@ -1073,11 +1073,10 @@ def main():
     parser.add_argument('--language', nargs='+', choices=list(LANGUAGES), help='with --check, only these languages')
     parser.add_argument('--pdf', action='store_true', help='print the guide to PDF')
     parser.add_argument('--paper', type=float, default=0.057,
-                        help='with --press, how thick a page is in mm, for the spine of the cover (default: 0.057)')
-    parser.add_argument('--spine', type=float, help='with --press, the width of the spine in mm, as the printer gives it')
-    parser.add_argument('--barcode', action='store_true', help='with --press, a white box for the barcode on the back of the cover')
-    parser.add_argument('--press', action='store_true',
-                        help='with --pdf, also the file for a printer: the cover open and the pages, with 3 mm of bleed')
+                        help='how thick a page is in mm, for the spine of the cover (default: 0.057)')
+    parser.add_argument('--spine', type=float, help='the width of the spine in mm, as the printer gives it')
+    parser.add_argument('--barcode', action='store_true', help='a white box for the barcode on the back of the cover')
+    parser.add_argument('--press', action='store_true', help='accepted for the old command lines: --pdf always makes the file for a printer')
     parser.add_argument('--cromo', default=os.path.join(ROOT, 'build', 'cromo.exe' if os.name == 'nt' else 'cromo'))
     options = parser.parse_args()
     if options.only:
@@ -1086,7 +1085,7 @@ def main():
         sys.exit(1)
     build(options.out, options.check, options.cromo)
     if options.pdf:
-        pdf(options.out, options.paper, options.barcode, options.press, options.spine)
+        pdf(options.out, options.paper, options.barcode, True, options.spine)
 
 
 if __name__ == '__main__':

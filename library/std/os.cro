@@ -22,6 +22,9 @@
 //   bool hasEnv(string name)  whether the variable is set
 //   i64 processId()
 //   string currentFolder()
+//   string programPath()      the path of the executable of this program
+//   i64 processors()          the processors this program can use
+//   bool isTerminal(i32 stream)
 // and readSome, which reads the standard input for readInput and readLine (D420).
 import unsafe
 
@@ -105,4 +108,24 @@ public bool readLine(ref string line) {
     }
     line = string(bytes)
     ret any
+}
+
+// Up to 'most' bytes of the standard input, as soon as some arrive, as they are: what a
+// program reads when its input is not text, or has its own lengths. Empty at the end of
+// the input. It reads after what readLine and readInput have read. Read the standard
+// input from one thread at a time.
+//
+// '''
+// list<u8> header = os.readInputBytes(16)
+// '''
+public list<u8> readInputBytes(i64 most) {
+    list<u8> bytes
+    if (most <= 0 || !fillInput()) {
+        ret bytes
+    }
+    for (inputStart < inputEnd && bytes.len() < most) {
+        bytes.add(input[inputStart])
+        inputStart++
+    }
+    ret bytes
 }

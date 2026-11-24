@@ -800,13 +800,13 @@ private:
         size_t members = decl.members.size();
         size_t fields = decl.fields.size();
         if (!parseMemberDecl(decl)) return false;
-        if (decl.members.size() > members) decl.members.back().isPublic = isPublic;
+        if (decl.members.size() > members) {
+            decl.members.back().isPublic = isPublic;
+            decl.members.back().attributes = std::move(attributes);  // [[format]] (D577)
+        }
         if (decl.fields.size() > fields) {
             decl.fields.back().isPublic = isPublic;
             decl.fields.back().attributes = std::move(attributes);
-        } else if (!attributes.empty()) {
-            diag_.error(attributes[0].loc, "an attribute is written only before a field, for now");
-            return false;
         }
         return true;
     }

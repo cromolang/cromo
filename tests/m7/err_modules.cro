@@ -3,7 +3,6 @@
 // expect-error: method 'touch' of Point is private to its module: it is not marked public
 // expect-error: 'describe' is in both geometry and text: write geometry.describe or text.describe
 // expect-error: no imported module is called 'nothing'
-// expect-error: 'geometry' is the name of an imported module
 // expect-error: the module geometry has no function 'nope'
 // expect-error: 'Secret' of geometry is private to its module: it is not marked public
 // expect-error: function 'make' is public, but its type Hidden is private to the module
@@ -21,7 +20,6 @@ i32 main() {
     p.touch()
     string name = describe()
     nothing.Point q
-    i32 geometry = 1
     geometry.nope()
     Secret s
     Token t = Token(1)

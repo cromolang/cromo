@@ -72,6 +72,8 @@ Un programma vede di rado queste regole: la shell, e `std.process` quando avvia 
 
 Un percorso è una `string`: assoluto, o relativo alla cartella corrente, che si ottiene con `os.currentFolder()`. I nomi in un percorso sono separati da `/` su ogni sistema, e su Windows anche da `\`, quindi `"data/notes.txt"` funziona ovunque.
 
+`fs.absolute(path)` restituisce il percorso assoluto di un percorso, con la cartella corrente davanti a uno relativo e senza i nomi `.` e `..`; il file può non esistere. `fs.canonical(path)` restituisce il percorso assoluto di un file o di una cartella che esiste, con ogni link seguito, così che due percorsi dello stesso file danno lo stesso testo; lancia un'eccezione quando il percorso non esiste. `fs.tempFolder()` è la cartella dei file temporanei: quella dell'utente su Windows, e su Linux quella della variabile `TMPDIR`, o `/tmp`.
+
 `std.fs` scompone un percorso, senza guardare il disco:
 
 ```cromo
@@ -454,6 +456,8 @@ La mappatura finisce con la sua variabile e, come un `File`, non si può copiare
 - `os.name()` è `"windows"` o `"linux"`; su Android è anch'esso `"linux"`.
 - `os.env(name)` è il valore di una variabile d'ambiente, o `""` quando non è impostata; `os.hasEnv(name)` distingue una variabile impostata a `""` da una che manca. Su Windows i nomi non distinguono maiuscole e minuscole: `os.env("path")` è il `PATH`.
 - `os.currentFolder()` è il percorso assoluto della cartella corrente, da cui partono i percorsi relativi. `os.processId()` è il numero che il sistema assegna al programma.
+- `os.programPath()` è il percorso assoluto dell'eseguibile del programma: la sua cartella è dove un programma trova i file installati accanto a sé. `os.processors()` è il numero di processori che il programma può usare, almeno 1.
+- `os.isTerminal(stream)` dice se un flusso standard è un terminale, e non un file o una pipe: 0 è l'input, 1 l'output, 2 gli errori. Un programma lo chiede prima di scrivere colori, o una riga che riscrive.
 
 ```cromo norun
 import std.fs
@@ -548,6 +552,7 @@ i32 main() {
 Le regole:
 
 - Viene letta anche un'ultima riga senza `\n`; alla fine, `readLine` restituisce `false` e lascia `line` vuota. Alla fine `readInput` restituisce `""`.
+- `os.readInputBytes(most)` restituisce fino a `most` bytes dell'input così come sono, appena ne arrivano, e una lista vuota alla fine: per un input che non è testo.
 - L'input deve essere UTF-8: una riga che non lo è è un'eccezione, come per `fs.readText`. Su una console di Windows il testo arriva in UTF-16, e viene convertito.
 - Da un terminale, l'input finisce con Ctrl+D su Linux, e su Windows con Ctrl+Z all'inizio di una riga seguito da Invio.
 - Lo standard input si legge da un thread alla volta.
@@ -711,6 +716,16 @@ i32 main() {
 
 ```output
 cannot start 'no-such-program': no such program
+```
+
+`process.status(program, args)` esegue un programma fino alla fine con lo standard input, output ed error di questo programma, come una shell esegue un comando: chi usa il programma vede ciò che l'altro stampa, e risponde a ciò che chiede. Restituisce il codice di uscita, e lancia un'eccezione quando il programma non può partire:
+
+```cromo norun
+import std.process
+
+i32 main() {
+    ret process.status("git", ["commit"])
+}
 ```
 
 ### Un programma che gira in parallelo
@@ -1077,7 +1092,7 @@ i32 main() {
 {"time":"2026-11-12T10:03:12.251+01:00","level":"WARN","message":"slow answer","request":"7f3b","user":42}
 ```
 
-- `log.info`, `log.warn` e `log.error` scrivono una riga del loro livello sullo standard error. Il messaggio è una stringa: `format` la compone dai valori.
+- `log.info`, `log.warn` e `log.error` scrivono una riga del loro livello sullo standard error. Il messaggio è un testo, oppure un formato con i suoi valori, come quello di `println`: `log.info("{} users", count)`.
 - Un `log.Logger` ha le stesse funzioni, più `debug`, e dice dove e come vengono scritte le sue righe. Uno dichiarato senza valore scrive testo sullo standard error, dal livello `Info` in su.
 - `setLevel(level)` imposta il livello più basso che il logger scrive, fra `log.Level.Debug`, `Info`, `Warn` ed `Error`.
 - `setJson(true)` rende ogni riga un oggetto JSON, con `time`, `level`, `message` e i campi: il formato che leggono gli strumenti che raccolgono i log dei servizi.

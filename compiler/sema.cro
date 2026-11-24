@@ -879,6 +879,7 @@ public struct Checker {
         copy.isConst = tree.functions[function].isConst
         copy.isLambda = tree.functions[function].isLambda
         copy.isCold = tree.functions[function].isCold
+        copy.isFormat = tree.functions[function].isFormat
         copy.typeParams = tree.functions[function].typeParams
         for (i64 i = 0; i < copy.typeParams.len(); i++) {
             if (copy.typeParams[i].id >= 0) {
@@ -1806,8 +1807,20 @@ public struct Checker {
             }
         }
 
+        for (i64 r = 0; r < tree.records.len(); r++) {
+            list<i32> members = tree.records[r].members
+            for (i32 member in members) {
+                readFormat(member)
+                if (tree.functions[member].attributes.len() > 0) {
+                    error(attributeLoc(member, 0), "unknown attribute '" + tree.functions[member].attributes[0].name +
+                        "': a method has only [[format]]")
+                    tree.functions[member].attributes.clear()
+                }
+            }
+        }
         for (i64 i = 0; i < tree.topFunctions.len(); i++) {
             i32 function = tree.topFunctions[i]
+            readFormat(function)
             readCold(function)
             readWindow(function)
             readAndroid(function)
@@ -1930,6 +1943,45 @@ public struct Checker {
             }
             tree.functions[function].attributes.remove(i)
         }
+    }
+
+    // `[[format]]` (D577): the last parameter, a string, takes in a call a format and
+    // its arguments, as println: `log.info("{} users", count)`. Like [[cold]], it goes
+    // with the other attributes and is taken out of the list.
+    void readFormat(i32 function) {
+        i64 i = 0
+        for (i < tree.functions[function].attributes.len()) {
+            if (tree.functions[function].attributes[i].name != "format") {
+                i++
+                continue
+            }
+            Loc loc = attributeLoc(function, i)
+            if (tree.functions[function].attributes[i].args.len() > 0) {
+                error(loc, "[[format]] takes no arguments")
+            } else if (tree.functions[function].isFormat) {
+                error(loc, "the function '" + tree.functions[function].name + "' already has [[format]]")
+            } else if (!takesFormat(function)) {
+                error(loc, "[[format]] is for a function or a method whose last parameter is a string: the text that the format gives")
+            } else {
+                tree.functions[function].isFormat = true
+            }
+            tree.functions[function].attributes.remove(i)
+        }
+    }
+
+    // Whether the last parameter of the function is a string that it reads.
+    bool takesFormat(i32 function) const {
+        FunctionKind kind = tree.functions[function].kind
+        i64 count = tree.functions[function].params.len()
+        if (tree.functions[function].isExtern || kind == FunctionKind.Constructor || kind == FunctionKind.Destructor || count == 0) {
+            ret false
+        }
+        if (tree.functions[function].params[count - 1].mode != ParamMode.Read) {
+            ret false
+        }
+        i32 type = tree.functions[function].params[count - 1].type
+        ret tree.types[type].name == "string" && tree.types[type].module == "" && !tree.types[type].isFunction &&
+            tree.types[type].args.len() == 0
     }
 
     // `[[window]] i32 main()` (D426): the executable for Windows opens no console.
@@ -2563,10 +2615,6 @@ public struct Checker {
     i32 declare(string name, i32 type, Loc loc, bool isConst) {
         if (types.findBuiltin(name) >= 0 || findDecl(structsTable, name, loc, "") >= 0) {
             error(loc, "'" + name + "' is a type name")
-            ret -1
-        }
-        if (importsQualifier(loc.file, name)) {
-            error(loc, "'" + name + "' is the name of an imported module")
             ret -1
         }
         if (ownFieldIndex(name) >= 0) {
@@ -4874,8 +4922,30 @@ public struct Checker {
     // Checks the arguments of a call against the parameters of `function`, then
     // exclusivity (D22, D79). `object` is the object of a method call, or -1;
     // `holder` the node that keeps the pairs to compare when the program runs.
-    bool checkArgs(list<i32> args, i32 function, string what, Loc loc, i32 holder, i32 object, i32 self) {
+    bool checkArgs(list<i32> given, i32 function, string what, Loc loc, i32 holder, i32 object, i32 self) {
         i64 expected = tree.functions[function].params.len()
+        list<i32> args = given
+        // D577: after the other arguments, a literal is a format, with its arguments:
+        // they become one argument, `format("...", a, b)`.
+        if (tree.functions[function].isFormat && args.len() >= expected) {
+            i32 text = args[expected - 1]
+            if (tree.exprs[text].kind == ExprKind.StringLiteral) {
+                Expr call = nodeAt(ExprKind.Call, tree.exprs[text].line, tree.exprs[text].column)
+                call.text = "format"
+                for (i64 i = expected - 1; i < args.len(); i++) {
+                    call.items.add(args[i])
+                }
+                tree.exprs.add(move call)
+                for (args.len() >= expected) {
+                    args.remove(args.len() - 1)
+                }
+                args.add(i32(tree.exprs.len() - 1))
+                tree.exprs[holder].items = args
+            } else if (args.len() > expected) {
+                error(locOf(text), "the text of " + what + " must be a string literal with the format, when arguments follow it")
+                ret false
+            }
+        }
         if (args.len() != expected) {
             error(loc, format("{} takes {}{}{} were given", what, expected, expected == 1 ? " argument, but " : " arguments, but ",
                 args.len()))
@@ -7832,8 +7902,8 @@ public struct Checker {
             } else {
                 i32 type = checkExpr(arg, -1)
                 if (types.isUntyped(type)) {
-                    error(locOf(arg), "the type of this literal cannot be deduced: write it explicitly, for example i32(5)")
-                    ok = false
+                    // D578: a number without a type is printed as i64, or f64 with a point.
+                    ok = coerce(arg, type == untypedInt() ? intType(64, true) : floatType(64), false) && ok
                 } else if (types.isVoid(type)) {
                     error(locOf(arg), "this call does not return a value")
                     ok = false

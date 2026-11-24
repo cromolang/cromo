@@ -457,7 +457,7 @@ struct Selection {
                     ": a folder in place of a version holds only in the project that is built"
                 ret false
             }
-            string folder = absolute(fs.joinPath(from, require.local))
+            string folder = loader.absolute(fs.joinPath(from, require.local))
             if (!fs.isFolder(folder)) {
                 error = format("cromo.mod:{}: error: there is no folder ", require.line) + require.local
                 ret false
@@ -565,7 +565,7 @@ public i32 resolvePackages(string projectFolder, ref Resolution out, ref string 
 void nameRequires(ref Package package, list<Require> requires, string from, map<string, i32> numbers) {
     for (Require require in requires) {
         string key = require.local.len() == 0 ? keyOf(require.url, majorOf(require.version)) :
-            "folder:" + absolute(fs.joinPath(from, require.local))
+            "folder:" + loader.absolute(fs.joinPath(from, require.local))
         package.requires[require.name] = numbers.contains(key) ? numbers[key] : 0
     }
 }

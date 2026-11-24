@@ -530,7 +530,7 @@ i32 main() {
 - A file is a module; a folder is one module made of its files, which share all their names, also the private ones, while each writes its own imports (D515). `import a.b` corresponds to `a/b.cro`, or to the folder `a/b`, starting from the folder of the main file (D130), or from that of `cromo.mod`, looked for in the folders above it (D516).
 - A project lists its executables in `cromo.mod`, `bin server cmd/server.cro`: `cromo build` without a file builds them all, `cromo run server` runs one (D517). Its libraries are modules, compiled into each executable that imports them. The lines `version`, `company`, `description` and `copyright` go in the version of its executables for Windows, which have a manifest too (D557), and the line `sign` is the command that signs them after `cromo build --release` (D558).
 - Everything is private to the module, except what is marked `public`: also the fields, the methods and the constructor of a struct (D132).
-- The public names of an imported module are used directly. The module in front, with the last name of its path, is needed only when two imported modules give the same name; the names of the module itself come first (D126).
+- The public names of an imported module are used directly. The module in front, with the last name of its path, is needed only when two imported modules give the same name; the names of the module itself come first (D126). A variable, a parameter or a field can have the name of an imported module, and where it is visible the name is the variable (D574). A module, and the file of a program, cannot be called `llvm`, the name that LLVM keeps for its symbols (D573).
 - The imports come at the top of the file. They are not transitive, and two modules can import each other (D131).
 - The standard library is seen by every module without importing it.
 
@@ -563,6 +563,7 @@ public struct Stopwatch {
 - When compiling for Linux, `extern "name"` is the static library `libname.a` next to the module (D143). If it calls functions of the C library, the executable is linked with glibc by `cromo` itself, and needs glibc 2.29 or later where it runs (D428); the others stay static. Shared libraries are not supported yet, nor the C library on Linux ARM64.
 - They take and return numbers, `bool` and `addr`; a `ref` parameter is a C pointer to a number or to a struct of numbers, which have the layout of C (D129). The `BOOL` of Windows is an `i32`.
 - C resources are wrapped in structs with a destructor (D42): see `examples/05_c_interop.cro`.
+- `[[format]]` before a function or a method whose last parameter is a `string` lets a call give there a format and its arguments, as those of `println`, where a number literal is an `i64` or an `f64` (D578): `log.info("{} users", count)`. The compiler checks the format and the function receives the text; a value that is not a literal is given as it is. The functions of `std.log` have it, and `s.format("{}", a)` of a string, which replaces its text (D577).
 - `[[cold]]` before a function says that it runs rarely, as `#[cold]` of Rust: the compiler keeps it out of its callers and optimizes them for the other path (D398).
 - `[[export("name")]]` before a function gives it that name and the convention of C, so that C calls it: its parameters and its result are numbers, `bool` and `addr`, and it cannot let an exception out (D395). The runtime written in Cromo uses it (D393).
 - `addr(n)` makes an address from an `i64` or a `u64`, and `i64(p)` and `u64(p)` give the number of an address; `addr(0)` is the null address, the default value of `addr` (P13).
@@ -662,6 +663,8 @@ i32 main() {
 - The core (`list`, `string`, `map`, `format`, `join`, the numbers from text) is visible everywhere; `std.fs`, `std.time`, `std.os`, `std.process`, `std.thread`, `std.net`, `std.crypto`, `std.json`, `std.jwt`, `std.http`, `std.gzip`, `std.zip`, `std.tar`, `std.websocket`, `std.cmdline`, `std.db`, `std.log`, `std.regex` and `std.math` are imported (D201). The functions of the first three are in D211.
 - `std.fs` has also `isFile`, `isLink`, `size`, `modified` (the seconds from 1970), `rename`, `copy`, `createFolders` with the folders above, `removeAll`, which never follows a link, and the parts of a path: `joinPath`, `parent`, `fileName` and `extension`. `fs.File(path, mode)` is a file open, read and written in pieces, at a position too, which its destructor closes, and `fs.Mapping(path)` a file mapped in memory, read only, with its numbers read at a position (D504).
 - `fs.createLink(target, path)` makes a link to a folder, a symbolic link on Linux and a junction on Windows, which needs no administrator; `fs.readLink(path)` gives where it points, and `fs.makeExecutable(path)` lets a file run on Linux (P18).
+- `fs.absolute(path)` is the absolute path, without `.` and `..`; `fs.canonical(path)` is that of a file that exists, with every link followed, and throws when it does not exist; `fs.tempFolder()` is the folder of the temporary files (D575).
+- `std.os` has also `programPath()`, the path of the executable of the program, `processors()`, how many it can use, `isTerminal(stream)` for the standard input, output and error, 0, 1 and 2, and `readInputBytes(most)`, the standard input as bytes (D575).
 - Next to `fs.cro` a module can have `fs_windows.cro` and `fs_linux.cro`: only the file of the system the program is compiled for is used, and it shares the names of the module, also the private ones (D202). It holds for the library and for the programs.
 - In the same way a file can be for an architecture, `fs_arm64.cro` or `fs_x86_64.cro`, or for a system and an architecture, `fs_linux_arm64.cro` (D408, P23).
 - In the modules with `import unsafe`, `s.cstring()` gives the address of a copy of the string ending with a zero, for the C functions, until the end of the statement (D204).
@@ -679,6 +682,7 @@ println("{}", p.readAll())
 p.wait()
 ```
 
+- `process.status(program, args)` runs a program with the standard input, output and error of this program, and gives its exit code (D575).
 - `process.run` waits for the end of the program and gives its exit code, its output and its errors; `process.start` gives a `Process` with `write`, `closeInput`, `read`, `readAll`, `wait` and `kill`, whose errors go where the ones of this program go (D307). A program is found in the folders of `PATH`. An exit code other than 0 is a value; a program that cannot start is an exception.
 
 ```cromo

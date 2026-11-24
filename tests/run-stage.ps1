@@ -1,4 +1,4 @@
-# Checks cromo written in Cromo (D291, P92): build\stage1\cromo.exe must build every
+# Checks cromo written in Cromo (D291, D576): build\stage1\cromo.exe must build every
 # program of tests\, examples\ and bench\ as cromo in C++ does: the same exit code and
 # the same errors for those that are refused, and for the others an executable with
 # the same bytes at the same path, apart from the time of the build that lld-link

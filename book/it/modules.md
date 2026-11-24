@@ -339,7 +339,7 @@ i32 main() {
 my own join
 ```
 
-Poiché l'ultimo nome di un modulo si scrive davanti ai suoi nomi, due import con lo stesso ultimo nome nello stesso file sono un errore, e lo è anche una variabile o un parametro con il nome di un modulo importato. Cromo non ha un modo per rinominare un import: rinomina uno dei moduli.
+Poiché l'ultimo nome di un modulo si scrive davanti ai suoi nomi, due import con lo stesso ultimo nome nello stesso file sono un errore. Cromo non ha un modo per rinominare un import: rinomina uno dei moduli.
 
 ```cromo file=plot/geometry.cro
 public f64 scale() {
@@ -360,17 +360,21 @@ i32 main() {
 error: another import is also called geometry
 ```
 
-```cromo error
-import geometry
+Una variabile, un parametro o un campo possono avere il nome di un modulo importato: dove sono visibili, il nome è la variabile, come in Go. Un modulo non può chiamarsi `llvm`, e nemmeno il file di un programma: LLVM riserva quel nome ai propri simboli.
+
+```cromo
+import tile
 
 i32 main() {
-    i32 geometry = 3
-    ret geometry
+    f64 before = tile.area(2.0)
+    f64 tile = 3.0  // from here to the end of the block, tile is the variable
+    println("{} {}", before, tile)
+    ret 0
 }
 ```
 
 ```output
-error: 'geometry' is the name of an imported module
+4 3
 ```
 
 ## Una cartella è un modulo

@@ -37,7 +37,7 @@ powershell -ExecutionPolicy Bypass -File build.ps1
 build\cromo.exe version
 ```
 
-The last command prints `cromo 0.96.0 (LLVM 23.1.4)`, with the version of the sources.
+The last command prints `cromo 0.98.0 (LLVM 23.1.4)`, with the version of the sources.
 
 `build.ps1` accepts:
 
@@ -112,7 +112,7 @@ powershell -ExecutionPolicy Bypass -File tests\run-pilot.ps1
 
 ## cromo written in Cromo
 
-`compiler/cromo.cro` is `cromo` itself written in Cromo, with LLVM and LLD inside it (D291, P92): the analysis and the generation of the code of the pilot, then `compiler/backend.cro`, which calls the C API of LLVM, and `compiler/shim/shim.cpp`, the few functions of C++ for what that API does not give. `build.ps1` makes `compiler\cromollvm.lib` with `tools\llvm-archive.ps1`, one archive with the shim, the libraries of LLVM and of LLD and the static runtime of C++, and compiles `compiler\cromo.cro` with the `cromo` in C++ into `build\stage1\cromo.exe`; `build-linux.sh` does the same in WSL, with `tools/llvm-archive.sh`, into `build-linux/stage1/cromo`. Neither is in the archives yet.
+`compiler/cromo.cro` is `cromo` itself written in Cromo, with LLVM and LLD inside it (D291, D576): the analysis and the generation of the code of the pilot, then `compiler/backend.cro`, which calls the C API of LLVM, and `compiler/shim/shim.cpp`, the few functions of C++ for what that API does not give. `build.ps1` makes `compiler\cromollvm.lib` with `tools\llvm-archive.ps1`, one archive with the shim, the libraries of LLVM and of LLD and the static runtime of C++, and compiles `compiler\cromo.cro` with the `cromo` in C++ into `build\stage1\cromo.exe`; `build-linux.sh` does the same in WSL, with `tools/llvm-archive.sh`, into `build-linux/stage1/cromo`. Neither is in the archives yet.
 
 `tests\run-stage.ps1` builds every program of the repository with both and checks that the executables have the same bytes; `tests/run-stage.sh` does it in WSL. The behavior tests run with it too:
 
@@ -146,7 +146,7 @@ The version is in `CMakeLists.txt`, in `project(cromo VERSION 0.94.0)`: `0.<mile
 powershell -ExecutionPolicy Bypass -File tools\package.ps1 -Key <private key>
 ```
 
-`tools\package.ps1` writes in `dist\`, with the layout of the site:
+`tools\package.ps1` writes in `dist\`, with the layout of the site; the `cromo` of the archives is the one written in Cromo, `build\stage1\cromo.exe` and `build-linux/stage1/cromo` (D576):
 
 | Path | Content |
 |---|---|
@@ -167,7 +167,7 @@ The Cromo Guide is written in Markdown in `book/en` and `book/it`, one file for 
 
 ```powershell
 python tools\book.py --check          # compiles and runs every example of the guide, and checks its output
-python tools\book.py --pdf            # the pages in dist\site\book, and the PDF of each language
+python tools\book.py --pdf            # the pages in dist\site\book, the PDF of each language and its file for a printer
 ```
 
 `--check` compiles every program of the guide with `build\cromo.exe` and compares what it prints with the `output` block that follows it, in every language: run it after a change to the compiler or to the library, too. The head of `tools/book.py` describes the flags of the code blocks. The PDFs are printed by Microsoft Edge or Chrome, headless.

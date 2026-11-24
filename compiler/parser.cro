@@ -1105,13 +1105,10 @@ struct Parser {
         }
         if (decl.members.len() > members) {
             tree.functions[decl.members[decl.members.len() - 1]].isPublic = isPublic
-        }
-        if (decl.fields.len() > fields) {
+            tree.functions[decl.members[decl.members.len() - 1]].attributes = move attributes  // [[format]] (D577)
+        } else if (decl.fields.len() > fields) {
             decl.fields[decl.fields.len() - 1].isPublic = isPublic
             decl.fields[decl.fields.len() - 1].attributes = move attributes
-        } else if (attributes.len() > 0) {
-            diag.error(attributes[0].line, attributes[0].column, "an attribute is written only before a field, for now")
-            ret false
         }
         ret true
     }

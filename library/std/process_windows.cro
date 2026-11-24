@@ -25,7 +25,17 @@ extern "kernel32" {
     i32 MultiByteToWideChar(u32 page, u32 flags, addr text, i32 size, addr wide, i32 wideSize)
 }
 
-void launch(ref Process p, string program, list<string> args, bool errors) {
+// An inheritable copy of a standard handle of this program, or -1 without it.
+i64 ownStream(u32 which) {
+    i64 own = GetStdHandle(which)
+    i64 copy = -1
+    if (own != 0 && own != -1) {
+        DuplicateHandle(GetCurrentProcess(), own, GetCurrentProcess(), ref copy, 0, 1, 2)  // SAME_ACCESS
+    }
+    ret copy
+}
+
+void launch(ref Process p, string program, list<string> args, i32 pipes) {
     addr none
     addr security = alloc(24)  // SECURITY_ATTRIBUTES, inheritable
     put<u32>(security, 24)
@@ -37,16 +47,18 @@ void launch(ref Process p, string program, list<string> args, bool errors) {
     i64 parentInput = -1
     i64 parentOutput = -1
     i64 parentErrors = -1
-    CreatePipe(ref childInput, ref parentInput, security, 0)
-    CreatePipe(ref parentOutput, ref childOutput, security, 0)
-    if (errors) {
+    // What has no pipe is that of this program, as an inheritable copy.
+    if (pipes >= 2) {
+        CreatePipe(ref childInput, ref parentInput, security, 0)
+        CreatePipe(ref parentOutput, ref childOutput, security, 0)
+    } else {
+        childInput = ownStream(0xFFFFFFF6)   // STD_INPUT_HANDLE
+        childOutput = ownStream(0xFFFFFFF5)  // STD_OUTPUT_HANDLE
+    }
+    if (pipes >= 3) {
         CreatePipe(ref parentErrors, ref childErrors, security, 0)
     } else {
-        // The errors of this program, as an inheritable copy.
-        i64 own = GetStdHandle(0xFFFFFFF4)  // STD_ERROR_HANDLE
-        if (own != 0 && own != -1) {
-            DuplicateHandle(GetCurrentProcess(), own, GetCurrentProcess(), ref childErrors, 0, 1, 2)  // SAME_ACCESS
-        }
+        childErrors = ownStream(0xFFFFFFF4)  // STD_ERROR_HANDLE
     }
     free(security)
     // The ends of this program are not inherited.
@@ -57,9 +69,11 @@ void launch(ref Process p, string program, list<string> args, bool errors) {
     }
 
     // STARTUPINFOEXW: the three handles, and the list of the handles to inherit.
-    list<i64> inherited = [childInput, childOutput]
-    if (childErrors != -1) {
-        inherited.add(childErrors)
+    list<i64> inherited
+    for (i64 handle in [childInput, childOutput, childErrors]) {
+        if (handle != -1) {
+            inherited.add(handle)
+        }
     }
     addr handles = alloc(inherited.len() * 8)
     for (i64 i = 0; i < inherited.len(); i++) {
@@ -69,15 +83,21 @@ void launch(ref Process p, string program, list<string> args, bool errors) {
     InitializeProcThreadAttributeList(none, 1, 0, ref size)
     addr attributes = alloc(i64(size))
     InitializeProcThreadAttributeList(attributes, 1, 0, ref size)
-    UpdateProcThreadAttribute(attributes, 0, 0x20002, handles, u64(inherited.len() * 8), none, none)  // HANDLE_LIST
+    if (inherited.len() > 0) {
+        UpdateProcThreadAttribute(attributes, 0, 0x20002, handles, u64(inherited.len() * 8), none, none)  // HANDLE_LIST
+    }
     addr startup = alloc(112)
     for (i64 i = 0; i < 112; i++) {
         put<u8>(offset(startup, i), 0)
     }
     put<u32>(startup, 112)
     put<u32>(offset(startup, 60), 0x100)  // STARTF_USESTDHANDLES
-    put<i64>(offset(startup, 80), childInput)
-    put<i64>(offset(startup, 88), childOutput)
+    if (childInput != -1) {
+        put<i64>(offset(startup, 80), childInput)
+    }
+    if (childOutput != -1) {
+        put<i64>(offset(startup, 88), childOutput)
+    }
     if (childErrors != -1) {
         put<i64>(offset(startup, 96), childErrors)
     }

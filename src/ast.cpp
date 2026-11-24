@@ -257,6 +257,7 @@ FunctionDecl clone(const FunctionDecl& function) {
     result.isGenerated = function.isGenerated;
     result.isLambda = function.isLambda;
     result.isCold = function.isCold;
+    result.isFormat = function.isFormat;
     result.typeParams = function.typeParams;
     result.body = clone(function.body);
     return result;

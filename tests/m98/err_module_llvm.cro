@@ -1,0 +1,7 @@
+// D573: a module cannot be called llvm, the name that LLVM keeps for its own symbols.
+// expect-error: a module cannot be called llvm: LLVM keeps the names that start with it
+import llvm
+
+i32 main() {
+    ret 0
+}

@@ -56,7 +56,7 @@ There is no `while`, `do`, `goto`, `class`, `new`, `delete`, `null` or `this`. T
 | `{ }` | blocks, and the bodies of functions, structs, enums, interfaces and `extern` blocks |
 | `( )` | parameters and arguments; the conditions of `if`, `for` and `switch`; grouping in expressions |
 | `[ ]` | an index, `v[i]`; a list literal, `[1, 2, 3]`; the captures of a lambda, `[ref total]`; the size of an array, `i32[4]` |
-| `[[ ]]` | an attribute, `[[test]]` |
+| `[[ ]]` | an attribute, `[[test]]`, `[[format]]` |
 | `< >` | the type parameters and arguments of generics, `list<T>`, `max<T : Ordered>` |
 | `:` | the interfaces of a struct or an enum, `struct Circle : Shape`; a constraint, `T : Key`; the conditional expression |
 | `+` | between constraints, `T : Key + Debug`, besides the addition |

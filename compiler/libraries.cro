@@ -26,7 +26,7 @@ struct Use {
 
 // The folder of a file, from the root.
 string folderOf(string path) {
-    ret parentOf(absolute(path))
+    ret parentOf(loader.absolute(path))
 }
 
 // Finds the library of every extern block and checks its C functions in the DLL

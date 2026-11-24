@@ -26,6 +26,8 @@ extern "kernel32" {
     i32 DeviceIoControl(i64 device, u32 code, addr input, u32 inputSize, addr output, u32 outputSize, ref u32 done,
         addr overlapped)
     u32 GetFullPathNameW(addr name, u32 size, addr buffer, addr part)
+    u32 GetTempPathW(u32 size, addr buffer)
+    u32 GetFinalPathNameByHandleW(i64 file, addr buffer, u32 size, u32 flags)
     i32 MultiByteToWideChar(u32 page, u32 flags, addr text, i32 size, addr wide, i32 wideSize)
     i32 WideCharToMultiByte(u32 page, u32 flags, addr wide, i32 size, addr text, i32 textSize, addr fallback, addr used)
 }
@@ -376,6 +378,55 @@ public void makeExecutable(string path) {
     if (!isFile(path)) {
         throw failure("make executable", path, 2)
     }
+}
+
+// The folder of the temporary files of the system, without a separator at its end: that
+// of the user on Windows, and on Linux the one of the variable TMPDIR, or "/tmp".
+public string tempFolder() {
+    addr buffer = alloc(65536)
+    u32 length = GetTempPathW(32768, buffer)
+    string path = narrow(buffer, i32(length))
+    free(buffer)
+    for (path.len() > 3 && isSeparator(path[path.len() - 1])) {
+        path = path.slice(0, path.len() - 1)
+    }
+    ret path
+}
+
+// The absolute path of a path: one from the current folder is joined to it, and the
+// names "." and ".." are taken out. The file may not exist, and the links stay as
+// they are: see canonical.
+public string absolute(string path) {
+    ret fullPath(path)
+}
+
+// The absolute path of a file or a folder that exists, with every link followed: two
+// paths of the same file give the same text. Throws if the path does not exist.
+public string canonical(string path) {
+    addr none
+    addr name = wide(path)
+    i64 file = CreateFileW(name, 0, 7, none, 3, 0x02000000, none)  // OPEN_EXISTING, BACKUP_SEMANTICS for a folder
+    free(name)
+    if (file == -1) {
+        throw failure("resolve", path, GetLastError())
+    }
+    addr buffer = alloc(65536)
+    u32 length = GetFinalPathNameByHandleW(file, buffer, 32768, 0)
+    u32 code = GetLastError()
+    CloseHandle(file)
+    if (length == 0 || length >= 32768) {
+        free(buffer)
+        throw failure("resolve", path, code)
+    }
+    string full = narrow(buffer, i32(length))
+    free(buffer)
+    if (full.startsWith("\\\\?\\UNC\\")) {
+        ret "\\\\" + full.slice(8, full.len())
+    }
+    if (full.startsWith("\\\\?\\")) {
+        ret full.slice(4, full.len())
+    }
+    ret full
 }
 
 // The absolute path, without a separator at the end unless it is the root, "C:\".

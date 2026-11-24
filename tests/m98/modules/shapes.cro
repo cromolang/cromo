@@ -1,0 +1,8 @@
+// A module imported by the tests of M98.
+public struct Shape {
+    public i64 sides
+}
+
+public i64 corners(Shape s) {
+    ret s.sides
+}

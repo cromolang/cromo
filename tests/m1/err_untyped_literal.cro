@@ -1,4 +1,4 @@
-// expect-error: the type of this literal cannot be deduced
+// D64; a literal given to println has a type since D578.
 // expect-error: the type of this expression cannot be deduced
 i32 main() {
     println("{}", 5)

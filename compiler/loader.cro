@@ -65,6 +65,10 @@ public Program loadWith(string path, string text, string library, Target system,
     loader.names.add("std")
     loader.contexts.add(0)
     loader.contexts.add(0)
+    if (stemOf(main) == "llvm" || stemOf(main).startsWith("llvm.")) {  // D573
+        loader.program.diag.errorIn(0, 1, 1, "a file cannot be called " + stemOf(main) +
+            ".cro: LLVM keeps the names that start with llvm")
+    }
     if (loader.inProject) {
         // D376-D391: the packages of cromo.mod, already in the cache: cromo build
         // downloads those that are missing before it comes here.
@@ -193,6 +197,12 @@ struct Loader {
             for (string part in path) {
                 dotted += "." + part
             }
+        }
+        // D573: LLVM keeps the names that start with `llvm.`, and the symbols of a
+        // module start with its name.
+        if (dotted == "llvm" || dotted.startsWith("llvm.")) {
+            program.diag.errorIn(from, line, column, "a module cannot be called llvm: LLVM keeps the names that start with it")
+            ret files
         }
         string file = home + sep() + relative + ".cro"
         string folder = path.len() == 0 ? home : home + sep() + relative

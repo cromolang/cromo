@@ -51,20 +51,21 @@ i64 rank(Level level) {
 }
 
 // Writes a line that says what the program does, on the standard error, as a
-// 'Logger' that is told nothing does.
-public void info(string message) {
+// 'Logger' that is told nothing does. The message is a text, or a format with its
+// arguments, as that of 'println': 'log.info("{} users", count)'.
+[[format]] public void info(string message) {
     Logger plain
     plain.info(message)
 }
 
 // Writes a line about something to look at, on the standard error.
-public void warn(string message) {
+[[format]] public void warn(string message) {
     Logger plain
     plain.warn(message)
 }
 
 // Writes a line about something that failed, on the standard error.
-public void error(string message) {
+[[format]] public void error(string message) {
     Logger plain
     plain.error(message)
 }
@@ -149,22 +150,22 @@ public struct Logger {
     }
 
     // Writes a line for who looks for a problem, when the level is 'Debug'.
-    public void debug(string message) const {
+    [[format]] public void debug(string message) const {
         write(0, "DEBUG", message)
     }
 
     // Writes a line that says what the program does.
-    public void info(string message) const {
+    [[format]] public void info(string message) const {
         write(1, "INFO", message)
     }
 
     // Writes a line about something to look at.
-    public void warn(string message) const {
+    [[format]] public void warn(string message) const {
         write(2, "WARN", message)
     }
 
     // Writes a line about something that failed.
-    public void error(string message) const {
+    [[format]] public void error(string message) const {
         write(3, "ERROR", message)
     }
 

@@ -1,0 +1,76 @@
+// D577: [[format]] on a function or a method whose last parameter is a string: a call gives
+// there a format and its arguments, as println. The methods of std.log and string.format
+// have it.
+// expect-output: [note] plain
+// expect-output: [note] 3 of 7
+// expect-output: [note] text
+// expect-output: [7] a=1 b=two
+// expect-output: [7] {braces}
+// expect-output: kept 2: x=0x1f
+// expect-output: value 42 and pi 3.1
+// expect-output: again
+// expect-output: 12 12
+// expect-output: 3 2.5 -1 7
+// expect-output: [note] 3 of 7
+// expect-stderr: INFO  the value of a is 42
+// expect-stderr: WARN  plain text
+// expect-stderr: ERROR 1 and two
+// expect-stderr: DEBUG deep 5
+import std.log
+
+[[format]]
+void note(string message) {
+    println("[note] {}", message)
+}
+
+[[format]]
+void tagged(i64 tag, string message) {
+    println("[{}] {}", tag, message)
+}
+
+struct Notes {
+    list<string> lines
+
+    [[format]] void add(string line) {
+        lines.add(line)
+    }
+
+    [[format]] public string last(string prefix) const {
+        ret prefix + lines[lines.len() - 1]
+    }
+}
+
+i32 main() {
+    note("plain")
+    note("{} of {}", i32(3), i64(7))
+    string text = "text"
+    note(text)
+    tagged(7, "a={} b={}", u8(1), "two")
+    tagged(7, "{{braces}}")
+
+    Notes notes
+    notes.add("first")
+    notes.add("x={:#x}", i32(31))
+    println("{}", notes.last("kept {}: ", notes.lines.len()))
+
+    i64 a = 42
+    string s
+    s.format("value {} and pi {:.2}", a, f64(3.14159))
+    println("{}", s)
+    s.format("again")
+    println("{}", s)
+    string t = format("{}", i32(12))
+    s.format("{}", t)
+    println("{} {}", s, t)
+
+    // D578: a number literal is printed as i64, or f64 with a point.
+    println("{} {} {:x} {}", 3, 2.5, -1, 7)
+    note("{} of {}", 3, 7)
+    log.info("the value of a is {}", a)
+    log.warn("plain text")
+    log.error("{} and {}", i32(1), "two")
+    log.Logger logger
+    logger.setLevel(log.Level.Debug)
+    logger.debug("deep {}", a - 37)
+    ret 0
+}

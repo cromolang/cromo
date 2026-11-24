@@ -1,0 +1,10 @@
+// D573: a file with the name that LLVM keeps for its own symbols is not a program, and not a
+// module that another imports (see err_module_llvm.cro).
+// expect-error: a file cannot be called llvm.cro: LLVM keeps the names that start with llvm
+public i64 one() {
+    ret 1
+}
+
+i32 main() {
+    ret i32(one() - 1)
+}

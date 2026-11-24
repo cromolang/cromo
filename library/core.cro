@@ -286,6 +286,13 @@ public struct string : Key, Ordered {
         length += other.length
     }
 
+    // Replaces the text with the one that a format and its arguments give, as 'format'
+    // does: 's.format("{} of {}", done, total)'.
+    [[format]] public void format(string text) {
+        length = 0
+        append(text)
+    }
+
     // A new text with 'other' after this one, as '+'.
     public string concat(string other) const {
         string result

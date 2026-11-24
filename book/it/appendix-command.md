@@ -22,7 +22,7 @@ Il comando viene sempre per primo: `cromo hello.cro` è un errore che mostra la 
 | `cromo design [file.form]` | il designer delle finestre: una finestra composta con il mouse, salvata come form e come modulo di Cromo ([Finestre e app](gui.md#disegnare-una-finestra-cromo-design)) |
 | `cromo get indirizzo[@versione] [nome]` | aggiunge un pacchetto al `cromo.mod` della cartella, o ne alza la versione ([Moduli](modules.md#pacchetti)) |
 | `cromo update [version]` | installa l'ultima versione di Cromo, o quella indicata, e la rende attiva |
-| `cromo version` | stampa la versione di `cromo` e di LLVM, come `cromo 0.96.0 (LLVM 23.1.4)` |
+| `cromo version` | stampa la versione di `cromo` e di LLVM, come `cromo 0.98.0 (LLVM 23.1.4)` |
 | `cromo help` | stampa i comandi e le opzioni |
 
 ### Il programma da compilare
