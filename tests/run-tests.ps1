@@ -46,13 +46,25 @@
 #   run on the device or the emulator that adb sees, with -Adb or the adb of
 #   ANDROID_HOME, ANDROID_SDK_ROOT or the PATH (P43)
 # The C libraries in m8\native are built first with the clang of LLVM (D136).
+# The tests run in several processes at a time, -Jobs of them: by default half the
+# processors, at most 8, and one for Android, whose device is one. Each process has
+# the tests whose names give its number, so two tests with the same name, which
+# write the same executable, are never at the same time. A test that fails among
+# the others is run again alone, and fails if it does so again: -Jobs 1 runs them
+# all one at a time, as before.
 param(
     [string]$Cromo = (Join-Path $PSScriptRoot '..\build\cromo.exe'),
     [string]$Filter = '',
     [string]$Flags = '',
     [string]$LlvmRoot = 'C:\software\llvm-23.1.4',
     [string]$Distro = '',
-    [string]$Adb = ''
+    [string]$Adb = '',
+    [int]$Jobs = 0,
+    # For the processes that this script starts: the tests of one of them, or those
+    # whose names are the lines of a file.
+    [int]$Shard = -1,
+    [int]$Shards = 1,
+    [string]$Rerun = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -62,6 +74,18 @@ $Cromo = (Resolve-Path $Cromo).Path
 $out = Join-Path $PSScriptRoot 'out2'
 New-Item -ItemType Directory -Force $out | Out-Null
 
+# A process started by this script has a part of the tests, and finds the libraries
+# of the tests already built.
+$part = $Shard -ge 0 -or $Rerun
+$rerunNames = if ($Rerun) { @(Get-Content $Rerun -Encoding UTF8) } else { @() }
+function Test-Chosen([string]$Name, [string]$BaseName) {
+    if ($Rerun) { return $rerunNames -contains $Name }
+    if ($Shard -lt 0) { return $true }
+    $sum = 0
+    foreach ($c in $BaseName.ToLower().ToCharArray()) { $sum = ($sum * 31 + [int]$c) % 1000003 }
+    ($sum % $Shards) -eq $Shard
+}
+
 # A program that cannot find a DLL ends with an error code, instead of opening a
 # window of Windows that would stop the tests. The programs inherit this mode.
 Add-Type -Namespace Cromo -Name ErrorMode -MemberDefinition '[DllImport("kernel32.dll")] public static extern uint SetErrorMode(uint mode);'
@@ -70,6 +94,7 @@ Add-Type -Namespace Cromo -Name ErrorMode -MemberDefinition '[DllImport("kernel3
 # The libraries next to the modules of m8: a DLL, a static library, and a DLL
 # for 32 bits that cromo must reject. Without the C library, like the runtime.
 function Invoke-Tool([string]$Tool, [string[]]$Arguments) {
+    if ($part) { return }
     & (Join-Path $LlvmRoot "bin\$Tool") @Arguments
     if ($LASTEXITCODE -ne 0) { throw "$Tool failed: $Arguments" }
 }
@@ -100,14 +125,14 @@ $triple, $pic = switch (Get-Target ($Flags -split '\s+')) {
     default { 'x86_64-unknown-linux-gnu', '-fno-pic' }
 }
 Invoke-Tool 'clang.exe' ($cflags + @("--target=$triple", $pic, "$native\scale.c", '-o', "$out\scale.o"))
-Remove-Item -Force -ErrorAction SilentlyContinue "$modules\libscale.a"
+if (-not $part) { Remove-Item -Force -ErrorAction SilentlyContinue "$modules\libscale.a" }
 Invoke-Tool 'llvm-ar.exe' @('rcs', "$modules\libscale.a", "$out\scale.o")
 
 # A static library for Linux x86-64 that calls the C library, for the link with
 # glibc (D428), next to the tests of M36.
 $glibcTests = Join-Path $PSScriptRoot 'm36'
 Invoke-Tool 'clang.exe' ($cflags + @('--target=x86_64-unknown-linux-gnu', '-fno-pic', "$glibcTests\native\greet.c", '-o', "$out\greet.o"))
-Remove-Item -Force -ErrorAction SilentlyContinue "$glibcTests\libgreet.a"
+if (-not $part) { Remove-Item -Force -ErrorAction SilentlyContinue "$glibcTests\libgreet.a" }
 Invoke-Tool 'llvm-ar.exe' @('rcs', "$glibcTests\libgreet.a", "$out\greet.o")
 
 # SDL3 of the lib/ of the cromo of the tests (D429), next to the tests of SDL.
@@ -117,6 +142,7 @@ $cromoLib = @((Join-Path $cromoFolder 'lib'), (Join-Path (Split-Path $cromoFolde
 foreach ($sdl in @('windows\SDL3.lib', 'linux\libSDL3.a')) {
     $from = Join-Path $cromoLib $sdl
     $to = Join-Path $glibcTests ('sdl\' + (Split-Path -Leaf $sdl))
+    if ($part) { continue }
     if (Test-Path $from) { Copy-Item -Force $from $to } else { Remove-Item -Force -ErrorAction SilentlyContinue $to }
 }
 
@@ -246,6 +272,80 @@ function Invoke-Program([string]$Path, [string[]]$Arguments, [byte[]]$StandardIn
     }
 }
 
+# The tests in several processes: each writes what it does in a file, shown at its end.
+if (-not $part) {
+    if ($Jobs -le 0) { $Jobs = [Math]::Max(1, [Math]::Min(8, [int]([Environment]::ProcessorCount / 2))) }
+    if ((Get-Target ($Flags -split '\s+')) -like 'android*') { $Jobs = 1 }
+}
+if (-not $part -and $Jobs -gt 1) {
+    $logs = Join-Path $out 'jobs'
+    New-Item -ItemType Directory -Force $logs | Out-Null
+    $shell = (Get-Process -Id $PID).Path
+    function Start-Part([string]$Name, [string]$Extra) {
+        $arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" -Cromo `"$Cromo`" -LlvmRoot `"$LlvmRoot`" $Extra"
+        if ($Filter) { $arguments += " -Filter `"$Filter`"" }
+        if ($Flags) { $arguments += " -Flags `"$Flags`"" }
+        if ($Distro) { $arguments += " -Distro `"$Distro`"" }
+        if ($Adb) { $arguments += " -Adb `"$Adb`"" }
+        Start-Process -FilePath $shell -ArgumentList $arguments -NoNewWindow -PassThru `
+            -RedirectStandardOutput (Join-Path $logs "$Name.out") -RedirectStandardError (Join-Path $logs "$Name.err")
+    }
+    # What a part printed, and its counts: passed, failed, for the other system.
+    function Read-Part([string]$Name) {
+        $lines = @(Get-Content (Join-Path $logs "$Name.out") -Encoding UTF8)
+        $counts = $null
+        foreach ($line in $lines) {
+            if ($line -match '^(\d+) passed, (\d+) failed, (\d+) for the other system$') {
+                $counts = @([int]$matches[1], [int]$matches[2], [int]$matches[3])
+            }
+        }
+        if (-not $counts) {
+            $errors = Get-Content (Join-Path $logs "$Name.err") -Raw -ErrorAction SilentlyContinue
+            throw "a process of the tests did not end ($Name): $errors"
+        }
+        [pscustomobject]@{ Lines = $lines; Counts = $counts }
+    }
+    $started = @()
+    for ($i = 0; $i -lt $Jobs; $i++) { $started += Start-Part "part$i" "-Shard $i -Shards $Jobs" }
+    $started | Wait-Process
+    $passed = 0
+    $skipped = 0
+    $alone = @()  # not $again: names are case-insensitive, it would be the parameter
+    for ($i = 0; $i -lt $Jobs; $i++) {
+        $result = Read-Part "part$i"
+        $passed += $result.Counts[0]
+        $skipped += $result.Counts[2]
+        $failing = $false
+        foreach ($line in $result.Lines) {
+            if ($line -match '^FAIL  (.+?)( \((lsp|fmt)\))?$') {
+                $alone += $matches[1]
+                $failing = $true
+            } elseif ($line -match '^ok    ') {
+                $failing = $false
+                Write-Host $line
+            }
+        }
+    }
+    $failed = 0
+    if ($alone.Count -gt 0) {
+        # Alone, a test has the machine for itself: what fails again has failed.
+        $list = Join-Path $logs 'again.txt'
+        [IO.File]::WriteAllLines($list, [string[]]($alone | Select-Object -Unique))
+        Start-Part 'again' "-Rerun `"$list`"" | Wait-Process
+        $result = Read-Part 'again'
+        foreach ($line in $result.Lines) {
+            if ($line -match '^\d+ passed, ' -or $line -eq '') { continue }
+            if ($line -match '^FAIL  ') { Write-Host $line -ForegroundColor Red } else { Write-Host $line }
+        }
+        $passed += $result.Counts[0]
+        $failed = $result.Counts[1]
+    }
+    Write-Host ""
+    Write-Host "$passed passed, $failed failed, $skipped for the other system"
+    if ($failed -gt 0) { exit 1 }
+    exit 0
+}
+
 $passed = 0
 $failed = 0
 $skipped = 0
@@ -262,6 +362,7 @@ foreach ($test in Get-ChildItem $PSScriptRoot -Recurse -Filter *.cro | Sort-Obje
     if ($folders[0] -eq 'out2') { continue }  # what the tests write, as the module of a form
     if ($test.BaseName.EndsWith('_test')) { continue }
     if ($Filter -and -not $name.Contains($Filter)) { continue }
+    if (-not (Test-Chosen $name $test.BaseName)) { continue }
 
     # Not $flags: names are case-insensitive, it would overwrite the -Flags parameter.
     $compileFlags = @()
@@ -392,6 +493,7 @@ foreach ($case in Get-ChildItem $PSScriptRoot -Recurse -Filter *.cro | Sort-Obje
     $name = $case.FullName.Substring($PSScriptRoot.Length + 1)
     if (-not ($name -split '\\' -contains 'formatting') -or $case.Name.EndsWith('.formatted.cro')) { continue }
     if ($Filter -and -not $name.Contains($Filter)) { continue }
+    if (-not (Test-Chosen $name $case.BaseName)) { continue }
     $expectedPath = $case.FullName -replace '\.cro$', '.formatted.cro'
     $result = Invoke-Program $Cromo @('fmt', '-') ([System.IO.File]::ReadAllBytes($case.FullName))
     $problems = @()
@@ -494,6 +596,7 @@ foreach ($case in Get-ChildItem $PSScriptRoot -Recurse -Filter *.cro | Sort-Obje
     $name = $case.FullName.Substring($PSScriptRoot.Length + 1)
     if (-not ($name -split '\\' -contains 'lsp')) { continue }
     if ($Filter -and -not $name.Contains($Filter)) { continue }
+    if (-not (Test-Chosen $name $case.BaseName)) { continue }
     $checks = @()
     foreach ($line in Get-Content $case.FullName -Encoding UTF8) {
         if ($line -match '^\s*//\s*lsp-(hover|definition|error):\s*(\d+):(\d+)\s+(.+?)\s*$') {

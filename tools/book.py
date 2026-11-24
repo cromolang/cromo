@@ -840,10 +840,83 @@ def build(out, checked=False, cromo=None):
 
 # ---- The check of the examples ----
 
+def check_chapter(cromo, language, source):
+    """The examples of one chapter, in a folder of its own: how many, how many failed, and what to say."""
+    total = 0
+    failures = 0
+    said = []
+    blocks = parse(open(os.path.join(BOOK, language, source), encoding='utf-8').read())
+    work = tempfile.mkdtemp(prefix=f'book-{language}-')
+    if os.path.isdir(os.path.join(BOOK, 'images')):  # for embed()
+        shutil.copytree(os.path.join(BOOK, 'images'), os.path.join(work, 'images'))
+    if os.path.isdir(os.path.join(BOOK, 'sounds')):  # the sounds that the examples embed
+        shutil.copytree(os.path.join(BOOK, 'sounds'), os.path.join(work, 'sounds'))
+    number = 0
+    for i, b in enumerate(blocks):
+        if b.kind != 'code':
+            continue
+        name = b.flags.get('file')
+        if isinstance(name, str):
+            os.makedirs(os.path.dirname(os.path.join(work, name)), exist_ok=True)
+        if isinstance(name, str) and b.language != 'cromo':
+            open(os.path.join(work, name), 'w', encoding='utf-8', newline='\n').write(b.text + '\n')
+            continue
+        if b.language != 'cromo' or b.flags.get('ignore'):
+            continue
+        text = program(b.text)
+        is_program = re.search(r'^(i32|void)\s+main\s*\(', text, re.M)
+        if isinstance(name, str):
+            open(os.path.join(work, name), 'w', encoding='utf-8', newline='\n').write(text + '\n')
+        if not is_program:
+            continue
+        number += 1
+        total += 1
+        file = name if isinstance(name, str) else f'example{number}.cro'
+        path = os.path.join(work, file)
+        open(path, 'w', encoding='utf-8', newline='\n').write(text + '\n')
+        expected = None
+        following = blocks[i + 1] if i + 1 < len(blocks) else None
+        if following is not None and following.kind == 'code' and following.language == 'output':
+            expected = following.text
+        where = f'{language}/{source} example {number}'
+        exe = os.path.join(work, f'example{number}.exe')
+        build = subprocess.run([cromo, 'build', file, '-o', exe], capture_output=True, text=True, encoding='utf-8', cwd=work)
+        if b.flags.get('error'):
+            if build.returncode == 0:
+                said.append(f'FAIL  {where}: it compiles, but it should not')
+                failures += 1
+            elif expected and any(line.strip() and line.strip() not in build.stdout + build.stderr for line in expected.split('\n')):
+                said.append(f'FAIL  {where}: other errors\n{build.stdout}{build.stderr}')
+                failures += 1
+            continue
+        if build.returncode != 0:
+            said.append(f'FAIL  {where}: it does not compile\n{build.stdout}{build.stderr}')
+            failures += 1
+            continue
+        if b.flags.get('norun'):
+            continue
+        args = b.flags.get('args')
+        args = args.split(',') if isinstance(args, str) else []
+        try:
+            run = subprocess.run([exe] + args, capture_output=True, text=True, encoding='utf-8', cwd=work, timeout=60)
+        except subprocess.TimeoutExpired:
+            said.append(f'FAIL  {where}: still running after 60 s')
+            failures += 1
+            continue
+        if expected is not None and not b.flags.get('nocheck'):
+            got = (run.stdout + run.stderr).replace('\r\n', '\n').rstrip()
+            if got != expected.rstrip():
+                said.append(f'FAIL  {where}: it prints\n{got}\n      instead of\n{expected.rstrip()}')
+                failures += 1
+    shutil.rmtree(work, ignore_errors=True)
+    return total, failures, said
+
+
 def check(cromo, only=None, languages=None):
     cromo = os.path.abspath(cromo)
     failures = 0
     total = 0
+    chapters_to_check = []
     for language in languages or LANGUAGES:
         _, chapters = read_summary(language)
         for _, source in chapters:
@@ -853,70 +926,18 @@ def check(cromo, only=None, languages=None):
                 print(f'MISSING  {language}/{source}')
                 failures += 1
                 continue
-            blocks = parse(open(os.path.join(BOOK, language, source), encoding='utf-8').read())
-            work = tempfile.mkdtemp(prefix=f'book-{language}-')
-            if os.path.isdir(os.path.join(BOOK, 'images')):  # for embed()
-                shutil.copytree(os.path.join(BOOK, 'images'), os.path.join(work, 'images'))
-            if os.path.isdir(os.path.join(BOOK, 'sounds')):  # the sounds that the examples embed
-                shutil.copytree(os.path.join(BOOK, 'sounds'), os.path.join(work, 'sounds'))
-            number = 0
-            for i, b in enumerate(blocks):
-                if b.kind != 'code':
-                    continue
-                name = b.flags.get('file')
-                if isinstance(name, str):
-                    os.makedirs(os.path.dirname(os.path.join(work, name)), exist_ok=True)
-                if isinstance(name, str) and b.language != 'cromo':
-                    open(os.path.join(work, name), 'w', encoding='utf-8', newline='\n').write(b.text + '\n')
-                    continue
-                if b.language != 'cromo' or b.flags.get('ignore'):
-                    continue
-                text = program(b.text)
-                is_program = re.search(r'^(i32|void)\s+main\s*\(', text, re.M)
-                if isinstance(name, str):
-                    open(os.path.join(work, name), 'w', encoding='utf-8', newline='\n').write(text + '\n')
-                if not is_program:
-                    continue
-                number += 1
-                total += 1
-                file = name if isinstance(name, str) else f'example{number}.cro'
-                path = os.path.join(work, file)
-                open(path, 'w', encoding='utf-8', newline='\n').write(text + '\n')
-                expected = None
-                following = blocks[i + 1] if i + 1 < len(blocks) else None
-                if following is not None and following.kind == 'code' and following.language == 'output':
-                    expected = following.text
-                where = f'{language}/{source} example {number}'
-                exe = os.path.join(work, f'example{number}.exe')
-                build = subprocess.run([cromo, 'build', file, '-o', exe], capture_output=True, text=True, encoding='utf-8', cwd=work)
-                if b.flags.get('error'):
-                    if build.returncode == 0:
-                        print(f'FAIL  {where}: it compiles, but it should not')
-                        failures += 1
-                    elif expected and any(line.strip() and line.strip() not in build.stdout + build.stderr for line in expected.split('\n')):
-                        print(f'FAIL  {where}: other errors\n{build.stdout}{build.stderr}')
-                        failures += 1
-                    continue
-                if build.returncode != 0:
-                    print(f'FAIL  {where}: it does not compile\n{build.stdout}{build.stderr}')
-                    failures += 1
-                    continue
-                if b.flags.get('norun'):
-                    continue
-                args = b.flags.get('args')
-                args = args.split(',') if isinstance(args, str) else []
-                try:
-                    run = subprocess.run([exe] + args, capture_output=True, text=True, encoding='utf-8', cwd=work, timeout=60)
-                except subprocess.TimeoutExpired:
-                    print(f'FAIL  {where}: still running after 60 s')
-                    failures += 1
-                    continue
-                if expected is not None and not b.flags.get('nocheck'):
-                    got = (run.stdout + run.stderr).replace('\r\n', '\n').rstrip()
-                    if got != expected.rstrip():
-                        print(f'FAIL  {where}: it prints\n{got}\n      instead of\n{expected.rstrip()}')
-                        failures += 1
-            shutil.rmtree(work, ignore_errors=True)
+            chapters_to_check.append((language, source))
+    # The chapters at the same time, each in its folder: cromo and the examples are
+    # other processes, so threads are enough. Their messages come in the order of the book.
+    import concurrent.futures
+    workers = max(1, min(8, (os.cpu_count() or 2) // 2))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+        results = list(pool.map(lambda chapter: check_chapter(cromo, chapter[0], chapter[1]), chapters_to_check))
+    for count, failed, said in results:
+        total += count
+        failures += failed
+        for line in said:
+            print(line)
     print(f'{total - failures} examples passed, {failures} failed')
     return failures == 0
 
