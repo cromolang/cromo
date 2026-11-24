@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.16...3.20)  # 3.16 in WSL for cromo for Linux, without the runtime
+cmake_minimum_required(VERSION 3.16...3.20)  # 3.16 in WSL, for the libraries of cromo for Linux
 project(cromo VERSION 0.98.0 LANGUAGES CXX)  # 0.milestone.fix (D157)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -19,8 +19,8 @@ set(CROMO_LLVM_ROOT "${CROMO_LLVM_DEFAULT}" CACHE PATH "LLVM with static librari
 list(PREPEND CMAKE_PREFIX_PATH "${CROMO_LLVM_ROOT}")
 
 # The runtime and lib/ are built on Windows, with the clang of the LLVM archive, for
-# both systems; cromo for Linux is only the compiler, and its archive takes lib/
-# from the build of Windows (D292).
+# both systems; on Linux CMake only finds the libraries of LLVM for the compiler,
+# and the archive of cromo for Linux takes lib/ from the build of Windows (D292).
 option(CROMO_BUILD_LIBRARY "Build the runtime and place the library in lib/" ${WIN32})
 
 if(WIN32)
@@ -500,29 +500,31 @@ add_custom_command(
   COMMENT "Placing the library in lib/")
 add_custom_target(cromo_library ALL DEPENDS "${CROMO_RT_DIR}/library.stamp")
 
-# The runtime written in Cromo, std.runtime (D393): compiled once by the cromo just
-# built, as in --release, into an object of the archive of the runtime of each
-# system, next to the C, so that the programs only link it.
+# The runtime written in Cromo, std.runtime (D393): compiled once, as in --release,
+# into an object of the archive of the runtime of each system, next to the C, so
+# that the programs only link it. Its compiler is the first cromo of the build,
+# stage1, which the cromo of the version before made from compiler/cromo.cro (D576).
+set(CROMO_COMPILER "${CMAKE_BINARY_DIR}/stage1/cromo.exe" CACHE FILEPATH "The cromo that compiles std.runtime")
 add_custom_command(
   OUTPUT "${CROMO_RT_DIR}/runtime_cromo.obj"
-  COMMAND cromo build --runtime --target windows -o "${CROMO_RT_DIR}/runtime_cromo.obj"
-  DEPENDS cromo "${CROMO_RT_DIR}/library.stamp"
+  COMMAND "${CROMO_COMPILER}" build --runtime --target windows -o "${CROMO_RT_DIR}/runtime_cromo.obj"
+  DEPENDS "${CROMO_COMPILER}" "${CROMO_RT_DIR}/library.stamp"
   COMMENT "Compiling the runtime written in Cromo")
 add_custom_command(
   OUTPUT "${CROMO_RT_DIR}/runtime_cromo_linux.o"
-  COMMAND cromo build --runtime --target linux -o "${CROMO_RT_DIR}/runtime_cromo_linux.o"
-  DEPENDS cromo "${CROMO_RT_DIR}/library.stamp"
+  COMMAND "${CROMO_COMPILER}" build --runtime --target linux -o "${CROMO_RT_DIR}/runtime_cromo_linux.o"
+  DEPENDS "${CROMO_COMPILER}" "${CROMO_RT_DIR}/library.stamp"
   COMMENT "Compiling the runtime written in Cromo for Linux")
 add_custom_command(
   OUTPUT "${CROMO_RT_DIR}/runtime_cromo_linux_arm64.o"
-  COMMAND cromo build --runtime --target linux-arm64 -o "${CROMO_RT_DIR}/runtime_cromo_linux_arm64.o"
-  DEPENDS cromo "${CROMO_RT_DIR}/library.stamp"
+  COMMAND "${CROMO_COMPILER}" build --runtime --target linux-arm64 -o "${CROMO_RT_DIR}/runtime_cromo_linux_arm64.o"
+  DEPENDS "${CROMO_COMPILER}" "${CROMO_RT_DIR}/library.stamp"
   COMMENT "Compiling the runtime written in Cromo for Linux on ARM64")
 foreach(arch arm64 x86_64)
   add_custom_command(
     OUTPUT "${CROMO_RT_DIR}/android_${arch}/runtime_cromo.o"
-    COMMAND cromo build --runtime --target android-${arch} -o "${CROMO_RT_DIR}/android_${arch}/runtime_cromo.o"
-    DEPENDS cromo "${CROMO_RT_DIR}/library.stamp"
+    COMMAND "${CROMO_COMPILER}" build --runtime --target android-${arch} -o "${CROMO_RT_DIR}/android_${arch}/runtime_cromo.o"
+    DEPENDS "${CROMO_COMPILER}" "${CROMO_RT_DIR}/library.stamp"
     COMMENT "Compiling the runtime written in Cromo for Android on ${arch}")
 endforeach()
 add_custom_command(
@@ -539,57 +541,23 @@ add_custom_command(
           "${CROMO_RT_DIR}/libcromo_rt_glibc.a" ${CROMO_GLIBC_STUB_FILES} ${CROMO_SDL_FILES} ${CROMO_ANDROID_ARCHIVES}
           "${CROMO_RT_DIR}/library.stamp"
   COMMENT "Placing the runtime in lib/")
-add_custom_target(cromo_runtime ALL DEPENDS "${CROMO_RT_DIR}/runtime.stamp")
+# Not of ALL: it needs stage1, which build.ps1 makes after the library is in lib/.
+add_custom_target(cromo_runtime DEPENDS "${CROMO_RT_DIR}/runtime.stamp")
 
 endif()
 
-add_executable(cromo
-  src/main.cpp
-  src/ast.cpp
-  src/diagnostics.cpp
-  src/docs.cpp
-  src/lexer.cpp
-  src/parser.cpp
-  src/types.cpp
-  src/sema.cpp
-  src/ownership.cpp
-  src/codegen.cpp
-  src/format.cpp
-  src/backend.cpp
-  src/libraries.cpp
-  src/loader.cpp
-  src/packages.cpp
-  src/json.cpp
-  src/index.cpp
-  src/reference.cpp
-  src/lsp.cpp
-  src/installation.cpp
-  compiler/shim/llvm_trims.cpp
-)
-if(CROMO_BUILD_LIBRARY)
-  add_dependencies(cromo cromo_library)
+# cromo is written in Cromo (D291, D576): build.ps1 and build-linux.sh compile
+# compiler/cromo.cro with the cromo of the version before. What it needs of C++ is
+# compiler/shim/shim.cpp, with the libraries of LLVM and of LLD in one archive, made
+# by tools/llvm-archive.ps1 and tools/llvm-archive.sh from the line of the link of
+# this target, which is never built: it only says which libraries, and in which order.
+add_executable(cromollvm-libraries EXCLUDE_FROM_ALL compiler/shim/libraries.cpp)
+if(NOT MSVC)
+  target_link_libraries(cromollvm-libraries PRIVATE pthread)
 endif()
-
-target_include_directories(cromo SYSTEM PRIVATE ${LLVM_INCLUDE_DIRS} ${LLD_INCLUDE_DIRS})
-separate_arguments(CROMO_LLVM_DEFINITIONS NATIVE_COMMAND "${LLVM_DEFINITIONS}")
-target_compile_definitions(cromo PRIVATE ${CROMO_LLVM_DEFINITIONS} CROMO_VERSION="${PROJECT_VERSION}")
-
-if(MSVC)
-  # C4702 (unreachable code) comes from the LLVM headers during optimization.
-  target_compile_options(cromo PRIVATE /utf-8 /W4 /permissive- /GR- /Zc:__cplusplus /wd4702)
-else()
-  # As LLVM, without RTTI; the runtime of C++ inside cromo, so that cromo for
-  # Linux depends only on glibc (D292).
-  target_compile_options(cromo PRIVATE -Wall -Wextra -fno-rtti)
-  # Without the symbols and the sections that nothing uses: a smaller archive (D286).
-  target_link_options(cromo PRIVATE -static-libstdc++ -static-libgcc -Wl,--gc-sections -s)
-  target_link_libraries(cromo PRIVATE pthread)
-  target_sources(cromo PRIVATE src/glibc_compat.cpp)
-endif()
-
 llvm_map_components_to_libnames(CROMO_LLVM_LIBS
   Core DebugInfoDWARF IRReader Object Passes Support Target TargetParser MC
   X86CodeGen X86AsmParser X86Desc X86Info
   AArch64CodeGen AArch64AsmParser AArch64Desc AArch64Info
 )
-target_link_libraries(cromo PRIVATE lldCOFF lldELF lldCommon ${CROMO_LLVM_LIBS})
+target_link_libraries(cromollvm-libraries PRIVATE lldCOFF lldELF lldCommon ${CROMO_LLVM_LIBS})

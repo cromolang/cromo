@@ -4,7 +4,7 @@ This document explains how to build `cromo` from source, run the tests and make 
 
 ## Overview
 
-`cromo` is a C++20 program that contains LLVM and LLD, linked statically: one executable compiles and links Cromo programs, with no other tool. Next to it, `cromo` reads `lib/`: the standard library, written in Cromo, and the runtime, written in C and compiled for each system.
+`cromo` is written in Cromo, in `compiler/`, and contains LLVM and LLD, linked statically: one executable compiles and links Cromo programs, with no other tool. It is built by the `cromo` of the version before, which the build downloads from cromolang.org, as the compilers of Rust and of Go are; the only C++ is `compiler/shim/shim.cpp`, the functions that the C API of LLVM does not have (D291, D576). Next to it, `cromo` reads `lib/`: the standard library, written in Cromo, and the runtime, written in C and compiled for each system.
 
 | Build | Where | Result |
 |---|---|---|
@@ -16,7 +16,7 @@ The Windows build is the main one: it compiles the runtime of both systems with 
 ## Requirements on Windows
 
 - **Windows 10 or 11, x64.**
-- **Visual Studio 2022**, Community or another edition, with the workload *Desktop development with C++*. It contains the MSVC compiler, CMake, Ninja and vcpkg.
+- **Visual Studio 2022**, Community or another edition, with the workload *Desktop development with C++*. It contains the MSVC compiler, for the shim and for the C and C++ runtime that LLVM needs, CMake, Ninja and vcpkg.
 - **LLVM 23.1.4**, from the archive `clang+llvm-23.1.4-x86_64-pc-windows-msvc.tar.xz` of the [LLVM release](https://github.com/llvm/llvm-project/releases/tag/llvmorg-23.1.4). The installer `LLVM-23.1.4-win64.exe` is not enough: it has neither the static libraries nor the CMake files. The default place is `C:\software\llvm-23.1.4`:
 
   ```powershell
@@ -25,7 +25,7 @@ The Windows build is the main one: it compiles the runtime of both systems with 
   ```
 
 - **Git**, to clone the repository.
-- **A connection to the Internet** for the first build: vcpkg downloads and builds zlib, zstd and libxml2, which the LLVM libraries need.
+- **A connection to the Internet** for the first build: vcpkg downloads and builds zlib, zstd and libxml2, which the LLVM libraries need, and `build.ps1` downloads the `cromo` of the version before into `bootstrap\`, and checks its SHA-256.
 - Optional: **WSL 2** with Ubuntu, to run the tests for Linux and to build `cromo` for Linux.
 
 ## Building on Windows
@@ -43,14 +43,18 @@ The last command prints `cromo 0.98.0 (LLVM 23.1.4)`, with the version of the so
 
 | Option | Meaning |
 |---|---|
-| `-Config Release` | A build without debug information; the default is `RelWithDebInfo` |
 | `-LlvmRoot <folder>` | LLVM in another folder than `C:\software\llvm-23.1.4` |
 | `-Clean` | Deletes `build\` and starts from scratch |
+| `-Bootstrap <cromo.exe>` | Another `cromo` builds this one, as that of an installation, in place of the one in `bootstrap\` |
 
 The script finds Visual Studio with `vswhere`, loads the environment of `vcvars64.bat` and configures CMake with Ninja and the toolchain of vcpkg (triplet `x64-windows-static`). It removes from `PATH` the MinGW toolchains, such as the one of Strawberry Perl, whose zlib CMake would otherwise find. Then it builds:
 
-- `build\cromo.exe`, from `src\`, with the static C runtime (`/MT`) and without RTTI, as the LLVM libraries: `cromo.exe` needs no Visual C++ Redistributable;
-- `build\lib\`, with `core.cro` and `std\` copied from `library\`, and the runtime: the C of `runtime\` and `third_party\` compiled by the clang of LLVM, and `std.runtime`, the part written in Cromo, compiled by the `cromo.exe` just built, in `windows\cromo_rt.lib` and `linux\libcromo_rt.a`.
+- `compiler\cromollvm.lib`, with the shim, the libraries of LLVM and of LLD and the static C and C++ runtime of MSVC (`/MT`), made by `tools\llvm-archive.ps1`: `cromo.exe` needs no Visual C++ Redistributable;
+- `build\stage1\cromo.exe`: `compiler\cromo.cro` compiled by the `cromo` of the version before, with the library of that version;
+- `build\lib\`, with `core.cro` and `std\` copied from `library\`, and the runtime: the C of `runtime\` and `third_party\` compiled by the clang of LLVM, and `std.runtime`, the part written in Cromo, compiled by `stage1`, in `windows\cromo_rt.lib` and `linux\libcromo_rt.a`;
+- `build\cromo.exe`: `compiler\cromo.cro` compiled by `stage1`, with the library and the runtime of the sources. It is the same file as `stage1`, apart from the time of the build, when the version before and the sources compile in the same way.
+
+So the sources of the compiler must compile with the `cromo` of the version before: what the language or the library gains in a version, the compiler uses from the next one. The version that builds is written at the top of `build.ps1` and of `build-linux.sh`, with the SHA-256 of its archives.
 
 Rebuild after any change to `library\` or `runtime\`: `cromo` reads them from `build\lib`. Debug builds are not supported, since the LLVM libraries are release builds.
 
@@ -84,7 +88,7 @@ In WSL 2, or on a Linux x64 machine with Ubuntu 20.04 or later:
 sudo apt install cmake ninja-build zlib1g-dev libzstd-dev
 ```
 
-and a `g++` with C++20 support (the releases are built with GCC 14), and LLVM 23.1.4 for Linux, from the archive `LLVM-23.1.4-Linux-X64.tar.xz` of the same release, in `~/llvm-23.1.4`:
+and a `g++`, for the shim (the releases are built with GCC 14), `curl`, and LLVM 23.1.4 for Linux, from the archive `LLVM-23.1.4-Linux-X64.tar.xz` of the same release, in `~/llvm-23.1.4`:
 
 ```sh
 tar -xf LLVM-23.1.4-Linux-X64.tar.xz -C ~
@@ -98,31 +102,20 @@ sh build-linux.sh            # --clean to start from scratch
 build-linux/cromo version
 ```
 
-`build-linux.sh` builds only the compiler, in `build-linux/cromo`, and links `build-linux/lib` to the `lib` of the Windows build. `LLVM_ROOT` and `CXX` choose another LLVM and another C++ compiler.
+`build-linux.sh` builds only the compiler, as `build.ps1` does: `compiler/libcromollvm.a` with `tools/llvm-archive.sh`, `build-linux/stage1/cromo` with the `cromo` for Linux of the version before, downloaded into `bootstrap/`, and `build-linux/cromo` with that. It links `build-linux/lib` to the `lib` of the Windows build. `LLVM_ROOT` and `CXX` choose another LLVM and another C++ compiler, `BOOTSTRAP` another `cromo` that builds.
 
 `cromo` for Linux links statically the C++ runtime, zlib and zstd, and depends only on the C library of the system: built on Ubuntu 20.04, it runs with glibc 2.29 or later. A build entirely on Linux, runtime included, is not supported yet.
 
-## The pilot of the compiler in Cromo
+## The compiler checks itself
 
-`compiler/` holds the first part of the compiler written in Cromo (D417, D423): the lexer, the parser, `cromo fmt`, the loader of the modules and the names of the modules. `build.ps1` compiles it with the `cromo` just built into `build\cromo-fmt.exe`, which takes the same options as `cromo fmt`, and `build\cromo-check.exe`, which checks the names of a program as `cromo build --check-names`; they are not in the archives. `tests\run-pilot.ps1` checks that both give the same results as the C++, on every `.cro` file and every program of the repository:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File tests\run-pilot.ps1
-```
-
-## cromo written in Cromo
-
-`compiler/cromo.cro` is `cromo` itself written in Cromo, with LLVM and LLD inside it (D291, D576): the analysis and the generation of the code of the pilot, then `compiler/backend.cro`, which calls the C API of LLVM, and `compiler/shim/shim.cpp`, the few functions of C++ for what that API does not give. `build.ps1` makes `compiler\cromollvm.lib` with `tools\llvm-archive.ps1`, one archive with the shim, the libraries of LLVM and of LLD and the static runtime of C++, and compiles `compiler\cromo.cro` with the `cromo` in C++ into `build\stage1\cromo.exe`; `build-linux.sh` does the same in WSL, with `tools/llvm-archive.sh`, into `build-linux/stage1/cromo`. Neither is in the archives yet.
-
-`tests\run-stage.ps1` builds every program of the repository with both and checks that the executables have the same bytes; `tests/run-stage.sh` does it in WSL. The behavior tests run with it too:
+`build\stage1\cromo.exe` and `build\cromo.exe` are the same sources, compiled by the version before and by themselves. `tests\run-stage.ps1` builds every program of the repository with both and checks that the executables have the same bytes, apart from the time of the build that `lld-link` writes; `tests/run-stage.sh` does it in WSL:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File tests\run-stage.ps1                       # -Flags '--release', -Flags '--target linux'
-powershell -ExecutionPolicy Bypass -File tests\run-tests.ps1 -Cromo build\stage1\cromo.exe
 wsl -e sh tests/run-stage.sh
 ```
 
-It compiles itself: `build\stage1\cromo.exe build --release compiler\cromo.cro -o build\stage2\cromo.exe` gives the executable it was built from, apart from the time of the build.
+Until version 0.98.0 the compiler was a program of C++, in `src/`, and the one in Cromo was checked against it in the same way, on the text of the IR and on the executables (D572, D576): the history of the repository has it.
 
 ## The extension for Visual Studio Code
 
@@ -146,7 +139,7 @@ The version is in `CMakeLists.txt`, in `project(cromo VERSION 0.94.0)`: `0.<mile
 powershell -ExecutionPolicy Bypass -File tools\package.ps1 -Key <private key>
 ```
 
-`tools\package.ps1` writes in `dist\`, with the layout of the site; the `cromo` of the archives is the one written in Cromo, `build\stage1\cromo.exe` and `build-linux/stage1/cromo` (D576):
+`tools\package.ps1` writes in `dist\`, with the layout of the site:
 
 | Path | Content |
 |---|---|
@@ -189,7 +182,7 @@ Publishing is copying `dist\site` to the folder of the server, `/var/www/cromola
 
 | Folder | Content |
 |---|---|
-| `src/` | The compiler, in C++: lexer, parser, semantic analysis, generation of LLVM IR, backend, formatter, language server |
+| `compiler/` | The compiler, in Cromo: lexer, parser, semantic analysis, generation of LLVM IR, backend, formatter, language server; in `shim/`, its C++ |
 | `runtime/` | The runtime in C, without the C library: memory, threads and tasks, stack traces and TLS |
 | `library/` | The standard library, in Cromo |
 | `third_party/` | Mbed TLS and Monocypher, with their licenses |

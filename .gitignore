@@ -25,3 +25,6 @@ dist/
 # LLVM, LLD and the runtime of C++ for the compiler in Cromo (tools/llvm-archive.ps1)
 compiler/*.lib
 compiler/*.a
+
+# The cromo of the version before, which builds this one (build.ps1, build-linux.sh)
+bootstrap/

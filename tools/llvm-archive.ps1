@@ -1,6 +1,7 @@
 # Makes compiler\cromollvm.lib, the C library of the compiler written in Cromo (D291):
-# compiler\shim\shim.cpp, the libraries of LLVM and of LLD that cromo.exe is linked
-# with, and the runtime of C and C++ of MSVC, in one archive, which `extern
+# compiler\shim\shim.cpp, the libraries of LLVM and of LLD that cromo needs, as CMake
+# lists them for its target cromollvm-libraries, and the runtime of C and C++ of MSVC,
+# in one archive, which `extern
 # "cromollvm"` of compiler\llvm.cro finds next to its module (D136). It is called by
 # build.ps1, in the environment of vcvars64, after CMake wrote build\build.ninja.
 # Usage: powershell -ExecutionPolicy Bypass -File tools\llvm-archive.ps1 [-LlvmRoot <dir>]
@@ -23,7 +24,7 @@ $object = Join-Path $build 'shim.obj'
 cl /nologo /c /MT /O2 /EHsc /GR- /std:c++17 /utf-8 "/I$LlvmRoot\include" "/Fo$object" $shim
 if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
-# The libraries of the link of cromo.exe, in its order, each once.
+# The libraries of the link of cromollvm-libraries, in its order, each once.
 $line = (Select-String -Path $ninja -Pattern 'LINK_LIBRARIES = .*lldCOFF' | Select-Object -First 1).Line
 $libraries = @()
 foreach ($match in [regex]::Matches($line.Substring($line.IndexOf('=') + 1), '"[^"]+"|\S+')) {
@@ -37,8 +38,8 @@ foreach ($match in [regex]::Matches($line.Substring($line.IndexOf('=') + 1), '"[
     }
     if ($libraries -notcontains $item) { $libraries += $item }
 }
-# The runtime of C and C++, static as that of LLVM (/MT), which cromo.exe gets by
-# default and a program of Cromo does not: its linker has no default libraries.
+# The runtime of C and C++, static as that of LLVM (/MT), which a program of C++ gets
+# by default and a program of Cromo does not: its linker has no default libraries.
 foreach ($name in 'libcmt.lib', 'libcpmt.lib', 'libvcruntime.lib', 'libucrt.lib', 'oldnames.lib', 'comsuppw.lib') {
     $found = $env:LIB -split ';' | Where-Object { $_ -and (Test-Path (Join-Path $_ $name)) } | Select-Object -First 1
     if (-not $found) { throw "$name was not found in the libraries of MSVC" }
@@ -47,7 +48,7 @@ foreach ($name in 'libcmt.lib', 'libcpmt.lib', 'libvcruntime.lib', 'libucrt.lib'
 $response = Join-Path $build 'cromollvm.rsp'
 [IO.File]::WriteAllLines($response, @('/nologo', "/out:`"$archive`"", "`"$object`"") + ($libraries | ForEach-Object { "`"$_`"" }))
 # LNK4006 and LNK4221: the same function in two libraries, as malloc of LLVM and of
-# the C runtime; the first is kept, as the linker of cromo.exe does.
+# the C runtime; the first is kept, as a linker does.
 lib.exe "@$response" | Select-String -NotMatch 'LNK4006|LNK4221'
 if ($LASTEXITCODE) { exit $LASTEXITCODE }
 "cromollvm.lib: $($libraries.Count) libraries, $([int]((Get-Item $archive).Length / 1MB)) MB"

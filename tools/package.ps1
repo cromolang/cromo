@@ -14,10 +14,9 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
-# The archives hold cromo written in Cromo (D576), which the two builds leave in stage1.
-$cromo = Join-Path $root 'build\stage1\cromo.exe'
+$cromo = Join-Path $root 'build\cromo.exe'
 $library = Join-Path $root 'build\lib'
-$linuxCromo = Join-Path $root 'build-linux\stage1\cromo'
+$linuxCromo = Join-Path $root 'build-linux\cromo'
 foreach ($needed in $cromo, $library, $linuxCromo) {
     if (-not (Test-Path $needed)) { throw "$needed is missing: run build.ps1, and build-linux.sh in WSL" }
 }

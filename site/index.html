@@ -515,12 +515,12 @@ cromo @VERSION@ (LLVM 23.1.4)</pre>
     <div class="wrap">
       <div class="kicker">Roadmap</div>
       <h2>Built in the open, <span class="chrome">one milestone at a time</span></h2>
-      <p class="section-lead">Every choice is decided first and written down with its reasons, then implemented with tests on Windows and Linux. Ninety-seven milestones, from M0 to M96, are done; the compiler written in Cromo already has the parser and the whole analysis.</p>
-      <div class="progress-label"><span>M0 – M96 done</span><span>97 of 97 numbered milestones</span></div>
+      <p class="section-lead">Every choice is decided first and written down with its reasons, then implemented with tests on Windows and Linux. Ninety-nine milestones, from M0 to M98, are done; since version 0.98 the compiler is written in Cromo, and compiles itself.</p>
+      <div class="progress-label"><span>M0 – M98 done</span><span>99 of 99 numbered milestones</span></div>
       <div class="progress" aria-hidden="true"><div style="width:100%"></div></div>
       <div class="roadmap">
         <div class="phase">
-          <h3>Done <span class="badge done">M0 – M96</span></h3>
+          <h3>Done <span class="badge done">M0 – M98</span></h3>
           <ul class="steps">
             <li><b>M0–2</b><span>LLVM backend, numbers, control flow, structs, RAII</span></li>
             <li><b>M3–6</b><span>Ownership, generics, interfaces, lists, strings, enums, exceptions</span></li>
@@ -577,6 +577,7 @@ cromo @VERSION@ (LLVM 23.1.4)</pre>
             <li><b>M34</b><span>The analysis of the compiler written in Cromo: the types of the declarations and of the expressions, and the moves, with the same results as the C++ on every test</span></li>
             <li><b>M95</b><span>Local references, <code>ref</code> and <code>const ref</code>; <code>==</code> on structs, enums, lists and maps; <code>Option&lt;T&gt;</code>; <code>public const</code>; <code>extend</code>, the methods of a struct in more files; and <code>cromo</code> says what it does while it builds</span></li>
             <li><b>M96</b><span>The words reserved for later, towards a stable language, and a heap for Linux with a cache for each thread, which halves the time of the server of the benchmarks; the guide as a book to print</span></li>
+            <li><b>M97–98</b><span>The compiler written in Cromo: the generation of the code, LLVM and LLD through their C API, every command of <code>cromo</code>; it builds the same executables as the one in C++, byte for byte, and compiles itself. <code>[[format]]</code>, for functions that take a format as <code>println</code></span></li>
           </ul>
         </div>
         <div class="phase">
@@ -586,12 +587,6 @@ cromo @VERSION@ (LLVM 23.1.4)</pre>
             <li><b>macOS</b><span>Programs for macOS, on Apple Silicon and Intel</span></li>
             <li><b>designer</b><span>The properties of each kind of component, and of several together</span></li>
             <li><b>packages</b><span>More of them: models of language with llama.cpp, plugins with WebAssembly, video</span></li>
-          </ul>
-        </div>
-        <div class="phase">
-          <h3>Later <span class="badge later">self-hosting</span></h3>
-          <ul class="steps">
-            <li><b>last</b><span>The compiler written in Cromo, compiling itself</span></li>
           </ul>
         </div>
       </div>

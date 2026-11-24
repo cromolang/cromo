@@ -128,7 +128,7 @@ Cromo is young: its versions are 0.x, the language can still change before 1.0, 
 
 - **What is safe and what is not.** [What Cromo checks, and what it does not](https://cromolang.org/book/en/appendix-safety.html) lists the guarantees, their limits and their price. The rules are not formally proven, and the compiler is young: a program without `import unsafe` that corrupts memory is a bug to report.
 - **Systems.** Windows x64 and Linux x64, and from either one programs for Linux ARM64 and Android. Not yet macOS and iOS.
-- **The compiler** is written in C++ and uses LLVM 23. A compiler written in Cromo will follow, once the language is mature; its first part, the formatter, is in [compiler/](compiler/).
+- **The compiler** is written in Cromo, in [compiler/](compiler/), and uses LLVM 23: each version is built by the one before, and compiles itself.
 
 ## How Cromo is made
 

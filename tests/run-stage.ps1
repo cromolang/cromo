@@ -1,5 +1,6 @@
-# Checks cromo written in Cromo (D291, D576): build\stage1\cromo.exe must build every
-# program of tests\, examples\ and bench\ as cromo in C++ does: the same exit code and
+# Checks the two compilers of a build (D291, D576): build\stage1\cromo.exe, the sources
+# compiled by the cromo of the version before, must build every program of tests\,
+# examples\ and bench\ as build\cromo.exe does, the sources compiled by stage1: the same exit code and
 # the same errors for those that are refused, and for the others an executable with
 # the same bytes at the same path, apart from the time of the build that lld-link
 # writes in an executable of Windows (two fields of four bytes).
