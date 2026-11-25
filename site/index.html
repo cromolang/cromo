@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Cromo programming language (cromolang) — native code, familiar syntax, no pointers</title>
 <meta name="description" content="Cromo (cromolang) is a compiled programming language with the syntax of C and C++, RAII, ownership checked by the compiler and no garbage collector. One command compiles and links, for Windows and Linux, and one line installs it.">
-<meta name="theme-color" content="#f6f8fb">
+<meta name="theme-color" content="#f3f1ea">
 <link rel="icon" href="logo-mark.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="logo-avatar.png">
 <meta property="og:type" content="website">
@@ -16,7 +16,7 @@
 <meta name="twitter:card" content="summary_large_image">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="site.css">
 </head>
 <body>
@@ -76,14 +76,25 @@
   <div class="hero">
     <div class="wrap">
       <div>
-        <div class="eyebrow"><span class="dot"></span>A systems language in development · Windows, Linux, ARM64</div>
-        <h1>Native code.<br>Familiar syntax.<br><span class="chrome">No pointers.</span></h1>
-        <p class="lead">Cromo is a compiled language with the syntax of C and C++, <strong>RAII</strong> and <strong>ownership checked by the compiler</strong>, and no garbage collector. One command, <code>cromo</code>, compiles and links your program. Cromo brings together the best ideas of C++, Rust and Go, with rules that <strong>stay simple</strong>.</p>
+        <div class="eyebrow">Cromo programming language · technical sheet</div>
+        <h1>Native code, familiar syntax, <span class="chrome">no pointers</span>.</h1>
+        <p class="lead">Cromo is a compiled language with the syntax of C and C++, <strong>RAII</strong> and <strong>ownership checked by the compiler</strong>, and no garbage collector. One command, <code>cromo</code>, compiles and links your program. It brings together the best ideas of C++, Rust and Go, with rules that <strong>stay simple</strong>.</p>
         <div class="cta">
-          <a class="btn primary" href="download/"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5v8M4.5 7 8 10.5 11.5 7M3 13.5h10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>Download Cromo @VERSION@</a>
+          <a class="btn primary" href="download/">Download Cromo @VERSION@</a>
           <a class="btn" href="book/">Read the guide</a>
         </div>
-        <div class="facts"><span>LLVM backend</span><span>as fast as C++</span><span>no libc, no SDK</span><span>Windows and Linux, from either</span><span>lightweight tasks</span><span>HTTP, TLS and JSON built in</span><span>VS Code support</span></div>
+        <dl class="sheet" aria-label="Cromo in data">
+          <div><dt>Kind</dt><dd>compiled to native code, statically typed</dd></div>
+          <div><dt>Memory</dt><dd>ownership and RAII <span>· no pointers, no garbage collector</span></dd></div>
+          <div><dt>Backend</dt><dd>LLVM 23 and LLD, inside <code>cromo</code></dd></div>
+          <div><dt>Targets</dt><dd>Windows x64 · Linux x64 · Linux ARM64 · Android</dd></div>
+          <div><dt>Hello world</dt><dd>32 KB <span>· statically linked, no libc</span></dd></div>
+          <div><dt>Needs</dt><dd>nothing else <span>· no SDK, no Visual Studio</span></dd></div>
+          <div><dt>Library</dt><dd>tasks, HTTP, TLS, JSON, databases, windows</dd></div>
+          <div><dt>Written in</dt><dd>Cromo <span>· it compiles itself since 0.98</span></dd></div>
+          <div><dt>Decisions</dt><dd>580 <span>· each written down with its reason</span></dd></div>
+          <div><dt>License</dt><dd>MIT or Apache 2.0</dd></div>
+        </dl>
       </div>
       <div class="window">
         <div class="window-bar"><i></i><i></i><i></i><span class="title"><b>timer.cro</b> — RAII, maps and bitwise operators</span></div>
@@ -118,16 +129,6 @@ even 249500, odd 250000
 sum: 120 µs</pre></div>
       </div>
     </div>
-  </div>
-
-  <div class="stats" aria-label="Cromo in numbers">
-    <div class="wrap"><div class="stats-grid">
-      <div class="stat"><b>1</b><span>command: compiler, linker, formatter and language server</span></div>
-      <div class="stat"><b>0</b><span>dependencies: no libc, no Windows SDK</span></div>
-      <div class="stat"><b>32 KB</b><span>for a hello world, statically linked</span></div>
-      <div class="stat"><b>4</b><span>targets: Windows x64, Linux x64, Linux ARM64 and Android</span></div>
-      <div class="stat"><b>559</b><span>design decisions, all written down</span></div>
-    </div></div>
   </div>
 
   <section id="features">
@@ -182,8 +183,8 @@ sum: 120 µs</pre></div>
 
   <section id="ownership">
     <div class="wrap split">
+      <div class="kicker">Ownership</div>
       <div>
-        <div class="kicker">Ownership</div>
         <h2>The compiler explains the rules</h2>
         <p class="section-lead" style="margin-bottom:0">Strings, lists and maps own memory: <code>=</code> copies them, as in C++, and <code>move</code> hands them over for free. When a value is used after a move, or cannot be copied, the error says how to fix it — and names the design decision behind the rule.</p>
         <ul class="modes">
@@ -215,8 +216,8 @@ i32 main() {
 
   <section id="apps">
     <div class="wrap split">
+      <div class="kicker">Windows and apps</div>
       <div>
-        <div class="kicker">Windows and apps</div>
         <h2>One program, <span class="chrome">desktop and phone</span></h2>
         <p class="section-lead" style="margin-bottom:0"><code>std.gui</code> draws its windows and components itself, inside the program: the same look on Windows and on Linux, light or dark. Compiled with <code>--target android</code>, the same program is an app.</p>
         <ul class="modes">
@@ -583,7 +584,6 @@ cromo @VERSION@ (LLVM 23.1.4)</pre>
         <div class="phase">
           <h3>Next</h3>
           <ul class="steps">
-            <li><b>compiler</b><span>The generation of the code in Cromo, on the way to a compiler that compiles itself</span></li>
             <li><b>macOS</b><span>Programs for macOS, on Apple Silicon and Intel</span></li>
             <li><b>designer</b><span>The properties of each kind of component, and of several together</span></li>
             <li><b>packages</b><span>More of them: models of language with llama.cpp, plugins with WebAssembly, video</span></li>
@@ -686,7 +686,9 @@ cromo @VERSION@ (LLVM 23.1.4)</pre>
       html += '<span class="tk-' + classes[group] + '">' + escape(match[0]) + "</span>";
       last = token.lastIndex;
     }
-    block.innerHTML = html + escape(source.slice(last));
+    html += escape(source.slice(last));
+    // Each line in a span, which the page numbers: no token spans two lines.
+    block.innerHTML = html.split("\n").map((line) => '<span class="ln">' + line + "</span>").join("\n");
   });
 
   // The tabs of the examples.
