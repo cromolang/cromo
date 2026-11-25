@@ -237,31 +237,35 @@ body.print {
   -webkit-print-color-adjust: exact; print-color-adjust: exact;
 }
 body.print a { color: #1d7a4c; text-decoration: none; }
+/* The scale of the text: the sizes below are written for a page 1/0.7 times as large, and
+   the contents and the chapters are drawn at 0.7 of them. One number makes the type of the
+   whole book larger or smaller. The cover, the title page and the colophon are in true size. */
+body.print .contents, body.print .chapter { zoom: 0.7; }
 
 /* Cover and colophon */
 /* The front is the first page of the PDF; cover.html is the cover for a printer: the
    back, the spine and the front on one sheet, with 3 mm of bleed on every side. */
-body.print .cover, body.wrap .sheet { background: #f3f1ea; color: #17191d; }
+body.print .cover, body.wrap .sheet { background: #111315; color: #e7e4da; }
 body.print .cover {
   page: cover; position: relative; overflow: hidden; height: 240mm; padding: 22mm 18mm 18mm;
   display: flex; flex-direction: column;
 }
 /* A frame of two rules, as that of a technical sheet. */
 body.print .cover::before {
-  content: ""; position: absolute; left: 18mm; right: 18mm; top: 40mm; border-top: 0.7mm solid #17191d;
+  content: ""; position: absolute; left: 18mm; right: 18mm; top: 40mm; border-top: 0.7mm solid #e7e4da;
 }
 .cover-defs { position: absolute; width: 0; height: 0; }
 .cover-hero { display: none; }
-.cover-brand { position: relative; display: flex; align-items: center; gap: 3.2mm; font: 600 15pt/1 var(--mono); letter-spacing: -0.04em; color: #17191d; }
+.cover-brand { position: relative; display: flex; align-items: center; gap: 3.2mm; font: 600 15pt/1 var(--mono); letter-spacing: -0.04em; color: #e7e4da; }
 .cover-brand svg { width: 12mm; height: 12mm; }
 .cover-title { position: relative; margin-top: auto; margin-bottom: 30mm; }
-.cover-title::before { content: ""; display: block; width: 24mm; height: 1.6mm; margin-bottom: 10mm; background: #1d7a4c; }
-.cover-title h1 { font: 600 44pt/1.02 var(--mono); letter-spacing: -0.05em; margin: 0 0 9mm; padding: 0; border: 0; color: #17191d; }
+.cover-title::before { content: ""; display: block; width: 24mm; height: 1.6mm; margin-bottom: 10mm; background: #58c08a; }
+.cover-title h1 { font: 600 44pt/1.02 var(--mono); letter-spacing: -0.05em; margin: 0 0 9mm; padding: 0; border: 0; color: #f3f1ea; }
 .cover-title h1 span { display: block; }
-.cover-title h1 span + span { display: inline; box-shadow: inset 0 -0.36em 0 rgba(29, 122, 76, 0.26); }
-.cover-title p { font: 400 12.5pt/1.4 "Inter", sans-serif; color: #4a4e55; margin: 0; max-width: 110mm; }
-.cover-bottom { position: relative; display: flex; justify-content: space-between; align-items: flex-end; font: 500 8.5pt/1.5 var(--mono); color: #6a6d72; border-top: 0.25mm solid #17191d; padding-top: 4mm; }
-.cover-bottom b { display: block; font-weight: 600; color: #17191d; }
+.cover-title h1 span + span { display: inline; box-shadow: inset 0 -0.36em 0 rgba(88, 192, 138, 0.34); }
+.cover-title p { font: 400 12.5pt/1.4 "Inter", sans-serif; color: #a9aaa6; margin: 0; max-width: 110mm; }
+.cover-bottom { position: relative; display: flex; justify-content: space-between; align-items: flex-end; font: 500 8.5pt/1.5 var(--mono); color: #8f9296; border-top: 0.25mm solid #e7e4da; padding-top: 4mm; }
+.cover-bottom b { display: block; font-weight: 600; color: #e7e4da; }
 
 body.wrap { margin: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 body.wrap * { box-sizing: border-box; }
@@ -275,12 +279,12 @@ body.wrap .front {
   width: calc(var(--w) + var(--bleed)); overflow: hidden; display: flex; flex-direction: column;
   padding: calc(var(--bleed) + 22mm) calc(var(--bleed) + 18mm) calc(var(--bleed) + 18mm) 18mm;
 }
-body.wrap .front::before { content: ""; position: absolute; left: 18mm; right: calc(var(--bleed) + 18mm); top: calc(var(--bleed) + 40mm); border-top: 0.7mm solid #17191d; }
+body.wrap .front::before { content: ""; position: absolute; left: 18mm; right: calc(var(--bleed) + 18mm); top: calc(var(--bleed) + 40mm); border-top: 0.7mm solid #e7e4da; }
 /* The inside of the cover, the second sheet: white, as the printer leaves it. */
 body.wrap .sheet.inner { background: #ffffff; break-after: auto; }
 body.wrap .spine {
   width: var(--spine); display: flex; flex-direction: column; align-items: center; justify-content: space-between;
-  padding: calc(var(--bleed) + 14mm) 0; background: #17191d;
+  padding: calc(var(--bleed) + 14mm) 0; background: #111315;
 }
 body.wrap .spine svg { width: min(11mm, calc(var(--spine) - 6mm)); height: min(11mm, calc(var(--spine) - 6mm)); }
 body.wrap .spine .name { writing-mode: vertical-rl; font: 600 12pt/1 var(--mono); letter-spacing: -0.02em; color: #f3f1ea; }
@@ -289,22 +293,22 @@ body.wrap .back {
   width: calc(var(--w) + var(--bleed)); display: flex; flex-direction: column;
   padding: calc(var(--bleed) + 22mm) 18mm calc(var(--bleed) + 18mm) calc(var(--bleed) + 18mm);
 }
-body.wrap .back h2 { font: 600 18pt/1.2 var(--mono); letter-spacing: -0.04em; margin: 0 0 7mm; padding: 0 0 6mm; border: 0; border-bottom: 0.7mm solid #17191d; color: #17191d; max-width: 129mm; }
-body.wrap .back p { font: 400 9.6pt/1.6 "Inter", sans-serif; color: #4a4e55; margin: 0 0 4mm; max-width: 128mm; }
-body.wrap .back .inside { margin-top: 5mm; display: grid; grid-template-columns: 1fr 1fr; gap: 0 8mm; max-width: 129mm; border-top: 0.25mm solid #b9b4a4; }
-body.wrap .back .inside div { font: 500 8pt/1.4 var(--mono); color: #17191d; padding: 2mm 0 2mm 4.2mm; position: relative; border-bottom: 0.25mm solid #d3cfc2; }
-body.wrap .back .inside div::before { content: ""; position: absolute; left: 0; top: 3.3mm; width: 1.6mm; height: 1.6mm; background: #1d7a4c; }
+body.wrap .back h2 { font: 600 18pt/1.2 var(--mono); letter-spacing: -0.04em; margin: 0 0 7mm; padding: 0 0 6mm; border: 0; border-bottom: 0.7mm solid #e7e4da; color: #f3f1ea; max-width: 129mm; }
+body.wrap .back p { font: 400 9.6pt/1.6 "Inter", sans-serif; color: #b9bab6; margin: 0 0 4mm; max-width: 128mm; }
+body.wrap .back .inside { margin-top: 5mm; display: grid; grid-template-columns: 1fr 1fr; gap: 0 8mm; max-width: 129mm; border-top: 0.25mm solid #424850; }
+body.wrap .back .inside div { font: 500 8pt/1.4 var(--mono); color: #e7e4da; padding: 2mm 0 2mm 4.2mm; position: relative; border-bottom: 0.25mm solid #2c3035; }
+body.wrap .back .inside div::before { content: ""; position: absolute; left: 0; top: 3.3mm; width: 1.6mm; height: 1.6mm; background: #58c08a; }
 body.wrap .back pre {
-  margin: 7mm 0 0; padding: 4mm 5mm; max-width: 112mm; font: 7.6pt/1.55 var(--mono); color: #17191d;
-  background: #faf9f4; border: 0.25mm solid #b9b4a4;
+  margin: 7mm 0 0; padding: 4mm 5mm; max-width: 112mm; font: 7.6pt/1.55 var(--mono); color: #e7e4da;
+  background: none; border: 0; border-left: 0.7mm solid #58c08a;
 }
-body.wrap .back pre .k { color: #1d7a4c; font-weight: 500; }
-body.wrap .back pre .c { color: #83868b; font-style: italic; }
-body.wrap .back pre .s { color: #8a5a12; }
-body.wrap .back .bottom { margin-top: auto; display: flex; justify-content: space-between; align-items: flex-end; border-top: 0.25mm solid #17191d; padding-top: 4mm; }
-body.wrap .back .who { font: 500 8pt/1.6 var(--mono); color: #6a6d72; }
-body.wrap .back .who b { display: block; font: 600 13pt/1 var(--mono); color: #17191d; letter-spacing: -0.04em; margin-bottom: 2mm; }
-body.wrap .back .barcode { width: 51mm; height: 31mm; background: #ffffff; border: 0.25mm solid #b9b4a4; }
+body.wrap .back pre .k { color: #58c08a; font-weight: 500; }
+body.wrap .back pre .c { color: #8f9296; font-style: italic; }
+body.wrap .back pre .s { color: #d6a85a; }
+body.wrap .back .bottom { margin-top: auto; display: flex; justify-content: space-between; align-items: flex-end; border-top: 0.25mm solid #e7e4da; padding-top: 4mm; }
+body.wrap .back .who { font: 500 8pt/1.6 var(--mono); color: #8f9296; }
+body.wrap .back .who b { display: block; font: 600 13pt/1 var(--mono); color: #e7e4da; letter-spacing: -0.04em; margin-bottom: 2mm; }
+body.wrap .back .barcode { width: 51mm; height: 31mm; background: #ffffff; border: 0; }
 /* The title page, which a printed book has where the PDF to read has the cover. */
 body.print .title-page { page: front; height: 196mm; display: flex; flex-direction: column; color: #17191d; }
 body.print .title-page .cover-hero { display: none; }
@@ -312,8 +316,10 @@ body.print .title-page .cover-brand { color: #17191d; }
 body.print .title-page .cover-title { margin-top: 62mm; margin-bottom: auto; }
 body.print .title-page .cover-title h1 { font-size: 34pt; color: #17191d; margin-bottom: 7mm; }
 body.print .title-page .cover-title h1 span + span { color: #17191d; }
+body.print .title-page .cover-title::before { background: #1d7a4c; }
+body.print .title-page .cover-title h1 span + span { box-shadow: inset 0 -0.36em 0 rgba(29, 122, 76, 0.26); }
 body.print .title-page .cover-title p { color: #4a4e55; font-size: 12pt; }
-body.print .title-page .cover-bottom { color: #6a6d72; }
+body.print .title-page .cover-bottom { color: #6a6d72; border-top-color: #17191d; }
 body.print .title-page .cover-bottom b { color: #17191d; }
 body.print .colophon {
   page: front; break-before: page; height: 190mm; display: flex; flex-direction: column; justify-content: flex-end;
@@ -360,12 +366,15 @@ body.print blockquote { margin: 3.5mm 0; padding: 2.5mm 4mm; border: 0; border-l
 
 /* Code */
 body.print .code, body.print .output { margin: 0 0 3.5mm; border: 0; border-radius: 0; overflow: visible; box-shadow: none; }
-body.print .code { background: #f3f1ea; border-left: 2pt solid #1d7a4c; }
-body.print .output { background: #ffffff; border: 0.6pt solid #d3cfc2; border-left: 2pt solid #b9b4a4; }
-body.print .code + .output { margin-top: -3.5mm; border-top: 0; }
-body.print .does-not-compile { border-left-color: #b93a32; }
-body.print .does-not-compile + .output { border-left-color: #b93a32; }
-body.print pre { padding: 2.4mm 2.4mm; font: 7.5pt/1.45 var(--mono); color: #17191d; white-space: pre-wrap; overflow: visible; orphans: 6; widows: 6; font-variant-ligatures: none; }
+/* No tint behind the code: a rule on its left says what it is, green for a program, grey for
+   what it prints, red for what does not compile. The rule is on the lines, not on the block,
+   which would leave a dot of it at the foot of a page when its lines go to the next one. */
+body.print .code { background: none; --edge: #1d7a4c; }
+body.print .output { background: none; --edge: #b9b4a4; }
+body.print .code + .output { margin-top: -3.5mm; }
+body.print .does-not-compile, body.print .does-not-compile + .output { --edge: #b93a32; }
+body.print .code > *, body.print .output > * { border-left: 2pt solid var(--edge); }
+body.print pre { padding: 2.4mm 2.4mm; font: 7.5pt/1.45 var(--mono); color: #17191d; white-space: pre-wrap; overflow-wrap: anywhere; overflow: visible; orphans: 6; widows: 6; font-variant-ligatures: none; }
 body.print pre code { white-space: pre-wrap; background: none; padding: 0; color: inherit; font-size: inherit; }
 body.print .output pre { color: #4a4e55; }
 /* A line longer than the page: what does not fit goes on, further in than its start. */

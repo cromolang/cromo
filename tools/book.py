@@ -775,9 +775,8 @@ def print_page(language, book_title, parts, pages, checked, press=False):
 </style>
 </head>
 <body class="print">
-{COVER_DEFS}
 <section class="{first}">
-  {cover_front(language, book_title)}
+  {COVER_DEFS}{cover_front(language, book_title)}
 </section>
 <section class="colophon">
   <p><strong>{html.escape(book_title)}</strong><br>{html.escape(edition)}</p>
