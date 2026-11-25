@@ -515,10 +515,10 @@ def sidebar(chapters, current, words, headings, numbered, library=None):
     return f'<nav class="toc" aria-label="{words["contents"]}"><ul>{"".join(items)}</ul></nav>'
 
 
-LOGO = '''<svg width="26" height="26" viewBox="0 0 64 64" aria-hidden="true"><defs><linearGradient id="o" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#1b2230"/><stop offset=".38" stop-color="#5d697b"/><stop offset=".52" stop-color="#9ba6b5"/><stop offset=".72" stop-color="#465164"/><stop offset="1" stop-color="#171d29"/></linearGradient><radialGradient id="n" cx=".35" cy=".3" r=".75"><stop offset="0" stop-color="#fff"/><stop offset=".35" stop-color="#cfd6df"/><stop offset=".8" stop-color="#7c8797"/><stop offset="1" stop-color="#4b5565"/></radialGradient></defs><g transform="translate(32 32) rotate(-28)"><path class="orbit" d="M23.84 -5.16A27 11 0 1 0 23.84 5.16" fill="none" stroke="url(#o)" stroke-width="4" stroke-linecap="round"/><circle cx="23.84" cy="5.16" r="3.6" fill="#0ea5c6"/></g><circle cx="32" cy="32" r="9" fill="url(#n)" stroke="#3a4454" stroke-width="1"/></svg>'''
+LOGO = '''<svg width="26" height="26" viewBox="0 0 64 64" aria-hidden="true"><defs><linearGradient id="o" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#1b2230"/><stop offset=".38" stop-color="#5d697b"/><stop offset=".52" stop-color="#9ba6b5"/><stop offset=".72" stop-color="#465164"/><stop offset="1" stop-color="#171d29"/></linearGradient><radialGradient id="n" cx=".35" cy=".3" r=".75"><stop offset="0" stop-color="#fff"/><stop offset=".35" stop-color="#cfd6df"/><stop offset=".8" stop-color="#7c8797"/><stop offset="1" stop-color="#4b5565"/></radialGradient></defs><g transform="translate(32 32) rotate(-28)"><path class="orbit" d="M23.84 -5.16A27 11 0 1 0 23.84 5.16" fill="none" stroke="url(#o)" stroke-width="4" stroke-linecap="round"/><circle cx="23.84" cy="5.16" r="3.6" fill="#1d7a4c"/></g><circle cx="32" cy="32" r="9" fill="url(#n)" stroke="#3a4454" stroke-width="1"/></svg>'''
 
 FONTS = ('<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>'
-         '<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500'
+         '<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600'
          '&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">')
 
 THEME_SCRIPT = ("<script>try{var t=localStorage.getItem('cromo-theme');if(t)document.documentElement.dataset.theme=t;}catch(e){}</script>")
@@ -639,8 +639,8 @@ COVER_DEFS = ('<svg class="cover-defs" aria-hidden="true"><defs>'
               '<stop offset="1" stop-color="#2a3444"/></linearGradient>'
               '<radialGradient id="cover-ball" cx=".35" cy=".3" r=".75"><stop offset="0" stop-color="#fff"/>'
               '<stop offset=".35" stop-color="#cfd6df"/><stop offset=".8" stop-color="#7c8797"/><stop offset="1" stop-color="#4b5565"/>'
-              '</radialGradient><radialGradient id="cover-glow" cx=".5" cy=".5" r=".5"><stop offset="0" stop-color="#0ea5c6" '
-              'stop-opacity=".55"/><stop offset="1" stop-color="#0ea5c6" stop-opacity="0"/></radialGradient></defs></svg>')
+              '</radialGradient><radialGradient id="cover-glow" cx=".5" cy=".5" r=".5"><stop offset="0" stop-color="#1d7a4c" '
+              'stop-opacity=".55"/><stop offset="1" stop-color="#1d7a4c" stop-opacity="0"/></radialGradient></defs></svg>')
 
 
 def cover_mark(css, hero=False):
@@ -649,7 +649,7 @@ def cover_mark(css, hero=False):
     glow = '<circle cx="32" cy="32" r="26" fill="url(#cover-glow)" opacity=".28"/>' if hero else ''
     return (f'<svg class="{css}" viewBox="0 0 64 64" aria-hidden="true">{glow}<g transform="translate(32 32) rotate(-28)">'
             f'<path d="M23.84 -5.16A27 11 0 1 0 23.84 5.16" fill="none" stroke="url(#cover-chrome)" stroke-width="{stroke}" '
-            f'stroke-linecap="round"/><circle cx="23.84" cy="5.16" r="{dot}" fill="#0ea5c6"/></g>'
+            f'stroke-linecap="round"/><circle cx="23.84" cy="5.16" r="{dot}" fill="#1d7a4c"/></g>'
             f'<circle cx="32" cy="32" r="{ball}" fill="url(#cover-ball)" stroke="#3a4454" stroke-width="{edge}"/></svg>')
 
 
