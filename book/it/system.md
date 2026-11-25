@@ -98,7 +98,7 @@ beach.jpg
 "" ""
 ```
 
-- `parent(path)` è la cartella del percorso, `""` per un nome da solo. La radice resta sé stessa: il genitore di `/etc` è `/`, e su Windows il genitore di `C:\data` è `C:\`.
+- `parent(path)` è la cartella del percorso, `""` per un nome da solo. La radice resta se stessa: il genitore di `/etc` è `/`, e su Windows il genitore di `C:\data` è `C:\`.
 - `fileName(path)` è l'ultimo nome; per `"a/b/"` è `"b"`.
 - `extension(path)` è l'ultima estensione del nome, con il suo punto; un nome che comincia con un punto, come `.profile`, non ne ha.
 
@@ -552,7 +552,7 @@ i32 main() {
 Le regole:
 
 - Viene letta anche un'ultima riga senza `\n`; alla fine, `readLine` restituisce `false` e lascia `line` vuota. Alla fine `readInput` restituisce `""`.
-- `os.readInputBytes(most)` restituisce fino a `most` bytes dell'input così come sono, appena ne arrivano, e una lista vuota alla fine: per un input che non è testo.
+- `os.readInputBytes(most)` restituisce fino a `most` byte dell'input così come sono, appena ne arrivano, e una lista vuota alla fine: per un input che non è testo.
 - L'input deve essere UTF-8: una riga che non lo è è un'eccezione, come per `fs.readText`. Su una console di Windows il testo arriva in UTF-16, e viene convertito.
 - Da un terminale, l'input finisce con Ctrl+D su Linux, e su Windows con Ctrl+Z all'inizio di una riga seguito da Invio.
 - Lo standard input si legge da un thread alla volta.
@@ -696,7 +696,7 @@ errors: a warning
 - Gli argomenti arrivano al programma così come sono, senza una shell che li interpreti: uno spazio, una virgoletta, `*` o `$` sono solo caratteri, e un argomento vuoto resta un argomento. Su Windows `std.process` scrive la riga di comando con le virgolette e le barre rovesciate che richiedono le regole degli [argomenti](#gli-argomenti-del-programma).
 - Un codice di uscita diverso da 0 è un valore da controllare, non un'eccezione: molti programmi lo usano per dare una risposta, come `grep` quando non trova nulla.
 - Lo standard input del programma è vuoto. Il suo output e i suoi errori si leggono nello stesso momento, su due thread, così che un programma che scrive molto su uno dei due non resti in attesa per sempre.
-- Il programma ha l'ambiente e la cartella corrente di questo.
+- Il programma ha l'ambiente e la cartella corrente di questo programma.
 - Si possono avviare programmi da più thread nello stesso momento: ogni programma riceve solo le proprie pipe.
 
 Il programma viene cercato come lo cerca una shell: un nome senza cartella, come `git`, si cerca nelle cartelle del `PATH`, e su Windows anche nella cartella corrente, aggiungendo `.exe` quando non ha estensione. `./tool` esegue il programma `tool` della cartella corrente su entrambi i sistemi. Un programma che non riesce a partire è un'eccezione:
@@ -1105,7 +1105,7 @@ Le righe dei thread e dei task non si mescolano mai, e un messaggio è sempre un
 
 ## Archivi
 
-`std.zip` legge gli archivi zip, come li creano Windows, macOS e le forge, anche oltre i 4 GB; `std.tar` legge gli archivi tar, come li creano GNU tar e bsdtar. Un `.tar.gz` è un tar compresso con gzip: prima lo decomprime `std.gzip`. Leggono ed estraggono archivi, ma non li scrivono.
+`std.zip` legge gli archivi zip, come li creano Windows, macOS e i siti che ospitano il codice, anche oltre i 4 GB; `std.tar` legge gli archivi tar, come li creano GNU tar e bsdtar. Un `.tar.gz` è un tar compresso con gzip: prima lo decomprime `std.gzip`. Leggono ed estraggono archivi, ma non li scrivono.
 
 `zip.read(bytes)` e `tar.read(bytes)` restituiscono le voci di un archivio, nel suo ordine. Ogni voce ha il suo `name`, un percorso con `/` e senza `/` in fondo, `folder`, se è una cartella, `link`, la destinazione di un link simbolico o `""`, `executable`, se si può eseguire, e `data`, il contenuto di un file. Gli esempi scrivono prima i loro archivi, dai byte nelle righe nascoste:
 

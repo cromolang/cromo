@@ -69,7 +69,7 @@ i32 main() {
 - Un letterale può stare su più righe, ed è ammessa una virgola dopo l'ultimo elemento.
 - Gli elementi vengono dati alla lista come ad `add()`: una stringa o un altro valore che possiede memoria viene copiato, a meno che non sia scritto `move name`. Le regole delle copie e degli spostamenti sono in [Possesso](ownership.md).
 
-Dove nulla indica il tipo, una lista di letterali numerici non compila, come non compila un `5` da solo; e nemmeno un `[]` vuoto. Un elemento non si può scrivere con `ref`: la lista tiene i propri elementi, non fa riferimento a variabili.
+Dove nulla indica il tipo, una lista di letterali numerici non compila; e nemmeno un `[]` vuoto. Un elemento non si può scrivere con `ref`: la lista tiene i propri elementi, non fa riferimento a variabili.
 
 ```cromo error
 i32 main() {
@@ -135,7 +135,7 @@ panic: index out of bounds: the index is 3 but the length is 3 at scores.cro:3:2
     at main (scores.cro:3)
 ```
 
-Due liste non si possono confrontare con `==`: confronta i loro elementi in un ciclo.
+Due liste si confrontano con `==` e `!=`, elemento per elemento, quando i loro elementi si possono confrontare.
 
 ### for su una lista
 
@@ -341,7 +341,7 @@ i32 main() {
 - `f64[2][3]` sono due array di tre elementi, come in C: `grid[i][j]` ha `i < 2` e `j < 3`.
 - `a.len()` è la dimensione, e `for (T x in a)` e `for (ref T x in a)` visitano gli elementi come per una lista, con le stesse regole.
 - Un indice fuori dall'array è un panic, come per una lista; quando l'indice è una costante, è un errore del compilatore.
-- Gli array non si confrontano con `==`, e si stampano solo con `{:?}`.
+- Gli array si confrontano con `==`, elemento per elemento, e si stampano solo con `{:?}`.
 
 Un array è un valore, come una struct: può essere un campo, un parametro, un valore restituito. Viene copiato quando i suoi elementi sono valori semplici, come i numeri; un array di stringhe o di altri valori che possiedono memoria viene spostato, e non ha `copy()`:
 
@@ -485,7 +485,7 @@ true rook
 
 Una struct senza `: Key` non può essere una chiave: `map<Point, i32>` dà `error: Point does not implement Key, required by K of map`.
 
-Con i float come chiavi, `-0.0` e `0.0` sono la stessa chiave, e un NaN non viene mai trovato, perché non è uguale a sé stesso: ogni `m[nan] = v` aggiunge una nuova chiave.
+Con i float come chiavi, `-0.0` e `0.0` sono la stessa chiave, e un NaN non viene mai trovato, perché non è uguale a se stesso: ogni `m[nan] = v` aggiunge una nuova chiave.
 
 `Key` nomina `Self`, il tipo che la implementa, quindi è solo un vincolo di un generico, mai il tipo di un parametro o di una variabile: `void f(Key k)` è un errore. Un generico che crea una mappa del suo `T` lo richiede con `T : Key`:
 
@@ -752,7 +752,7 @@ i32 main() {
 - `+`, `-` e `*` agiscono numero per numero, come `/` per i float, e `-v` cambia segno ai numeri con segno e ai float; `&`, `|`, `^` e `!` agiscono sui bit degli interi, e `<<` e `>>` li spostano di una quantità controllata come per un singolo intero. Un numero da una parte va in ogni numero, come `a * 2`. Gli interi ricominciano dall'estremo opposto, senza i controlli di overflow.
 - `/` tra vettori di interi è un errore del compilatore, perché i processori non hanno la divisione dei vettori di interi; `%` non funziona su nessun vettore.
 - Un confronto dà una maschera, un vettore di interi con segno larghi quanto i numeri, con -1 dove il confronto è vero e 0 dove è falso: `f32x8 > f32x8` dà un `i32x8`. Una maschera ha `all()`, `any()` e `select(a, b)`, che prende i numeri di `a` dove è vera e quelli di `b` dove è falsa.
-- `sum()`, `smallest()` e `largest()` restituiscono un solo numero; la somma dei float viene fatta nell'ordine che il SIMD preferisce, che può differire nelle ultime cifre da quello di un ciclo. `abs()` funziona sui numeri con segno e sui float, `min(w)` e `max(w)` numero per numero, e `low()` e `high()` restituiscono le due metà di un vettore di 256 bit.
+- `sum()`, `smallest()` e `largest()` restituiscono un solo numero; la somma dei float viene fatta nell'ordine che il SIMD preferisce, e può differire nelle ultime cifre da quella di un ciclo. `abs()` funziona sui numeri con segno e sui float, `min(w)` e `max(w)` numero per numero, e `low()` e `high()` restituiscono le due metà di un vettore di 256 bit.
 - Un vettore si stampa con `{:?}`, come un array; `{}` non lo stampa.
 
 ```cromo error

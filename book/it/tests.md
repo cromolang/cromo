@@ -125,7 +125,7 @@ Per essere testato un programma non ha bisogno di `main`: `cromo test shapes.cro
 
 ### Come vengono eseguiti i test
 
-- `cromo test` compila un solo eseguibile con tutti i test, in una cartella temporanea, e lo avvia una volta per ogni test. Ogni test gira in un processo tutto suo, tanti alla volta quanti sono i processori: un test che va in crash ferma solo sé stesso, e i test non possono condividere uno stato attraverso le variabili del programma.
+- `cromo test` compila un solo eseguibile con tutti i test, in una cartella temporanea, e lo avvia una volta per ogni test. Ogni test gira in un processo tutto suo, tanti alla volta quanti sono i processori: un test che va in crash ferma solo se stesso, e i test non possono condividere uno stato attraverso le variabili del programma.
 - Ogni test gira nella cartella corrente di `cromo test`, quindi trova i file del progetto con i loro percorsi relativi, e il suo standard input è vuoto.
 - Un test non ha un limite di tempo: un test che non termina mai tiene `cromo test` in attesa.
 - I test girano sul sistema su cui gira `cromo`. `cromo test` accetta le opzioni della build che lì hanno senso: `--release`, da `-O0` a `-O3`, `--cpu`. `-o`, `--target` e `--emit-ir` sono opzioni solo di `cromo build`, e gli argomenti dopo `--` sono solo per `cromo run`.

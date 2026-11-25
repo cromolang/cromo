@@ -58,7 +58,7 @@ Il compilatore converte questi tipi, senza alcuna dichiarazione:
 | `list<T>` | un array |
 | `T[n]`, un array fisso | un array di esattamente `n` elementi |
 | `map<string, T>` | un oggetto |
-| un enum | il nome del suo case, o un oggetto per un case con dati |
+| un enum | il nome del suo caso, o un oggetto per un caso con dati |
 | una struct, anche generica | un oggetto con un membro per ogni campo |
 | `json.Value` | qualsiasi valore JSON |
 
@@ -166,8 +166,8 @@ cannot encode JSON: nan is not a number of JSON
 
 `json.decode<T>` parte dal valore predefinito di `T`, poi lo riempie con ciò che il testo contiene:
 
-- Un membro assente lascia il campo come lo crea il valore predefinito della struct, con il suo valore iniziale.
-- Un membro `null` vale come un membro assente: il campo conserva il valore che ha nel valore predefinito della struct. Un elemento di una lista o un valore di una mappa `null` riceve il valore predefinito del suo tipo: 0, `""`, `false`, una lista vuota, il primo case di un enum.
+- Un membro assente lascia il campo come lo crea il valore predefinito della struct, con il suo valore iniziale, se ne ha uno.
+- Un membro `null` vale come un membro assente: il campo conserva il valore che ha nel valore predefinito della struct. Un elemento di una lista o un valore di una mappa `null` riceve il valore predefinito del suo tipo: 0, `""`, `false`, una lista vuota, il primo caso di un enum.
 - Un membro senza un campo corrispondente viene ignorato.
 - Di un membro scritto due volte, vale l'ultimo.
 
@@ -357,7 +357,7 @@ error: unknown attribute 'secret': for now there is only json
 
 ## Enum
 
-Un case senza dati si scrive con il suo nome; un case con dati, come un oggetto che ha per unico membro il case stesso, con i suoi dati come i membri di una struct. `[[json("name")]]` davanti a un case gli dà un altro nome:
+Un caso senza dati si scrive con il suo nome; un caso con dati, come un oggetto che ha per unico membro il caso stesso, con i suoi dati come i membri di una struct. `[[json("name")]]` davanti a un caso gli dà un altro nome:
 
 ```cromo
 import std.json
@@ -385,9 +385,9 @@ Rectangle(1.0, 2.0)
 
 La lettura di un enum:
 
-- Un case senza dati deve essere una stringa, il suo nome; un case con dati un oggetto con esattamente un membro, il case.
+- Un caso senza dati deve essere una stringa, il suo nome; un caso con dati un oggetto con esattamente un membro, il caso.
 - Un membro dei dati assente, o `null`, dà il valore predefinito del suo tipo.
-- Un `null` al posto dell'enum dà il suo primo case.
+- Un `null` al posto dell'enum dà il suo primo caso.
 - Un altro nome, o un altro tipo di valore, è un errore che elenca i nomi.
 
 ```cromo
@@ -424,11 +424,11 @@ cannot decode JSON: expected one of Empty, Circle, rect, found "Square"
 cannot decode JSON: expected an object with one member, the case, found an object
 ```
 
-Un case ha solo l'attributo `json("name")`, non `skip`: un valore dell'enum deve sempre avere un nome con cui essere scritto. Due case con lo stesso nome in JSON sono un errore.
+Un caso ha solo l'attributo `json("name")`, non `skip`: un valore dell'enum deve sempre avere un nome con cui essere scritto. Due casi con lo stesso nome in JSON sono un errore.
 
 ## Valori di forma qualsiasi: json.Value
 
-Quando la forma dei dati non è nota in anticipo, `json.parse(text)` restituisce un `json.Value`, un enum con un case per ogni tipo di valore JSON:
+Quando la forma dei dati non è nota in anticipo, `json.parse(text)` restituisce un `json.Value`, un enum con un caso per ogni tipo di valore JSON:
 
 | Case | Per |
 |---|---|
@@ -436,7 +436,7 @@ Quando la forma dei dati non è nota in anticipo, `json.parse(text)` restituisce
 | `Bool(bool value)` | `true`, `false` |
 | `Int(i64 value)` | un intero che sta in un `i64` |
 | `UInt(u64 value)` | un intero da 2^63 a 2^64 - 1 |
-| `Float(f64 value)` | un numero con il punto decimale o con un esponente, o un intero troppo grande per gli altri case |
+| `Float(f64 value)` | un numero con il punto decimale o con un esponente, o un intero troppo grande per gli altri casi |
 | `Text(string value)` | una stringa |
 | `Array(list<json.Value> items)` | un array |
 | `Object(list<json.Member> members)` | un oggetto: un `json.Member` ha `name` e `value` |
@@ -667,7 +667,7 @@ cannot read JSON: line 1, column 9: expected the name of a member, in double quo
 - `json.encode`, `json.pretty` e `json.decode<T>` convertono numeri, stringhe, liste, array fissi, mappe con chiavi stringa, enum e struct, con codice scritto dal compilatore; un campo che non si può convertire è un errore di compilazione.
 - Scrittura: i campi nel loro ordine, le chiavi delle mappe ordinate, i float con il testo più breve e con `.0`, né NaN né infiniti, solo le sequenze di escape che JSON richiede.
 - Lettura: JSON rigoroso, annidato fino a 512 livelli; un membro assente e un `null` conservano il valore predefinito della struct, un `null` in una lista dà il valore predefinito del tipo, un membro sconosciuto viene ignorato; gli interi devono essere interi che stanno nel tipo.
-- `[[json("name")]]` rinomina un campo o un case; `[[json(skip)]]` esclude un campo.
+- `[[json("name")]]` rinomina un campo o un caso; `[[json(skip)]]` esclude un campo.
 - `json.parse` restituisce un `json.Value` per dati di forma qualsiasi, con `Int`, `UInt` e `Float` distinti; `toValue` e `fromValue` convertono tra valori e tipi.
 - Una funzione generica che converte il suo `T` scrive `<T : json.Data>`.
 - Gli errori dicono dove si trova il problema: la riga e la colonna, o il percorso del valore.

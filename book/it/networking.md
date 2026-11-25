@@ -2,7 +2,7 @@
 
 La libreria standard ha tutto ciò che serve a un programma di rete, e non richiede altre librerie:
 
-| Modulo | Per |
+| Modulo | A cosa serve |
 |---|---|
 | [std.net](std.net.html) | TCP e UDP, i nomi degli host, TLS |
 | [std.http](std.http.html) | server e client HTTP |
@@ -199,7 +199,7 @@ La lambda di un task viene eseguita una sola volta, quindi può modificare ciò 
 
 ## Nomi e indirizzi
 
-`net.resolve(host)` restituisce gli indirizzi di un nome, come testo; un indirizzo scritto in cifre restituisce sé stesso. IPv6 viene scritto nella forma breve della RFC 5952, con la sequenza di zeri più lunga resa con `::`:
+`net.resolve(host)` restituisce gli indirizzi di un nome, come testo; un indirizzo scritto in cifre restituisce se stesso. IPv6 viene scritto nella forma breve della RFC 5952, con la sequenza di zeri più lunga resa con `::`:
 
 ```cromo
 import std.net
@@ -291,7 +291,7 @@ i32 main() {
 
 Un server si mette in ascolto con `net.listenTls(host, port, certificate, key)`: il certificato in PEM, seguito da quelli della sua catena, e la sua chiave privata in PEM, entrambi come testi. Il suo `accept()` restituisce subito una connessione, e l'handshake avviene al primo `read` o `write` della connessione, nel task che la serve, così un client lento od ostile non fa attendere `accept()`. Un errore dell'handshake è l'eccezione di quel `read` o `write`.
 
-Il programma qui sotto ha un server il cui certificato è firmato da sé stesso: un client TCP semplice non riceve nulla, e un client TLS rifiuta il certificato. Le funzioni `certificate()` e `privateKey()` restituiscono i due testi in PEM; si trovano nel programma completo.
+Il programma qui sotto ha un server il cui certificato è firmato da se stesso: un client TCP semplice non riceve nulla, e un client TLS rifiuta il certificato. Le funzioni `certificate()` e `privateKey()` restituiscono i due testi in PEM; si trovano nel programma completo, sul sito.
 
 ```cromo
 import std.net
@@ -799,7 +799,7 @@ Sul client:
 Da entrambe le parti:
 
 - `send(text)` invia un messaggio di testo, `sendBytes(bytes)` uno binario.
-- `receive()` attende il messaggio successivo e restituisce un `websocket.Message`, un enum con i case `Text(string text)` e `Binary(list<u8> bytes)`. Ricompone i frammenti di un messaggio, e risponde ai ping che arrivano nel frattempo. Un messaggio più grande di 16 MB, un frame non valido o un testo che non è UTF-8 sono un'eccezione.
+- `receive()` attende il messaggio successivo e restituisce un `websocket.Message`, un enum con i casi `Text(string text)` e `Binary(list<u8> bytes)`. Ricompone i frammenti di un messaggio, e risponde ai ping che arrivano nel frattempo. Un messaggio più grande di 16 MB, un frame non valido o un testo che non è UTF-8 sono un'eccezione.
 - Senza `timeout(ms)` un socket attende tutto il tempo necessario; con esso, ogni lettura e scrittura attende al massimo quel tempo.
 - `close()` termina il WebSocket in modo pulito: invia la chiusura con il codice 1000, attende la risposta dell'altra parte, scartando i messaggi che arrivano nel frattempo, e chiude la connessione.
 - Dopo una chiusura, `receive()`, `send` e `sendBytes` lanciano `websocket.Closed`, un'eccezione con `code` e `reason`: 1000 una fine normale, 1001 una parte che se ne va, 1005 una chiusura senza codice, 1006 una connessione terminata senza chiusura. `receive()` la lancia anche quando è l'altra parte a chiudere, dopo aver risposto alla sua chiusura.
@@ -894,7 +894,7 @@ cannot read the base64: its length is not valid
 ```
 
 - `md5`, `sha1`, `sha256`, `sha384` e `sha512` restituiscono l'hash dei dati: 16, 20, 32, 48 e 64 byte. MD5 e SHA-1 non sono più sicuri: ci sono per i formati che li usano ancora, come WebSocket.
-- `hmac(hash, key, data)` dimostra che chi l'ha prodotto possiede la chiave, con `crypto.Hash`, un enum con i case `Md5`, `Sha1`, `Sha256`, `Sha384` e `Sha512`. Per controllare un HMAC ricevuto, confrontane tutti i byte, non solo fino al primo diverso.
+- `hmac(hash, key, data)` dimostra che chi l'ha prodotto possiede la chiave, con `crypto.Hash`, un enum con i casi `Md5`, `Sha1`, `Sha256`, `Sha384` e `Sha512`. Per controllare un HMAC ricevuto, confrontane tutti i byte, non solo fino al primo diverso.
 - `crypto.Hasher(hash)` calcola un hash a pezzi: `add` aggiunge dei dati, `finish()` restituisce l'hash e riparte da vuoto. Si può spostare, non copiare.
 - `hex(bytes)` scrive due cifre minuscole per ogni byte; `fromHex(text)` le legge sia minuscole sia maiuscole, e lancia un'eccezione per un numero dispari di cifre o per un carattere che non è una cifra.
 - `base64(bytes)` scrive base64 con il suo padding `=`, che `fromBase64(text)` richiede. `base64Url(bytes)` scrive la forma per gli URL, con `-` e `_` e senza padding; `fromBase64Url(text)` la legge con o senza.

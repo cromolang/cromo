@@ -148,11 +148,12 @@ The extension for Visual Studio Code colors the code, and takes everything else 
 
 The script that installs Cromo also installs the extension, when it finds the command `code` of Visual Studio Code, and so does `cromo update` for each new version. The extension is also in the archive of each version, as a `.vsix` file in its folder `extension`, and can be installed by hand with `code --install-extension` and the path of that file, or with *Install from VSIX* in the panel of the extensions.
 
-The extension has two settings:
+The extension has three settings:
 
 | Setting | Meaning |
 |---|---|
 | `cromo.path` | the `cromo` executable that runs the language server. When it is empty, the default: `build\cromo.exe` in a folder of the workspace, if there is one, else `cromo` from the `PATH` |
+| `cromo.guideLanguage` | the language of the Cromo Guide in its panel, as `it` or `en`. When it is empty, the language of Visual Studio Code if the guide has it, else English |
 | `cromo.trace` | writes every message between Visual Studio Code and `cromo lsp` in the *Cromo* panel of the output, to find a problem |
 
 If `cromo` cannot start, a message says so, with a button that opens the setting. The files of Cromo are formatted when they are saved, by default: `editor.formatOnSave` can be turned off for `[cromo]` in the settings.
@@ -359,4 +360,4 @@ cromo build -O0 dbg.cro
 - The extension for Visual Studio Code uses `cromo lsp`: errors while you write, hover, definition, outline, completion after a dot, signature help and formatting. `cromo.path` chooses the `cromo` to run.
 - The server analyzes a file with its `main`, or the nearest `main.cro` above it, or alone, with the files of the system it runs on.
 - The `//` comments right above a declaration, or at the end of the line of a field or a case, are its documentation, in Markdown with `'code'` and `'''` blocks; the comment at the top of a file documents its module.
-- Without `--release` a program has debug information, PDB on Windows and DWARF on Linux; a debugger shows `this` and the fields of strings and lists. Build with `-O0` to follow it line by line.
+- Without `--release` a program has debug information, PDB on Windows and DWARF on Linux; a debugger shows `this`, and with the files of the extension a string, a list and a map as their values. Build with `-O0` to follow it line by line.

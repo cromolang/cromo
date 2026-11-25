@@ -162,7 +162,7 @@ i32 main() {
 error: the constructor of Ticket is private to its module: it is not marked public
 ```
 
-Writing `public` where it does not belong is an error that says why: `the cases of an enum are public with it`, `the methods of an interface are public with it`, `a destructor has no 'public': it runs wherever its object ends`. The constants of a module, as `const i64 limit = 1024`, are always private: `a constant of a module has no attributes and is not public: only its module sees it`.
+Writing `public` where it does not belong is an error that says why: `the cases of an enum are public with it`, `the methods of an interface are public with it`, `a destructor has no 'public': it runs wherever its object ends`. A constant of a module, as `const i64 limit = 1024`, is private unless it is written `public const`, as the next section shows.
 
 What a public declaration shows must be public too: a public function cannot take or return a private struct, and a public field or method cannot have a private type, since another module could not write that type:
 
@@ -592,7 +592,12 @@ The core of the library, with `list`, `map`, `string`, `format`, `Exception`, `E
 | `std.jwt` | JSON Web Tokens | [Networking and HTTP](networking.md) |
 | `std.gzip` | compression | [Networking and HTTP](networking.md) |
 | `std.json` | JSON | [JSON](json.md) |
+| `std.regex` | regular expressions | [Regular expressions](regex.md) |
+| `std.db` | SQLite and PostgreSQL | [Databases](databases.md) |
+| `std.math` | roots, powers, logarithms, trigonometry | [Numbers and operators](operators.md) |
+| `std.log` | the log of a program | [Files, processes and time](system.md) |
 | `std.gui` | windows, components and apps for Android | [Windows and apps](gui.md) |
+| `std.audio` | sounds and music | [Windows and apps](gui.md) |
 
 The modules of the library follow the rules of the others: after `import std.fs`, its names are found also without the module in front. The guide and the library write them with their last name in front all the same, `fs.readText(path)`, `time.now()`, because a name as `readText` or `now` says less without it.
 
@@ -634,7 +639,7 @@ bin report cmd/report.cro
 
 `cromo.mod` has one thing on each line, its words separated by spaces, with blank lines and `//` comments where needed:
 
-- `module name` is the first line, once: the name of the project, made of letters, digits and `.`, `-`, `_` and `/`, as `example.com/project`. It will name the project as a package; for now it marks the top of the project.
+- `module name` is the first line, once: the name of the project, made of letters, digits and `.`, `-`, `_` and `/`, as `example.com/project`. It is the address of the project as a package, and it marks the top of the project.
 - `bin name path` is an executable: its name, made of letters, digits, `-` and `_`, different for each line, and its main file, a `.cro` file written from the folder of `cromo.mod` with `/`.
 
 ### The root of the imports
@@ -794,11 +799,11 @@ The packages of the project of Cromo are the repositories of [github.com/cromola
 ## Summary
 
 - A file is a module; a folder is one module made of its files, which share all their names, private ones too, while each writes its own imports; its subfolders are modules of their own.
-- Everything is private unless it is `public`: functions, types, fields, methods and constructors. Enum cases, interface methods, the methods that implement an interface and destructors are public with their type; module constants are always private.
+- Everything is private unless it is `public`: functions, types, fields, methods and constructors. Enum cases, interface methods, the methods that implement an interface and destructors are public with their type; a module constant is private unless it is `public const`.
 - A public declaration cannot show a private type.
 - Imports come first in a file, are not public and not transitive; modules can import each other.
 - Imported names are used directly; the module goes in front, with the last name of its path, when two imports give the same name. A name is looked for in the module, then in its imports, then in the core of the library.
 - `import a.b` is `a/b.cro` or the folder `a/b`, from the folder of the main file or of `cromo.mod`.
 - Files ending in `_windows`, `_linux`, `_x86_64` and `_arm64` are the parts of a module for one system or architecture.
 - `std.x` are the modules of the library; its core is visible everywhere.
-- `cromo.mod` marks the top of a project: the imports start from its folder, and its `bin` lines are the executables that `cromo build`, `cromo run name` and `cromo test` take. Its lines `version`, `company`, `description` and `copyright` go in the executables for Windows, and `sign` is the command that signs them after `cromo build --release`. Packages come later.
+- `cromo.mod` marks the top of a project: the imports start from its folder, and its `bin` lines are the executables that `cromo build`, `cromo run name` and `cromo test` take. Its lines `version`, `company`, `description` and `copyright` go in the executables for Windows, and `sign` is the command that signs them after `cromo build --release`. A package is a repository named by its address: `cromo get` adds it to `cromo.mod` as a `require` line, and `cromo.sum` keeps its hash.

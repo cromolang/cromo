@@ -30,7 +30,7 @@ A panic stops the program with a message and a stack trace. It never goes on wit
 
 A file that writes `import unsafe` can reach raw memory and call C, and there the mistakes of C come back: [The unsafe dialect](unsafe.md) lists them. The guarantees above hold for a program as long as that code is right, and this includes:
 
-- the standard library, which is written in the dialect: about 28 000 lines, in the folder `library` of the repository;
+- the standard library, which is written in the dialect: about 43 000 lines, in the folder `library` of the repository;
 - the runtime, in C, and the libraries that it uses: SDL for the windows, mbedTLS for TLS, and those that read the images and the fonts.
 
 A program that does not write `import unsafe` itself trusts only these.
@@ -46,7 +46,7 @@ A program that does not write `import unsafe` itself trusts only these.
 They are the rules of the design, enforced by a compiler that is young.
 
 - There is no formal proof that the rules are sound, as there is for parts of Rust.
-- The compiler has a suite of tests, more than 450 programs in `tests`, and every example of this guide is compiled and run when the guide is built. It has not yet been used by many people on large programs.
+- The compiler has a suite of tests, more than 550 programs in `tests`, and every example of this guide is compiled and run when the guide is built. It has not yet been used by many people on large programs.
 - A program without `import unsafe` that corrupts memory, or that compiles while it breaks one of the rules above, is a bug of Cromo. Please report it in the [issues](https://github.com/cromolang/cromo/issues) of the repository: these reports are the most useful ones.
 
 ## Summary

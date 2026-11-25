@@ -31,7 +31,7 @@ Queste parole non si possono usare come nomi:
 | `ref` | un parametro o una cattura che modifica; l'elemento di un `for`, o i dati di un `case`, che si possono modificare | [Possesso](ownership.md) |
 | `ret` | ritorna da una funzione | [Concetti comuni](common-concepts.md) |
 | `struct` | dichiara una struct | [Struct](structs.md) |
-| `switch` | sceglie tra più case | [Enum e switch](enums.md) |
+| `switch` | sceglie tra più casi | [Enum e switch](enums.md) |
 | `throw` | lancia un'eccezione | [Errori](errors.md) |
 | `try` | il blocco di cui si gestiscono le eccezioni | [Errori](errors.md) |
 | `unsafe` | `import unsafe`: il dialetto delle funzioni C e della memoria grezza | [Il dialetto unsafe](unsafe.md) |
@@ -60,8 +60,8 @@ Non esistono `while`, `do`, `goto`, `class`, `new`, `delete`, `null` né `this`.
 | `< >` | i parametri e gli argomenti di tipo dei generici, `list<T>`, `max<T : Ordered>` |
 | `:` | le interfacce di una struct o di un enum, `struct Circle : Shape`; un vincolo, `T : Key`; l'espressione condizionale |
 | `+` | tra i vincoli, `T : Key + Debug`, oltre all'addizione |
-| `.` | un campo o un metodo, `p.x`; un nome di un modulo, `json.decode`; un case di un enum, `Color.Red` |
-| `,` | separa parametri, argomenti, elementi e case |
+| `.` | un campo o un metodo, `p.x`; un nome di un modulo, `json.decode`; un caso di un enum, `Color.Red` |
+| `,` | separa parametri, argomenti, elementi e casi |
 | `;` | solo in `for (init; condition; step)`: un'istruzione finisce alla fine della sua riga |
 | `~` | il distruttore, `~File()` |
 | `//`, `/* */` | commenti; le righe `//` subito sopra una dichiarazione la documentano |
@@ -145,7 +145,7 @@ Un letterale intero prende il tipo richiesto dal contesto, e deve starci dentro.
 | `panic(reason)` | ferma il programma, con il codice di uscita 101 | [Errori](errors.md) |
 | `assert(condition)` | un panic quando la condizione è falsa, anche con `--release` | [Errori](errors.md), [Test](tests.md) |
 | `wrapAdd(a, b)`, `wrapSub(a, b)`, `wrapMul(a, b)` | aritmetica degli interi che ricomincia dall'estremo opposto, senza il controllo di overflow | [Numeri e operatori](operators.md) |
-| `countOnes(x)`, `trailingZeros(x)`, `leadingZeros(x)` | contano i bit di un intero, come `i32` | [Numeri e operatori](operators.md) |
+| `countOnes(x)`, `trailingZeros(x)`, `leadingZeros(x)` | contano i bit di un intero, e danno un `i32` | [Numeri e operatori](operators.md) |
 | `rotateLeft(x, n)`, `rotateRight(x, n)` | ruotano i bit di un intero | [Numeri e operatori](operators.md) |
 | `fma(a, b, c)` | `a * b + c` di numeri in virgola mobile, arrotondato una volta sola | [Numeri e operatori](operators.md) |
 | `embed(path)` | i byte di un file, letti dal compilatore e messi nel programma, come `list<u8>` | [Finestre e app](gui.md) |
@@ -156,7 +156,7 @@ I nomi dei tipi convertono, e così due metodi dei numeri in virgola mobile:
 |---|---|---|
 | `i64(x)`, `f64(x)`, ... | converte un numero; `i64("42")` ne legge uno da un testo | [Numeri e operatori](operators.md) |
 | `string(bytes)` | una stringa da una `list<u8>` di UTF-8 | [Liste, mappe e testo](collections.md) |
-| `Color(n)`, `i32(color)` | il case di un enum con quel valore, e viceversa | [Enum e switch](enums.md) |
+| `Color(n)`, `i32(color)` | il caso di un enum con quel valore, e viceversa | [Enum e switch](enums.md) |
 | `T()` | il valore predefinito di `T`, o il suo costruttore | [Struct](structs.md) |
 | `x.bits()`, `f64.fromBits(b)`, `f32.fromBits(b)` | i bit di un numero in virgola mobile, e viceversa | [Numeri e operatori](operators.md) |
 
@@ -195,7 +195,8 @@ Gli attributi si scrivono come in C++11, `[[name]]` o `[[name(arguments)]]`, pri
 | Attributo | Prima di | Significato | Capitolo |
 |---|---|---|---|
 | `[[test]]` | una funzione `void name()` | un test, che `cromo test` esegue | [Test](tests.md) |
-| `[[json("name")]]` | un campo, o un case di un enum | il suo nome nel JSON | [JSON](json.md) |
+| `[[format]]` | una funzione o un metodo il cui ultimo parametro è una `string` | una chiamata passa lì un formato e i suoi argomenti, come `println` | [Formattare il testo](formatting.md) |
+| `[[json("name")]]` | un campo, o un caso di un enum | il suo nome nel JSON | [JSON](json.md) |
 | `[[json(skip)]]` | un campo | escluso dal JSON | [JSON](json.md) |
 | `[[window]]` | `main` | su Windows, un eseguibile senza console | [Finestre e app](gui.md) |
 | `[[android("org.example.app", "Name")]]` | `main` | il package e il nome dell'app per Android | [Finestre e app](gui.md) |
@@ -226,7 +227,7 @@ i32 main() {
 {"user_id":7,"name":"Ada"}
 ```
 
-Gli attributi vanno solo prima delle funzioni, dei campi e dei case degli enum; prima di una struct o di un metodo sono errori. Una funzione ha `[[test]]` una volta sola; `[[window]]` e `[[android(...)]]` vanno solo prima di `main`, e `[[export]]` e `[[cold]]` solo nei file con `import unsafe`:
+Gli attributi vanno solo prima delle funzioni, dei metodi, dei campi e dei casi degli enum; prima di una struct sono errori, e un metodo ha solo `[[format]]`. Una funzione ha `[[test]]` una volta sola; `[[window]]` e `[[android(...)]]` vanno solo prima di `main`, e `[[export]]` e `[[cold]]` solo nei file con `import unsafe`:
 
 ```cromo error
 [[inline]]
@@ -258,4 +259,4 @@ error: [[window]] is only for main of the program, whose executable opens no con
 - 29 parole chiave e `Self`, e 30 parole riservate per il futuro; `println`, `i64` e gli altri nomi integrati non sono parole chiave, ma un programma non può dichiararli di nuovo.
 - Gli operatori hanno l'ordine del C, con quelli bit a bit sopra i confronti e `c ? a : b` il più debole, che raggruppa da destra; gli assegnamenti, `++` e `--` sono istruzioni.
 - Le funzioni integrate stampano, fermano il programma, fanno l'aritmetica che ricomincia dall'estremo opposto, contano e ruotano i bit, e incorporano file; i nomi dei tipi convertono; il nucleo aggiunge `sort`, `sortBy`, `join`, `Exception`, `Error`, `Key`, `Ordered` e `Debug`.
-- Sette attributi: `[[test]]`, `[[json(...)]]`, `[[window]]`, `[[android(...)]]`, e `[[export(...)]]` e `[[cold]]` del dialetto unsafe.
+- Sette attributi: `[[test]]`, `[[format]]`, `[[json(...)]]`, `[[window]]`, `[[android(...)]]`, e `[[export(...)]]` e `[[cold]]` del dialetto unsafe.

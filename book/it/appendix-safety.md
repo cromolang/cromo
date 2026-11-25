@@ -13,7 +13,7 @@ Cromo vuole essere abbastanza sicuro per i programmi di tutti i giorni con regol
 | Due argomenti di una chiamata che sono lo stesso oggetto, una lista modificata mentre un `for` la percorre | Un errore; per due elementi di una lista, i cui indici si conoscono solo quando il programma gira, un panic | In compilazione, in esecuzione |
 | Un indice fuori da una lista, una stringa o un array | Un panic, nelle build di debug e di release | In esecuzione |
 | Una divisione tra interi per zero | Un panic, nelle build di debug e di release | In esecuzione |
-| Un overflow di interi, uno scorrimento oltre la larghezza del tipo, un float che non sta in un intero | Un panic nelle build di debug; con `--release` un risultato definito, uguale su ogni sistema ([Numeri e operatori](operators.md)) | In esecuzione |
+| Un overflow di interi, uno shift oltre la larghezza del tipo, un float che non sta in un intero | Un panic nelle build di debug; con `--release` un risultato definito, uguale su ogni sistema ([Numeri e operatori](operators.md)) | In esecuzione |
 | Due thread che modificano gli stessi dati | Il compilatore controlla cosa cattura la lambda di un thread o di un task: i dati che condividono stanno in un `Mutex`, uno `Shared`, un `Atomic` o un `Channel` ([Thread, task e canali](concurrency.md)) | In compilazione |
 | Uno stack che trabocca | Il programma si ferma, con la traccia dello stack | In esecuzione |
 
@@ -30,7 +30,7 @@ Un panic ferma il programma con un messaggio e la traccia dello stack. Il progra
 
 Un file che scrive `import unsafe` può raggiungere la memoria grezza e chiamare il C, e lì tornano gli errori del C: [Il dialetto unsafe](unsafe.md) li elenca. Le garanzie qui sopra valgono per un programma finché quel codice è giusto, e questo comprende:
 
-- la libreria standard, che è scritta nel dialetto: circa 28 000 righe, nella cartella `library` del repository;
+- la libreria standard, che è scritta nel dialetto: circa 43 000 righe, nella cartella `library` del repository;
 - il runtime, in C, e le librerie che usa: SDL per le finestre, mbedTLS per TLS, e quelle che leggono le immagini e i font.
 
 Un programma che non scrive `import unsafe` si fida solo di queste.
@@ -39,14 +39,14 @@ Un programma che non scrive `import unsafe` si fida solo di queste.
 
 - **Niente riferimenti nei campi o nelle variabili.** Un grafo, un albero con i collegamenti ai genitori e un observer si scrivono con indici o handle, che vengono cercati, e controllati, ogni volta. In Rust sarebbero riferimenti con lifetime, oppure `Rc` e `RefCell`. [Id e handle](ids.md) mostra come si scrivono, e quanto costano.
 - **Le copie.** Un valore che possiede memoria viene copiato dove è dato senza `move`, come in C++. Il programma è giusto, e può essere più lento del necessario: `move`, e i parametri letti e `ref`, evitano le copie.
-- **I controlli in esecuzione.** I limiti degli indici sono controllati anche nelle build di release. L'overflow degli interi è controllato solo nelle build di debug: un programma rilasciato con `--release` riparte da capo dove i suoi test davano un panic.
+- **I controlli in esecuzione.** I limiti degli indici sono controllati anche nelle build di release. L'overflow degli interi è controllato solo nelle build di debug: in un programma rilasciato con `--release` gli interi ricominciano dall'estremo opposto dove i suoi test davano un panic.
 
 ## Quanto sono sicure queste garanzie
 
 Sono le regole del progetto, fatte rispettare da un compilatore giovane.
 
 - Non c'è una dimostrazione formale che le regole siano corrette, come c'è per parti di Rust.
-- Il compilatore ha una suite di test, più di 450 programmi in `tests`, e ogni esempio di questa guida viene compilato ed eseguito quando la guida è costruita. Non è stato ancora usato da molte persone su programmi grandi.
+- Il compilatore ha una suite di test, più di 550 programmi in `tests`, e ogni esempio di questa guida viene compilato ed eseguito quando la guida è costruita. Non è stato ancora usato da molte persone su programmi grandi.
 - Un programma senza `import unsafe` che corrompe la memoria, o che compila pur violando una delle regole qui sopra, è un bug di Cromo. Segnalalo nelle [issue](https://github.com/cromolang/cromo/issues) del repository: sono le segnalazioni più utili.
 
 ## Riepilogo

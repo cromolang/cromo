@@ -311,7 +311,7 @@ Una funzione ha un solo risultato, e non esiste `null`. Quando potrebbe non aver
 
 ### Ogni percorso finisce con ret
 
-Una funzione che restituisce un valore deve finire, su ogni percorso, con un'istruzione dopo la quale non si prosegue: `ret`, `throw`, che spiega [Errori](errors.md), una chiamata di `panic`, un `if` con un `else` i cui rami finiscono tutti così, un `for` infinito senza `break`, oppure uno `switch` i cui case finiscono tutti così e coprono ogni valore. Altrimenti il programma non compila:
+Una funzione che restituisce un valore deve finire, su ogni percorso, con un'istruzione dopo la quale non si prosegue: `ret`, `throw`, spiegato in [Errori](errors.md), una chiamata di `panic`, un `if` con un `else` i cui rami finiscono tutti così, un `for` infinito senza `break`, oppure uno `switch` i cui `case` finiscono tutti così e coprono ogni valore. Altrimenti il programma non compila:
 
 ```cromo error
 i32 sign(i64 n) {

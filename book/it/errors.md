@@ -801,7 +801,7 @@ uncaught exception: cannot read 'settings.txt': no such file or folder
 ### Ricorsione, codice ottimizzato e tracce lunghe
 
 - La stessa funzione, chiamata dalla stessa riga molte volte di seguito, come in una ricorsione, compare una volta sola, seguita da `... the same N more times`, come in `deep.cro` qui sopra.
-- Il compilatore ottimizza per default, e mette le funzioni piccole dentro le funzioni che le chiamano: la traccia le mostra comunque, con le loro righe. Una funzione che chiama se stessa come ultimo passo può diventare un ciclo: allora le sue chiamate lasciano una sola riga.
+- Il compilatore ottimizza di default, e mette le funzioni piccole dentro le funzioni che le chiamano: la traccia le mostra comunque, con le loro righe. Una funzione che chiama se stessa come ultimo passo può diventare un ciclo: allora le sue chiamate lasciano una sola riga.
 - Le funzioni del runtime e del C vengono omesse.
 - Una traccia ha al massimo 63 chiamate; una più lunga termina con `...`. Il caso tipico è uno stack overflow:
 
@@ -823,7 +823,7 @@ panic: stack overflow
     ...
 ```
 
-Per avere più di una traccia, come i valori delle variabili, si può eseguire il programma in un debugger: vedi [Strumenti: formattazione, editor e debugger](tools.md).
+Per avere più di quanto dà una traccia, come i valori delle variabili, si può eseguire il programma in un debugger: vedi [Strumenti: formattazione, editor e debugger](tools.md).
 
 ## Come scegliere
 

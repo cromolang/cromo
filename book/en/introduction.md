@@ -54,7 +54,7 @@ i32 main() {
 error: 'name' has been moved and can no longer be used
 ```
 
-The guide is also available as a PDF, in English and in Italian: use the **PDF** button at the top of the page.
+The guide is on cromolang.org, in English and in Italian, as pages and as a PDF.
 
 ## The state of Cromo
 

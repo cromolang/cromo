@@ -283,7 +283,7 @@ Il compilatore non segue un thread libero: i suoi `start()` e `join()` possono s
 
 ### Thread staccati
 
-Un thread libero si può anche **staccare**: dopo `start()`, `detach()` lo lascia proseguire da solo, come `std::thread::detach` in C++, un `JoinHandle` che Rust lascia cadere, o una goroutine di Go. La sua variabile può finire subito: il suo distruttore non lo attende più, nessuno lo attende con `join()`, e nemmeno la fine di `main` lo aspetta. È il modo di avviare un lavoro che nessuno deve aspettare, come il lavoro lungo che avvia un handler di una finestra ([Finestre e app](gui.md)).
+Un thread libero si può anche **staccare**: dopo `start()`, `detach()` lo lascia proseguire da solo, come `std::thread::detach` in C++, un `JoinHandle` che Rust lascia cadere, o una goroutine di Go. La sua variabile può finire subito: il suo distruttore non lo attende più, nessuno lo attende con `join()`, e nemmeno la fine di `main` lo aspetta. È il modo di avviare un lavoro che nessuno deve aspettare, come il lavoro lungo che un handler di una finestra avvia ([Finestre e app](gui.md)).
 
 ```cromo
 import std.thread
@@ -321,7 +321,7 @@ the thread has finished: 42
 
 - Si può staccare solo un thread libero: un thread di un blocco usa le variabili del suo blocco, e `detach()` su di esso è un errore del compilatore, `the thread 'worker' captures by address, and cannot be detached: it uses the variables of its block`.
 - Un'eccezione che termina un thread staccato ferma il programma, come una che nessun `join()` raccoglie.
-- I risultati tornano attraverso ciò che il thread condivide: uno `thread.Shared`, un canale che possiede con `move`, un atomico dentro uno `Shared`, o i componenti di una finestra.
+- I risultati tornano attraverso ciò che il thread condivide: un `thread.Shared`, un canale che possiede con `move`, un atomico dentro uno `Shared`, o i componenti di una finestra.
 - Anche `thread.Task` ha `detach()`, con le stesse regole.
 
 ### start(), join() e detach()
@@ -696,7 +696,7 @@ error: values of type Atomic<i64> cannot be copied
 
 ## Task
 
-Un `thread.Task` ha l'interfaccia e le regole di un `thread.Thread`, ma non è un thread del sistema: il runtime esegue molti task su pochi thread, i suoi **worker**, uno per processore. Quando un task attende, la rete, `time.sleep`, un mutex, un canale o `join()`, nel frattempo il suo worker esegue altri task. Il codice è lo stesso che si scrive con i thread: niente `async`, niente `await`, e nessuna funzione di un colore diverso.
+Un `thread.Task` ha l'interfaccia e le regole di un `thread.Thread`, ma non è un thread del sistema: il runtime esegue molti task su pochi thread, i suoi **worker**, uno per processore. Quando un task attende la rete, `time.sleep`, un mutex, un canale o `join()`, nel frattempo il suo worker esegue altri task. Il codice è lo stesso che si scrive con i thread: niente `async`, niente `await`, e nessuna funzione di un colore diverso.
 
 ```cromo file=task.cro
 import std.thread
@@ -978,7 +978,7 @@ false 2
 receive from a closed, empty channel throws
 ```
 
-Quando il canale viene chiuso, chi invia può essere in attesa. Con capacità 0 attende finché un ricevente non ha il suo valore: se il canale viene chiuso prima, `send()` ritorna normalmente, e il valore si può ancora ricevere. Chi invia ed è in attesa su un canale pieno riceve un'eccezione, come un `send()` dopo `close()`:
+Quando il canale viene chiuso, chi invia può essere in attesa. Con capacità 0 attende finché un ricevente non ha il suo valore: se il canale viene chiuso prima, `send()` ritorna normalmente, e il valore si può ancora ricevere. Chi invia ed è in attesa su un canale pieno riceve un'eccezione quando il canale viene chiuso, come un `send()` dopo `close()`:
 
 ```cromo
 import std.thread

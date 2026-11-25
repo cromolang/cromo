@@ -384,6 +384,8 @@ body.print .does-not-compile + .output { border-left-color: #d23a4f; }
 body.print pre { padding: 2.4mm 2.4mm; font: 7.5pt/1.45 var(--mono); color: #263142; white-space: pre-wrap; overflow: visible; orphans: 6; widows: 6; font-variant-ligatures: none; }
 body.print pre code { white-space: pre-wrap; background: none; padding: 0; color: inherit; font-size: inherit; }
 body.print .output pre { color: #4d596b; }
+/* A line longer than the page: what does not fit goes on, further in than its start. */
+body.print .long { display: block; padding-left: calc((var(--indent) + 8) * 1ch); text-indent: calc((var(--indent) + 8) * -1ch); }
 body.print .keep { break-inside: avoid; }
 body.print .code-name { font: 500 7pt/1 var(--mono); color: #6b7686; padding: 2.4mm 2.4mm 0; }
 body.print .hidden-line, body.print .code-lang, body.print .copy, body.print .toggle { display: none; }

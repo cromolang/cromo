@@ -495,7 +495,7 @@ panic: division by zero at average.cro:2:15
     at main (average.cro:7)
 ```
 
-I numeri in virgola mobile seguono invece lo standard IEEE 754: una divisione per zero dà infinito, `inf` o `-inf`, e 0,0 / 0,0 dà `nan`, "not a number", senza panic. Anche un risultato troppo grande per il tipo è `inf`. `nan` non è uguale a niente, nemmeno a sé stesso, quindi `x != x` è vero solo quando `x` è `nan`:
+I numeri in virgola mobile seguono invece lo standard IEEE 754: una divisione per zero dà infinito, `inf` o `-inf`, e 0,0 / 0,0 dà `nan`, "not a number", senza panic. Anche un risultato troppo grande per il tipo è `inf`. `nan` non è uguale a niente, nemmeno a se stesso, quindi `x != x` è vero solo quando `x` è `nan`:
 
 ```cromo
 i32 main() {
@@ -590,7 +590,7 @@ ff ff00000000
 
 `set & (set - 1)` toglie il bit a 1 più basso, quindi il ciclo visita i bit dell'insieme uno alla volta.
 
-Il risultato di queste funzioni dipende dalla larghezza del tipo, quindi un letterale intero non può essere il loro argomento: il suo tipo andrebbe tirato a indovinare.
+Il risultato di queste funzioni dipende dalla larghezza del tipo, quindi un letterale intero non può essere il loro argomento: il suo tipo andrebbe indovinato.
 
 ```cromo error
 i32 main() {
@@ -639,7 +639,7 @@ Ogni operazione sui numeri in virgola mobile arrotonda il suo risultato, quindi 
 ```cromo
 i32 main() {
     f64 a = 1.0 + 1.0 / 134217728.0  // 1 + 2^-27
-    f64 square = a * a               // arrotondato: l'ultima parte del prodotto si perde
+    f64 square = a * a               // rounded: the last part of the product is lost
     println("{} {}", a * a - square, fma(a, a, -square))
     ret 0
 }
@@ -694,7 +694,7 @@ nan true true
 | `isNaN(x)`, `isInfinite(x)` | se `x` non è un numero, o è un infinito |
 | `pi()`, `e()`, `infinity()`, `nan()` | le costanti, scritte come funzioni |
 
-Il modulo è scritto in Cromo e non chiama la libreria C del sistema, quindi un programma dà gli stessi numeri su Windows, Linux e Android, su x86-64 e su ARM64, bit per bit. La radice quadrata e gli arrotondamenti sono esatti; le altre sono entro un'unità dell'ultima cifra del risultato vero, come nelle librerie C. Una funzione senza risultato, come la radice quadrata di un numero negativo, dà un valore che non è un numero: `isNaN` lo riconosce, mentre `==` è falso anche con se stesso.
+Il modulo è scritto in Cromo e non chiama la libreria C del sistema, quindi un programma dà gli stessi numeri su Windows, Linux e Android, su x86-64 e su ARM64, bit per bit. La radice quadrata e gli arrotondamenti sono esatti; le altre funzioni sono entro un'unità dell'ultima cifra del risultato vero, come nelle librerie C. Una funzione senza risultato, come la radice quadrata di un numero negativo, dà un valore che non è un numero: `isNaN` lo riconosce, mentre `==` è falso anche con se stesso.
 
 ## Conversioni
 
@@ -819,7 +819,7 @@ Il messaggio dell'eccezione dice quale dei due errori è: `'abc' is not a valid 
 
 - Gli interi vanno da `i8` a `i64` e da `u8` a `u64`, i numeri in virgola mobile sono `f32` e `f64`; `char` è `u8`; non esistono interi a 128 bit.
 - Un letterale prende il tipo del suo contesto e deve starci; un'operazione ha il tipo dei suoi operandi, non quello della variabile che riceve il risultato.
-- Un numero si converte da solo solo in un tipo che ne contiene tutti i valori; gli interi con segno e quelli senza segno della stessa dimensione non si mescolano.
+- Un numero si converte da solo soltanto in un tipo che ne contiene tutti i valori; gli interi con segno e quelli senza segno della stessa dimensione non si mescolano.
 - Gli operatori bit a bit legano più dei confronti; `c ? a : b` lega meno di tutti e raggruppa da destra; gli assegnamenti, `++` e `--` sono istruzioni.
 - La divisione intera tronca verso lo zero, e `%` ha il segno del dividendo.
 - L'overflow degli interi, la divisione intera per zero e uno shift di un numero di posizioni fuori dalla larghezza sono panic nelle build di debug; con `--release` l'overflow ricomincia dall'estremo opposto, il numero di posizioni viene preso modulo la larghezza, e la divisione per zero resta un panic. I numeri in virgola mobile danno `inf` e `nan`.

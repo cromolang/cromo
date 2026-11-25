@@ -291,7 +291,7 @@ i32 main() {
 
 A server listens with `net.listenTls(host, port, certificate, key)`: the certificate in PEM, followed by those of its chain, and its private key in PEM, both as texts. Its `accept()` gives a connection at once, and the handshake happens at its first `read` or `write`, in the task that serves it, so that a slow or hostile client does not keep `accept()` waiting. An error of the handshake is the exception of that `read` or `write`.
 
-The program below has a server whose certificate is signed by itself: a plain TCP client gets nothing, and a TLS client refuses the certificate. The functions `certificate()` and `privateKey()` give the two texts in PEM; they are in the whole program.
+The program below has a server whose certificate is signed by itself: a plain TCP client gets nothing, and a TLS client refuses the certificate. The functions `certificate()` and `privateKey()` give the two texts in PEM; they are in the whole program, on the site.
 
 ```cromo
 import std.net

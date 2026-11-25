@@ -751,7 +751,7 @@ Usa un'interfaccia per le collezioni di tipi diversi e per il codice che non ha 
 
 ## Le interfacce della libreria
 
-La libreria dichiara alcune interfacce, che le sue funzioni usano come vincoli: `json.Data` sta nel modulo `std.json`, le altre nel core, che ogni programma vede. I tipi integrati le implementano da soli, e una struct le implementa come qualsiasi altra interfaccia:
+La libreria dichiara alcune interfacce, che le sue funzioni usano come vincoli: `json.Data` sta nel modulo `std.json`, le altre nel nucleo, che ogni programma vede. I tipi integrati le implementano da soli, e una struct le implementa come qualsiasi altra interfaccia:
 
 | Interfaccia | I suoi metodi | Implementata da | Richiesta da | Capitolo |
 |---|---|---|---|---|
@@ -827,7 +827,7 @@ stable
 newest: Version { major: 2, minor: 0 }
 ```
 
-`Debug` e `json.Data` non hanno metodi, e un tipo non li indica: il compilatore sa quali tipi hanno una forma di debug, e quali può convertire in JSON. Esistono per i generici: un `T` si stampa con `{:?}` solo quando il generico chiede `T : Debug`, e si converte in JSON solo con `T : json.Data`; altrimenti il compilatore dice `T can be printed with {:?} only with a constraint: write <T : Debug>`.
+`Debug` e `json.Data` non hanno metodi, e un tipo non li indica: il compilatore sa quali tipi hanno una forma per il debug, e quali può convertire in JSON. Esistono per i generici: un `T` si stampa con `{:?}` solo quando il generico chiede `T : Debug`, e si converte in JSON solo con `T : json.Data`; altrimenti il compilatore dice `T can be printed with {:?} only with a constraint: write <T : Debug>`.
 
 `Exception` non ha `Self`, quindi è anche un tipo, come in `catch (Exception e)`.
 

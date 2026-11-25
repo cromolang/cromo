@@ -195,6 +195,7 @@ Attributes are written as in C++11, `[[name]]` or `[[name(arguments)]]`, before 
 | Attribute | Before | Meaning | Chapter |
 |---|---|---|---|
 | `[[test]]` | a function `void name()` | a test, which `cromo test` runs | [Tests](tests.md) |
+| `[[format]]` | a function or a method whose last parameter is a `string` | a call gives there a format and its arguments, as `println` | [Formatting text](formatting.md) |
 | `[[json("name")]]` | a field, or a case of an enum | its name in JSON | [JSON](json.md) |
 | `[[json(skip)]]` | a field | left out of JSON | [JSON](json.md) |
 | `[[window]]` | `main` | on Windows, an executable without a console | [Windows and apps](gui.md) |
@@ -226,7 +227,7 @@ i32 main() {
 {"user_id":7,"name":"Ada"}
 ```
 
-The attributes go only before the functions, the fields and the cases of the enums; before a struct or a method they are errors. A function has `[[test]]` once; `[[window]]` and `[[android(...)]]` go only before `main`, and `[[export]]` and `[[cold]]` only in the files with `import unsafe`:
+The attributes go only before the functions, the methods, the fields and the cases of the enums; before a struct they are errors, and a method has only `[[format]]`. A function has `[[test]]` once; `[[window]]` and `[[android(...)]]` go only before `main`, and `[[export]]` and `[[cold]]` only in the files with `import unsafe`:
 
 ```cromo error
 [[inline]]
@@ -258,4 +259,4 @@ error: [[window]] is only for main of the program, whose executable opens no con
 - 29 keywords and `Self`, and 30 words reserved for later; `println`, `i64` and the other built-in names are not keywords, but a program cannot declare them again.
 - The operators have the order of C, with the bitwise ones above the comparisons and `c ? a : b` the weakest, grouping from the right; assignments, `++` and `--` are statements.
 - The built-in functions print, stop the program, wrap, count and turn bits, and embed files; the types convert; the core adds `sort`, `sortBy`, `join`, `Exception`, `Error`, `Key`, `Ordered` and `Debug`.
-- Seven attributes: `[[test]]`, `[[json(...)]]`, `[[window]]`, `[[android(...)]]`, and `[[export(...)]]` and `[[cold]]` of the unsafe dialect.
+- Seven attributes: `[[test]]`, `[[format]]`, `[[json(...)]]`, `[[window]]`, `[[android(...)]]`, and `[[export(...)]]` and `[[cold]]` of the unsafe dialect.

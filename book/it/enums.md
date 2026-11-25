@@ -483,7 +483,7 @@ error: 'switch' works on enums, integers and strings, found f64
 
 ## break e continue in uno switch
 
-Un ramo termina da solo, quindi `break` e `continue` non si possono scrivere al suo interno, nemmeno dentro un `if` del ramo. In C un `break` chiude un case; in Cromo uscirebbe dal ciclo che racchiude lo `switch`, e il compilatore ferma l'abitudine del C prima che diventi un bug:
+Un ramo termina da solo, quindi `break` e `continue` non si possono scrivere al suo interno, nemmeno dentro un `if` del ramo. In C un `break` chiude un `case`; in Cromo uscirebbe dal ciclo che racchiude lo `switch`, e il compilatore ferma l'abitudine del C prima che diventi un bug:
 
 ```cromo error
 i32 main() {
@@ -844,7 +844,7 @@ Un valore si crea scrivendo gli argomenti di tipo, `Outcome<i64>.Done(5)`: `Outc
 
 ## Option: un valore, o nessuno
 
-Una funzione che può non avere un risultato, come una ricerca che non trova niente, restituisce un `Option<T>`: un enum generico del core, con i casi `None` e `Some(T value)`.
+Una funzione che può non avere un risultato, come una ricerca che non trova niente, restituisce un `Option<T>`: un enum generico del nucleo, con i casi `None` e `Some(T value)`.
 
 ```cromo
 Option<i64> indexOf(list<string> names, string wanted) {

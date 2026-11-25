@@ -411,7 +411,7 @@ Circle(2.5) Rect(1.0, 2.0) Empty
 | lista, array, vettore | `[a, b, c]` |
 | mappa | `{key: value, ...}`, nell'ordine della mappa |
 | struct | `Name { field: value, ... }`, con tutti i suoi campi, anche quelli privati; `Name` se non ha campi; una struct generica senza i suoi argomenti di tipo, `Box { item: 7 }` |
-| enum | il case, con i suoi valori in ordine: `Circle(2.5)`, `Empty` |
+| enum | il caso, con i suoi valori in ordine: `Circle(2.5)`, `Empty` |
 
 Le parti si stampano con la loro forma per il debug, anche quando hanno `text()`, quindi una stringa dentro una lista o una struct sta tra virgolette. Il nome di una struct o di un enum è quello della sua dichiarazione, senza il modulo.
 

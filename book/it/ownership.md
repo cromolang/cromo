@@ -559,7 +559,7 @@ close give=false
 
 ### Spostare un campo, un elemento o un parametro `ref`
 
-Una variabile locale intera non si può usare dopo uno spostamento. Spostare un campo, un elemento di una lista o un parametro `ref`, invece, prende il valore e lascia al suo posto il **valore predefinito del suo tipo**, così la struct, la lista e la variabile del chiamante restano utilizzabili:
+Una variabile locale spostata per intero non si può più usare. Spostare un campo, un elemento di una lista o un parametro `ref`, invece, prende il valore e lascia al suo posto il **valore predefinito del suo tipo**, così la struct, la lista e la variabile del chiamante restano utilizzabili:
 
 ```cromo
 struct Settings {
@@ -822,7 +822,7 @@ keeping Grace (5 letters)
 ["Ada", "Grace"]
 ```
 
-Sugli altri parametri `const` non ha senso: un parametro in lettura è già in sola lettura, e `ref` esiste per modificare.
+Sugli altri parametri, `const` non ha senso: un parametro in lettura è già in sola lettura, e `ref` esiste per modificare.
 
 ```cromo error
 void show(const string name) {
@@ -895,7 +895,7 @@ i32 main() {
 Anna! 10
 ```
 
-Il posto è una variabile, un campo o un elemento, e il tipo è quello del posto, scritto esattamente. Un riferimento locale non è un valore che si può conservare: un'assegnazione scrive il posto, `ret` e `move` prendono il valore del posto, e non si può mettere in un campo. Il suo nome dura fino alla fine del blocco.
+Il posto è una variabile, un campo o un elemento, e il tipo è quello del posto, scritto esattamente. Un riferimento locale non è un valore che si può conservare: un assegnamento scrive il posto, `ret` e `move` prendono il valore del posto, e non si può mettere in un campo. Il suo nome dura fino alla fine del blocco.
 
 A tenerlo sicuro è una regola sola. Dalla sua dichiarazione al suo ultimo uso, la variabile da cui parte è prestata, come la lista di un `for` mentre il ciclo la percorre: si può leggere, e si modifica solo attraverso il riferimento. Così il posto non può sparire, né spostarsi in memoria, sotto il riferimento:
 

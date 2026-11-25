@@ -143,6 +143,24 @@ TOKEN = re.compile(r'''
 ''', re.S | re.X)
 
 
+# A line of code longer than the printed page is wide: the PDF breaks it, and its
+# other lines start further in than its first, so that they read as its continuation.
+LONG = 100
+
+
+def lines_of(text, shown):
+    """The lines of a block of code, each as `shown` writes it, the long ones marked for the PDF."""
+    parts = []
+    for line in text.split('\n'):
+        if len(line) > LONG:
+            indent = len(line) - len(line.lstrip(' '))
+            parts.append(f'<span class="long" style="--indent: {indent}">{shown(line)}\n</span>')
+        else:
+            parts.append(shown(line) + '\n')
+    code = ''.join(parts)
+    return code[:-1] if code.endswith('\n') else code
+
+
 def highlight(code):
     out = []
     for m in TOKEN.finditer(code):
@@ -343,13 +361,14 @@ def render(blocks, links, headings):
                         hidden += 1
                         parts.append(f'<span class="hidden-line">{highlight(HIDDEN.sub("", line, count=1))}\n</span>')
                     else:
-                        parts.append(highlight(line) + '\n')
+                        shown = lines_of(line, highlight)  # with its end of line inside, when it is long
+                        parts.append(shown if len(line) > LONG else shown + '\n')
                 code = ''.join(parts)
                 code = code[:-1] if code.endswith('\n') else code
             elif b.language in ('sh', 'shell', 'powershell', 'console'):
                 code = highlight_shell(b.text)
             else:
-                code = html.escape(b.text, quote=False)
+                code = lines_of(b.text, lambda line: html.escape(line, quote=False))
             css = 'output' if b.language in ('output', 'text') else 'code'
             if b.flags.get('error'):
                 css += ' does-not-compile'

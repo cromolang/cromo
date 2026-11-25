@@ -162,7 +162,7 @@ i32 main() {
 error: the constructor of Ticket is private to its module: it is not marked public
 ```
 
-Scrivere `public` dove non va è un errore che spiega il perché: `the cases of an enum are public with it`, `the methods of an interface are public with it`, `a destructor has no 'public': it runs wherever its object ends`. Le costanti di un modulo, come `const i64 limit = 1024`, sono sempre private: `a constant of a module has no attributes and is not public: only its module sees it`.
+Scrivere `public` dove non va è un errore che spiega il perché: `the cases of an enum are public with it`, `the methods of an interface are public with it`, `a destructor has no 'public': it runs wherever its object ends`. Una costante di un modulo, come `const i64 limit = 1024`, è privata a meno che non sia scritta `public const`, come mostra la prossima sezione.
 
 Ciò che una dichiarazione pubblica espone deve essere pubblico a sua volta: una funzione pubblica non può prendere né restituire una struct privata, e un campo o un metodo pubblico non può avere un tipo privato, perché un altro modulo non potrebbe scrivere quel tipo:
 
@@ -208,7 +208,7 @@ i32 main() {
 100 0.5
 ```
 
-`limits.hidden` in `quota.cro` sarebbe l'errore `the module limits has no public constant 'hidden'`. Una variabile di modulo del dialetto unsafe non è mai pubblica: è stato ([Il dialetto unsafe](unsafe.md)).
+`limits.hidden` in `quota.cro` sarebbe l'errore `the module limits has no public constant 'hidden'`. Una variabile di modulo del dialetto unsafe non è mai pubblica: è uno stato ([Il dialetto unsafe](unsafe.md)).
 
 ## Gli import
 
@@ -592,7 +592,12 @@ Il nucleo della libreria, con `list`, `map`, `string`, `format`, `Exception`, `E
 | `std.jwt` | JSON Web Token | [Rete e HTTP](networking.md) |
 | `std.gzip` | compressione | [Rete e HTTP](networking.md) |
 | `std.json` | JSON | [JSON](json.md) |
+| `std.regex` | espressioni regolari | [Espressioni regolari](regex.md) |
+| `std.db` | SQLite e PostgreSQL | [Database](databases.md) |
+| `std.math` | radici, potenze, logaritmi, trigonometria | [Numeri e operatori](operators.md) |
+| `std.log` | il log di un programma | [File, processi e tempo](system.md) |
 | `std.gui` | finestre, componenti e app per Android | [Finestre e app](gui.md) |
+| `std.audio` | suoni e musica | [Finestre e app](gui.md) |
 
 I moduli della libreria seguono le regole degli altri: dopo `import std.fs`, i suoi nomi si trovano anche senza il modulo davanti. La guida e la libreria li scrivono comunque con il loro ultimo nome davanti, `fs.readText(path)`, `time.now()`, perché senza di esso un nome come `readText` o `now` dice meno.
 
@@ -634,7 +639,7 @@ bin report cmd/report.cro
 
 `cromo.mod` ha una cosa per riga, con le parole separate da spazi, e righe vuote e commenti `//` dove servono:
 
-- `module name` è la prima riga, una sola volta: il nome del progetto, fatto di lettere, cifre e `.`, `-`, `_` e `/`, come `example.com/project`. Darà il nome al progetto come pacchetto; per ora ne segna la cima.
+- `module name` è la prima riga, una sola volta: il nome del progetto, fatto di lettere, cifre e `.`, `-`, `_` e `/`, come `example.com/project`. È l'indirizzo del progetto come pacchetto, e ne segna la cima.
 - `bin name path` è un eseguibile: il suo nome, fatto di lettere, cifre, `-` e `_`, diverso per ogni riga, e il suo file principale, un file `.cro` scritto a partire dalla cartella di `cromo.mod`, con `/`.
 
 ### La radice degli import
@@ -683,7 +688,7 @@ Senza righe `bin`, `cromo build`, `cromo run` e `cromo test` senza un file usano
 
 ### Gli errori di cromo.mod
 
-Quando `cromo` legge gli eseguibili, ogni riga sbagliata di `cromo.mod` è un errore con il suo numero, e non viene costruito nulla. Per questo `cromo.mod`:
+Quando `cromo` legge gli eseguibili, ogni riga sbagliata di `cromo.mod` è un errore con il suo numero, e non viene costruito nulla. Con questo `cromo.mod`:
 
 ```text
 module example.com/project
@@ -752,7 +757,7 @@ module example.com/app
 require geometry github.com/anna/geometry v1.2.0
 ```
 
-La prima parola dopo `require` è il nome del pacchetto negli import del progetto: `import geometry` è il modulo dei file nella radice del repository, e `import geometry.shapes` il suo file `shapes.cro` o la sua cartella `shapes`. Il nome è l'ultimo dell'indirizzo, oppure quello scritto dopo, come `cromo get github.com/anna/geometry maps`, quando due pacchetti avrebbero lo stesso.
+La prima parola dopo `require` è il nome del pacchetto negli import del progetto: `import geometry` è il modulo dei file nella radice del repository, e `import geometry.shapes` il suo file `shapes.cro` o la sua cartella `shapes`. Il nome è l'ultimo dell'indirizzo, oppure quello scritto dopo, come `cromo get github.com/anna/geometry maps`, quando due pacchetti avrebbero lo stesso nome.
 
 - **Le versioni.** Una versione è un tag come `v1.2.0`. `cromo get github.com/anna/geometry@v1.4.0` prende quella, e `@v2` l'ultima delle versioni `v2`; senza, prende l'ultima, o l'ultima della versione maggiore già richiesta. `v1` e `v2` dello stesso repository sono due pacchetti: un programma può usarli entrambi, con due nomi.
 - **Quale viene scelta.** Quando il progetto e i suoi pacchetti richiedono versioni diverse dello stesso pacchetto, si usa la più alta fra quelle richieste, e mai una più nuova che nessuno ha chiesto: lo stesso programma si costruisce dagli stessi sorgenti ogni volta, senza un file che blocchi le versioni.
@@ -794,11 +799,11 @@ I pacchetti del progetto Cromo sono i repository di [github.com/cromolang](https
 ## Riepilogo
 
 - Un file è un modulo; una cartella è un unico modulo formato dai suoi file, che condividono tutti i loro nomi, anche quelli privati, mentre ognuno scrive i propri import; le sue sottocartelle sono moduli a sé.
-- Tutto è privato, a meno che non sia `public`: funzioni, tipi, campi, metodi e costruttori. I casi degli enum, i metodi delle interfacce, i metodi che implementano un'interfaccia e i distruttori sono pubblici con il loro tipo; le costanti di un modulo sono sempre private.
+- Tutto è privato, a meno che non sia `public`: funzioni, tipi, campi, metodi e costruttori. I casi degli enum, i metodi delle interfacce, i metodi che implementano un'interfaccia e i distruttori sono pubblici con il loro tipo; una costante di un modulo è privata a meno che non sia `public const`.
 - Una dichiarazione pubblica non può esporre un tipo privato.
 - Gli import vengono per primi in un file, non sono pubblici e non sono transitivi; i moduli possono importarsi a vicenda.
 - I nomi importati si usano direttamente; il modulo va davanti, con l'ultimo nome del suo percorso, quando due import danno lo stesso nome. Un nome viene cercato nel modulo, poi nei suoi import, poi nel nucleo della libreria.
 - `import a.b` è `a/b.cro` o la cartella `a/b`, a partire dalla cartella del file principale o di `cromo.mod`.
 - I file che terminano con `_windows`, `_linux`, `_x86_64` e `_arm64` sono le parti di un modulo per un solo sistema o una sola architettura.
 - `std.x` sono i moduli della libreria; il suo nucleo è visibile ovunque.
-- `cromo.mod` segna la cima di un progetto: gli import partono dalla sua cartella, e le sue righe `bin` sono gli eseguibili che prendono `cromo build`, `cromo run name` e `cromo test`. Le sue righe `version`, `company`, `description` e `copyright` vanno negli eseguibili per Windows, e `sign` è il comando che li firma dopo `cromo build --release`. I pacchetti verranno più avanti.
+- `cromo.mod` segna la cima di un progetto: gli import partono dalla sua cartella, e le sue righe `bin` sono gli eseguibili che `cromo build`, `cromo run name` e `cromo test` prendono. Le sue righe `version`, `company`, `description` e `copyright` vanno negli eseguibili per Windows, e `sign` è il comando che li firma dopo `cromo build --release`. Un pacchetto è un repository indicato dal suo indirizzo: `cromo get` lo aggiunge a `cromo.mod` come riga `require`, e `cromo.sum` ne conserva l'hash.

@@ -69,7 +69,7 @@ i32 main() {
 - A literal can stand on several lines, and a comma after the last element is allowed.
 - The elements are given to the list as to `add()`: a string or another value that owns memory is copied, unless it is written `move name`. The rules of copies and moves are in [Ownership](ownership.md).
 
-Where nothing gives the type, a list of number literals does not compile, as a lone `5` does not; neither does an empty `[]`. An element cannot be written with `ref`: the list keeps its own elements, it does not refer to variables.
+Where nothing gives the type, a list of number literals does not compile; neither does an empty `[]`. An element cannot be written with `ref`: the list keeps its own elements, it does not refer to variables.
 
 ```cromo error
 i32 main() {
@@ -135,7 +135,7 @@ panic: index out of bounds: the index is 3 but the length is 3 at scores.cro:3:2
     at main (scores.cro:3)
 ```
 
-Two lists cannot be compared with `==`: compare their elements in a loop.
+Two lists are compared with `==` and `!=`, element by element, when their elements can be.
 
 ### for over a list
 
@@ -341,7 +341,7 @@ i32 main() {
 - `f64[2][3]` is two arrays of three, as in C: `grid[i][j]` has `i < 2` and `j < 3`.
 - `a.len()` is the size, and `for (T x in a)` and `for (ref T x in a)` visit the elements as for a list, with the same rules.
 - An index outside the array is a panic, as for a list; when the index is a constant, it is an error of the compiler.
-- Arrays are not compared with `==`, and they are printed only with `{:?}`.
+- Arrays are compared with `==`, element by element, and they are printed only with `{:?}`.
 
 An array is a value, as a struct: it can be a field, a parameter, a return value. It is copied when its elements are simple values, as numbers; an array of strings or of other values that own memory is moved, and it has no `copy()`:
 

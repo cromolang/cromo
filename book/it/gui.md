@@ -242,10 +242,10 @@ i32 main() {
 ```
 
 - `setTitleBarVisible(false)` nasconde la barra: il contenuto occupa tutta la finestra, dall'alto. Una finestra così non ha un punto da cui trascinarla, e la chiude il programma, con `close()`.
-- `setTitleBarHeight(pixel)` imposta l'altezza della barra, da 24 a 96: 35 di default.
+- `setTitleBarHeight(pixels)` imposta l'altezza della barra, da 24 a 96: 35 di default.
 - `setButtons(minimize, maximize, close)` sceglie i pulsanti della barra: tutti e tre di default.
 - `setIcon(gui.Icon.Mail)` mette un'icona a sinistra della barra, nel colore del titolo, e `setIconImage(gui.Image(embed("logo.png")))` un'immagine del programma, come il suo logo; `setIcon(gui.Icon.None)` toglie l'una o l'altra. Il pannello di `titleBar()` allora comincia dopo l'icona.
-- `setCornerRadius(pixel)` arrotonda gli angoli della finestra, da 0, il default, a 64, e si chiama prima di `start()`. Fuori dagli angoli si vede ciò che sta dietro la finestra; una finestra ingrandita ha gli angoli vivi.
+- `setCornerRadius(pixels)` arrotonda gli angoli della finestra, da 0, il default, a 64, e si chiama prima di `start()`. Fuori dagli angoli si vede ciò che sta dietro la finestra; una finestra massimizzata ha gli angoli vivi.
 - Una finestra viene disegnata mentre l'utente la ridimensiona: i componenti seguono il bordo con le loro ancore mentre il mouse si muove.
 
 ### Temi
@@ -275,7 +275,7 @@ w.setPalette(light, dark)
 | `surface`, `surfaceHover`, `surfacePressed` | card, dialoghi, campi, pulsanti e barre; sotto il mouse e le fasce; premuto, e le tracce |
 | `text`, `textSecondary`, `textFaint` | il testo; quello che conta meno, le etichette e le icone; testo attenuato e segnaposto |
 | `line`, `border` | linee e bordi delle card; bordi dei controlli |
-| `accent`, `accentStrong`, `accentSoft` | pulsanti principali, caselle spuntate, interruttori e cursori; l'accento sotto il mouse; la voce indicata |
+| `accent`, `accentStrong`, `accentSoft` | pulsanti principali, caselle spuntate, interruttori e slider; l'accento sotto il mouse; la voce indicata |
 | `selection`, `selectionSoft` | il focus, i link e la barra della riga selezionata; la riga e il testo selezionati |
 | `onAccent` | il testo sull'accento |
 | `danger` | errori, e i pulsanti che distruggono |
@@ -356,7 +356,7 @@ name.resetLook()                                    // as the theme wants, again
 
 - `setBackground(color)`, `setTextColor(color)` e `setBorderColor(color)` impostano lo sfondo del componente, il colore del suo testo e il colore del suo bordo e delle sue linee. Un colore è uno fisso, `gui.rgb(0x8A4FBF)`, o un ruolo del tema, `gui.role(gui.Role.Accent)`, che segue il tema della finestra, chiaro o scuro, e la sua palette. I ruoli sono quelli della tabella de [i colori di un programma](#i-colori-di-un-programma), con la maiuscola: `gui.Role.SurfaceHover`, `gui.Role.TextFaint`.
 - `setCornerRadius(radius)` imposta il raggio dei suoi angoli, in pixel logici, da 0 per angoli vivi: al massimo metà del suo lato più corto, che dà una pillola. Vale per i pulsanti, le caselle di testo, le combo box, i gruppi, le card con schede e i controlli segmentati, e per lo sfondo degli altri.
-- `setTextSize(size)` imposta la dimensione del suo testo, in pixel logici, per i componenti che scrivono un testo proprio. Il componente mantiene la sua dimensione: è il programma a dargli lo spazio per un testo più grande. Una text view ha il suo `setTextSize`, la dimensione da cui sono scalati i suoi pezzi.
+- `setTextSize(size)` imposta la dimensione del suo testo, in pixel logici, per i componenti che scrivono un testo proprio. Il componente mantiene la sua dimensione: è il programma a dargli lo spazio per un testo più grande. Una vista di testo ha il suo `setTextSize`, la dimensione da cui sono scalati i suoi pezzi.
 - `resetLook()` ridà al componente l'aspetto del tema.
 
 Un componente senza un corpo proprio, come un'etichetta o una casella di spunta, disegna il suo sfondo come un riquadro dietro di sé. Ciò che è sotto il mouse e ciò che è premuto derivano dallo sfondo, un po' verso il colore del testo.
@@ -1408,12 +1408,12 @@ i32 main() {
 }
 ```
 
-- **I fotogrammi.** L'handler di `onUpdate` è chiamato 60 volte al secondo, o quante ne dice `w.setFps`, con i secondi passati dalla chiamata precedente, e 0 la prima volta. Una velocità è in pixel al secondo, moltiplicata per quei secondi: la palla va veloce uguale su un computer lento e su uno veloce. La finestra viene ridisegnata quando l'handler ha cambiato qualcosa; mentre è minimizzata l'handler aspetta.
+- **I fotogrammi.** L'handler di `onUpdate` è chiamato 60 volte al secondo, o quante ne dice `w.setFps`, con i secondi passati dalla chiamata precedente, e 0 la prima volta. Una velocità è in pixel al secondo, moltiplicata per quei secondi: la palla va alla stessa velocità su un computer lento e su uno veloce. La finestra viene ridisegnata quando l'handler ha cambiato qualcosa; mentre è ridotta a icona l'handler aspetta.
 - **I tasti.** `w.onKeyUp(handler)` è chiamato quando un tasto viene rilasciato, come `onKeyDown` quando viene premuto: fra i due il tasto è tenuto giù. Un tasto tenuto premuto torna a `onKeyDown` mentre si ripete, con `key.repeated` a true: un gioco che vuole ogni pressione una volta sola li scarta.
 - **Le dita.** `w.onTouchDown`, `onTouchMove` e `onTouchUp` danno ogni dito sullo schermo di un telefono come un `gui.Touch`: `finger` è il suo numero, lo stesso da quando tocca a quando si alza, così due dita si distinguono; `x` e `y` sono la sua posizione nel contenuto, e `pressure` va da 0 a 1. Uno scorrimento è il punto dove un dito ha toccato, confrontato con dove si trova ora. Il primo dito è anche il mouse: i componenti, e gli handler del mouse, gli rispondono come prima.
 - **I punti.** `gui.Point(x, y)` tiene due numeri che vanno insieme, una posizione o una velocità: una lista di punti prende il posto di una lista di x e una di y. I suoi numeri sono `p.x` e `p.y`.
 - **Il ritmo.** `w.setVsync(true)` disegna la finestra al passo con lo schermo, ogni fotogramma a un suo refresh: il movimento è fluido, ed è lo schermo, non `setFps`, a dare il ritmo mentre il gioco disegna.
-- **Lo schermo.** `w.setFullscreen(true)` dà alla finestra tutto lo schermo, senza la barra del titolo, e su un telefono senza le barre di sistema; `w.setOrientation(gui.Orientation.Portrait)`, o `Landscape`, dice come un telefono tiene la finestra, che di default ruota con lui.
+- **Lo schermo.** `w.setFullscreen(true)` dà alla finestra tutto lo schermo, senza la barra del titolo, e su un telefono senza le barre del sistema; `w.setOrientation(gui.Orientation.Portrait)`, o `Landscape`, dice come un telefono tiene la finestra, che di default ruota con lui.
 
 Lo stato del gioco sta in un `thread.Shared`, come quello di ogni handler, e gli handler girano uno alla volta sul thread delle finestre. `examples/25_snake.cro` è un gioco intero fatto così: lo stesso sorgente si gioca in una finestra con le frecce e su un telefono con un dito, con `cromo run --target android`.
 
@@ -1456,11 +1456,11 @@ Un suono e un player non si copiano, si spostano soltanto: l'handler che suona l
 Una finestra si può anche comporre con il mouse. `cromo design` apre il designer, che è a sua volta un programma di `std.gui`:
 
 ```sh
-cromo design               # una nuova finestra
-cromo design notes.form    # apre un form
+cromo design               # a new window
+cromo design notes.form    # opens a form
 ```
 
-- **Components**, a sinistra, aggiunge un componente alla finestra: etichette, pulsanti, caselle e aree di testo, caselle di spunta, interruttori, gruppi di opzioni, controlli segmentati, combo box, cursori, barre di avanzamento, liste, tabelle, canvas, icone, immagini, testo ricco, la vista di una telecamera, gruppi, pannelli, schede e divisori. Il testo di una icon box è il nome della sua icona, come `Star`; quello di una image box è il file della sua immagine, dalla cartella del form, che entra nel programma con `embed`; una vista di telecamera ha la sua telecamera, il campo `camera` del modulo.
+- **Components**, a sinistra, aggiunge un componente alla finestra: etichette, pulsanti, caselle e aree di testo, caselle di spunta, interruttori, gruppi di scelte, controlli segmentati, combo box, slider, barre di avanzamento, liste, tabelle, canvas, icone, immagini, testo ricco, la vista di una telecamera, gruppi, pannelli, schede e divisori. Il testo di una icon box è il nome della sua icona, come `Star`; quello di una image box è il file della sua immagine, dalla cartella del form, che entra nel programma con `embed`; una vista di telecamera ha la sua telecamera, il campo `camera` del modulo.
 - **Outline**, sotto, mostra i componenti della finestra per pagine e per gruppi: un clic su uno lo seleziona, e mostra la sua pagina.
 - Un clic seleziona un componente; Maiusc e un clic ne aggiungono uno alla selezione, e un rettangolo tracciato sulla finestra seleziona ciò che tocca. La selezione si sposta insieme con il mouse o con le frecce, di 4 pixel, e Canc la elimina. Un componente si ridimensiona con le otto maniglie che ha intorno, e la finestra con le maniglie sul bordo destro, sul bordo inferiore e sul loro angolo.
 - **Edit** ha Cut, Copy, Paste, Duplicate, Delete e Select all, con Ctrl+X, Ctrl+C, Ctrl+V, Ctrl+D, Canc e Ctrl+A. Ciò che viene incollato va sulla pagina mostrata, un po' più in basso e a destra, con nomi propri, e un gruppo o un pannello viene copiato con ciò che contiene.

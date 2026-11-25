@@ -147,11 +147,11 @@ lld-link: error: undefined symbol: callThrice
 
 When compiling for Linux, `extern "name"` is the static library `libname.a`, looked for in the folders of the modules that declare the library, in the order in which they are loaded, as on Windows. Its code goes into the executable, which needs nothing next to it. When it is not found, the compiler says so:
 
-Without a `libname.a`, the library can be shared: `libname.so` next to the modules, or `libname.so.1` as it names itself for the loader. The executable is then linked with it and with glibc, `cromo` copies the library next to the executable, as a DLL on Windows, and the program looks for it there when it starts. The static library comes first when both are there: it leaves one file to give to others.
-
 ```text
 error: cannot find the library 'maths': there is no libmaths.a or libmaths.so next to the modules that use it
 ```
+
+Without a `libname.a`, the library can be shared: `libname.so` next to the modules, or `libname.so.1` as it names itself for the loader. The executable is then linked with it and with glibc, `cromo` copies the library next to the executable, as a DLL on Windows, and the program looks for it there when it starts. The static library comes first when both are there: it leaves one file to give to others.
 
 `cromo` does not read the names of a static library: a missing function is reported by the linker, which often suggests the right one:
 
@@ -161,7 +161,7 @@ ld.lld: error: undefined symbol: sumAl
 >>> did you mean: sumAll
 ```
 
-Shared libraries, the `.so` files, are not supported on Linux yet.
+A shared library, a `.so` file, is taken only when there is no static one, as said above.
 
 A module that calls the DLLs of Windows compiles only for Windows. When a program must run on both systems, the calls go in the files of each system, as `clock_windows.cro` and `clock_linux.cro` next to `clock.cro`, which offer the same functions: see [Modules and projects](modules.md).
 
@@ -530,7 +530,7 @@ The rules of `[[export]]` are in [The unsafe dialect](unsafe.md).
 
 - `import unsafe` allows `extern "name" { ... }` blocks of C functions, written as Cromo functions without a body.
 - On Windows `extern "name"` is `name.dll`, next to the modules or in `System32`, whose functions are checked while compiling; a `name.lib` next to the module is used instead, without the check. The DLLs next to the modules are copied next to the executable.
-- On Linux it is `libname.a` next to the modules, checked by the linker. When the C libraries call the C library, the executable is linked with glibc, and needs glibc 2.29 or later; not yet on ARM64.
+- On Linux it is `libname.a` next to the modules, or `libname.so` without it, checked by the linker. When the C libraries call the C library, the executable is linked with glibc, and needs glibc 2.29 or later; not yet on ARM64.
 - From Linux, the functions of the Windows DLLs are not checked: a missing one stops the program when it starts.
 - Numbers, `bool`, `addr` and `ref` to numbers or to structs of numbers cross the boundary; strings go with `cstring()` and come back with `string(data, length)`.
 - The C functions keep their name and are private to their module; C resources go in structs with destructors, and the rest of the program uses those.

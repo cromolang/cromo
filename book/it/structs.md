@@ -747,7 +747,7 @@ true true
 false true
 ```
 
-Non c'è niente da scrivere: il compilatore prepara il confronto di una struct la prima volta che viene usato, come prepara `copy()`. Quando due valori sono uguali in un altro modo, la struct scrive il metodo `bool equals(Nome other) const`, e `==` lo chiama. È lo stesso `equals` che usa una chiave di una mappa ([Liste, mappe e testo](collections.md)):
+Non c'è niente da scrivere: il compilatore prepara il confronto di una struct la prima volta che viene usato, come prepara `copy()`. Quando due valori sono uguali in un altro modo, la struct scrive il metodo `bool equals(Name other) const`, e `==` lo chiama. È lo stesso `equals` che usa una chiave di una mappa ([Liste, mappe e testo](collections.md)):
 
 ```cromo
 struct Money {

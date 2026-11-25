@@ -13,7 +13,7 @@ Cromo prende qualcosa da ciascuno di questi linguaggi. Questa appendice elenca, 
 | `return` | `ret` |
 | `;` alla fine delle istruzioni | la fine della riga; un'istruzione per riga ([Concetti comuni](common-concepts.md)) |
 | puntatori, `nullptr`, `new`, `delete` | niente puntatori e niente `null`; l'heap solo attraverso i contenitori. Gli indirizzi grezzi esistono solo nel dialetto unsafe ([Il dialetto unsafe](unsafe.md)). Un oggetto che punta a un altro tiene il suo id, un indice in una lista ([Id e handle](ids.md)) |
-| `T&`, `const T&` | un parametro è in lettura per default; `ref` modifica; un riferimento vive solo durante una chiamata o un ciclo, mai in un campo ([Possesso](ownership.md)) |
+| `T&`, `const T&` | un parametro è in lettura di default; `ref` modifica; un riferimento vive solo durante una chiamata o un ciclo, mai in un campo ([Possesso](ownership.md)) |
 | costruttori di copia, copie implicite | copie implicite anche qui, fatte da `copy()`, generato o scritto a mano ([Struct](structs.md)) |
 | `std::move` | `move`, controllato: una variabile spostata non può più essere usata ([Possesso](ownership.md)) |
 | `class`, ereditarietà, `virtual` | `struct` e interfacce ([Interfacce e generici](interfaces-generics.md)) |
@@ -21,7 +21,7 @@ Cromo prende qualcosa da ciascuno di questi linguaggi. Questa appendice elenca, 
 | overloading di funzioni e operatori | non disponibile: ogni funzione ha il proprio nome |
 | `auto` | il tipo si scrive sempre |
 | `while`, `do` | `for (condition)`, `for { }` |
-| `switch` con fall-through | niente fall-through; sugli enum ogni case va gestito ([Enum e switch](enums.md)) |
+| `switch` con fall-through | niente fall-through; sugli enum ogni caso va gestito ([Enum e switch](enums.md)) |
 | `#include`, header | `import` di moduli; nessun preprocessore ([Moduli e progetti](modules.md)) |
 | `int`, `long`, `size_t` | `i32`, `i64`, `u64`: dimensioni fisse; le lunghezze sono `i64` |
 | conversioni implicite tra numeri | solo quelle che non perdono nulla, come da `i32` a `i64`; numeri con segno e senza segno non si mescolano ([Numeri e operatori](operators.md)) |
@@ -33,7 +33,7 @@ Cromo prende qualcosa da ciascuno di questi linguaggi. Questa appendice elenca, 
 
 ## Da Go
 
-**Familiare:** un solo strumento che compila, esegue, testa e formatta; eseguibili che non richiedono nulla di installato e si compilano anche per altri sistemi; task leggeri che si bloccano senza bisogno di `async`; i canali; una libreria standard per le reti e per HTTP; il dialetto dietro `import unsafe`; e i pacchetti, che arriveranno più avanti.
+**Familiare:** un solo strumento che compila, esegue, testa e formatta; eseguibili che non richiedono nulla di installato e si compilano anche per altri sistemi; task leggeri che si bloccano senza bisogno di `async`; i canali; una libreria standard per le reti e per HTTP; il dialetto dietro `import unsafe`; e i pacchetti, presi con `cromo get`.
 
 Su Linux gli eseguibili sono statici, a meno che le librerie C del programma non chiamino la libreria C del sistema: allora `cromo` li collega a glibc, come fa Go con cgo, e richiedono glibc 2.29 o successiva ([Chiamare il C](c-interop.md)). Ogni programma con una finestra rientra in questo caso.
 
@@ -68,8 +68,8 @@ Su Linux gli eseguibili sono statici, a meno che le librerie C del programma non
 | `Clone`, `.clone()` | `copy()`, chiamato da solo dove un valore viene dato senza `move` |
 | tipi `Copy` | tipi semplici: numeri, `bool` e le struct composte solo da questi, senza distruttore |
 | `Result<T, E>` e `?` | eccezioni; enum con dati per i risultati che sono valori ([Errori](errors.md)) |
-| `Option<T>` | `Option<T>` del core, letto con `switch` o con `has()`, `value()` e `or()` ([Enum e switch](enums.md)) |
-| `match` con pattern | `switch` sui case, dando un nome ai dati; niente pattern annidati ([Enum e switch](enums.md)) |
+| `Option<T>` | `Option<T>` del nucleo, letto con `switch` o con `has()`, `value()` e `or()` ([Enum e switch](enums.md)) |
+| `match` con pattern | `switch` sui casi, dando un nome ai dati; niente pattern annidati ([Enum e switch](enums.md)) |
 | `Drop` | distruttori |
 | `impl Trait for Type` | `struct Type : Interface`, con i metodi dentro la struct |
 | `String`, `Vec<T>`, `HashMap<K, V>` | `string`, `list<T>`, `map<K, V>` |

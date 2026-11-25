@@ -148,11 +148,12 @@ L'estensione per Visual Studio Code colora il codice, e prende tutto il resto da
 
 Lo script che installa Cromo installa anche l'estensione, quando trova il comando `code` di Visual Studio Code, e lo stesso fa `cromo update` per ogni nuova versione. L'estensione si trova anche nell'archivio di ogni versione, come file `.vsix` nella sua cartella `extension`, e si può installare a mano con `code --install-extension` seguito dal percorso di quel file, oppure con *Install from VSIX* nel pannello delle estensioni.
 
-L'estensione ha due impostazioni:
+L'estensione ha tre impostazioni:
 
 | Impostazione | Significato |
 |---|---|
 | `cromo.path` | l'eseguibile `cromo` che fa girare il language server. Se è vuota, come per impostazione predefinita: `build\cromo.exe` in una cartella del workspace, se c'è, altrimenti `cromo` dal `PATH` |
+| `cromo.guideLanguage` | la lingua della guida di Cromo nel suo pannello, come `it` o `en`. Se è vuota, la lingua di Visual Studio Code quando la guida esiste in quella lingua, altrimenti l'inglese |
 | `cromo.trace` | scrive ogni messaggio tra Visual Studio Code e `cromo lsp` nel pannello *Cromo* dell'output, per trovare un problema |
 
 Se `cromo` non riesce a partire, un messaggio lo segnala, con un pulsante che apre l'impostazione. Per impostazione predefinita i file di Cromo vengono formattati al salvataggio: `editor.formatOnSave` si può disattivare per `[cromo]` nelle impostazioni.
@@ -290,11 +291,11 @@ con `t`, `to` e il blocco come codice, e *new* in corsivo. Sopra `Fahrenheit` mo
 
 ## Debug
 
-Un programma compilato senza `--release` porta con sé le informazioni che servono a un debugger: le funzioni, le righe, le variabili e i loro tipi. Su Windows sono in un file PDB accanto all'eseguibile, `hello.pdb` accanto a `hello.exe`, che leggono Visual Studio, WinDbg e l'estensione C/C++ di Visual Studio Code; su Linux sono in formato DWARF, dentro l'eseguibile, per gdb e lldb. I file sono indicati con il loro percorso completo, quindi il debugger li trova da qualsiasi cartella. Un programma compilato con `--release` non le ha: mantiene i suoi stack trace, ma un debugger vede solo il codice macchina.
+Un programma compilato senza `--release` porta con sé le informazioni che servono a un debugger: le funzioni, le righe, le variabili e i loro tipi. Su Windows sono in un file PDB accanto all'eseguibile, `hello.pdb` accanto a `hello.exe`, che leggono Visual Studio, WinDbg e l'estensione C/C++ di Visual Studio Code; su Linux sono in formato DWARF, dentro l'eseguibile, per gdb e lldb. I file sorgente vi sono indicati con il loro percorso completo, quindi il debugger li trova da qualsiasi cartella. Un programma compilato con `--release` non le ha: mantiene i suoi stack trace, ma un debugger vede solo il codice macchina.
 
 In Visual Studio Code fa tutto l'estensione: `F5`, o *Debug* sopra `main`, compila il programma con `-O0` e lo avvia nel debugger dell'[estensione C/C++](https://marketplace.visualstudio.com/items?itemName=ms-vscode.cpptools) di Microsoft, che propone di installare la prima volta. *Debug test* sopra un `[[test]]` fa lo stesso con un solo test.
 
-A mano: `cromo run` cancella l'eseguibile quando il programma termina, quindi compila il programma con `cromo build` ed esegui l'eseguibile nel debugger.
+A mano: `cromo run` cancella l'eseguibile quando il programma termina: compila perciò il programma con `cromo build`, e avvia l'eseguibile nel debugger.
 
 ### Che cosa mostra il debugger
 
@@ -359,4 +360,4 @@ cromo build -O0 dbg.cro
 - L'estensione per Visual Studio Code usa `cromo lsp`: errori mentre scrivi, hover, definizione, outline, completamento dopo un punto, aiuto sulla firma e formattazione. `cromo.path` sceglie il `cromo` da eseguire.
 - Il server analizza un file con il suo `main`, o con il `main.cro` più vicino sopra di esso, oppure da solo, con i file del sistema su cui gira.
 - I commenti `//` subito sopra una dichiarazione, o a fine riga di un campo o di un caso, sono la sua documentazione, in Markdown con `'code'` e blocchi `'''`; il commento in cima a un file documenta il suo modulo.
-- Senza `--release` un programma ha le informazioni di debug, PDB su Windows e DWARF su Linux; un debugger mostra `this` e i campi di stringhe e liste. Compila con `-O0` per seguirlo riga per riga.
+- Senza `--release` un programma ha le informazioni di debug, PDB su Windows e DWARF su Linux; un debugger mostra `this`, e con i file dell'estensione una stringa, una lista e una mappa come i loro valori. Compila con `-O0` per seguirlo riga per riga.

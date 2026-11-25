@@ -147,11 +147,11 @@ lld-link: error: undefined symbol: callThrice
 
 Quando si compila per Linux, `extern "name"` è la libreria statica `libname.a`, cercata nelle cartelle dei moduli che dichiarano la libreria, nell'ordine in cui vengono caricati, come su Windows. Il suo codice entra nell'eseguibile, che non ha bisogno di nulla accanto a sé. Quando non la trova, il compilatore lo dice:
 
-Senza una `libname.a`, la libreria può essere condivisa: `libname.so` accanto ai moduli, o `libname.so.1` come si chiama per il loader. L'eseguibile viene allora collegato con essa e con glibc, `cromo` copia la libreria accanto all'eseguibile, come una DLL su Windows, e il programma la cerca lì all'avvio. La libreria statica ha la precedenza quando ci sono entrambe: lascia un solo file da dare ad altri.
-
 ```text
 error: cannot find the library 'maths': there is no libmaths.a or libmaths.so next to the modules that use it
 ```
+
+Senza una `libname.a`, la libreria può essere condivisa: `libname.so` accanto ai moduli, o `libname.so.1` come si chiama per il loader. L'eseguibile viene allora collegato con essa e con glibc, `cromo` copia la libreria accanto all'eseguibile, come una DLL su Windows, e il programma la cerca lì all'avvio. La libreria statica ha la precedenza quando ci sono entrambe: lascia un solo file da dare ad altri.
 
 `cromo` non legge i nomi di una libreria statica: una funzione mancante viene segnalata dal linker, che spesso suggerisce quella giusta:
 
@@ -161,7 +161,7 @@ ld.lld: error: undefined symbol: sumAl
 >>> did you mean: sumAll
 ```
 
-Le librerie condivise, i file `.so`, non sono ancora supportate su Linux.
+Una libreria condivisa, un file `.so`, viene presa solo quando manca quella statica, come detto sopra.
 
 Un modulo che chiama le DLL di Windows compila solo per Windows. Quando un programma deve girare su entrambi i sistemi, le chiamate vanno nei file di ciascun sistema, come `clock_windows.cro` e `clock_linux.cro` accanto a `clock.cro`, che offrono le stesse funzioni: vedi [Moduli e progetti](modules.md).
 
@@ -291,7 +291,7 @@ Non ancora supportati:
 
 ## Nomi e visibilità
 
-Le funzioni C mantengono il loro nome C, e sono private al loro modulo, che offre invece funzioni sicure: un altro modulo non può chiamarle, nemmeno con il nome del modulo davanti.
+Le funzioni C mantengono il loro nome C, e sono private del loro modulo, che offre invece funzioni sicure: un altro modulo non può chiamarle, nemmeno con il nome del modulo davanti.
 
 ```cromo file=clock.cro
 import unsafe
@@ -530,7 +530,7 @@ Le regole di `[[export]]` sono in [Il dialetto unsafe](unsafe.md).
 
 - `import unsafe` permette i blocchi `extern "name" { ... }` di funzioni C, scritte come funzioni Cromo senza corpo.
 - Su Windows `extern "name"` è `name.dll`, accanto ai moduli o in `System32`, le cui funzioni vengono controllate durante la compilazione; una `name.lib` accanto al modulo viene usata al suo posto, senza il controllo. Le DLL accanto ai moduli vengono copiate accanto all'eseguibile.
-- Su Linux è `libname.a` accanto ai moduli, controllata dal linker. Quando le librerie C chiamano la libreria C, l'eseguibile viene collegato con glibc, e ha bisogno di glibc 2.29 o successiva; non ancora su ARM64.
+- Su Linux è `libname.a` accanto ai moduli, o `libname.so` quando manca, controllata dal linker. Quando le librerie C chiamano la libreria C, l'eseguibile viene collegato con glibc, e ha bisogno di glibc 2.29 o successiva; non ancora su ARM64.
 - Da Linux, le funzioni delle DLL di Windows non vengono controllate: una funzione mancante ferma il programma all'avvio.
 - Attraversano il confine i numeri, `bool`, `addr` e i `ref` a numeri o a struct di numeri; le stringhe vanno con `cstring()` e tornano con `string(data, length)`.
-- Le funzioni C mantengono il loro nome e sono private al loro modulo; le risorse C vanno in struct con distruttori, e il resto del programma usa quelle.
+- Le funzioni C mantengono il loro nome e sono private del loro modulo; le risorse C vanno in struct con distruttori, e il resto del programma usa quelle.
