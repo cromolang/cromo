@@ -22,7 +22,7 @@ The command always comes first: `cromo hello.cro` is an error that shows the rig
 | `cromo design [file.form]` | the designer of the windows: a window composed with the mouse, saved as a form and as a module of Cromo ([Windows and apps](gui.md#designing-a-window-cromo-design)) |
 | `cromo get address[@version] [name]` | adds a package to the `cromo.mod` of the folder, or raises its version ([Modules](modules.md#packages)) |
 | `cromo update [version]` | installs the latest version of Cromo, or the one named, and makes it the active one |
-| `cromo version` | prints the version of `cromo` and of LLVM, as `cromo 0.98.1 (LLVM 23.1.4)` |
+| `cromo version` | prints the version of `cromo` and of LLVM, as `cromo 0.98.2 (LLVM 23.1.4)` |
 | `cromo help` | prints the commands and the options |
 
 ### The program to compile

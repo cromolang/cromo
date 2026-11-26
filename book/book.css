@@ -237,10 +237,11 @@ body.print {
   -webkit-print-color-adjust: exact; print-color-adjust: exact;
 }
 body.print a { color: #1d7a4c; text-decoration: none; }
-/* The scale of the text: the sizes below are written for a page 1/0.7 times as large, and
-   the contents and the chapters are drawn at 0.7 of them. One number makes the type of the
-   whole book larger or smaller. The cover, the title page and the colophon are in true size. */
-body.print .contents, body.print .chapter { zoom: 0.7; }
+/* The scale of the text: the contents and the chapters are drawn at 0.85 of the sizes
+   written below, so the text of 10pt is printed at 8.5pt and the code of 7.5pt at 6.4pt.
+   One number makes the type of the whole book larger or smaller. The cover, the title
+   page and the colophon are in true size. */
+body.print .contents, body.print .chapter { zoom: 0.85; }
 
 /* Cover and colophon */
 /* The front is the first page of the PDF; cover.html is the cover for a printer: the
