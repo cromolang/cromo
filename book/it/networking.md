@@ -977,6 +977,8 @@ the same secret: true
 - `x25519` restituisce un segreto di 32 byte, e lancia un'eccezione per una chiave pubblica non valida, una che renderebbe nullo il segreto. Una chiave per un cifrario è meglio ricavarla dal segreto con un hash, come `sha256`.
 - Una chiave privata che non ha 32 byte è un'eccezione: `the private key of Ed25519 has 32 bytes, not 16`.
 
+`std.crypto` ha anche i pezzi che un protocollo mette insieme da sé, come fa SSH: `chacha20`, `poly1305` e `aesCtr`, i cifrari senza la loro autenticazione, e le firme RSA, `rsaSign` e `rsaVerify`, ed ECDSA, `ecdsaSign` e `ecdsaVerify`, con le chiavi date come numeri. Da solo, uno di questi cifrari non dice se i dati sono stati modificati: un programma che vuole soltanto cifrare usa `encrypt` e `decrypt`. Il client SSH e SFTP è un pacchetto scritto su di essi, `github.com/cromolang/ssh`.
+
 ## Token: JWT
 
 Un servizio con molti client spesso li riconosce da un JSON Web Token, che firma quando accedono, o che firma per lui un provider di identità come Keycloak. `std.jwt` li firma e li verifica, e i claim sono una struct del programma:

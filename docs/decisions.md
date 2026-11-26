@@ -2761,6 +2761,18 @@ A branch whose type is not simple, as a `string`, gives a new value, also a copy
 - A debugger written in Cromo, `cromo debug` with the protocol of the editors, is for after 1.0: it would see the tasks and need nothing else installed, and it is a work of several milestones for each system.
 - The guide is read from cromolang.org, not carried by the extension: in the language of Visual Studio Code when the guide has it, else in English, or in that of the setting `cromo.guideLanguage`, so that a new language of the guide needs no new version of the extension.
 
+### D581. `std.crypto`: the parts that a protocol puts together
+*2026-11-26.* Chosen by the author. A protocol as SSH does not use the ciphers of `encrypt` as they are, and has its keys as numbers, not in PEM: `std.crypto` gains what a package written in Cromo needs to speak it, with the algorithms of mbedTLS that the runtime has already (D233, D236).
+- `chacha20(key, nonce, counter, data)` and `poly1305(key, data)`, one without the other (RFC 8439), and `aesCtr(key, counter, data)`, AES in CTR mode. Their comments say that alone they do not tell whether the data were changed, and that a program that only wants to encrypt uses `encrypt` and `decrypt`.
+- `rsaVerify(hash, key, message, signature)` and `rsaSign(hash, key, message)`, with the padding of PKCS#1 v1.5 and an `RsaKey` whose fields are the numbers `n`, `e`, `d`, `p` and `q`, big-endian.
+- `ecdsaPublicKey(curve, privateKey)`, `ecdsaSign(curve, hash, privateKey, message)` and `ecdsaVerify(curve, hash, publicKey, message, signature)` on the curves of the enum `Curve`, `P256`, `P384` and `P521`: a public key is the point of SEC 1, a signature is `r` and `s` side by side.
+- As `ed25519Verify`, the functions that verify give `false` for a key or a size that is wrong and never throw; those that sign throw when the numbers are not a private key.
+- The keys read from PEM stay in `std.jwt` (D399), which keeps them read: a module of keys for every use can come later, above the same functions of the runtime.
+
+### D582. SSH and SFTP are an official package, not a module of the library
+*2026-11-26.* Chosen by the author. The client of SSH and of SFTP is `github.com/cromolang/ssh` (D550), written in Cromo on `std.net` and `std.crypto` (D581), without mbedTLS of its own and without the C library. It is not `std.ssh`: a defect of security is fixed with a tag of the package, without a version of `cromo`; the library stays small; and none of the languages that Cromo looks at has SSH in its standard library, Go has it in `x/crypto`. The first version is a client only: commands, a shell, SFTP; a key or a password to log in; the server checked against `known_hosts`; only the algorithms of today, without RSA with SHA-1, CBC and Diffie-Hellman on small groups. The agent, the certificates, the forwarding of ports and a server come later, if asked.
+- What the package showed: `cromo test file.cro` does not see the other files of the folder of the main file, which are parts of the module when the folder is imported (D515), so a package of several files cannot test what is private to it. The package is one file, as the others, until this is decided.
+
 ---
 
 ## Proposed

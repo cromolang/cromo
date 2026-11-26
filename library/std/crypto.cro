@@ -4,6 +4,11 @@
 // nonce of the wrong size is an exception of type 'Error'. The algorithms are those of
 // mbedTLS and Monocypher, inside the runtime: the executables need no other library.
 //
+// At the end are the parts that a protocol puts together by itself, as SSH does:
+// 'chacha20', 'poly1305' and 'aesCtr', which alone protect nothing from who changes the
+// data, and the signatures of RSA and of ECDSA with the keys given as numbers. A
+// program that only wants to encrypt uses 'encrypt' and 'decrypt'.
+//
 // '''
 // list<u8> data = "hello".bytes()
 // println("{}", crypto.hex(crypto.sha256(data)))  // 2cf24dba5fb0a30e...
@@ -36,6 +41,17 @@ extern "cromo" {
     i32 cromo_crypto_ed25519_verify(addr publicKey, addr message, i64 size, addr signature)
     void cromo_crypto_x25519_public(addr privateKey, addr publicKey)
     i32 cromo_crypto_x25519(addr privateKey, addr peerKey, addr shared)
+    void cromo_crypto_chacha20(addr key, addr nonce, u32 counter, addr data, i64 size, addr out)
+    void cromo_crypto_poly1305(addr key, addr data, i64 size, addr out)
+    void cromo_crypto_aes_ctr(addr key, i64 keySize, addr counter, addr data, i64 size, addr out)
+    i32 cromo_crypto_rsa_verify(i32 hash, addr n, i64 nSize, addr e, i64 eSize, addr data, i64 size, addr signature,
+        i64 signatureSize)
+    i64 cromo_crypto_rsa_sign(i32 hash, addr n, i64 nSize, addr e, i64 eSize, addr d, i64 dSize, addr p, i64 pSize, addr q,
+        i64 qSize, addr data, i64 size, addr out, i64 capacity)
+    i32 cromo_crypto_ecdsa_verify(i32 curve, i32 hash, addr publicKey, i64 keySize, addr data, i64 size, addr signature,
+        i64 signatureSize)
+    i32 cromo_crypto_ecdsa_sign(i32 curve, i32 hash, addr privateKey, i64 keySize, addr data, i64 size, addr out, i64 half)
+    i32 cromo_crypto_ecdsa_public(i32 curve, addr privateKey, i64 keySize, addr out, i64 capacity)
 }
 
 // ---- Hashes ----
@@ -368,7 +384,212 @@ public list<u8> x25519(list<u8> privateKey, list<u8> publicKey) {
     ret result
 }
 
+// ---- The parts of a protocol ----
+
+// The data encrypted, or decrypted, with the stream of ChaCha20 (RFC 8439): a key of
+// 32 bytes, a nonce of 12, and the number of the first block of 64 bytes of the
+// stream. The same call that encrypts decrypts. Alone it does not say whether the
+// data were changed: 'encrypt' with 'Cipher.ChaCha20Poly1305' does, and is what a
+// program wants unless a protocol asks for the cipher alone. An exception for a key
+// or a nonce of the wrong size.
+public list<u8> chacha20(list<u8> key, list<u8> nonce, u32 counter, list<u8> data) {
+    checkKey(key, "the key of ChaCha20")
+    if (nonce.len() != 12) {
+        throw Error(format("the nonce of ChaCha20 has 12 bytes, not {}", nonce.len()))
+    }
+    addr secret = raw(key)
+    addr once = raw(nonce)
+    addr input = raw(data)
+    addr out = alloc(data.len())
+    cromo_crypto_chacha20(secret, once, counter, input, data.len(), out)
+    list<u8> result = fromRaw(out, data.len())
+    forget(secret, 32)
+    forget(input, data.len())
+    forget(out, data.len())
+    free(once)
+    ret result
+}
+
+// The tag of Poly1305 of the data, 16 bytes, with a key of 32 bytes (RFC 8439): it
+// proves that who made it has the key, which must be used for one message only. An
+// exception if the key does not have 32 bytes.
+public list<u8> poly1305(list<u8> key, list<u8> data) {
+    checkKey(key, "the key of Poly1305")
+    addr secret = raw(key)
+    addr input = raw(data)
+    addr out = alloc(16)
+    cromo_crypto_poly1305(secret, input, data.len(), out)
+    list<u8> result = fromRaw(out, 16)
+    forget(secret, 32)
+    free(input)
+    free(out)
+    ret result
+}
+
+// The data encrypted, or decrypted, with AES in CTR mode: a key of 16, 24 or 32
+// bytes, and a counter of 16 bytes, which is the first block and grows by one for
+// each 16 bytes of data, as a big-endian number. The same call that encrypts
+// decrypts; a counter must never be used twice with the same key. Alone it does not
+// say whether the data were changed, as 'chacha20'. An exception for a key or a
+// counter of the wrong size.
+public list<u8> aesCtr(list<u8> key, list<u8> counter, list<u8> data) {
+    i64 size = key.len()
+    if (size != 16 && size != 24 && size != 32) {
+        throw Error(format("a key of AES has 16, 24 or 32 bytes, not {}", size))
+    }
+    if (counter.len() != 16) {
+        throw Error(format("the counter of AES in CTR mode has 16 bytes, not {}", counter.len()))
+    }
+    addr secret = raw(key)
+    addr start = raw(counter)
+    addr input = raw(data)
+    addr out = alloc(data.len())
+    cromo_crypto_aes_ctr(secret, size, start, input, data.len(), out)
+    list<u8> result = fromRaw(out, data.len())
+    forget(secret, size)
+    forget(input, data.len())
+    forget(out, data.len())
+    free(start)
+    ret result
+}
+
+// A key of RSA as its numbers, each big-endian: a public key has 'n' and 'e', a
+// private one also 'd', and 'p' and 'q' when they are known.
+public struct RsaKey {
+    public list<u8> n  // the modulus
+    public list<u8> e  // the public exponent, as 65537
+    public list<u8> d  // the private exponent
+    public list<u8> p  // the first prime factor of n, or empty
+    public list<u8> q  // the second, or empty
+}
+
+// Whether the signature is that of the message, made with the private key of 'n' and
+// 'e', with the padding of PKCS#1 v1.5 (RFC 8017) and the hash; false also when the
+// key or a size is wrong, never an exception.
+public bool rsaVerify(Hash hash, RsaKey key, list<u8> message, list<u8> signature) {
+    if (key.n.len() == 0 || key.e.len() == 0) {
+        ret false
+    }
+    addr n = raw(key.n)
+    addr e = raw(key.e)
+    addr input = raw(message)
+    addr check = raw(signature)
+    i32 valid = cromo_crypto_rsa_verify(i32(hash), n, key.n.len(), e, key.e.len(), input, message.len(), check,
+        signature.len())
+    free(n)
+    free(e)
+    free(input)
+    free(check)
+    ret valid != 0
+}
+
+// The signature of the message with a private key of RSA, as long as its 'n', with
+// the padding of PKCS#1 v1.5 and the hash. An exception when the numbers are not a
+// private key.
+public list<u8> rsaSign(Hash hash, RsaKey key, list<u8> message) {
+    addr n = raw(key.n)
+    addr e = raw(key.e)
+    addr d = raw(key.d)
+    addr p = raw(key.p)
+    addr q = raw(key.q)
+    addr input = raw(message)
+    i64 capacity = key.n.len() + 1
+    addr out = alloc(capacity)
+    i64 size = cromo_crypto_rsa_sign(i32(hash), n, key.n.len(), e, key.e.len(), d, key.d.len(), p, key.p.len(), q,
+        key.q.len(), input, message.len(), out, capacity)
+    list<u8> result
+    if (size > 0) {
+        result = fromRaw(out, size)
+    }
+    free(n)
+    free(e)
+    forget(d, key.d.len())
+    forget(p, key.p.len())
+    forget(q, key.q.len())
+    free(input)
+    free(out)
+    if (size <= 0) {
+        throw Error("cannot sign: the numbers are not a private key of RSA")
+    }
+    ret result
+}
+
+// A curve of NIST, for ECDSA. The cases are in the order of the runtime.
+public enum Curve {
+    P256  // P-256, with numbers of 32 bytes
+    P384  // P-384, with numbers of 48 bytes
+    P521  // P-521, with numbers of 66 bytes
+}
+
+// The public key of a private key of ECDSA: the point of the curve as SEC 1 writes
+// it, a byte 4 and then x and y, 65 bytes for P-256. The private key is a number,
+// big-endian, as long as the numbers of the curve. An exception when it is not a
+// private key of the curve.
+public list<u8> ecdsaPublicKey(Curve curve, list<u8> privateKey) {
+    i64 capacity = 1 + 2 * curveSize(curve)
+    addr secret = raw(privateKey)
+    addr out = alloc(capacity)
+    i32 done = cromo_crypto_ecdsa_public(i32(curve), secret, privateKey.len(), out, capacity)
+    list<u8> result = fromRaw(out, capacity)
+    forget(secret, privateKey.len())
+    free(out)
+    if (done == 0) {
+        throw Error("the number is not a private key of the curve")
+    }
+    ret result
+}
+
+// The signature of the message with a private key of ECDSA and the hash: its two
+// numbers r and s side by side, each as long as the numbers of the curve, 64 bytes
+// for P-256. Two signatures of the same message differ. An exception when the number
+// is not a private key of the curve.
+public list<u8> ecdsaSign(Curve curve, Hash hash, list<u8> privateKey, list<u8> message) {
+    i64 half = curveSize(curve)
+    addr secret = raw(privateKey)
+    addr input = raw(message)
+    addr out = alloc(2 * half)
+    i32 done = cromo_crypto_ecdsa_sign(i32(curve), i32(hash), secret, privateKey.len(), input, message.len(), out, half)
+    list<u8> result = fromRaw(out, 2 * half)
+    forget(secret, privateKey.len())
+    free(input)
+    free(out)
+    if (done == 0) {
+        throw Error("cannot sign: the number is not a private key of the curve")
+    }
+    ret result
+}
+
+// Whether the signature, r and s side by side, is that of the message, made with the
+// private key of the public key; false also when the key or a size is wrong, never
+// an exception.
+public bool ecdsaVerify(Curve curve, Hash hash, list<u8> publicKey, list<u8> message, list<u8> signature) {
+    if (signature.len() != 2 * curveSize(curve) || publicKey.len() == 0) {
+        ret false
+    }
+    addr key = raw(publicKey)
+    addr input = raw(message)
+    addr check = raw(signature)
+    i32 valid = cromo_crypto_ecdsa_verify(i32(curve), i32(hash), key, publicKey.len(), input, message.len(), check,
+        signature.len())
+    free(key)
+    free(input)
+    free(check)
+    ret valid != 0
+}
+
 // ---- Helpers ----
+
+// How long the numbers of a curve are, in bytes.
+i64 curveSize(Curve curve) {
+    i32 index = i32(curve)
+    if (index == 0) {
+        ret 32
+    }
+    if (index == 1) {
+        ret 48
+    }
+    ret 66
+}
 
 i64 digestSize(Hash kind) {
     i32 index = i32(kind)

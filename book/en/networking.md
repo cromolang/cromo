@@ -977,6 +977,8 @@ the same secret: true
 - `x25519` gives a secret of 32 bytes, and throws for a public key that is not valid, one that would make the secret zero. A key for a cipher is better made from the secret with a hash, as `sha256`.
 - A private key that does not have 32 bytes is an exception: `the private key of Ed25519 has 32 bytes, not 16`.
 
+`std.crypto` also has the parts that a protocol puts together by itself, as SSH does: `chacha20`, `poly1305` and `aesCtr`, the ciphers without their authentication, and the signatures of RSA, `rsaSign` and `rsaVerify`, and of ECDSA, `ecdsaSign` and `ecdsaVerify`, with the keys given as numbers. Alone, a cipher of these does not say whether the data were changed: a program that only wants to encrypt uses `encrypt` and `decrypt`. The client of SSH and of SFTP is a package written on them, `github.com/cromolang/ssh`.
+
 ## Tokens: JWT
 
 A service that has many clients often recognizes them by a JSON Web Token, which it signs when they log in, or which a provider of identity such as Keycloak signs for it. `std.jwt` signs and verifies them, and the claims are a struct of the program:

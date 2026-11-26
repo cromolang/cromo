@@ -1,0 +1,164 @@
+// The parts of std.crypto that a protocol puts together (D581): ChaCha20 with the
+// vector of RFC 8439 2.4.2, Poly1305 with that of 2.5.2, AES in CTR mode with that of
+// NIST SP 800-38A F.5.1, and the signatures of RSA and of ECDSA checked against
+// those of OpenSSL, for the same keys and the same message.
+// expect-output: 6e2e359a2568f98041ba0728dd0d6981e97e7aec1d4360c20a27afccfd9fae0bf91b65c5524733ab8f593dabcd62b3571639d624e65152ab8f530c359f0861d807ca0dbf500d6a6156a38e088a22b65e52bc514d16ccf806818ce91ab77937365af90bbf74a35be6b40b8eedf2785e42874d
+// expect-output: true
+// expect-output: a8061dc1305136c6c22b8baf0c0127a9
+// expect-output: 874d6191b620e3261bef6864990db6ce9806f66b7970fdff8617187bb9fffdff5ae4df3edbd5d35e
+// expect-output: true
+// expect-output: the key of ChaCha20 has 32 bytes, not 16
+// expect-output: the nonce of ChaCha20 has 12 bytes, not 8
+// expect-output: the key of Poly1305 has 32 bytes, not 3
+// expect-output: a key of AES has 16, 24 or 32 bytes, not 15
+// expect-output: the counter of AES in CTR mode has 16 bytes, not 12
+// expect-output: rsa first: true
+// expect-output: rsa: true true true true
+// expect-output: rsa wrong: false false false false
+// expect-output: cannot sign: the numbers are not a private key of RSA
+// expect-output: p256: true true true false false
+// expect-output: p384: true true true false false
+// expect-output: p521: true true true false false
+// expect-output: cannot sign: the number is not a private key of the curve
+// expect-output: the number is not a private key of the curve
+import std.crypto
+
+void attempt(func() body) {
+    try {
+        body()
+    } catch (Exception e) {
+        println("{}", e.message())
+    }
+}
+
+void curve(string name, crypto.Curve which, crypto.Hash hash, list<u8> secret, list<u8> point, list<u8> signed) {
+    list<u8> message = "the message that is signed".bytes()
+    list<u8> ours = crypto.ecdsaSign(which, hash, secret, message)
+    list<u8> other = "the message that is signed.".bytes()
+    list<u8> changed = signed.copy()
+    changed[5] ^= 1
+    println("{}: {} {} {} {} {}", name, crypto.ecdsaPublicKey(which, secret) == point,
+        crypto.ecdsaVerify(which, hash, point, message, signed), crypto.ecdsaVerify(which, hash, point, message, ours),
+        crypto.ecdsaVerify(which, hash, point, other, signed), crypto.ecdsaVerify(which, hash, point, message, changed))
+}
+
+i32 main() {
+    list<u8> key = crypto.fromHex("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f")
+    list<u8> nonce = crypto.fromHex("000000000000004a00000000")
+    string text = "Ladies and Gentlemen of the class of '99: If I could offer you only one tip for the future, sunscreen would be it."
+    list<u8> sealed = crypto.chacha20(key, nonce, 1, text.bytes())
+    println("{}", crypto.hex(sealed))
+    println("{}", string(crypto.chacha20(key, nonce, 1, sealed)) == text)
+
+    list<u8> once = crypto.fromHex("85d6be7857556d337f4452fe42d506a80103808afb0db2fd4abff6af4149f51b")
+    println("{}", crypto.hex(crypto.poly1305(once, "Cryptographic Forum Research Group".bytes())))
+
+    list<u8> aes = crypto.fromHex("2b7e151628aed2a6abf7158809cf4f3c")
+    list<u8> counter = crypto.fromHex("f0f1f2f3f4f5f6f7f8f9fafbfcfdfeff")
+    list<u8> plain = crypto.fromHex("6bc1bee22e409f96e93d7e117393172aae2d8a571e03ac9c9eb76fac45af8e5130c81c46a35ce411")
+    list<u8> mixed = crypto.aesCtr(aes, counter, plain)
+    println("{}", crypto.hex(mixed))
+    println("{}", crypto.aesCtr(aes, counter, mixed) == plain)
+
+    attempt([ref nonce, ref plain]() {
+        crypto.chacha20(crypto.random(16), nonce, 0, plain)
+    })
+    attempt([ref key, ref plain]() {
+        crypto.chacha20(key, crypto.random(8), 0, plain)
+    })
+    attempt([ref plain]() {
+        crypto.poly1305("key".bytes(), plain)
+    })
+    attempt([ref counter, ref plain]() {
+        crypto.aesCtr(crypto.random(15), counter, plain)
+    })
+    attempt([ref aes, ref plain]() {
+        crypto.aesCtr(aes, crypto.random(12), plain)
+    })
+
+    list<u8> message = "the message that is signed".bytes()
+    crypto.RsaKey rsa
+    rsa.n = crypto.fromHex("9f863b03f1f3ba4c9488cb41184983c2cab3d1a630e73a9e146f6040e218baabd0d9155664782ec6b828bb4b8420bd8f" +
+        "4fd772e0d7359cb7f58d33f9bdfcae1b13592ce91cd57e0357aaa0ef2f3f95a44e20c149abdc09bab295f933ecb1af36" +
+        "2e16bfee5abac2e97b15b79d489f96c4285021adf8dcc08ea39155cc50bc05663a48c73556a3b2279584537d73f9e970" +
+        "0261a7674a183fdb6e85f459347c02597fec4693b4b3a16181564d785c2d68cbf6edc6935f037650b0658b3ecca5af10" +
+        "85b95d6d90df1d43aa7489f5210bf9498f61e8f096447d750b749eaecb2cec09e85e22294992abbd9064c63814c191ec" +
+        "e9b5c1adf17c5c8e6821a29df82cbf15")
+    rsa.e = crypto.fromHex("010001")
+    rsa.d = crypto.fromHex("2a3b5908545797ec8a2e24d118e2ed74f640e0b1c4a4928a2312d1429c18bbe29ca9bbd2614ac7e767fdb087ef74d37a" +
+        "4b42d870d9c8a1b2b9d925f769eaa91515ec37cd870aa60fb077c59f4cbce29adaec24ffa1f5e0c5825dddd977421b06" +
+        "96f102e2d1363c3f9f8c424deb5a0489edba39105b9fe5825d9f2e3da6e9ffeb8366a95a61bff57c0226e458245710fa" +
+        "1e960e99d72f4c904ec6b3d7ab56ddc67b33aab49a67d4173688a6b71aaac216f92c2183e8d394d3a64957e2e255c477" +
+        "d722c7acb7091793adf359331ce8389b040a0e202ccbce32b2b4e95ef1a664913f7bcd48e68029cbc66c6c4ae1a6269f" +
+        "a2c7aec11999ef9dabd352361899af01")
+    rsa.p = crypto.fromHex("ca21c15ac758cd20df1982509f53a69a54b396d5e2f827fce81addb3801d83ea3cf6c77ed80bd53dfbd767784f551625" +
+        "8a98398202bb0ca7b05f4082c0f771c3bab353f857c54a60af4a90269039efe702ea2dbd4eb56c403661bce40c048404" +
+        "90c42d2bf1326b8243e781c9c61eeb79c77a0048314db24d73e4fa5c6e4c0121")
+    rsa.q = crypto.fromHex("ca099ea43eb20b2ee921be27c63b0f9dffd55ac9904dfc31cff14a8ccf6477cdf1ec0df720fe944a516992dfb75b37ea" +
+        "fc6a678f5580c838c94c58a8f307b3c25df98340e424e918aabbdb50f08f9ddc88acb30d58705caf8d29d6f6c2bd0413" +
+        "5447e0cb5bb9749cea37c2af6fd1a7de8f2a4ad809bc53346ba64d856659db75")
+    list<u8> signed256 = crypto.fromHex("98370858c8ce95fbeca7b70205054560e49fe129b4dae4b01ec989eb6f43465e375be914a1ea0f46a5cb62535b59d2f0" +
+        "8b135d1a975dd430d41ffd3adf8045e2742b91947b177584ff3c7e338b5e57a7fcc122025af0dad81937c74aa8fdf470" +
+        "b475416c798fce1ebccc9784bcf99c79e25150c042820569c5ad36df37e76e6aba194d5b28a30d6022a266c7ca5114a4" +
+        "06d406f0f7eebf29cbe03c1296dd0c23f0028e587e69bab6ea9ec274b0197f5ac92fa3a64e90d31ef5bd3d8d2a5f1092" +
+        "39349dae13d5b2ffba52c38a0715b62628f97d3d8242e56f2252ac661398506f10a4a1dc2f25cad64cf205f168272be2" +
+        "8c222388842d35bbb971c983d3da869f")
+    list<u8> signed512 = crypto.fromHex("29d5c27077db8554a0dbe5c8b27d101d40b5828612c67e7c9bdb6932fc4bca8a6e5e09c1331cfae69588196d772ee0a7" +
+        "05f23e54da34b069514e21bbc4e2273061972ecf1f71550953bfbaa0b1bb82918e84682b2e310a5ba50ffeba3e298a1c" +
+        "9c7c6f844d2ac12781c0011ee2ec4fe761ccd42fdb8228be57ddd096ba6cf5b74f85c87a269545212532fe5c1d8447bf" +
+        "073430d39d1b93f8cd8f200183a81be494fea85bd7bbf6bc8ac3a319b5b0bdad172c224588159ce3dda315fbc12d3c8e" +
+        "7829e966c6b9bbbe33629101f0d329c057ac3935d7aa96f895db79cd023b8e6db2ac38ce24c4848714f8916969002d43" +
+        "ca0d0dea50da662ec78d895525ee64ef")
+    crypto.RsaKey open
+    open.n = rsa.n
+    open.e = rsa.e
+    // Before anything else of mbedTLS has run in the program: a server of SSH is verified so.
+    println("rsa first: {}", crypto.rsaVerify(crypto.Hash.Sha256, open, message, signed256))
+    // The padding of PKCS#1 v1.5 has no random part: the signature is the one of OpenSSL.
+    println("rsa: {} {} {} {}", crypto.rsaSign(crypto.Hash.Sha256, rsa, message) == signed256,
+        crypto.rsaSign(crypto.Hash.Sha512, rsa, message) == signed512,
+        crypto.rsaVerify(crypto.Hash.Sha256, open, message, signed256),
+        crypto.rsaVerify(crypto.Hash.Sha512, open, message, signed512))
+    list<u8> changed = signed256.copy()
+    changed[9] ^= 4
+    list<u8> short = signed256.copy()
+    short.remove(0)
+    println("rsa wrong: {} {} {} {}", crypto.rsaVerify(crypto.Hash.Sha512, open, message, signed256),
+        crypto.rsaVerify(crypto.Hash.Sha256, open, message, changed),
+        crypto.rsaVerify(crypto.Hash.Sha256, open, message, short),
+        crypto.rsaVerify(crypto.Hash.Sha256, crypto.RsaKey(), message, signed256))
+    attempt([ref open, ref message]() {
+        crypto.rsaSign(crypto.Hash.Sha256, open, message)  // a public key
+    })
+
+    list<u8> p256Secret = crypto.fromHex("2e31571fafb23ea24f6d6f6221b1bff47a10ee4703322b5892025777c260d010")
+    list<u8> p256Point = crypto.fromHex("04c352ea069e980cad7505935d5e1b6aed031f79603c63c4a430eff9062ed240574812fcde5ccfe7cd810606183c5b30" +
+        "9a08502d5fc06e300cc263bb115ca147dd")
+    list<u8> p256Signed = crypto.fromHex("1b52a696b4a4ba04dec0147dfaa6b466106923ca27edc22031e8f7f98cd601397111f2cd73ec59c205efd65f17fef12a" +
+        "3e0bf1f87b503c952bf310de1cb1a9be")
+    curve("p256", crypto.Curve.P256, crypto.Hash.Sha256, p256Secret, p256Point, p256Signed)
+    list<u8> p384Secret = crypto.fromHex("9d354f0ea8496aae748db6d13f5758253343eda6df1ae08c58420c91efd84c0e7840a6ef5d3216dc72e6f37ad9235523")
+    list<u8> p384Point = crypto.fromHex("0443775834f4856b4647df679d9ec1cb2ae9043883b4fdf60eab22130387bad5f3f1d49c281842563c8f28049807c45f" +
+        "5c205ee6e81b2a151353dafb6664abbf841e2b4e4e70138341794a70d892fcf664ef7c5df68662264b6bed50adeab844" +
+        "e8")
+    list<u8> p384Signed = crypto.fromHex("d9345a794f79964d7c698a32f5b98eef4a4d3c520aa855f598a1972199ed0243d87ab4617bf640b9568773a44e3a905e" +
+        "d923d9dd01fa111f703a7ea3b00bbbfdbe40a46059b70265b5f4a7dcf5c826c7435282b28899aca84b4175b340759323")
+    curve("p384", crypto.Curve.P384, crypto.Hash.Sha384, p384Secret, p384Point, p384Signed)
+    list<u8> p521Secret = crypto.fromHex("01311685f0f91626dd2e469f7c065f9797f2910739a9752d9f967c470c29a292079b43ef67b335c3216eac912bc557ae" +
+        "aaa528fbadfef6751f06e574c1eed0f8c2dd")
+    list<u8> p521Point = crypto.fromHex("0401d5b146223673c41cc2c396dfff5719f08dc1fd571afe0371b09378f7ff525e0f286630b7fda39d3ad11d49ac4416" +
+        "720176dcea825bcad7287f36fddf88097d82da00826a24cda39150f7d2e1a72b5bf5bfa567b7a1f0feab006439c54b7c" +
+        "69be15bd29a4445c2a10d81461afbef7aa66e00df947469d0b1bda3e8179c490d7bcd0bebb")
+    list<u8> p521Signed = crypto.fromHex("01a170feff1c1a02f2e07673bc25bcd9d28f20de201c5b599a9dc6db75a7e0b8d01b13b279ee758ee2e58eba3a383b99" +
+        "1e0ca14bbdfb20a3b8d4686be50a14a3c6d900d6f26a93a72fa76aa2b1cf7a516421d7d91d2f8e35dfe7693d23a85d90" +
+        "d907e633d110d312b1af328f58399557d500600d4d35ef8965be76ee9089f47f9c201f10")
+    curve("p521", crypto.Curve.P521, crypto.Hash.Sha512, p521Secret, p521Point, p521Signed)
+    attempt([ref message]() {
+        crypto.ecdsaSign(crypto.Curve.P256, crypto.Hash.Sha256, list<u8>(), message)
+    })
+    attempt([]() {
+        // Larger than the order of the curve.
+        crypto.ecdsaPublicKey(crypto.Curve.P256, crypto.fromHex("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"))
+    })
+    ret 0
+}
