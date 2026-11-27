@@ -590,8 +590,10 @@ Il nucleo della libreria, con `list`, `map`, `string`, `format`, `Exception`, `E
 | `std.websocket` | client e server WebSocket | [Rete e HTTP](networking.md) |
 | `std.crypto` | hash, byte casuali, cifratura, firme | [Rete e HTTP](networking.md) |
 | `std.jwt` | JSON Web Token | [Rete e HTTP](networking.md) |
+| `std.oauth` | OAuth 2.0 e OpenID Connect | [Rete e HTTP](networking.md) |
 | `std.gzip` | compressione | [Rete e HTTP](networking.md) |
 | `std.json` | JSON | [JSON](json.md) |
+| `std.xml` | XML | [JSON](json.md) |
 | `std.regex` | espressioni regolari | [Espressioni regolari](regex.md) |
 | `std.db` | SQLite e PostgreSQL | [Database](databases.md) |
 | `std.math` | radici, potenze, logaritmi, trigonometria | [Numeri e operatori](operators.md) |

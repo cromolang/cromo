@@ -61,7 +61,7 @@
       <a href="#examples">Examples</a>
       <a href="#tooling">Tooling</a>
       <a href="#benchmarks">Benchmarks</a>
-      <a href="#roadmap">Roadmap</a>
+      <a href="#library">Library</a>
       <a href="book/">Guide</a>
       <a href="https://github.com/cromolang/cromo">GitHub</a>
     </nav>
@@ -258,6 +258,7 @@ duckdb: github.com/cromolang/duckdb v0.1.0</pre></div>
         <li><b><a href="https://github.com/cromolang/pdfium">pdfium</a></b><span>PDF documents, with the engine of Chrome: their text, and each page as a picture.</span></li>
         <li><b><a href="https://github.com/cromolang/toml">toml</a></b><span>TOML, read into a struct of the program. Written in Cromo.</span></li>
         <li><b><a href="https://github.com/cromolang/redis">redis</a></b><span>A client of Redis. Written in Cromo, on <code>std.net</code>.</span></li>
+        <li><b><a href="https://github.com/cromolang/s3">s3</a></b><span>A client of S3, for AWS and the stores that speak its protocol: buckets, objects, large files in parts, addresses to share. Written in Cromo, on <code>std.http</code>.</span></li>
         <li><b><a href="https://github.com/cromolang/ssh">ssh</a></b><span>A client of SSH and of SFTP: commands, a shell and the files of a server. Written in Cromo, on <code>std.net</code> and <code>std.crypto</code>.</span></li>
       </ul>
       <p class="section-lead" style="margin-top:20px;margin-bottom:0">The packages with a library are for Windows and Linux on x86-64. <a href="book/en/modules.html#packages">How packages work</a>, and how to write one.</p>
@@ -513,77 +514,50 @@ cromo @VERSION@ (LLVM 23.1.4)</pre>
     </div>
   </section>
 
-  <section id="roadmap">
+  <section id="library">
     <div class="wrap">
-      <div class="kicker">Roadmap</div>
-      <h2>Built in the open, <span class="chrome">one milestone at a time</span></h2>
-      <p class="section-lead">Every choice is decided first and written down with its reasons, then implemented with tests on Windows and Linux. Ninety-nine milestones, from M0 to M98, are done; since version 0.98 the compiler is written in Cromo, and compiles itself.</p>
-      <div class="progress-label"><span>M0 – M98 done</span><span>99 of 99 numbered milestones</span></div>
-      <div class="progress" aria-hidden="true"><div style="width:100%"></div></div>
+      <div class="kicker">Standard library</div>
+      <h2>What a program needs, <span class="chrome">already inside</span></h2>
+      <p class="section-lead">The library comes with <code>cromo</code>, written in Cromo, with nothing to install and no C library under it on Linux: a backend, a tool for the command line or an app starts from here. Each module has its page in the guide, made from the comments of its source.</p>
       <div class="roadmap">
         <div class="phase">
-          <h3>Done <span class="badge done">M0 – M98</span></h3>
+          <h3>The modules <span class="badge done">25 and the core</span></h3>
           <ul class="steps">
-            <li><b>M0–2</b><span>LLVM backend, numbers, control flow, structs, RAII</span></li>
-            <li><b>M3–6</b><span>Ownership, generics, interfaces, lists, strings, enums, exceptions</span></li>
-            <li><b>M7–10</b><span>Modules, C interop without the SDK, Linux, <code>build</code> and <code>run</code></span></li>
-            <li><b>M11–13</b><span>Formatter, language server, anonymous functions</span></li>
-            <li><b>M14</b><span>Arrays, maps, bytes, files, time, code for each system</span></li>
-            <li><b>M15–16</b><span>Threads and mutexes; TCP, UDP and DNS without libc</span></li>
-            <li><b>M17</b><span>TLS for clients and servers, and cryptography</span></li>
-            <li><b>M18</b><span>HTTP server and client, JSON from structs</span></li>
-            <li><b>M19</b><span>Lightweight tasks under the same API as threads</span></li>
-            <li><b>M20</b><span>Signed archives for Windows and Linux, made from the repository</span></li>
-            <li><b>M21</b><span>List literals, text functions, files and other programs</span></li>
-            <li><b>M22</b><span>Printable types, <code>{:?}</code> for every value, generic methods</span></li>
-            <li><b>M23</b><span>Channels and atomics for tasks and threads</span></li>
-            <li><b>M24</b><span>Stack traces, also in release, and debugging with PDB and DWARF</span></li>
-            <li><b>M25</b><span><code>cromo test</code>: <code>[[test]]</code> functions, <code>assert</code>, a process for each test</span></li>
-            <li><b>M26</b><span>Values of interfaces everywhere, computed initial values of fields</span></li>
-            <li><b>M27</b><span>JSON of enums and arrays, <code>http.Client</code>, gzip, WebSocket</span></li>
-            <li><b>0.27</b><span>The first public release: the one-line installer and the Cromo Guide</span></li>
-            <li><b>M28</b><span>The runtime in Cromo: the heap, the output, the formatting; <code>std.cmdline</code></span></li>
-            <li><b>M29</b><span>Linux on ARM64, from Windows and Linux x64: Raspberry Pi, Graviton, Ampere</span></li>
-            <li><b>0.29</b><span><code>cromo update</code> with signed versions; <code>std.jwt</code>, <code>std.zip</code> and <code>std.tar</code></span></li>
-            <li><b>M30</b><span>The pilot of the compiler in Cromo: lexer, parser and <code>cromo fmt</code></span></li>
-            <li><b>M31</b><span>The standard input, <code>sort</code> and <code>sortBy</code>, <code>c ? a : b</code></span></li>
-            <li><b>M32</b><span>Sema in Cromo begins: the loader and the names of the modules</span></li>
-            <li><b>M33</b><span><code>=</code> copies, as in C++; <code>move</code> hands over for free</span></li>
-            <li><b>M35</b><span>Windows programs with an icon, and without a console</span></li>
-            <li><b>M36–41</b><span><code>std.gui</code>: windows and components, text with Inter, the icons of Lucide</span></li>
-            <li><b>M42–44</b><span>Android: the APK written by <code>cromo</code>, <code>std.gui</code> on a phone</span></li>
-            <li><b>M45–47</b><span>Lists that scroll, dialogs, snackbars; <code>cromo run</code> on the phone</span></li>
-            <li><b>M48–49</b><span><code>embed</code> for the files of a program; the keyboard on the screen</span></li>
-            <li><b>0.49</b><span>The windows and the apps in the guide and on the site</span></li>
-            <li><b>M50</b><span>The documentation in the editor, and the whole library documented</span></li>
-            <li><b>M51–53</b><span><code>std.gui</code> for applications of data: the look, the canvas and SVG; <code>thread.Shared</code></span></li>
-            <li><b>M54–59</b><span>Tables of millions of rows, rich text, tabs, menus, text areas, the dialogs of the files</span></li>
-            <li><b>M60–62</b><span>The functions of the bits, files in pieces and mapped in memory, the vectors of SIMD</span></li>
-            <li><b>M63–65, 67</b><span>Radio groups, progress bars, the title bar, splits, submenus inside submenus</span></li>
-            <li><b>M66</b><span><code>--cpu x86-64-v3</code>: AVX2 in the whole program, checked at the start</span></li>
-            <li><b>M68</b><span>Projects: <code>cromo.mod</code>, modules of folders, several executables in one build</span></li>
-            <li><b>M69</b><span>The guide as the manual of the language, the reference of the library, <code>detach()</code></span></li>
-            <li><b>M70</b><span>Windows drawn only when something changes: a program that waits uses no processor</span></li>
-            <li><b>M71</b><span><code>cromo design</code>: the windows composed with the mouse, saved as a form and as a module</span></li>
-            <li><b>M72</b><span>Windows drawn while they are resized, their title bar, its icon and rounded corners</span></li>
-            <li><b>0.72</b><span>What Cromo checks and what it does not, in the guide; how to contribute</span></li>
-            <li><b>M73–74</b><span><code>std.db</code>: SQLite inside the program, and a client of PostgreSQL with SCRAM and TLS</span></li>
-            <li><b>M75–77</b><span>Dates with time zones and formats, <code>std.log</code>, and <code>std.regex</code>, which searches in linear time</span></li>
-            <li><b>M78–79</b><span>The colors of a program, as a palette by roles, and the look of each component</span></li>
-            <li><b>M80–81</b><span>The camera and the sensors of motion, on a computer and on a phone</span></li>
-            <li><b>M82–83</b><span><code>cromo design</code> for every day: colors chosen with a picker and seen at once, the bars and the pages of an app, tabs, splits, groups in groups, clipboard, alignment and guides</span></li>
-            <li><b>M85–86</b><span>Games: a handler for each frame, the keys held, the fingers on the screen, the whole screen, and <code>std.audio</code> with sounds from WAV and Ogg Vorbis; Snake as an example</span></li>
-            <li><b>M87–90</b><span>Packages: <code>cromo get</code>, versions from Git tags, <code>cromo.sum</code>; packages that bring a native library, downloaded and checked by <code>cromo</code>; the first ones, with ONNX Runtime, DuckDB and PDFium</span></li>
-            <li><b>M91–93</b><span><code>fma</code>, also of SIMD vectors; <code>std.math</code>, with the same numbers on every system; the manifest and the version of an executable for Windows, from <code>cromo.mod</code>, and the command that signs it</span></li>
-            <li><b>M94</b><span><code>cromo ai</code>: what an AI assistant needs to write Cromo, and the reference of each module, from the compiler itself</span></li>
-            <li><b>M34</b><span>The analysis of the compiler written in Cromo: the types of the declarations and of the expressions, and the moves, with the same results as the C++ on every test</span></li>
-            <li><b>M95</b><span>Local references, <code>ref</code> and <code>const ref</code>; <code>==</code> on structs, enums, lists and maps; <code>Option&lt;T&gt;</code>; <code>public const</code>; <code>extend</code>, the methods of a struct in more files; and <code>cromo</code> says what it does while it builds</span></li>
-            <li><b>M96</b><span>The words reserved for later, towards a stable language, and a heap for Linux with a cache for each thread, which halves the time of the server of the benchmarks; the guide as a book to print</span></li>
-            <li><b>M97–98</b><span>The compiler written in Cromo: the generation of the code, LLVM and LLD through their C API, every command of <code>cromo</code>; it builds the same executables as the one in C++, byte for byte, and compiles itself. <code>[[format]]</code>, for functions that take a format as <code>println</code></span></li>
+            <li><b>core</b><span>Always there, without an import: <code>string</code>, <code>list&lt;T&gt;</code>, <code>map&lt;K, V&gt;</code>, <code>Option&lt;T&gt;</code>, <code>print</code> and <code>format</code> checked by the compiler, <code>sort</code>, numbers from text, the functions of the bits, the vectors of SIMD, <code>embed</code> for the files of a program</span></li>
+            <li><b><a href="book/en/std.fs.html">std.fs</a></b><span>Files read and written whole, in pieces or mapped in memory; folders, paths, links, permissions</span></li>
+            <li><b><a href="book/en/std.os.html">std.os</a></b><span>The system, the environment, the current folder, the standard input, whether the output is a terminal</span></li>
+            <li><b><a href="book/en/std.process.html">std.process</a></b><span>Other programs, run to their end or alongside, with their input and output, without a shell</span></li>
+            <li><b><a href="book/en/std.cmdline.html">std.cmdline</a></b><span>The options of the command line, with their types, and the help written by itself</span></li>
+            <li><b><a href="book/en/std.time.html">std.time</a></b><span>A monotonic clock and a stopwatch, dates with time zones from the IANA database, formats to write and to read them, pauses</span></li>
+            <li><b><a href="book/en/std.log.html">std.log</a></b><span>The log of a service: levels, text with colors or JSON, the terminal, a file or both, fields that follow a request</span></li>
+            <li><b><a href="book/en/std.config.html">std.config</a></b><span>Names with their values, in memory and in files of <code>name=value</code> lines that keep their comments</span></li>
+            <li><b><a href="book/en/std.uuid.html">std.uuid</a></b><span>The UUIDs of RFC 9562: random, ordered by time, from a name; read, written and compared</span></li>
+            <li><b><a href="book/en/std.thread.html">std.thread</a></b><span>Threads, lightweight tasks under the same names, groups, mutexes that hold their data, atomics, channels</span></li>
+            <li><b><a href="book/en/std.net.html">std.net</a></b><span>TCP, UDP and TLS for clients and servers, the names of DNS, and <code>ping</code>, without the C library on Linux</span></li>
+            <li><b><a href="book/en/std.http.html">std.http</a></b><span>A server with routes and a task for each connection; a client with redirects, gzip and kept connections</span></li>
+            <li><b><a href="book/en/std.websocket.html">std.websocket</a></b><span>WebSocket for servers and clients: messages of text and of bytes, in both directions</span></li>
+            <li><b><a href="book/en/std.oauth.html">std.oauth</a></b><span>OAuth 2.0 and OpenID Connect: the login with Microsoft, Google, Keycloak or any provider, with PKCE; the tokens of a service; the check of the tokens of an API</span></li>
+            <li><b><a href="book/en/std.jwt.html">std.jwt</a></b><span>JSON Web Tokens signed with HMAC, RSA, ECDSA or Ed25519, and the keys that a provider publishes</span></li>
+            <li><b><a href="book/en/std.crypto.html">std.crypto</a></b><span>SHA-1, SHA-2 and MD5, HMAC, random bytes, hex and base64; AES-GCM and ChaCha20-Poly1305; Ed25519, X25519, RSA and ECDSA</span></li>
+            <li><b><a href="book/en/std.json.html">std.json</a></b><span>JSON to and from the structs of a program, with the conversion written by the compiler; values of any shape</span></li>
+            <li><b><a href="book/en/std.xml.html">std.xml</a></b><span>XML read into its elements and written, on one line or for a person</span></li>
+            <li><b><a href="book/en/std.regex.html">std.regex</a></b><span>Regular expressions with the syntax of RE2: a search in linear time, groups, replacements</span></li>
+            <li><b><a href="book/en/std.gzip.html">std.gzip</a></b><span>gzip and deflate, to compress and to decompress</span></li>
+            <li><b><a href="book/en/std.zip.html">std.zip</a></b><span>The archives of zip, read and extracted, also above 4 GB</span></li>
+            <li><b><a href="book/en/std.tar.html">std.tar</a></b><span>The archives of tar, read and extracted, with <code>std.gzip</code> for <code>.tar.gz</code></span></li>
+            <li><b><a href="book/en/std.db.html">std.db</a></b><span>SQLite inside the program, and a client of PostgreSQL with SCRAM and TLS, under the same names</span></li>
+            <li><b><a href="book/en/std.math.html">std.math</a></b><span>Roots, powers, logarithms and trigonometry, with the same numbers on every system</span></li>
+            <li><b><a href="book/en/std.gui.html">std.gui</a></b><span>Windows and apps for Windows, Linux and Android from one source: components, tables of millions of rows, rich text, a canvas, SVG, dialogs, menus, the camera and the sensors</span></li>
+            <li><b><a href="book/en/std.audio.html">std.audio</a></b><span>Sounds and music for games and apps, from WAV and Ogg Vorbis</span></li>
           </ul>
         </div>
         <div class="phase">
-          <h3>Next</h3>
+          <h3>How it was built</h3>
+          <ul class="steps">
+            <li><b>decided</b><span>Every choice is decided first and written down with its reasons, then implemented, with tests on Windows and Linux</span></li>
+            <li><b>M0 – M98</b><span>Ninety-nine milestones, all done; since version 0.98 the compiler is written in Cromo, and compiles itself</span></li>
+          </ul>
+          <h3 style="margin-top:28px">Next</h3>
           <ul class="steps">
             <li><b>macOS</b><span>Programs for macOS, on Apple Silicon and Intel</span></li>
             <li><b>designer</b><span>The properties of each kind of component, and of several together</span></li>

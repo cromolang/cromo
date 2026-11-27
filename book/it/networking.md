@@ -10,6 +10,7 @@ La libreria standard ha tutto ciò che serve a un programma di rete, e non richi
 | [std.gzip](std.gzip.html) | la compressione nel formato gzip |
 | [std.crypto](std.crypto.html) | hash, chiavi casuali, cifrari e firme |
 | [std.jwt](std.jwt.html) | JSON Web Token |
+| [std.oauth](std.oauth.html) | il login con un provider di identità, e la verifica dei suoi token |
 
 TLS viene da Mbed TLS, compilato nel runtime di Cromo, così gli eseguibili restano autosufficienti, su Windows e su Linux.
 
@@ -1052,6 +1053,88 @@ refused: the token has expired
 - Un token rifiutato è un `jwt.Invalid`, il cui `reason` dice perché: `Expired`, `BadSignature`, `UnknownKey` e gli altri.
 - I tempi sono secondi dal 1970: `time.unix() + 3600` è fra un'ora.
 
+## Accedere con un provider: OAuth 2.0
+
+Gli utenti di un backend spesso accedono con un account che hanno già, di Microsoft, di Google, o del Keycloak della loro azienda. Il modulo [std.oauth](std.oauth.html) parla OAuth 2.0 e OpenID Connect con qualsiasi provider, per le due cose che fa un backend: far accedere i suoi utenti, e verificare i token che arrivano alla sua API.
+
+Un `oauth.Provider` contiene gli indirizzi di un provider. `oauth.google()`, `oauth.microsoft(tenant)` e `oauth.keycloak(server, realm)` li leggono dal provider stesso, e `oauth.discover(issuer)` lo fa per qualsiasi altro, a partire dal suo issuer: una richiesta, all'avvio del programma.
+
+### Il login di un utente
+
+Il backend è registrato presso il provider, che gli dà un id e un segreto, e a cui si dice l'indirizzo a cui rimandare gli utenti. Un login sono due richieste:
+
+```cromo nocheck
+import std.http
+import std.oauth
+import std.thread
+
+i32 main() {
+    oauth.Client app
+    app.provider = oauth.google()
+    app.id = "the id of the client"
+    app.secret = "its secret"
+    app.redirectUrl = "http://localhost:8080/callback"
+
+    thread.Mutex<oauth.Login> pending  // one user at a time: a real server keeps one for each session
+    http.serve("127.0.0.1", 8080, [app, pending](ref http.Request req, ref http.Response res) {
+        if (req.matches("GET /login")) {
+            oauth.Login login = app.login()
+            pending.lock([login](ref oauth.Login kept) { kept = login.copy() })
+            res.status = 302
+            res.headers.set("Location", login.url)
+        } else if (req.matches("GET /callback")) {
+            oauth.Login login
+            pending.lock([ref login](ref oauth.Login kept) { login = kept.copy() })
+            oauth.Tokens tokens = app.exchange(login, req.queryValue("state"), req.queryValue("code"))
+            res.write(format("Hello, {} <{}>", tokens.identity.name, tokens.identity.email))
+        } else {
+            res.status = 404
+        }
+    })
+    ret 0
+}
+```
+
+- `app.login()` avvia un login: il suo `url` è la pagina del provider a cui mandare l'utente, creata solo per questo login. Il programma conserva l'`oauth.Login` finché l'utente non torna, nella sessione dell'utente.
+- Il provider rimanda l'utente a `redirectUrl` con uno `state` e un `code` nella query. `app.exchange(login, state, code)` verifica che lo state sia quello del login, chiede i token al provider e verifica l'ID token: che l'abbia firmato il provider, per questa applicazione, per questo login, e che non sia scaduto.
+- Gli `oauth.Tokens` hanno `identity`, chi è l'utente: `sub`, l'id dell'utente presso il provider, che non cambia mai, ed `email`, `name`, `username` quando gli scope li chiedono; `access`, il token per le API; `refresh`, per chiederne di nuovi con `app.refresh(token)` quando l'access token è scaduto, a `expires`.
+- `scopes` dice che cosa si chiede: senza nulla, `openid`, `profile` ed `email`. Microsoft e Keycloak danno un refresh token con `offline_access`.
+
+Ogni login usa PKCE: un codice rubato per strada non serve a nulla senza il `verifier` che ha solo il programma. Una verifica fallita, o un codice che il provider rifiuta, è un'eccezione che dice quale.
+
+`app.clientCredentials()` restituisce i token dell'applicazione stessa, senza un utente, per un servizio che ne chiama un altro. `app.userInfo(accessToken)` chiede al provider chi è l'utente di un token, e `app.logoutUrl(idToken, returnUrl)` è l'indirizzo a cui mandare l'utente per chiudere la sessione anche presso il provider.
+
+### I token di un'API
+
+Un'API chiamata da una pagina o da un'app riceve un token con ogni richiesta, nell'header `Authorization: Bearer ...`, e deve sapere che è autentico prima di rispondere:
+
+```cromo nocheck
+import std.http
+import std.oauth
+
+i32 main() {
+    oauth.Verifier verifier
+    verifier.provider = oauth.keycloak("https://id.example.com", "shop")
+    verifier.audience = "shop-api"
+
+    http.serve("0.0.0.0", 8080, [verifier](ref http.Request req, ref http.Response res) {
+        try {
+            oauth.Claims who = verifier.claims(oauth.bearer(req))
+            res.write(format("your orders, {}", who.username))
+        } catch (Exception e) {
+            res.status = 401
+        }
+    })
+    ret 0
+}
+```
+
+Un `oauth.Verifier` verifica che una chiave del provider abbia firmato il token, che non sia scaduto, che sia dell'issuer del provider e per l'`audience`, il nome di questa API presso il provider. `claims(token)` restituisce gli `oauth.Claims` dello standard, e `verify<T>(token)` i claim come struct del programma, per quelli propri di ciascun provider, come i ruoli di un Keycloak. Un token che non passa è un `jwt.Invalid` con il suo `reason`, come `Expired`, oppure un `Error`.
+
+Le chiavi del provider vengono scaricate al primo token e conservate: un verifier si crea una volta sola e lo condividono tutte le richieste, come nell'esempio. Quando il provider cambia le chiavi, il verifier le richiede da sé.
+
+Un access token di Microsoft o di Keycloak è un JWT, e si verifica così. Uno di Google non lo è: `userInfo` chiede a Google di chi è.
+
 ## Riepilogo
 
 - `std.net` ha TCP, UDP e TLS, con chiamate bloccanti che, mentre attendono, lasciano il thread agli altri task. Senza `timeout(ms)` un'operazione attende tutto il tempo necessario; `connect` non ha un timeout proprio.
@@ -1060,5 +1143,6 @@ refused: the token has expired
 - `http.serve` esegue un handler `const func` per ogni richiesta, con un task per ogni connessione e le route scelte da `req.matches`; limiti e timeout proteggono il server.
 - `http.get`, `http.post` e `http.send` effettuano le richieste, seguono i redirect e decomprimono gzip; `http.Client` tiene le connessioni e serve più task contemporaneamente.
 - `std.websocket` invia e riceve messaggi in entrambe le direzioni, e termina con `close()` e `websocket.Closed`.
+- `std.oauth` fa accedere gli utenti con Microsoft, Google, Keycloak o qualsiasi provider OpenID Connect, con PKCE, e verifica i token di un'API con le chiavi del provider.
 - `net.ping` dice se un host risponde a un echo ICMP, e in quanto tempo.
 - `std.gzip`, `std.crypto` e `std.jwt` completano la cassetta degli attrezzi, senza librerie esterne.

@@ -662,6 +662,46 @@ cannot decode JSON: expected an object, found an array
 cannot read JSON: line 1, column 9: expected the name of a member, in double quotes
 ```
 
+## XML
+
+Some services answer in XML: the storage of S3, SOAP, the feeds of RSS. The module [std.xml](std.xml.html) reads a document into its elements, and writes one.
+
+```cromo
+import std.xml
+
+i32 main() {
+    xml.Element feed = xml.parse("<feed lang=\"en\"><item id=\"7\">pen &amp; ink</item><item id=\"8\">paper</item></feed>")
+    println("{} {}", feed.name, feed.attribute("lang"))
+    for (xml.Element item in feed.all("item")) {
+        println("{} {}", item.attribute("id"), item.text)
+    }
+    println("'{}' {}", feed.child("owner").textOf("name"), feed.has("owner"))
+
+    xml.Element order = xml.element("order")
+    order.setAttribute("id", "42")
+    order.addText("item", "pen & ink")
+    print("{}", xml.pretty(order))
+    ret 0
+}
+```
+
+```output
+feed en
+7 pen & ink
+8 paper
+'' false
+<?xml version="1.0" encoding="UTF-8"?>
+<order id="42">
+  <item>pen &amp; ink</item>
+</order>
+```
+
+- `xml.parse(text)` gives the `xml.Element` at the top of the document. An element has its `name`, its `attributes`, its `text` and its `children`, the elements inside it.
+- `attribute(key)` gives the value of an attribute, or `""`; `child(key)` the first element of that name, `all(key)` all of them, and `textOf(key)` the text of the first. An element that is not there is an element without a name, and its text is `""`: a chain as `feed.child("owner").textOf("name")` does not throw, and `has(key)` tells when it matters.
+- `xml.element(name)` makes an element; `setAttribute`, `add` and `addText` fill it; `xml.encode(root)` writes the document on one line and `xml.pretty(root)` one line for each element. The characters that XML keeps for itself are written as entities, and `xml.escape(text)` does it for a text.
+
+The reader takes the documents that are well formed, with their comments, CDATA and declaration, and throws an `Error` with the line and the column for the others, as a tag that is not closed. It does not check a document against a DTD or a schema, and the entities that a DOCTYPE declares are not known: a document from outside cannot grow in memory by its own entities, nor make the program read a file. A name keeps its prefix, as `s:Body`, and `localName()` gives it without.
+
 ## Summary
 
 - `json.encode`, `json.pretty` and `json.decode<T>` convert numbers, strings, lists, fixed arrays, maps with string keys, enums and structs, with code written by the compiler; a field that cannot be converted is a compile error.
@@ -671,3 +711,4 @@ cannot read JSON: line 1, column 9: expected the name of a member, in double quo
 - `json.parse` gives a `json.Value` for data of any shape, with `Int`, `UInt` and `Float` kept apart; `toValue` and `fromValue` convert between values and types.
 - A generic function that converts its `T` writes `<T : json.Data>`.
 - Errors say where the problem is: the line and the column, or the path of the value.
+- `std.xml` reads XML into elements with attributes, text and children, and writes them.

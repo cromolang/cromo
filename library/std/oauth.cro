@@ -1,0 +1,430 @@
+// OAuth 2.0 and OpenID Connect, for a backend whose users log in with an account of
+// Microsoft, of Google, of a Keycloak or of any provider that speaks them: the login
+// with a code (RFC 6749, with PKCE of RFC 7636), the tokens of a service for another
+// service, and the check of the tokens that arrive at an API.
+//
+// '''
+// import std.oauth
+//
+// oauth.Client app
+// app.provider = oauth.google()
+// app.id = "the id of the client"
+// app.secret = "its secret"
+// app.redirectUrl = "https://example.com/callback"
+//
+// oauth.Login login = app.login()        // keep it in the session, send the user to login.url
+// // ... the provider sends the user back to /callback?state=...&code=...
+// oauth.Tokens tokens = app.exchange(login, state, code)
+// println("{} <{}>", tokens.identity.name, tokens.identity.email)
+// '''
+//
+// An API checks the token of each request with a 'Verifier', which downloads the keys
+// of the provider once and keeps them:
+//
+// '''
+// oauth.Verifier verifier
+// verifier.provider = oauth.keycloak("https://id.example.com", "shop")
+// verifier.audience = "shop-api"
+// oauth.Claims who = verifier.claims(oauth.bearer(req))   // or an exception: answer 401
+// '''
+//
+// The guide: [Networking and HTTP](https://cromolang.org/book/en/networking.html).
+
+// The module std.oauth (D591), in Cromo on std.http, std.json and std.jwt. Nothing
+// here is of the whole program: the keys of a provider are kept in the Client or in
+// the Verifier that asked them, behind its own lock.
+import std.crypto
+import std.http
+import std.json
+import std.jwt
+import std.thread
+import std.time
+
+// The addresses of a provider of identity, as its configuration of OpenID Connect
+// gives them. 'discover' reads them from the provider; a program can also write them
+// by hand, for a provider of OAuth 2.0 without OpenID Connect, as GitHub.
+public struct Provider {
+    public string issuer        // "https://accounts.google.com": the iss of its tokens
+    public string authorizeUrl  // where the user logs in
+    public string tokenUrl      // where the tokens are asked
+    public string userInfoUrl   // what the provider knows of the user of a token, or ""
+    public string keysUrl       // the keys that sign its tokens, a JWK Set, or ""
+    public string logoutUrl     // where the session of the user is ended, or ""
+}
+
+// The text of a member of an object of JSON, or "" when it is not there or is not a text.
+string textOf(json.Value object, string name) {
+    try {
+        if (object.has(name)) {
+            ret object.get(name).asText()
+        }
+    } catch (Exception e) {
+    }
+    ret ""
+}
+
+// The addresses of the provider whose issuer is 'issuer', as
+// "https://accounts.google.com", read from its configuration of OpenID Connect,
+// '/.well-known/openid-configuration' under the issuer. An exception if the provider
+// does not answer, or answers something else.
+public Provider discover(string issuer) {
+    string base = issuer.copy()
+    for (base.endsWith("/")) {
+        base = base.slice(0, base.len() - 1)
+    }
+    string address = base + "/.well-known/openid-configuration"
+    http.Response res = http.get(address)
+    if (res.status != 200) {
+        throw Error(format("cannot read the configuration of the provider {}: the status of {} is {}", issuer, address, res.status))
+    }
+    json.Value doc = json.parse(res.text())
+    Provider found
+    found.issuer = textOf(doc, "issuer")
+    found.authorizeUrl = textOf(doc, "authorization_endpoint")
+    found.tokenUrl = textOf(doc, "token_endpoint")
+    found.userInfoUrl = textOf(doc, "userinfo_endpoint")
+    found.keysUrl = textOf(doc, "jwks_uri")
+    found.logoutUrl = textOf(doc, "end_session_endpoint")
+    if (found.issuer.len() == 0 || found.tokenUrl.len() == 0) {
+        throw Error(format("{} is not the configuration of a provider of OpenID Connect", address))
+    }
+    ret found
+}
+
+// The accounts of Google, as 'discover' reads them.
+public Provider google() {
+    ret discover("https://accounts.google.com")
+}
+
+// The accounts of Microsoft, of Entra ID, as 'discover' reads them. 'tenant' is the
+// id or the domain of an organization, or "common" for every account,
+// "organizations" for those of work and school, "consumers" for the personal ones.
+public Provider microsoft(string tenant) {
+    ret discover("https://login.microsoftonline.com/" + http.escape(tenant) + "/v2.0")
+}
+
+// A realm of a Keycloak, as 'discover' reads it: 'server' is the address of the
+// Keycloak, as "https://id.example.com", and 'realm' the name of the realm.
+public Provider keycloak(string server, string realm) {
+    string base = server.copy()
+    for (base.endsWith("/")) {
+        base = base.slice(0, base.len() - 1)
+    }
+    ret discover(base + "/realms/" + http.escape(realm))
+}
+
+// What a token of OpenID Connect says of its user: the claims of the standard, each
+// empty when the token does not have it. A program that needs others, as the roles
+// of a Keycloak, reads them into a struct of its own with 'Verifier.verify'.
+public struct Claims {
+    public string iss      // the issuer: the provider
+    public string sub      // the id of the user at the provider, which never changes
+    public json.Value aud  // for whom the token is: a text, or an array of them
+    public i64 exp         // when it ends, in seconds of Unix
+    public i64 iat         // when it was made
+    public string email
+    public string name  // the full name
+    [[json("preferred_username")]] public string username
+    [[json("given_name")]] public string givenName
+    [[json("family_name")]] public string familyName
+    public string picture  // the address of a picture of the user
+    public string nonce    // of the login that asked the token
+    public string azp      // the client that asked the token
+    public string tid      // of Microsoft: the id of the organization of the user
+    public string scope    // of an access token: what it allows, separated by spaces
+}
+
+// The tokens that a provider gives.
+public struct Tokens {
+    public string access    // the access token: sent to the APIs as "Authorization: Bearer ..."
+    public string type      // "Bearer"
+    public i64 expires      // when the access token ends, in seconds of Unix; 0 when the provider does not say
+    public string refresh   // the refresh token, for 'refresh', or ""
+    public string id        // the ID token, a JWT, or "" without the scope openid
+    public string scope     // what the access token allows, when the provider says it
+    public Claims identity  // the claims of the ID token, checked; empty without one
+}
+
+// A login that has started: where to send the user, and what to keep until the
+// provider sends the user back, as in the session of the user on the server.
+public struct Login {
+    public string url       // the page of the provider, with the request of the client
+    public string state     // comes back with the user: 'exchange' checks it
+    public string verifier  // of PKCE: only who started the login can end it
+    public string nonce     // comes back in the ID token: 'exchange' checks it
+}
+
+// The keys of a provider as it gave them, and when.
+struct Keys {
+    string text
+    i64 fetched
+}
+
+// The JWK Set of the provider, downloaded when it is not there yet, when it is a day
+// old, or when `again` asks for it and the last one is older than a minute: a
+// provider changes its keys, and a token with a new one must not be refused.
+string keysText(Provider provider, thread.Mutex<Keys> cache, bool again) {
+    string text
+    i64 fetched = 0
+    cache.lock([ref text, ref fetched](ref Keys keys) {
+        text = keys.text.copy()
+        fetched = keys.fetched
+    })
+    i64 now = time.unix()
+    if (text.len() > 0 && now - fetched < 86400 && !(again && now - fetched > 60)) {
+        ret text
+    }
+    if (provider.keysUrl.len() == 0) {
+        throw Error("the provider has no address of its keys: its tokens cannot be checked")
+    }
+    http.Response res = http.get(provider.keysUrl)
+    if (res.status != 200) {
+        throw Error(format("cannot read the keys of the provider: the status of {} is {}", provider.keysUrl, res.status))
+    }
+    text = res.text()
+    cache.lock([text, now](ref Keys keys) {
+        keys.text = text.copy()
+        keys.fetched = now
+    })
+    ret text
+}
+
+// The claims of a token of the provider that passes the checks: a key of the
+// provider, the signature, the times, the audience when it is set, the issuer.
+json.Value checked(Provider provider, thread.Mutex<Keys> cache, string token, string audience, i64 leeway) {
+    json.Value claims
+    for (i64 attempt = 0; attempt < 2; attempt++) {
+        jwt.Verifier verifier
+        verifier.keys = jwt.keySet(keysText(provider, cache, attempt > 0))
+        verifier.audience = audience.copy()
+        verifier.leeway = leeway
+        try {
+            claims = verifier.verify<json.Value>(token)
+            break
+        } catch (jwt.Invalid e) {
+            if (e.reason != jwt.Reason.UnknownKey || attempt > 0) {
+                throw e
+            }
+        }
+    }
+    // The issuer of Microsoft for every organization has {tenantid} in place of the
+    // id of the organization of each token.
+    string expected = provider.issuer.replace("{tenantid}", textOf(claims, "tid"))
+    if (textOf(claims, "iss") != expected) {
+        throw Error(format("the token is of the issuer {}, not of {}", textOf(claims, "iss"), expected))
+    }
+    ret claims
+}
+
+// Checks the tokens of a provider, as an API does with the token of each request:
+// that a key of the provider signed it, that its time has not passed, that it is of
+// the issuer of the provider and, when 'audience' is set, for this API. The keys are
+// downloaded at the first token and kept for a day, and again when a token names a
+// key that is not among them. Its methods are const: the tasks of a server share one
+// verifier. It can be moved, not copied.
+//
+// Only a JWT can be checked this way: the ID tokens, and the access tokens of
+// Microsoft and of Keycloak. An access token of Google is not one: 'Client.userInfo'
+// asks Google whose it is.
+public struct Verifier {
+    public Provider provider
+    // The audience that the aud of the tokens must name: the id of the API at the
+    // provider. "" does not check it, and then a token made for another service of
+    // the same provider passes.
+    public string audience
+    public i64 leeway  // the seconds of tolerance on the times, for the clocks that differ
+    thread.Mutex<Keys> cache
+
+    // The claims of the token as the struct T, when it passes the checks. Otherwise
+    // 'jwt.Invalid' with its reason, as 'Expired', or an 'Error' for a token of
+    // another issuer or a provider that does not give its keys.
+    public T verify<T : json.Data>(string token) const {
+        ret json.fromValue<T>(checked(provider, cache, token, audience, leeway))
+    }
+
+    // The claims of the standard of the token, when it passes the checks, as
+    // 'verify<oauth.Claims>'.
+    public Claims claims(string token) const {
+        ret json.fromValue<Claims>(checked(provider, cache, token, audience, leeway))
+    }
+}
+
+// The token of a request to an API, from its header "Authorization: Bearer ...", or
+// "" when the request has none.
+public string bearer(http.Request req) {
+    string value = req.headers.get("authorization").trim()
+    if (value.len() > 7 && value.slice(0, 7).lower() == "bearer ") {
+        ret value.slice(7, value.len()).trim()
+    }
+    ret ""
+}
+
+// The pairs of a form, name=value joined by &, with their escapes.
+string form(list<string> pairs) {
+    list<string> parts
+    for (i64 i = 0; i + 1 < pairs.len(); i += 2) {
+        if (pairs[i + 1].len() > 0) {
+            parts.add(http.escape(pairs[i]) + "=" + http.escape(pairs[i + 1]))
+        }
+    }
+    ret join(parts, "&")
+}
+
+// Whether two texts are the same, in a time that does not say where they differ.
+bool sameText(string a, string b) {
+    if (a.len() != b.len()) {
+        ret false
+    }
+    u8 difference = 0
+    for (i64 i = 0; i < a.len(); i++) {
+        difference = difference | (a[i] ^ b[i])
+    }
+    ret difference == 0
+}
+
+// An application registered at a provider: a backend that logs its users in, or a
+// service that asks tokens for itself. Its methods are const: the tasks of a server
+// share one client. It can be moved, not copied.
+public struct Client {
+    public Provider provider
+    public string id           // the id of the client at the provider
+    public string secret       // its secret; "" for a client without one, which PKCE protects
+    public string redirectUrl  // where the provider sends the user back: registered at the provider
+    // What the client asks: "openid" for the ID token, "profile" and "email" for the
+    // name and the address, "offline_access" for a refresh token at Microsoft and
+    // Keycloak. Without any, 'login' asks openid, profile and email.
+    public list<string> scopes
+    public i64 leeway  // the seconds of tolerance on the times of the ID token
+    thread.Mutex<Keys> cache
+
+    string scopeText(list<string> otherwise) const {
+        ret join(scopes.len() > 0 ? scopes : otherwise, " ")
+    }
+
+    // Starts a login: the address of the page of the provider where to send the
+    // user, with a state, a nonce and a challenge of PKCE made for this login. The
+    // program keeps the 'Login' until the user comes back, in the session of the
+    // user, and gives it to 'exchange'.
+    public Login login() const {
+        Login started
+        started.state = crypto.base64Url(crypto.random(24))
+        started.nonce = crypto.base64Url(crypto.random(24))
+        started.verifier = crypto.base64Url(crypto.random(48))
+        string query = form(["response_type", "code", "client_id", id, "redirect_uri", redirectUrl, "scope",
+            scopeText(["openid", "profile", "email"]), "state", started.state, "nonce", started.nonce, "code_challenge",
+            crypto.base64Url(crypto.sha256(started.verifier.bytes())), "code_challenge_method", "S256"])
+        started.url = provider.authorizeUrl + (provider.authorizeUrl.contains("?") ? "&" : "?") + query
+        ret started
+    }
+
+    // Asks the address of the tokens with a form, and reads the tokens of the answer.
+    Tokens ask(list<string> pairs, string action) const {
+        list<string> all = pairs.copy()
+        all.add("client_id")
+        all.add(id.copy())
+        all.add("client_secret")
+        all.add(secret.copy())
+        http.Request req = http.Request("POST", provider.tokenUrl)
+        req.headers.set("Content-Type", "application/x-www-form-urlencoded")
+        req.headers.set("Accept", "application/json")
+        req.write(form(all))
+        http.Response res = http.send(req)
+        json.Value answer
+        try {
+            answer = json.parse(res.text())
+        } catch (Exception e) {
+            throw Error(format("cannot {}: the provider answered the status {} and no JSON", action, res.status))
+        }
+        string error = textOf(answer, "error")
+        if (res.status != 200 || error.len() > 0) {
+            string more = textOf(answer, "error_description")
+            throw Error(format("cannot {}: the provider answered {}{}", action, error.len() > 0 ? error : format("the status {}", res.status),
+                more.len() > 0 ? ": " + more : ""))
+        }
+        Tokens tokens
+        tokens.access = textOf(answer, "access_token")
+        tokens.type = textOf(answer, "token_type")
+        tokens.refresh = textOf(answer, "refresh_token")
+        tokens.id = textOf(answer, "id_token")
+        tokens.scope = textOf(answer, "scope")
+        try {
+            if (answer.has("expires_in")) {
+                tokens.expires = time.unix() + answer.get("expires_in").asInt()
+            }
+        } catch (Exception e) {
+        }
+        if (tokens.access.len() == 0) {
+            throw Error(format("cannot {}: the answer of the provider has no access token", action))
+        }
+        ret tokens
+    }
+
+    // Ends a login: 'state' and 'code' are those of the query of the request with
+    // which the provider sent the user back to 'redirectUrl'. It checks that the
+    // state is the one of the login, asks the tokens with the code and the verifier
+    // of PKCE, and checks the ID token, when there is one: its signature, its times,
+    // that it is of the provider, for this client and of this login. The user is
+    // 'identity' of the tokens. An exception when a check fails or the provider
+    // refuses the code, as one used twice.
+    public Tokens exchange(Login login, string state, string code) const {
+        if (login.state.len() == 0 || !sameText(state, login.state)) {
+            throw Error("cannot end the login: the state of the answer is not the one of the login")
+        }
+        Tokens tokens = ask(["grant_type", "authorization_code", "code", code, "redirect_uri", redirectUrl, "code_verifier",
+            login.verifier], "end the login")
+        if (tokens.id.len() > 0) {
+            tokens.identity = json.fromValue<Claims>(checked(provider, cache, tokens.id, id, leeway))
+            if (!sameText(tokens.identity.nonce, login.nonce)) {
+                throw Error("cannot end the login: the ID token is of another login")
+            }
+        }
+        ret tokens
+    }
+
+    // New tokens from a refresh token, when the access token has ended, without
+    // asking the user again. The provider can give a new refresh token: when
+    // 'refresh' of the result is empty, the old one still holds.
+    public Tokens refresh(string refreshToken) const {
+        Tokens tokens = ask(["grant_type", "refresh_token", "refresh_token", refreshToken, "scope", join(scopes, " ")],
+            "refresh the tokens")
+        if (tokens.id.len() > 0) {
+            tokens.identity = json.fromValue<Claims>(checked(provider, cache, tokens.id, id, leeway))
+        }
+        ret tokens
+    }
+
+    // The tokens of the client itself, with its id and its secret and no user, for
+    // a service that calls another service (the grant client_credentials). It asks
+    // the 'scopes' of the client.
+    public Tokens clientCredentials() const {
+        ret ask(["grant_type", "client_credentials", "scope", join(scopes, " ")], "get the tokens of the client")
+    }
+
+    // What the provider knows of the user of an access token, from its address of
+    // userinfo: an object of JSON with "sub", and "email" and "name" when the scopes
+    // allow them. An exception when the provider refuses the token.
+    public json.Value userInfo(string accessToken) const {
+        if (provider.userInfoUrl.len() == 0) {
+            throw Error("the provider has no address of userinfo")
+        }
+        http.Request req = http.Request("GET", provider.userInfoUrl)
+        req.headers.set("Authorization", "Bearer " + accessToken)
+        req.headers.set("Accept", "application/json")
+        http.Response res = http.send(req)
+        if (res.status != 200) {
+            throw Error(format("cannot read the user of the token: the provider answered the status {}", res.status))
+        }
+        ret json.parse(res.text())
+    }
+
+    // The address where to send the user to end the session at the provider too,
+    // with the ID token of the user and the address where the provider sends the user
+    // after it, registered at the provider; "" for a provider without such an address.
+    public string logoutUrl(string idToken, string returnUrl) const {
+        if (provider.logoutUrl.len() == 0) {
+            ret ""
+        }
+        ret provider.logoutUrl + (provider.logoutUrl.contains("?") ? "&" : "?") +
+            form(["id_token_hint", idToken, "post_logout_redirect_uri", returnUrl, "client_id", id])
+    }
+}

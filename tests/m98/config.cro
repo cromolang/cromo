@@ -2,7 +2,7 @@
 // given when a name is not there; the lines of a file, with its comments kept, a
 // name written twice, a value with a = in it; the file written and read again;
 // and the names and the lines that are refused.
-// program-env: OUT={dir}/../out2/config
+// program-env: OUT={dir}/../out2/config_files
 // expect-output: 3 names: host, port, verbose
 // expect-output: host=example.com port=8080 verbose=true ratio=0.5
 // expect-output: missing '' 'none' 7 1.5 true false

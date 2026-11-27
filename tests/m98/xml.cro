@@ -1,0 +1,83 @@
+// std.xml (D590): a document read into its elements, with attributes, texts,
+// entities, CDATA, comments, a declaration and a DOCTYPE; the elements looked for by
+// name; a tree made and written, on one line and for a person, and read again; and
+// the documents that are not well formed, with their line and column.
+// expect-output: ListBucketResult Result 2 1000 false
+// expect-output: a.txt 12 "abc" | b & c.txt 7 "d<e>"
+// expect-output: missing '' '' 0 false
+// expect-output: attributes 7 'two words & more' true false ''
+// expect-output: text 'a < b é € 😀 raw <b> & text' 0
+// expect-output: mixed 'before after' 1
+// expect-output: <?xml version="1.0" encoding="UTF-8"?><order id="42" note="a &quot;b&quot;"><item>pen &amp; ink</item><item/><part n="1"><ETag>x</ETag></part></order>
+// expect-output: <?xml version="1.0" encoding="UTF-8"?>|<order id="42" note="a &quot;b&quot;">|  <item>pen &amp; ink</item>|  <item/>|  <part n="1">|    <ETag>x</ETag>|  </part>|</order>|
+// expect-output: again true true
+// expect-output: escape a &lt; b &amp;&amp; c &gt; &quot;d&quot; &apos;e&apos;
+// expect-output: the XML is wrong at line 1, column 14: </b> closes a
+// expect-output: the XML is wrong at line 2, column 5: the element a does not end
+// expect-output: the XML is wrong at line 1, column 4: the entity &nbsp; is not known
+// expect-output: the XML is wrong at line 1, column 11: the attribute x is written twice
+// expect-output: the XML is wrong at line 1, column 5: the document has one element at its top
+// expect-output: the XML is wrong at line 1, column 1: an element is expected
+// expect-output: the XML is wrong at line 1, column 604: the elements are more than 200 deep
+// expect-output: 'two words' cannot be the name of an element of XML
+import std.xml
+
+void wrong(string text) {
+    try {
+        xml.parse(text)
+        println("read: {}", text)
+    } catch (Exception e) {
+        println("{}", e.message())
+    }
+}
+
+i32 main() {
+    string listing = "\u{FEFF}<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!-- a listing -->\n" +
+        "<ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">\n  <Name>photos</Name>\n  <MaxKeys>1000</MaxKeys>\n" +
+        "  <IsTruncated>false</IsTruncated>\n  <Contents><Key>a.txt</Key><Size>12</Size><ETag>&quot;abc&quot;</ETag></Contents>\n" +
+        "  <Contents>\n    <Key>b &amp; c.txt</Key>\n    <Size>7</Size>\n    <ETag>\"d&lt;e&gt;\"</ETag>\n  </Contents>\n</ListBucketResult>\n"
+    xml.Element root = xml.parse(listing)
+    list<xml.Element> contents = root.all("Contents")
+    println("{} {} {} {} {}", root.name, root.localName().slice(10, 16), contents.len(), root.textOf("MaxKeys"), root.textOf("IsTruncated"))
+    println("{} {} {} | {} {} {}", contents[0].textOf("Key"), contents[0].textOf("Size"), contents[0].textOf("ETag"),
+        contents[1].textOf("Key"), contents[1].child("Size").text, contents[1].textOf("ETag"))
+    println("missing '{}' '{}' {} {}", root.child("Owner").child("ID").text, root.textOf("Owner"), root.all("Owner").len(), root.has("Owner"))
+
+    xml.Element item = xml.parse("<!DOCTYPE s:item [ <!ENTITY big \"x\"> ]><s:item id='7' note=\"two words &amp; more\" xml:lang=\"it\"/>")
+    println("attributes {} '{}' {} {} '{}'", item.attribute("id"), item.attribute("note"), item.hasAttribute("xml:lang"),
+        item.hasAttribute("lang"), item.attribute("lang"))
+    xml.Element text = xml.parse("<t>a &lt; b &#233; &#x20AC; &#x1F600; <![CDATA[raw <b> & text]]><!-- not this --><?nor this?></t>")
+    println("text '{}' {}", text.text, text.children.len())
+    xml.Element mixed = xml.parse("<p>before <b>bold</b>after</p>")
+    println("mixed '{}' {}", mixed.text, mixed.children.len())
+
+    xml.Element order = xml.element("order")
+    order.setAttribute("id", "1")
+    order.setAttribute("note", "a \"b\"")
+    order.setAttribute("id", "42")
+    order.addText("item", "pen & ink")
+    order.add(xml.element("item"))
+    xml.Element part = xml.element("part")
+    part.setAttribute("n", "1")
+    part.addText("ETag", "x")
+    order.add(move part)
+    println("{}", xml.encode(order))
+    println("{}", xml.pretty(order).replace("\n", "|"))
+    xml.Element again = xml.parse(xml.pretty(order))
+    println("again {} {}", xml.encode(again) == xml.encode(order), again.child("part").textOf("ETag") == "x")
+    println("escape {}", xml.escape("a < b && c > \"d\" 'e'"))
+
+    wrong("<a><b></b></b>")
+    wrong("<a>\n<b/>")
+    wrong("<a>&nbsp;</a>")
+    wrong("<a x='1' x='2'/>")
+    wrong("<a/><b/>")
+    wrong("just words")
+    wrong("<a>".repeat(250))
+    try {
+        xml.encode(xml.element("two words"))
+    } catch (Exception e) {
+        println("{}", e.message())
+    }
+    ret 0
+}

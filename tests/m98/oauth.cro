@@ -1,0 +1,280 @@
+// std.oauth (D591), against a provider of OpenID Connect written here: its
+// configuration read; a login with a code and PKCE, with the ID token checked and
+// the user read from it; the logins that must fail, with another state, another
+// verifier and another nonce; the refresh, the tokens of the client, userinfo and
+// the logout; and a Verifier for the tokens of an API, with the keys downloaded once.
+// expect-output: provider true /authorize /token /userinfo /keys /logout
+// expect-output: login true true true true
+// expect-output: tokens a1 Bearer r1 true
+// expect-output: identity u1 Anna Rossi <anna@example.com> anna true
+// expect-output: cannot end the login: the state of the answer is not the one of the login
+// expect-output: cannot end the login: the provider answered invalid_grant: the code or its verifier is wrong
+// expect-output: cannot end the login: the ID token is of another login
+// expect-output: refresh a2 '' Anna Rossi
+// expect-output: service svc
+// expect-output: cannot get the tokens of the client: the provider answered invalid_client
+// expect-output: userinfo u1 anna@example.com
+// expect-output: cannot read the user of the token: the provider answered the status 401
+// expect-output: logout true
+// expect-output: api u1 anna@example.com [admin, staff]
+// expect-output: WrongAudience Expired UnknownKey BadSignature
+// expect-output: the token is of the issuer ISSUER, not of https://other.example.com
+// expect-output: keys asked 4 times
+// expect-output: bearer 'abc.def' '' ''
+import std.crypto
+import std.http
+import std.json
+import std.jwt
+import std.oauth
+import std.os
+import std.thread
+import std.time
+
+struct IdClaims {
+    string iss
+    string sub
+    string aud
+    i64 exp
+    i64 iat
+    string email
+    string name
+    [[json("preferred_username")]] string username
+    string nonce
+    list<string> roles
+}
+
+struct Roles {
+    string sub
+    string email
+    list<string> roles
+}
+
+// What the provider remembers of the login in course.
+struct Session {
+    string nonce
+    string challenge
+}
+
+// A key of Ed25519 that signs, with its public part for the JWK Set.
+jwt.Key newKey(string id, ref string jwk) {
+    list<u8> secret = crypto.random(32)
+    list<u8> der = crypto.fromHex("302e020100300506032b657004220420")
+    for (u8 b in secret) {
+        der.add(b)
+    }
+    jwt.Key key = jwt.privateKey(jwt.Algorithm.EdDsa, "-----BEGIN PRIVATE KEY-----\n" + crypto.base64(der) + "\n-----END PRIVATE KEY-----\n")
+    key.id = id
+    jwk = format("{{\"kty\":\"OKP\",\"crv\":\"Ed25519\",\"use\":\"sig\",\"alg\":\"EdDSA\",\"kid\":\"{}\",\"x\":\"{}\"}}", id,
+        crypto.base64Url(crypto.ed25519PublicKey(secret)))
+    ret key
+}
+
+// The value of a name of a form whose values have no escapes.
+string field(string form, string name) {
+    for (string pair in form.split("&")) {
+        if (pair.startsWith(name + "=")) {
+            ret pair.slice(name.len() + 1, pair.len())
+        }
+    }
+    ret ""
+}
+
+string idToken(jwt.Key key, string issuer, string audience, string nonce, i64 life) {
+    IdClaims claims
+    claims.iss = issuer
+    claims.sub = "u1"
+    claims.aud = audience
+    claims.iat = time.unix()
+    claims.exp = time.unix() + life
+    claims.email = "anna@example.com"
+    claims.name = "Anna Rossi"
+    claims.username = "anna"
+    claims.nonce = nonce
+    claims.roles = ["admin", "staff"]
+    ret jwt.sign(claims, key)
+}
+
+void failing(func() work) {
+    try {
+        work()
+        println("no exception")
+    } catch (Exception e) {
+        println("{}", e.message())
+    }
+}
+
+string reason(oauth.Verifier verifier, string token) {
+    try {
+        verifier.claims(token)
+    } catch (jwt.Invalid e) {
+        switch (e.reason) {
+            case WrongAudience {
+                ret "WrongAudience"
+            }
+            case Expired {
+                ret "Expired"
+            }
+            case UnknownKey {
+                ret "UnknownKey"
+            }
+            case BadSignature {
+                ret "BadSignature"
+            }
+            default {
+                ret e.message()
+            }
+        }
+    }
+    ret "valid"
+}
+
+i32 main() {
+    http.Server server = http.listen("127.0.0.1", 0)
+    string base = format("http://127.0.0.1:{}", server.port())
+    string jwk
+    string otherJwk
+    jwt.Key key = newKey("k1", ref jwk)
+    jwt.Key other = newKey("k2", ref otherJwk)
+    thread.Mutex<Session> session
+    thread.Atomic<i64> keysAsked
+    thread.Thread provider = thread.Thread([server, base, key, jwk, session, keysAsked]() {
+        server.serve([base, key, jwk, session, keysAsked](ref http.Request req, ref http.Response res) {
+            if (req.matches("GET /.well-known/openid-configuration")) {
+                string configuration = "{\"issuer\":\"BASE\",\"authorization_endpoint\":\"BASE/authorize\",\"token_endpoint\":\"BASE/token\"," +
+                    "\"userinfo_endpoint\":\"BASE/userinfo\",\"jwks_uri\":\"BASE/keys\",\"end_session_endpoint\":\"BASE/logout\"}"
+                res.writeJson(configuration.replace("BASE", base))
+            } else if (req.matches("GET /keys")) {
+                keysAsked.add(1)
+                res.writeJson("{\"keys\":[" + jwk + "]}")
+            } else if (req.matches("GET /authorize")) {
+                // The page of the login: the user is who asks, and comes back at once.
+                string nonce = req.queryValue("nonce")
+                string challenge = req.queryValue("code_challenge")
+                session.lock([nonce, challenge](ref Session s) {
+                    s.nonce = nonce.copy()
+                    s.challenge = challenge.copy()
+                })
+                res.status = 302
+                res.headers.set("Location", req.queryValue("redirect_uri") + "?code=c0de&state=" + req.queryValue("state"))
+            } else if (req.matches("GET /callback")) {
+                res.write(req.queryValue("state") + " " + req.queryValue("code"))
+            } else if (req.matches("POST /token")) {
+                string form = req.text()
+                string grant = field(form, "grant_type")
+                string nonce
+                string challenge
+                session.lock([ref nonce, ref challenge](ref Session s) {
+                    nonce = s.nonce.copy()
+                    challenge = s.challenge.copy()
+                })
+                if (field(form, "client_id") != "app" || field(form, "client_secret") != "s3cret") {
+                    res.status = 401
+                    res.writeJson("{\"error\":\"invalid_client\"}")
+                } else if (grant == "authorization_code") {
+                    bool proved = crypto.base64Url(crypto.sha256(field(form, "code_verifier").bytes())) == challenge
+                    if (field(form, "code") != "c0de" || !proved) {
+                        res.status = 400
+                        res.writeJson("{\"error\":\"invalid_grant\",\"error_description\":\"the code or its verifier is wrong\"}")
+                    } else {
+                        string answer = "{\"access_token\":\"a1\",\"token_type\":\"Bearer\",\"expires_in\":3600,\"refresh_token\":\"r1\"," +
+                            "\"id_token\":\"TOKEN\"}"
+                        res.writeJson(answer.replace("TOKEN", idToken(key, base, "app", nonce, 600)))
+                    }
+                } else if (grant == "refresh_token" && field(form, "refresh_token") == "r1") {
+                    res.writeJson(format("{{\"access_token\":\"a2\",\"token_type\":\"Bearer\",\"expires_in\":3600,\"id_token\":\"{}\"}}",
+                        idToken(key, base, "app", "", 600)))
+                } else if (grant == "client_credentials") {
+                    res.writeJson("{\"access_token\":\"svc\",\"token_type\":\"Bearer\",\"expires_in\":60}")
+                } else {
+                    res.status = 400
+                    res.writeJson("{\"error\":\"unsupported_grant_type\"}")
+                }
+            } else if (req.matches("GET /userinfo")) {
+                if (oauth.bearer(req) == "a1") {
+                    res.writeJson("{\"sub\":\"u1\",\"email\":\"anna@example.com\"}")
+                } else {
+                    res.status = 401
+                }
+            } else {
+                res.status = 404
+            }
+        })
+    })
+    provider.start()
+
+    oauth.Client app
+    app.provider = oauth.discover(base + "/")
+    app.id = "app"
+    app.secret = "s3cret"
+    app.redirectUrl = base + "/callback"
+    println("provider {} {} {} {} {} {}", app.provider.issuer == base, app.provider.authorizeUrl.slice(base.len(), app.provider.authorizeUrl.len()),
+        app.provider.tokenUrl.slice(base.len(), app.provider.tokenUrl.len()), app.provider.userInfoUrl.slice(base.len(), app.provider.userInfoUrl.len()),
+        app.provider.keysUrl.slice(base.len(), app.provider.keysUrl.len()), app.provider.logoutUrl.slice(base.len(), app.provider.logoutUrl.len()))
+
+    // The login: the user goes to the provider and comes back with a state and a code.
+    oauth.Login login = app.login()
+    println("login {} {} {} {}", login.url.startsWith(base + "/authorize?response_type=code&client_id=app&redirect_uri=http%3A%2F%2F127.0.0.1"),
+        login.url.contains("&scope=openid%20profile%20email&state=" + login.state + "&nonce=" + login.nonce + "&code_challenge="),
+        login.url.endsWith("&code_challenge_method=S256"), login.verifier.len() >= 43 && app.login().state != login.state)
+    list<string> back = http.get(login.url).text().split(" ")
+    oauth.Tokens tokens = app.exchange(login, back[0], back[1])
+    println("tokens {} {} {} {}", tokens.access, tokens.type, tokens.refresh, tokens.expires > time.unix() + 3000)
+    println("identity {} {} <{}> {} {}", tokens.identity.sub, tokens.identity.name, tokens.identity.email, tokens.identity.username,
+        tokens.identity.iss == base && tokens.identity.aud.asText() == "app")
+
+    failing([app, login, back]() { app.exchange(login, "another", back[1]) })
+    oauth.Login second = app.login()
+    http.get(second.url)
+    oauth.Login stolen = second.copy()
+    stolen.verifier = login.verifier
+    failing([app, stolen]() { app.exchange(stolen, stolen.state, "c0de") })
+    oauth.Login mixed = second.copy()
+    mixed.nonce = login.nonce
+    failing([app, mixed]() { app.exchange(mixed, mixed.state, "c0de") })
+
+    oauth.Tokens fresh = app.refresh(tokens.refresh)
+    println("refresh {} '{}' {}", fresh.access, fresh.refresh, fresh.identity.name)
+    println("service {}", app.clientCredentials().access)
+    oauth.Client unknown
+    unknown.provider = app.provider.copy()
+    unknown.id = "app"
+    unknown.secret = "wrong"
+    failing([unknown]() { unknown.clientCredentials() })
+    json.Value user = app.userInfo(tokens.access)
+    println("userinfo {} {}", user.get("sub").asText(), user.get("email").asText())
+    failing([app]() { app.userInfo("another") })
+    println("logout {}", app.logoutUrl(tokens.id, base + "/bye") == base + "/logout?id_token_hint=" + tokens.id +
+        "&post_logout_redirect_uri=" + http.escape(base + "/bye") + "&client_id=app")
+
+    // An API: the tokens of its requests.
+    oauth.Verifier verifier
+    verifier.provider = app.provider.copy()
+    verifier.audience = "app"
+    Roles roles = verifier.verify<Roles>(tokens.id)
+    println("api {} {} [{}]", verifier.claims(tokens.id).sub, roles.email, join(roles.roles, ", "))
+    oauth.Verifier another
+    another.provider = app.provider.copy()
+    another.audience = "another-api"
+    string forged = tokens.id.slice(0, tokens.id.len() - 4) + (tokens.id.endsWith("AAAA") ? "BBBB" : "AAAA")
+    println("{} {} {} {}", reason(another, tokens.id), reason(verifier, idToken(key, base, "app", "", -60)),
+        reason(verifier, idToken(other, base, "app", "", 600)), reason(verifier, forged))
+    oauth.Verifier elsewhere
+    elsewhere.provider = app.provider.copy()
+    elsewhere.provider.issuer = "https://other.example.com"
+    try {
+        elsewhere.claims(tokens.id)
+    } catch (Exception e) {
+        println("{}", e.message().replace(base, "ISSUER"))
+    }
+    // The client and each of the three verifiers asked the keys once, for all their
+    // tokens: a token with a key that is not there asks them again only after a minute.
+    println("keys asked {} times", keysAsked.load())
+
+    http.Request req = http.Request("GET", base)
+    req.headers.set("Authorization", "bearer abc.def ")
+    http.Request basic = http.Request("GET", base)
+    basic.headers.set("Authorization", "Basic abc")
+    println("bearer '{}' '{}' '{}'", oauth.bearer(req), oauth.bearer(basic), oauth.bearer(http.Request("GET", base)))
+    os.exit(0)
+    ret 0
+}

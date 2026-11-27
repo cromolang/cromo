@@ -662,6 +662,46 @@ cannot decode JSON: expected an object, found an array
 cannot read JSON: line 1, column 9: expected the name of a member, in double quotes
 ```
 
+## XML
+
+Alcuni servizi rispondono in XML: lo storage S3, SOAP, i feed RSS. Il modulo [std.xml](std.xml.html) legge un documento nei suoi elementi, e ne scrive uno.
+
+```cromo
+import std.xml
+
+i32 main() {
+    xml.Element feed = xml.parse("<feed lang=\"en\"><item id=\"7\">pen &amp; ink</item><item id=\"8\">paper</item></feed>")
+    println("{} {}", feed.name, feed.attribute("lang"))
+    for (xml.Element item in feed.all("item")) {
+        println("{} {}", item.attribute("id"), item.text)
+    }
+    println("'{}' {}", feed.child("owner").textOf("name"), feed.has("owner"))
+
+    xml.Element order = xml.element("order")
+    order.setAttribute("id", "42")
+    order.addText("item", "pen & ink")
+    print("{}", xml.pretty(order))
+    ret 0
+}
+```
+
+```output
+feed en
+7 pen & ink
+8 paper
+'' false
+<?xml version="1.0" encoding="UTF-8"?>
+<order id="42">
+  <item>pen &amp; ink</item>
+</order>
+```
+
+- `xml.parse(text)` restituisce l'`xml.Element` in cima al documento. Un elemento ha il suo `name`, i suoi `attributes`, il suo `text` e i suoi `children`, gli elementi al suo interno.
+- `attribute(key)` restituisce il valore di un attributo, o `""`; `child(key)` il primo elemento con quel nome, `all(key)` tutti, e `textOf(key)` il testo del primo. Un elemento che non c'è è un elemento senza nome, e il suo testo è `""`: una catena come `feed.child("owner").textOf("name")` non lancia eccezioni, e `has(key)` lo dice quando serve saperlo.
+- `xml.element(name)` crea un elemento; `setAttribute`, `add` e `addText` lo riempiono; `xml.encode(root)` scrive il documento su una riga e `xml.pretty(root)` una riga per elemento. I caratteri che XML riserva a sé vengono scritti come entità, e `xml.escape(text)` lo fa per un testo.
+
+Il lettore accetta i documenti ben formati, con i loro commenti, CDATA e dichiarazione, e lancia un `Error` con la riga e la colonna per gli altri, come un tag non chiuso. Non verifica un documento rispetto a una DTD o a uno schema, e le entità dichiarate da un DOCTYPE non sono riconosciute: un documento che viene da fuori non può crescere in memoria con le proprie entità, né far leggere un file al programma. Un nome conserva il suo prefisso, come `s:Body`, e `localName()` lo restituisce senza.
+
 ## Riepilogo
 
 - `json.encode`, `json.pretty` e `json.decode<T>` convertono numeri, stringhe, liste, array fissi, mappe con chiavi stringa, enum e struct, con codice scritto dal compilatore; un campo che non si può convertire è un errore di compilazione.
@@ -671,3 +711,4 @@ cannot read JSON: line 1, column 9: expected the name of a member, in double quo
 - `json.parse` restituisce un `json.Value` per dati di forma qualsiasi, con `Int`, `UInt` e `Float` distinti; `toValue` e `fromValue` convertono tra valori e tipi.
 - Una funzione generica che converte il suo `T` scrive `<T : json.Data>`.
 - Gli errori dicono dove si trova il problema: la riga e la colonna, o il percorso del valore.
+- `std.xml` legge l'XML in elementi con attributi, testo e figli, e li scrive.
