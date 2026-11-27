@@ -40,6 +40,7 @@ public struct BackendOptions {
     // names of C that it exports.
     public bool dynamicLibrary
     public list<string> exports
+    public bool pic  // code for any address: a library for Linux, and the runtime in Cromo for it
     // D339: the path of each source file in the debug information, and its name in a stack trace.
     public list<string> debugPaths
     public list<string> shownPaths
@@ -57,6 +58,11 @@ public list<string> glibcLibraries() {
 
 public string glibcFolder(string library) {
     ret fs.joinPath(fs.joinPath(library, "linux"), "glibc")
+}
+
+// D599: the runtime of the libraries for Linux, for glibc and for any address.
+public string sharedRuntimePath(string library) {
+    ret fs.joinPath(fs.joinPath(library, "linux"), "libcromo_rt_shared.a")
 }
 
 public string glibcRuntimePath(string library) {
@@ -486,7 +492,7 @@ bool writeResources(BackendOptions options, string resPath, ref string error) {
     if (described) {
         resource(ref out, 16, 1, 0x30, versionResource(options))  // RT_VERSION
     }
-    if (!options.dynamicLibrary) {  // a DLL lives in the process of another program, with its manifest
+    if (!options.dynamicLibrary) {                                                // a DLL lives in the process of another program, with its manifest
         resource(ref out, 24, 1, 0x30, manifestResource(options.window).bytes())  // RT_MANIFEST, the one of the process
     }
     list<u8> group
@@ -652,6 +658,35 @@ bool linkAndroid(string objectPath, string tablePath, string runtimePath, Backen
 // the system, with the stubs of glibc before the runtime for glibc: a function of
 // C that the runtime has too, as strlen, is that of glibc for the C libraries.
 // Only the libraries of glibc that are used are needed.
+// A library with an interface of C for Linux (D599): a shared object that exports
+// only the names of its functions, with the stubs of glibc and the runtime made for
+// it. Its name is its soname, so that a program linked with it looks for that file.
+bool linkShared(string objectPath, string tablePath, BackendOptions options, ref list<string> temporaries, ref string error) {
+    string script = options.outputPath + ".map"
+    temporaries.add(script)
+    try {
+        fs.writeText(script, "{\n  global: " + join(options.exports, "; ") + ";\n  local: *;\n};\n")
+    } catch (Exception e) {
+        error = "cannot write " + script + ": " + e.message()
+        ret false
+    }
+    list<string> args = ["ld.lld", "-o", options.outputPath, "-shared", "-soname", fs.fileName(options.outputPath), "--eh-frame-hdr",
+        "--version-script", script, "-z", "defs", objectPath, tablePath]
+    if (!options.debugInfo) {
+        args.add("--strip-debug")
+    }
+    for (string archive in options.archives) {
+        args.add(archive)
+    }
+    args.add(sharedRuntimePath(options.library))
+    args.add("--as-needed")
+    for (string stub in glibcLibraries()) {
+        args.add(fs.joinPath(glibcFolder(options.library), stub))
+    }
+    args.add("--no-as-needed")
+    ret runLld(args, ref error)
+}
+
 bool linkLinux(string objectPath, string tablePath, string runtimePath, BackendOptions options, ref string error) {
     // --eh-frame-hdr: the index of the unwind tables, for the stack traces (D375).
     list<string> args = [
@@ -719,7 +754,8 @@ public bool buildExecutable(string irText, string moduleName, BackendOptions opt
     string features
     string cpu = processorOf(options, ref features)
     // Android: position independent code, as its executables and libraries (P43).
-    if (!machine.target(targetTriple(options.target), cpu, features, options.optLevel, isAndroid(options.target), ref error)) {
+    if (!machine.target(targetTriple(options.target), cpu, features, options.optLevel, isAndroid(options.target) || options.pic,
+        ref error)) {
         ret false
     }
     machine.adopt()
@@ -772,6 +808,8 @@ public bool buildExecutable(string irText, string moduleName, BackendOptions opt
     bool linked = false
     if (isAndroid(options.target)) {
         linked = linkAndroid(objectPath, tablePath, runtimePath, options, ref temporaries, ref error)
+    } else if (linux && options.dynamicLibrary) {
+        linked = linkShared(objectPath, tablePath, options, ref temporaries, ref error)
     } else if (linux) {
         linked = linkLinux(objectPath, tablePath, runtimePath, options, ref error)
     } else {

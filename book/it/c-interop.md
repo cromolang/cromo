@@ -526,6 +526,76 @@ long long callTwice(long long x) {
 
 Le regole di `[[export]]` sono in [Il dialetto unsafe](unsafe.md).
 
+## Una libreria per altri linguaggi
+
+Una parte di un programma scritto in C, C++ o C# si può scrivere in Cromo: un progetto viene compilato come **libreria con interfaccia C**, una DLL su Windows e una `.so` su Linux, che qualsiasi linguaggio capace di chiamare il C può caricare. La chiede una riga `lib` di `cromo.mod`, accanto alle righe `bin` degli eseguibili:
+
+```text
+module example.com/engine
+version 1.2.0
+lib engine src/engine.cro
+bin tool cmd/tool.cro
+```
+
+`cromo build` li costruisce tutti. Per la libreria scrive `engine.dll` ed `engine.lib`, la libreria di import per i linker C, su Windows, oppure `libengine.so` su Linux, e in entrambi i casi `engine.h`, le dichiarazioni C. Il file di una libreria non ha `main`: ciò che offre sono le sue funzioni precedute da `[[export]]`, in Cromo normale, senza `import unsafe`.
+
+```cromo nocheck
+import std.crypto
+
+// The sum of two numbers.
+[[export]] i64 engine_add(i64 a, i64 b) {
+    ret a + b
+}
+
+// A greeting for a name.
+[[export]] string engine_greet(string name) {
+    ret "Ciao, " + name + "!"
+}
+
+// The SHA-256 of a text.
+[[export("engine_hash")]] list<u8> hash(string text) {
+    ret crypto.sha256(text.bytes())
+}
+```
+
+L'intestazione che `cromo` ne ricava, con i loro commenti:
+
+```c
+// The sum of two numbers.
+int64_t engine_add(int64_t a, int64_t b);
+
+// A greeting for a name.
+int64_t engine_greet(const char* name, char* out, int64_t size);
+
+// The SHA-256 of a text.
+int64_t engine_hash(const char* text, uint8_t* out, int64_t size);
+```
+
+- `[[export]]` esporta una funzione con il suo nome, e `[[export("name")]]` con un altro: i nomi C appartengono all'intero programma, quindi un prefisso come `engine_` li tiene distinti.
+- I numeri e `bool` passano così come sono.
+- Un parametro `string` è per il C un testo UTF-8 terminato da zero, `const char*`: la funzione ne riceve una copia propria. Un indirizzo nullo è un testo vuoto.
+- Una funzione che restituisce una `string` o una `list<u8>` prende per il C due argomenti in più, un buffer e la sua dimensione, e restituisce il numero di byte dell'intero valore. Un testo viene copiato con uno zero in fondo, tagliato dove finisce un carattere quando il buffer è piccolo; chiamarla con un buffer nullo chiede solo la dimensione.
+- Liste, mappe e struct non passano: una libreria che conserva oggetti li indica con un numero, ed esporta le funzioni che li creano, li usano e li tolgono.
+
+Un programma C include l'intestazione e collega la libreria; C# dichiara le funzioni con `DllImport`:
+
+```c
+#include "engine.h"
+
+char text[64];
+engine_greet("Anna", text, sizeof text);
+```
+
+```csharp
+[DllImport("engine")] static extern long engine_add(long a, long b);
+```
+
+Una funzione esportata **non può lasciar uscire un'eccezione**, perché il C non ne ha: il compilatore rifiuta quella che può lanciarne, e la funzione cattura ciò che chiama e restituisce un codice d'errore. Un panic termina l'intero processo con il suo messaggio: è un bug della libreria, e proseguire sarebbe peggio.
+
+La libreria ha dentro il runtime di Cromo, che parte quando la libreria viene caricata: le funzioni si possono chiamare da qualsiasi thread del programma, e possono usare thread, task e tutta la libreria standard. Su Windows la DLL ha nelle proprietà la versione e i testi di `cromo.mod`, e `cromo build --release` la firma con la riga `sign`, come un eseguibile. Su Linux la `.so` ha bisogno di glibc, come ogni libreria caricata da un programma C. Un programma Cromo che usa una libreria così passa anch'esso dalla sua interfaccia C, con un blocco `extern`.
+
+Per ora le librerie sono per Windows e Linux su x86-64, e una per Linux non può usare le librerie C di un blocco `extern`, né `std.gui`.
+
 ## Riepilogo
 
 - `import unsafe` permette i blocchi `extern "name" { ... }` di funzioni C, scritte come funzioni Cromo senza corpo.
@@ -534,3 +604,4 @@ Le regole di `[[export]]` sono in [Il dialetto unsafe](unsafe.md).
 - Da Linux, le funzioni delle DLL di Windows non vengono controllate: una funzione mancante ferma il programma all'avvio.
 - Attraversano il confine i numeri, `bool`, `addr` e i `ref` a numeri o a struct di numeri; le stringhe vanno con `cstring()` e tornano con `string(data, length)`.
 - Le funzioni C mantengono il loro nome e sono private del loro modulo; le risorse C vanno in struct con distruttori, e il resto del programma usa quelle.
+- Una riga `lib` di `cromo.mod` costruisce una libreria con interfaccia C, una DLL o una `.so` con la sua intestazione: le sue funzioni con `[[export]]` prendono e restituiscono numeri, `bool` e testi, per i programmi in C, C++ e C#.

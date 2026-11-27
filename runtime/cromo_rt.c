@@ -1582,6 +1582,19 @@ i32 __stdcall cromo_dll_main(void* instance, u32 reason, void* reserved) {
 }
 #endif
 
+#ifdef CROMO_SHARED
+// The start of a library for Linux (D599): the loader of the system calls it when
+// a program loads the library, before any of its functions. The size of a page is
+// asked to glibc; the handler of the crashes is not set, since the process is of
+// another program, with its own.
+unsigned long getauxval(unsigned long type);
+
+__attribute__((constructor)) static void cromo_library_start(void) {
+    u64 size = getauxval(6);  // AT_PAGESZ
+    if (size) pageSize = size;
+}
+#endif
+
 // Called first by cromo_start (codegen.cpp).
 void cromo_runtime_start(void) {
 #ifdef CROMO_BIONIC
@@ -3260,6 +3273,30 @@ const u8* cromo_arg_data(i64 index) {
 // (mem_x64.S, mem_arm64.S).
 u64* cromo_initial_stack;
 
+#ifdef CROMO_SHARED
+
+// A library (D599) is loaded by a program of C, which has the stack of the start:
+// it has no arguments, and its environment is the one that glibc keeps.
+extern char** environ;
+
+i64 cromo_arg_count(void) { return 0; }
+
+const u8* cromo_arg_data(i64 index) {
+    (void)index;
+    return (const u8*)"";
+}
+
+const u8* cromo_environment(i64 index) {
+    char** entries = environ;
+    if (!entries) return 0;
+    for (i64 i = 0; i < index; ++i) {
+        if (!entries[i]) return 0;
+    }
+    return (const u8*)entries[index];
+}
+
+#else
+
 i64 cromo_arg_count(void) { return (i64)cromo_initial_stack[0]; }
 
 const u8* cromo_arg_data(i64 index) { return (const u8*)cromo_initial_stack[1 + index]; }
@@ -3273,6 +3310,8 @@ const u8* cromo_environment(i64 index) {
     }
     return (const u8*)entries[index];
 }
+
+#endif
 
 i64 cromo_arg_length(i64 index) {
     const u8* text = cromo_arg_data(index);

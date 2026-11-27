@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16...3.20)  # 3.16 in WSL, for the libraries of cromo for Linux
-project(cromo VERSION 0.99.0 LANGUAGES CXX)  # 0.milestone.fix (D157)
+project(cromo VERSION 0.99.1 LANGUAGES CXX)  # 0.milestone.fix (D157)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -183,6 +183,11 @@ endfunction()
 cromo_tls_objects(tls_windows "${CROMO_TLS_WINDOWS_FLAGS}" CROMO_TLS_WINDOWS_OBJECTS)
 cromo_tls_objects(tls_linux "${CROMO_RT_LINUX_BASE_FLAGS}" CROMO_TLS_LINUX_OBJECTS)
 cromo_tls_objects(tls_linux_arm64 "${CROMO_RT_ARM64_BASE_FLAGS}" CROMO_TLS_ARM64_OBJECTS)
+# For the libraries with an interface of C (D599): code that can be loaded at any
+# address, as a .so is.
+set(CROMO_RT_SHARED_BASE_FLAGS --target=x86_64-unknown-linux-gnu -ffreestanding -fno-builtin -nostdlib -O2
+    -fno-stack-protector -fPIC -fvisibility=hidden)
+cromo_tls_objects(tls_linux_shared "${CROMO_RT_SHARED_BASE_FLAGS}" CROMO_TLS_SHARED_OBJECTS)
 
 add_custom_command(
   OUTPUT "${CROMO_RT_DIR}/cromo_rt.obj"
@@ -252,6 +257,35 @@ add_custom_command(
           "${CROMO_RT_DIR}/runtime_cromo_linux.o" ${CROMO_GUI_LINUX_OBJECTS} ${CROMO_TLS_LINUX_OBJECTS}
           "${CROMO_RT_DIR}/tls_linux.rsp"
   COMMENT "Archiving the Cromo runtime for glibc")
+# The runtime of the libraries with an interface of C for Linux (D599): the one for
+# glibc, compiled to be loaded at any address, without the start of a program, and
+# with the runtime written in Cromo compiled the same way. It has no windows.
+add_custom_command(
+  OUTPUT "${CROMO_RT_DIR}/cromo_rt_shared.o"
+  COMMAND "${CROMO_CLANG}" ${CROMO_RT_SHARED_BASE_FLAGS} -fasynchronous-unwind-tables -Wall -Wextra -DCROMO_GLIBC -DCROMO_SHARED
+          -c "${CMAKE_SOURCE_DIR}/runtime/cromo_rt.c" -o "${CROMO_RT_DIR}/cromo_rt_shared.o"
+  DEPENDS runtime/cromo_rt.c
+  COMMENT "Compiling the Cromo runtime for the libraries")
+add_custom_command(
+  OUTPUT "${CROMO_RT_DIR}/glibc_shared.o"
+  COMMAND "${CROMO_CLANG}" ${CROMO_RT_SHARED_BASE_FLAGS} -fasynchronous-unwind-tables -Wall -Wextra -DCROMO_SHARED
+          -c "${CMAKE_SOURCE_DIR}/runtime/glibc.c" -o "${CROMO_RT_DIR}/glibc_shared.o"
+  DEPENDS runtime/glibc.c
+  COMMENT "Compiling the part for glibc of the libraries")
+add_custom_command(
+  OUTPUT "${CROMO_RT_DIR}/mem_x64_shared.o"
+  COMMAND "${CROMO_CLANG}" --target=x86_64-unknown-linux-gnu -fPIC -DCROMO_GLIBC -DCROMO_SHARED
+          -c "${CMAKE_SOURCE_DIR}/runtime/mem_x64.S" -o "${CROMO_RT_DIR}/mem_x64_shared.o"
+  DEPENDS runtime/mem_x64.S
+  COMMENT "Assembling the Cromo runtime for the libraries")
+add_custom_command(
+  OUTPUT "${CROMO_RT_DIR}/libcromo_rt_shared.a"
+  COMMAND "${CMAKE_COMMAND}" -E rm -f "${CROMO_RT_DIR}/libcromo_rt_shared.a"
+  COMMAND "${CROMO_LLVM_AR}" rcs "${CROMO_RT_DIR}/libcromo_rt_shared.a" "${CROMO_RT_DIR}/cromo_rt_shared.o" "${CROMO_RT_DIR}/glibc_shared.o"
+          "${CROMO_RT_DIR}/mem_x64_shared.o" "${CROMO_RT_DIR}/runtime_cromo_shared.o" "@${CROMO_RT_DIR}/tls_linux_shared.rsp"
+  DEPENDS "${CROMO_RT_DIR}/cromo_rt_shared.o" "${CROMO_RT_DIR}/glibc_shared.o" "${CROMO_RT_DIR}/mem_x64_shared.o"
+          "${CROMO_RT_DIR}/runtime_cromo_shared.o" ${CROMO_TLS_SHARED_OBJECTS} "${CROMO_RT_DIR}/tls_linux_shared.rsp"
+  COMMENT "Archiving the Cromo runtime for the libraries")
 set(CROMO_GLIBC_STUBS libc.so.6 libm.so.6 libpthread.so.0 libdl.so.2 librt.so.1 ld-linux-x86-64.so.2)
 list(TRANSFORM CROMO_GLIBC_STUBS PREPEND "${CROMO_RT_DIR}/glibc/" OUTPUT_VARIABLE CROMO_GLIBC_STUB_FILES)
 add_custom_command(
@@ -511,6 +545,11 @@ add_custom_command(
   DEPENDS "${CROMO_COMPILER}" "${CROMO_RT_DIR}/library.stamp"
   COMMENT "Compiling the runtime written in Cromo")
 add_custom_command(
+  OUTPUT "${CROMO_RT_DIR}/runtime_cromo_shared.o"
+  COMMAND "${CROMO_COMPILER}" build --runtime --pic --target linux -o "${CROMO_RT_DIR}/runtime_cromo_shared.o"
+  DEPENDS "${CROMO_COMPILER}" "${CROMO_RT_DIR}/library.stamp"
+  COMMENT "Compiling the runtime written in Cromo for the libraries")
+add_custom_command(
   OUTPUT "${CROMO_RT_DIR}/runtime_cromo_linux.o"
   COMMAND "${CROMO_COMPILER}" build --runtime --target linux -o "${CROMO_RT_DIR}/runtime_cromo_linux.o"
   DEPENDS "${CROMO_COMPILER}" "${CROMO_RT_DIR}/library.stamp"
@@ -533,12 +572,14 @@ add_custom_command(
   COMMAND "${CMAKE_COMMAND}" -E copy "${CROMO_RT_DIR}/libcromo_rt.a" "${CROMO_LIB_DIR}/linux"
   COMMAND "${CMAKE_COMMAND}" -E copy "${CROMO_RT_DIR}/libcromo_rt_arm64.a" "${CROMO_LIB_DIR}/linux_arm64/libcromo_rt.a"
   COMMAND "${CMAKE_COMMAND}" -E copy "${CROMO_RT_DIR}/libcromo_rt_glibc.a" "${CROMO_LIB_DIR}/linux"
+  COMMAND "${CMAKE_COMMAND}" -E copy "${CROMO_RT_DIR}/libcromo_rt_shared.a" "${CROMO_LIB_DIR}/linux"
   COMMAND "${CMAKE_COMMAND}" -E copy ${CROMO_GLIBC_STUB_FILES} "${CROMO_LIB_DIR}/linux/glibc"
   ${CROMO_SDL_PLACE}
   ${CROMO_ANDROID_PLACE}
   COMMAND "${CMAKE_COMMAND}" -E touch "${CROMO_RT_DIR}/runtime.stamp"
   DEPENDS "${CROMO_RT_DIR}/cromo_rt.lib" "${CROMO_RT_DIR}/libcromo_rt.a" "${CROMO_RT_DIR}/libcromo_rt_arm64.a"
-          "${CROMO_RT_DIR}/libcromo_rt_glibc.a" ${CROMO_GLIBC_STUB_FILES} ${CROMO_SDL_FILES} ${CROMO_ANDROID_ARCHIVES}
+          "${CROMO_RT_DIR}/libcromo_rt_glibc.a" "${CROMO_RT_DIR}/libcromo_rt_shared.a" ${CROMO_GLIBC_STUB_FILES} ${CROMO_SDL_FILES}
+          ${CROMO_ANDROID_ARCHIVES}
           "${CROMO_RT_DIR}/library.stamp"
   COMMENT "Placing the runtime in lib/")
 # Not of ALL: it needs stage1, which build.ps1 makes after the library is in lib/.

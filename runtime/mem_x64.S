@@ -424,6 +424,7 @@ _alloca_probe:
 # the function of the dynamic loader to call at the exit, from rdx, and the end of
 # the stack. With Bionic (P43), fs is that of Bionic, and _start gives the stack
 # to cromo_bionic_start of runtime/bionic.c, as crtbegin_dynamic.o of the NDK.
+#ifndef CROMO_SHARED
     .globl _start
     .p2align 4
 _start:
@@ -458,6 +459,7 @@ _start:
     syscall
     call cromo_start
     ud2
+#endif
 #endif
 
 # void cromo_switch(void** save, void* next): leaves the stack of the caller,

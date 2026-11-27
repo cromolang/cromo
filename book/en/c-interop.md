@@ -526,6 +526,76 @@ long long callTwice(long long x) {
 
 The rules of `[[export]]` are in [The unsafe dialect](unsafe.md).
 
+## A library for other languages
+
+A part of a program written in C, C++ or C# can be written in Cromo: a project is built as a **library with an interface of C**, a DLL on Windows and a `.so` on Linux, which any language that calls C loads. A line `lib` of `cromo.mod` asks for it, next to the lines `bin` of the executables:
+
+```text
+module example.com/engine
+version 1.2.0
+lib engine src/engine.cro
+bin tool cmd/tool.cro
+```
+
+`cromo build` makes them all. For the library it writes `engine.dll` and `engine.lib`, the import library for the linkers of C, on Windows, or `libengine.so` on Linux, and in both cases `engine.h`, the declarations of C. The file of a library has no `main`: what it gives are its functions with `[[export]]` before them, in normal Cromo, without `import unsafe`.
+
+```cromo nocheck
+import std.crypto
+
+// The sum of two numbers.
+[[export]] i64 engine_add(i64 a, i64 b) {
+    ret a + b
+}
+
+// A greeting for a name.
+[[export]] string engine_greet(string name) {
+    ret "Ciao, " + name + "!"
+}
+
+// The SHA-256 of a text.
+[[export("engine_hash")]] list<u8> hash(string text) {
+    ret crypto.sha256(text.bytes())
+}
+```
+
+The header that `cromo` writes from them, with their comments:
+
+```c
+// The sum of two numbers.
+int64_t engine_add(int64_t a, int64_t b);
+
+// A greeting for a name.
+int64_t engine_greet(const char* name, char* out, int64_t size);
+
+// The SHA-256 of a text.
+int64_t engine_hash(const char* text, uint8_t* out, int64_t size);
+```
+
+- `[[export]]` exports a function with its name, and `[[export("name")]]` with another: the names of C are of the whole program, so a prefix as `engine_` keeps them apart.
+- The numbers and `bool` cross as they are.
+- A `string` parameter is for C a text of UTF-8 ended by a zero, `const char*`: the function gets its own copy. A null address is an empty text.
+- A function that returns a `string` or a `list<u8>` takes for C two more arguments, a buffer and its size, and returns the number of bytes of the whole value. A text is copied with a zero at its end, cut where a character ends when the buffer is small; calling with a null buffer asks only for the size.
+- Lists, maps and structs do not cross: a library that keeps objects names them with a number, and exports the functions that make, use and remove them.
+
+A program of C includes the header and links the library; C# declares the functions with `DllImport`:
+
+```c
+#include "engine.h"
+
+char text[64];
+engine_greet("Anna", text, sizeof text);
+```
+
+```csharp
+[DllImport("engine")] static extern long engine_add(long a, long b);
+```
+
+An exported function **cannot let an exception out**, since C has none: the compiler refuses one that can throw, and the function catches what it calls and gives back a code of error. A panic ends the whole process with its message: it is a bug of the library, and going on would be worse.
+
+The library has the runtime of Cromo inside, which starts when the library is loaded: the functions can be called from any thread of the program, and can use threads, tasks and the whole standard library. On Windows the DLL has the version and the texts of `cromo.mod` in its properties, and `cromo build --release` signs it with the line `sign`, as an executable. On Linux the `.so` needs glibc, as any library that a program of C loads. A program in Cromo that uses such a library goes through its interface of C too, with an `extern` block.
+
+For now the libraries are for Windows and Linux on x86-64, and one for Linux cannot use the C libraries of an `extern` block, nor `std.gui`.
+
 ## Summary
 
 - `import unsafe` allows `extern "name" { ... }` blocks of C functions, written as Cromo functions without a body.
@@ -534,3 +604,4 @@ The rules of `[[export]]` are in [The unsafe dialect](unsafe.md).
 - From Linux, the functions of the Windows DLLs are not checked: a missing one stops the program when it starts.
 - Numbers, `bool`, `addr` and `ref` to numbers or to structs of numbers cross the boundary; strings go with `cstring()` and come back with `string(data, length)`.
 - The C functions keep their name and are private to their module; C resources go in structs with destructors, and the rest of the program uses those.
+- A line `lib` of `cromo.mod` builds a library with an interface of C, a DLL or a `.so` with its header: its functions with `[[export]]` take and give numbers, `bool` and texts, for the programs in C, C++ and C#.

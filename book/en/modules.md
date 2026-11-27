@@ -715,7 +715,7 @@ cromo.mod:2: error: the line module comes first, once
 cromo.mod:4: error: another executable is called areas
 cromo.mod:5: error: there is no file cmd/tool.cro
 cromo.mod:6: error: bin takes the name of an executable and its main file, as bin server cmd/server.cro
-cromo.mod:7: error: unknown line library: cromo.mod has the lines module, bin, require, native, version, company, description, copyright, author and sign
+cromo.mod:7: error: unknown line library: cromo.mod has the lines module, bin, lib, require, native, version, company, description, copyright, author and sign
 ```
 
 A `cromo.mod` that does not start with `module`, or is empty, is `cromo.mod:1: error: cromo.mod starts with the line module, with the name of the project, as module example.com/app`.

@@ -1,0 +1,115 @@
+// A library with an interface of C for Linux (D599): the same project as
+// library.cro, built with --target linux into libengine.so and engine.h, and a
+// program of C compiled with the gcc of WSL that calls it, also from several
+// threads; the library exports only its functions, and says its name. It needs WSL
+// with gcc: it runs when the tests have CROMO_TEST_WSL.
+// target: windows
+// needs-env: CROMO_TEST_WSL
+// program-env: CROMO={cromo}
+// program-env: WORK={dir}/../out2/m98_library_linux
+// expect-output: built: 0, libengine.so true, engine.h true, libengine.h false, tool true
+// expect-output: int64_t engine_greet(const char* name, int64_t times, char* out, int64_t size);
+// expect-output: compiled: 0
+// expect-output: add 42, even 1 0, half 2.50
+// expect-output: parallel 499999500000
+// expect-output: 27 [Ciao, Andrea! Ciao, Andrea!]
+// expect-output: 13 [Ciao, cit]
+// expect-output: 32 ba7816bf
+// expect-output: length 4 0
+// expect-output: home true
+// expect-output: 8 threads of the host: the same 1
+// expect-output: soname libengine.so
+// expect-output: exported engine_add engine_even engine_greet engine_half engine_hash engine_home engine_length engine_parallel
+import std.fs
+import std.os
+import std.process
+
+process.Output inFolder(string work, string command) {
+    ret process.run("cmd", ["/c", "cd /d " + work.replace("/", "\\") + " && " + command])
+}
+
+string engine() {
+    ret "import std.crypto\nimport std.os\nimport std.thread\n\n" +
+        "[[export]] i64 engine_add(i64 a, i64 b) {\n    ret a + b\n}\n\n" +
+        "[[export]] bool engine_even(i32 n) {\n    ret n % 2 == 0\n}\n\n" +
+        "[[export(\"engine_half\")]] f64 half(f64 x) {\n    ret x / 2.0\n}\n\n" +
+        "[[export]] i64 engine_parallel(i64 count) {\n    thread.Atomic<i64> total\n    try {\n        thread.Group tasks\n" +
+        "        for (i64 t = 0; t < 4; t++) {\n            tasks.start([total, t, count]() {\n" +
+        "                for (i64 i = t; i < count; i += 4) {\n                    total.add(i)\n                }\n            })\n" +
+        "        }\n        tasks.wait()\n    } catch (Exception e) {\n        ret -1\n    }\n    ret total.load()\n}\n\n" +
+        "[[export]] string engine_greet(string name, i64 times) {\n    string text\n    for (i64 i = 0; i < times; i++) {\n" +
+        "        text += (i > 0 ? \" \" : \"\") + \"Ciao, \" + name + \"!\"\n    }\n    ret text\n}\n\n" +
+        "[[export]] list<u8> engine_hash(string text) {\n    ret crypto.sha256(text.bytes())\n}\n\n" +
+        "[[export]] i64 engine_length(string text) {\n    ret text.len()\n}\n\n" +
+        "// The environment of the program that loaded the library.\n[[export]] string engine_home() {\n    try {\n        ret os.env(\"HOME\")\n" +
+        "    } catch (Exception e) {\n        ret \"\"\n    }\n}\n"
+}
+
+string host() {
+    ret "#include <stdio.h>\n#include <string.h>\n#include <pthread.h>\n#include \"engine.h\"\n\n" +
+        "static void* worker(void* arg) {\n    int64_t* out = (int64_t*)arg;\n    int64_t sum = 0;\n    char text[40];\n" +
+        "    for (int i = 0; i < 300; i++) sum += engine_greet(\"x\", i % 5, text, sizeof text) + engine_add(i, 1);\n" +
+        "    *out = sum;\n    return 0;\n}\n\n" +
+        "int main(void) {\n    setvbuf(stdout, 0, _IONBF, 0);\n" +
+        "    printf(\"add %lld, even %d %d, half %.2f\\n\", (long long)engine_add(40, 2), engine_even(4), engine_even(5), engine_half(5.0));\n" +
+        "    printf(\"parallel %lld\\n\", (long long)engine_parallel(1000000));\n    char text[64];\n" +
+        "    int64_t all = engine_greet(\"Andrea\", 2, text, sizeof text);\n    printf(\"%lld [%s]\\n\", (long long)all, text);\n" +
+        "    char tiny[10];\n    all = engine_greet(\"citt\\xc3\\xa0\", 1, tiny, sizeof tiny);\n    printf(\"%lld [%s]\\n\", (long long)all, tiny);\n" +
+        "    uint8_t hash[32];\n    int64_t n = engine_hash(\"abc\", hash, sizeof hash);\n" +
+        "    printf(\"%lld %02x%02x%02x%02x\\n\", (long long)n, hash[0], hash[1], hash[2], hash[3]);\n" +
+        "    printf(\"length %lld %lld\\n\", (long long)engine_length(\"ciao\"), (long long)engine_length(0));\n" +
+        "    char home[256];\n    engine_home(home, sizeof home);\n    printf(\"home %s\\n\", home[0] == '/' ? \"true\" : home);\n" +
+        "    pthread_t threads[8];\n    int64_t results[8];\n" +
+        "    for (int i = 0; i < 8; i++) pthread_create(&threads[i], 0, worker, &results[i]);\n" +
+        "    for (int i = 0; i < 8; i++) pthread_join(threads[i], 0);\n    int same = 1;\n" +
+        "    for (int i = 1; i < 8; i++) same = same && results[i] == results[0];\n" +
+        "    printf(\"8 threads of the host: the same %d\\n\", same);\n    return 0;\n}\n"
+}
+
+i32 main() {
+    string work = os.env("WORK")
+    fs.removeAll(work)
+    fs.createFolders(work)
+    fs.writeText(work + "/cromo.mod", "module example.com/engine\nversion 1.2.3\nlib engine engine.cro\nbin tool tool.cro\n")
+    fs.writeText(work + "/engine.cro", engine())
+    fs.writeText(work + "/tool.cro", "i32 main() {\n    println(\"a tool\")\n    ret 0\n}\n")
+
+    process.Output built = inFolder(work, os.env("CROMO").replace("/", "\\") + " build --target linux --quiet")
+    println("built: {}, libengine.so {}, engine.h {}, libengine.h {}, tool {}", built.code, fs.exists(work + "/libengine.so"),
+        fs.exists(work + "/engine.h"), fs.exists(work + "/libengine.h"), fs.exists(work + "/tool"))
+    if (built.code != 0) {
+        println("{}", built.err)
+    }
+    for (string line in fs.readText(work + "/engine.h").split("\n")) {
+        if (line.contains("engine_greet")) {
+            println("{}", line)
+        }
+    }
+
+    fs.writeText(work + "/host.c", host())
+    process.Output compiled = inFolder(work, "wsl -e gcc -O1 host.c -L. -lengine -lpthread -Wl,-rpath,$ORIGIN -o host")
+    println("compiled: {}", compiled.code)
+    if (compiled.code != 0) {
+        println("{}", compiled.err)
+    }
+    process.Output hosted = inFolder(work, "wsl -e ./host")
+    print("{}", hosted.out.replace("\r", ""))
+    if (hosted.code != 0) {
+        println("the program of C ended with {}: {}", hosted.code, hosted.err)
+    }
+
+    string dynamic = inFolder(work, "wsl -e readelf -d libengine.so").out
+    i64 soname = dynamic.find("Library soname: [")
+    println("soname {}", soname < 0 ? "none" : dynamic.slice(soname + 17, dynamic.findFrom("]", soname)))
+    list<string> names
+    for (string line in inFolder(work, "wsl -e nm -D --defined-only libengine.so").out.replace("\r", "").split("\n")) {
+        list<string> words = line.trim().split(" ")
+        if (words.len() == 3) {
+            names.add(words[2])
+        }
+    }
+    sort(ref names)
+    println("exported {}", join(names, " "))
+    fs.removeAll(work)
+    ret 0
+}

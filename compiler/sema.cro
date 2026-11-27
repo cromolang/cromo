@@ -60,9 +60,9 @@ public struct Checker {
     public list<DefaultField> defaultFields
     public list<i32> made  // the functions made by the analysis, in their order
     public bool requireMain = true
-    public bool asLibrary  // D599: a library with an interface of C: [[export]] in every file, and no main
-    list<i32> exportWrappers  // the functions written for the exports that take or give a text
-    list<i32> exportInner     // and the function of the library that each is written around
+    public bool asLibrary         // D599: a library with an interface of C: [[export]] in every file, and no main
+    list<i32> exportWrappers      // the functions written for the exports that take or give a text
+    list<i32> exportInner         // and the function of the library that each is written around
     public bool onlyDeclarations  // the bodies are not checked (P89)
     list<Scope> scopes
     i64 recordCount  // the structs of the sources: their instances come after them

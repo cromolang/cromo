@@ -13,7 +13,7 @@ Il comando viene sempre per primo: `cromo hello.cro` è un errore che mostra la 
 
 | Comando | Cosa fa |
 |---|---|
-| `cromo build [file.cro \| name]` | compila il programma in un eseguibile |
+| `cromo build [file.cro \| name]` | compila il programma in un eseguibile; in un progetto, i suoi eseguibili e le sue librerie con interfaccia C, le righe `bin` e `lib` di `cromo.mod` ([Chiamare il C](c-interop.md)) |
 | `cromo run [file.cro \| name] [-- arguments]` | compila il programma in una cartella temporanea, lo esegue con gli argomenti che seguono `--` e termina con il suo codice di uscita |
 | `cromo test [file.cro] [names]` | esegue le funzioni `[[test]]` del programma e dei suoi moduli; i nomi scelgono i test che li contengono, e `--list` ne stampa i nomi senza eseguirli ([Test](tests.md)) |
 | `cromo fmt [--check] [files and folders \| -]` | formatta il codice, di default quello della cartella corrente e delle sue sottocartelle ([Strumenti: formattazione, editor e debugger](tools.md)) |
@@ -24,7 +24,7 @@ Il comando viene sempre per primo: `cromo hello.cro` è un errore che mostra la 
 | `cromo create name [--no-git]` | crea la cartella `name` e vi avvia un progetto, come `cromo init` |
 | `cromo get address[@version] [name]` | aggiunge un pacchetto al `cromo.mod` della cartella, o ne alza la versione ([Moduli](modules.md#pacchetti)) |
 | `cromo update [version]` | installa l'ultima versione di Cromo, o quella indicata, e la rende attiva |
-| `cromo version` | stampa la versione di `cromo` e di LLVM, come `cromo 0.99.0 (LLVM 23.1.4)` |
+| `cromo version` | stampa la versione di `cromo` e di LLVM, come `cromo 0.99.1 (LLVM 23.1.4)` |
 | `cromo help` | stampa i comandi e le opzioni |
 
 ### Il programma da compilare

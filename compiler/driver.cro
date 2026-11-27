@@ -520,10 +520,16 @@ public i32 build(ref Compilation compilation) {
     list<i32> exportedFunctions
     if (compilation.library) {
         // D599: what the library gives are its functions with [[export]].
-        if (target != Target.Windows) {
-            eprintln("cromo: the libraries are built for Windows only, for now: {} is not built for {}", fs.fileName(path), targetName(target))
+        if (target != Target.Windows && target != Target.Linux) {
+            eprintln("cromo: the libraries are built for Windows and for Linux on x86-64: {} is not built for {}", fs.fileName(path),
+                targetName(target))
             ret 1
         }
+        if (target == Target.Linux && (found.archives.len() > 0 || found.shared.len() > 0)) {
+            eprintln("cromo: a library for Linux cannot use the C libraries of an extern block yet: {} does", fs.fileName(path))
+            ret 1
+        }
+        compilation.options.pic = target == Target.Linux
         for (i64 i = 0; i < checked.tree.functions.len(); i++) {
             bool written = checked.tree.functions[i].headerFile >= 0  // around a function of the library that takes or gives a text
             if (checked.tree.functions[i].isExported && (written || !checked.tree.files[checked.tree.functions[i].file].isLibrary)) {
@@ -642,8 +648,14 @@ public i32 build(ref Compilation compilation) {
     }
     if (compilation.library) {
         // D599: the declarations of C of the library, next to it.
-        string header = compilation.options.outputPath.slice(0, compilation.options.outputPath.len() - fs.extension(
-            compilation.options.outputPath).len()) + ".h"
+        // engine.h, next to engine.dll or to libengine.so.
+        string file = fs.fileName(compilation.options.outputPath)
+        string folder = compilation.options.outputPath.slice(0, compilation.options.outputPath.len() - file.len())
+        string stem = file.slice(0, file.len() - fs.extension(file).len())
+        if (target != Target.Windows && stem.startsWith("lib")) {
+            stem = stem.slice(3, stem.len())
+        }
+        string header = folder + stem + ".h"
         try {
             fs.writeText(header, headerOf(checked, exportedFunctions, fs.fileName(header)))
         } catch (Exception e) {
@@ -944,6 +956,8 @@ public bool readOptions(list<string> args, i64 first, i64 last, bool isRun, ref 
             compilation.listTests = true  // D580
         } else if (arg == "--tests" && !isRun && !test) {
             compilation.tests = true  // D572: the IR of cromo test, not in the help
+        } else if (arg == "--pic" && !isRun && !test) {
+            compilation.options.pic = true  // D599: with --runtime, the one of the libraries for Linux
         } else if (arg == "--runtime" && !isRun && !test) {
             compilation.runtime = true  // D393: only for the build of cromo, not in the help
         } else if (arg == "--reference" && !isRun && !test && i + 1 < last) {
@@ -1133,8 +1147,9 @@ public void printUsage(bool toError) {
         "\n" +
         "commands:\n" +
         "  build      compiles file.cro into an executable; without a file, the executables\n" +
-        "             of the cromo.mod of this folder, or its main.cro; with a name, that\n" +
-        "             executable of cromo.mod\n" +
+        "             and the libraries of the cromo.mod of this folder, its lines bin and lib,\n" +
+        "             or its main.cro; with a name, that one of cromo.mod. A library is a DLL\n" +
+        "             or a .so with an interface of C, and its header\n" +
         "  test       runs the [[test]] functions of file.cro, or of main.cro of this folder, and\n" +
         "             of the files name_test.cro of its modules; the names after the file choose\n" +
         "             the tests that contain them, and --list prints their names without\n" +

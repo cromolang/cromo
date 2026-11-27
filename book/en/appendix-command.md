@@ -13,7 +13,7 @@ The command always comes first: `cromo hello.cro` is an error that shows the rig
 
 | Command | Does |
 |---|---|
-| `cromo build [file.cro \| name]` | compiles the program into an executable |
+| `cromo build [file.cro \| name]` | compiles the program into an executable; in a project, its executables and its libraries with an interface of C, the lines `bin` and `lib` of `cromo.mod` ([Calling C](c-interop.md)) |
 | `cromo run [file.cro \| name] [-- arguments]` | compiles the program into a temporary folder, runs it with the arguments that follow `--`, and ends with its exit code |
 | `cromo test [file.cro] [names]` | runs the `[[test]]` functions of the program and of its modules; the names choose the tests that contain them, and `--list` prints their names without running them ([Tests](tests.md)) |
 | `cromo fmt [--check] [files and folders \| -]` | formats the code, by default of the current folder and its subfolders ([Tools](tools.md)) |
@@ -24,7 +24,7 @@ The command always comes first: `cromo hello.cro` is an error that shows the rig
 | `cromo create name [--no-git]` | makes the folder `name` and starts a project in it, as `cromo init` |
 | `cromo get address[@version] [name]` | adds a package to the `cromo.mod` of the folder, or raises its version ([Modules](modules.md#packages)) |
 | `cromo update [version]` | installs the latest version of Cromo, or the one named, and makes it the active one |
-| `cromo version` | prints the version of `cromo` and of LLVM, as `cromo 0.99.0 (LLVM 23.1.4)` |
+| `cromo version` | prints the version of `cromo` and of LLVM, as `cromo 0.99.1 (LLVM 23.1.4)` |
 | `cromo help` | prints the commands and the options |
 
 ### The program to compile
