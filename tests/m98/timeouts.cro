@@ -1,0 +1,74 @@
+// The timeouts of a connection (D593): net.connectTimeout to an address that does
+// not answer gives up in its time, and connects as net.connect to one that does; an
+// http.Client waits for the connection and for the answer as long as its fields
+// say, 30 seconds each when it is told nothing.
+// expect-output: connect gave up true
+// expect-output: connect in time true
+// expect-output: defaults 30000 30000
+// expect-output: a server that does not answer: true, timed out
+// expect-output: a server that answers: 200
+// expect-output: a host that does not take the connection gave up true
+import std.http
+import std.net
+import std.os
+import std.thread
+import std.time
+
+i32 main() {
+    // 10.255.255.1 is of a private network that no route reaches: nothing comes back,
+    // or the network says at once that it cannot be reached.
+    time.Instant start = time.now()
+    bool gaveUp = false
+    try {
+        net.Connection nobody = net.connectTimeout("10.255.255.1", 81, 400)
+    } catch (Exception e) {
+        gaveUp = true
+    }
+    println("connect gave up {}", gaveUp && start.elapsed().milliseconds() < 3000)
+
+    // A server that takes the connections and says nothing, and one of HTTP.
+    net.Listener silent = net.listen("127.0.0.1", 0)
+    i32 silentPort = silent.port()
+    thread.Thread holding = thread.Thread([silent]() {
+        list<net.Connection> kept
+        for {
+            kept.add(silent.accept())
+        }
+    })
+    holding.start()
+    http.Server server = http.listen("127.0.0.1", 0)
+    i32 port = server.port()
+    thread.Thread serving = thread.Thread([server]() {
+        server.serve([](ref http.Request req, ref http.Response res) { res.write("here") })
+    })
+    serving.start()
+
+    net.Connection fine = net.connectTimeout("127.0.0.1", silentPort, 2000)
+    println("connect in time {}", true)
+
+    http.Client client
+    println("defaults {} {}", client.connectTimeout, client.timeout)
+    client.timeout = 300
+    start = time.now()
+    string said = "answered"
+    try {
+        client.get(format("http://127.0.0.1:{}/", silentPort))
+    } catch (Exception e) {
+        said = e.message().contains("timed out") ? "timed out" : e.message()
+    }
+    i64 took = start.elapsed().milliseconds()
+    println("a server that does not answer: {}, {}", took >= 250 && took < 5000, said)
+    println("a server that answers: {}", client.get(format("http://127.0.0.1:{}/", port)).status)
+
+    client.connectTimeout = 400
+    start = time.now()
+    gaveUp = false
+    try {
+        client.get("http://10.255.255.1:81/")
+    } catch (Exception e) {
+        gaveUp = true
+    }
+    println("a host that does not take the connection gave up {}", gaveUp && start.elapsed().milliseconds() < 3000)
+    os.exit(0)
+    ret 0
+}

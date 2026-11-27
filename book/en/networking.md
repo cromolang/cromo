@@ -11,6 +11,7 @@ The standard library has everything a network program needs, and needs no other 
 | [std.crypto](std.crypto.html) | hashes, random keys, ciphers and signatures |
 | [std.jwt](std.jwt.html) | JSON Web Tokens |
 | [std.oauth](std.oauth.html) | the login with a provider of identity, and the check of its tokens |
+| [std.smtp](std.smtp.html) | sending email |
 
 TLS comes from Mbed TLS, compiled into the runtime of Cromo, so the executables stay self-contained, on Windows and on Linux.
 
@@ -150,7 +151,7 @@ cannot write: the socket is closed
 
 The connection above completes although `accept()` is not called again: the system accepts the connections of a listener by itself, and `accept()` only takes the next one.
 
-- `net.connect` has no timeout of its own: it waits for the connection as long as the system does, and `timeout` holds from the connection on.
+- `net.connect` has no timeout of its own: it waits for the connection as long as the system does, and `timeout` holds from the connection on. `net.connectTimeout(host, port, milliseconds)` gives up after that time, with an exception that says `timed out`: for a server that may be off, or behind a firewall that says nothing.
 - A port that another program uses is an exception: `cannot use 127.0.0.1 port 8080: the address is in use`. A listener on Linux uses `SO_REUSEADDR`, so that a server started again takes its port at once.
 
 ### Many clients
@@ -313,7 +314,7 @@ i32 main() {
 - The authorities are those of the system, updated with it, the ones a company adds too: on Windows its store of root certificates, and Windows itself for those it downloads only when a chain needs them; on Linux the file of the distribution, as `/etc/ssl/certs/ca-certificates.crt`.
 - The environment variable `SSL_CERT_FILE`, when it is set, names a file in PEM whose certificates replace those of the system, as for OpenSSL, curl and Go: a test can trust an authority of its own. A file without certificates leaves none, and the connections fail with `no certificates in ..., the file of SSL_CERT_FILE`. The authorities are read once, at the first connection.
 - Revoked certificates are not checked, as in Go: OCSP and the lists of revoked certificates need further connections, and the certificates of the web last a few months.
-- `timeout()` holds for the handshake too. Like `connect`, `connectTls` has no timeout of its own: it waits for the connection and for the handshake as long as the other side takes.
+- `timeout()` holds for the handshake too. `net.connectTlsTimeout(host, port, milliseconds)` waits that long for the connection and for each step of the handshake. Like `connect`, `connectTls` has no timeout of its own: it waits for the connection and for the handshake as long as the other side takes.
 - Some protocols begin in clear and then ask for TLS, as SMTP and PostgreSQL: `connection.startTls(host)` starts it on a connection that `net.connect` gave, with the certificate of the server verified in the same way, and from then on `read` and `write` are encrypted.
 
 A server listens with `net.listenTls(host, port, certificate, key)`: the certificate in PEM, followed by those of its chain, and its private key in PEM, both as texts. Its `accept()` gives a connection at once, and the handshake happens at its first `read` or `write`, in the task that serves it, so that a slow or hostile client does not keep `accept()` waiting. An error of the handshake is the exception of that `read` or `write`.
@@ -604,7 +605,7 @@ http.Response res = http.send(req)
 - The URL starts with `http://` or `https://`, and can have a port; `https` uses TLS, with the checks of `net.connectTls`. A name and a password in the URL are not supported. The path and the query are sent as written: `http.escape(text)` writes a value with `%XX` for every byte that is not a letter, a digit, `-`, `_`, `.` or `~`, so `http.escape("a b&c")` gives `"a%20b%26c"`.
 - The client writes `Host`, `Content-Length` and `Connection` by itself, and adds `User-Agent: cromo` when the request has no `User-Agent`.
 - A status of error, as 404 or 500, is a response like the others. An exception is a URL that cannot be used, a host that is not found, a failure of the network or of TLS, a timeout, an answer that is not HTTP, or a body too large.
-- Connecting, with the handshake of TLS, has no timeout; then each read and write waits at most 30 seconds.
+- Connecting, with the handshake of TLS, waits at most 30 seconds, and then each read and write as much. An `http.Client` changes them with its fields `connectTimeout` and `timeout`, in milliseconds, -1 for no limit: `client.timeout = 5000` for a service that must answer soon.
 - The responses 1xx, as `100 Continue`, are skipped.
 
 ### Redirects and compression
@@ -1135,14 +1136,57 @@ The keys of the provider are downloaded at the first token and kept: a verifier 
 
 An access token of Microsoft or of Keycloak is a JWT, and is checked this way. One of Google is not: `userInfo` asks Google whose it is.
 
+## Sending email: SMTP
+
+A backend sends email: a confirmation, a password to set again, a report. The module [std.smtp](std.smtp.html) gives a message to a server of SMTP, the one of a provider of email or of a company:
+
+```cromo nocheck
+import std.smtp
+
+i32 main() {
+    smtp.Client mail
+    mail.host = "smtp.example.com"
+    mail.user = "anna@example.com"
+    mail.password = "the password"
+
+    smtp.Message message
+    message.from = "Anna Rossi <anna@example.com>"
+    message.to = ["bruno@example.com"]
+    message.subject = "The report of November"
+    message.text = "Here it is.\n"
+    message.html = "<p>Here it <b>is</b>.</p>"
+    message.attachFile("report.pdf", "application/pdf")
+    mail.send(message)
+    ret 0
+}
+```
+
+An `smtp.Client` says which server and how:
+
+| `security` | Port | The connection |
+|---|---|---|
+| `smtp.Security.StartTls` | 587 | starts in clear and asks for TLS before anything else: the one of a client that is told nothing |
+| `smtp.Security.Tls` | 465 | TLS from the first byte: what the mail programs call SSL |
+| `smtp.Security.None` | 25 | in clear, for a server of the same computer or of a closed network |
+
+- `port` is 587 at the start: with another `security`, the program sets it too.
+- `user` and `password` log in, with the first way that the server offers among PLAIN, LOGIN and CRAM-MD5. Google and Microsoft 365 take no password of the account: either a password made for an application, or `token`, an access token of OAuth 2.0 of that user, which `std.oauth` gets.
+- `timeout` is for the connection and for each read and write, 30 seconds at the start.
+- `check()` connects, starts TLS and logs in, without sending: to know that the settings are right.
+
+An `smtp.Message` has `from`, `to`, `cc` and `bcc`, the copies that the message does not name, `replyTo`, `subject`, `text` and `html`. With both `text` and `html` a mail program shows the one it can. An address is `anna@example.com` or `Anna Rossi <anna@example.com>`. `attach(name, type, bytes)` and `attachFile(path, type)` add files. Accents in a subject, in a name and in the name of a file are fine.
+
+A server that says no is an `smtp.Refused`, with the `code` of SMTP: 535 for a wrong password, 550 for an address that the server does not take. The codes from 400 to 499 are of the moment, and the message can be sent again later. When one receiver is refused, nobody gets the message. With `StartTls`, a server that does not offer TLS is an error, and nothing goes in clear.
+
 ## Summary
 
-- `std.net` has TCP, UDP and TLS, with calls that block and leave the thread to other tasks while they wait. Without `timeout(ms)` an operation waits as long as it takes; `connect` has no timeout of its own.
+- `std.net` has TCP, UDP and TLS, with calls that block and leave the thread to other tasks while they wait. Without `timeout(ms)` an operation waits as long as it takes; `connect` has no timeout of its own, and `connectTimeout` has one.
 - `read` gives what has arrived, an empty list at the end; `write` writes everything; `close()` and the destructor close.
 - TLS verifies the certificate and the name of the server against the authorities of the system, or those of `SSL_CERT_FILE`; a server makes its handshake at the first `read` or `write`.
 - `http.serve` runs a `const func` handler for each request, a task for each connection, with routes chosen by `req.matches`; limits and timeouts protect the server.
 - `http.get`, `http.post` and `http.send` make requests, follow redirects and decompress gzip; `http.Client` keeps the connections and serves several tasks at once.
 - `std.websocket` sends and receives messages in both directions, and ends with `close()` and `websocket.Closed`.
 - `std.oauth` logs users in with Microsoft, Google, Keycloak or any provider of OpenID Connect, with PKCE, and checks the tokens of an API with the keys of the provider.
+- `std.smtp` sends email with a text, HTML and attachments, with STARTTLS or TLS, and a login by password or by a token.
 - `net.ping` says whether a host answers an echo of ICMP, and in how long.
 - `std.gzip`, `std.crypto` and `std.jwt` complete the toolbox, with no external library.

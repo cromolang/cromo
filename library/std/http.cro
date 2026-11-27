@@ -871,8 +871,8 @@ public Response post(string url, string body, string type) {
 // - Up to ten redirects are followed. After 303, and after 301 or 302 to a method other
 //   than GET and HEAD, the request goes on as a GET without a body. Authorization and
 //   Cookie are not sent to another host.
-// - Connecting, with the handshake of TLS, has no timeout; then each read and write
-//   waits at most 30 seconds.
+// - Connecting, with the handshake of TLS, waits at most 30 seconds, and then each
+//   read and write as much: 'connectTimeout' and 'timeout' of a 'Client' change them.
 // - A status of error, as 404, is a response, not an exception. An exception of type
 //   'Error' is a URL that cannot be used, a host that is not found, a failure of the
 //   network or of TLS, a timeout, more than ten redirects, an answer that is not HTTP,
@@ -913,6 +913,14 @@ public struct Client {
     // The largest body of a response, in bytes, also once decompressed: a larger one is
     // an exception. 16 MiB by default.
     public i64 bodyLimit = 16777216
+    // How long to wait for a server to take a new connection, with the handshake of
+    // TLS, in milliseconds: 30 seconds by default, -1 as long as the system does. Past
+    // it the request is an exception that says "timed out".
+    public i64 connectTimeout = 30000
+    // How long each read and each write of a request waits, in milliseconds: 30
+    // seconds by default, -1 without a limit. It is not the time of the whole
+    // request: a large body that keeps arriving goes on.
+    public i64 timeout = 30000
 
     // The response to a GET of the URL, as 'http.get' gives it, on the connections of
     // the client.
@@ -970,19 +978,19 @@ public struct Client {
         net.Connection connection
         bool kept = !single && takeKept(key, ref connection)
         if (!kept) {
-            connection = open(target)
+            connection = open(target, connectTimeout)
         }
         Incoming input
         Response res
         try {
-            res = talk(ref connection, ref input, single, target, method, headers, body, bodyLimit)
+            res = talk(ref connection, ref input, single, target, method, headers, body, bodyLimit, timeout)
         } catch (Exception e) {
             if (!kept || input.data.len() > 0) {
                 throw
             }
-            connection = open(target)
+            connection = open(target, connectTimeout)
             Incoming fresh
-            res = talk(ref connection, ref fresh, single, target, method, headers, body, bodyLimit)
+            res = talk(ref connection, ref fresh, single, target, method, headers, body, bodyLimit, timeout)
         }
         if (!single && !res.closes) {
             keep(key, move connection)
@@ -1035,19 +1043,19 @@ void addKept(ref list<Kept> items, ref Kept kept) {
     items.add(move kept)
 }
 
-net.Connection open(Url target) {
+net.Connection open(Url target, i64 wait) {
     net.Connection connection
     if (target.secure) {
-        connection = net.connectTls(target.host, target.port)
+        connection = net.connectTlsTimeout(target.host, target.port, wait)
     } else {
-        connection = net.connect(target.host, target.port)
+        connection = net.connectTimeout(target.host, target.port, wait)
     }
     ret connection
 }
 
 Response talk(ref net.Connection connection, ref Incoming input, bool single, Url target, string method, Headers headers,
-    list<u8> body, i64 limit) {
-    connection.timeout(30000)
+    list<u8> body, i64 limit, i64 wait) {
+    connection.timeout(wait < 0 ? -1 : wait)
     string head = format("{} {} HTTP/1.1\r\nHost: {}\r\n", method, target.path, target.authority())
     if (!headers.has("user-agent")) {
         head += "User-Agent: cromo\r\n"

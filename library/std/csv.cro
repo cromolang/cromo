@@ -1,0 +1,218 @@
+// CSV, the tables as text that spreadsheets and databases write and read: a line for
+// each row, the values separated by commas, between quotes when they need it (RFC
+// 4180).
+//
+// '''
+// import std.csv
+//
+// list<list<string>> rows = csv.parse("name,city\n\"Rossi, Anna\",Rome\n")
+// println("{}", rows[1][0])                      // Rossi, Anna
+//
+// csv.Table people = csv.table(fs.readText("people.csv"))
+// for (i64 i = 0; i < people.len(); i++) {
+//     println("{} lives in {}", people.get(i, "name"), people.get(i, "city"))
+// }
+// fs.writeText("out.csv", csv.encode([["id", "note"], ["7", "said \"hello\""]]))
+// '''
+//
+// The guide: [JSON](https://cromolang.org/book/en/json.html).
+
+// The module std.csv (D594), in Cromo. The values are texts: what a number or a date
+// is, the program says, with i64(), f64() and std.time.
+
+// The rows of a text of CSV, each the list of its values, with a comma between the
+// values. A value between double quotes can have commas, ends of line and quotes,
+// each quote written twice. The lines end with "\n" or "\r\n"; the empty lines are
+// passed over, and the rows can have different numbers of values. Throws an 'Error'
+// with the line for quotes that are not closed, or with something after them.
+public list<list<string>> parse(string text) {
+    ret parseWith(text, ',')
+}
+
+// The rows of a text whose values are separated by 'separator': ';' for the files
+// of the spreadsheets where the comma is of the decimals, as in Italy, '\t' for the
+// values separated by tabs.
+public list<list<string>> parseWith(string text, u8 separator) {
+    list<list<string>> rows
+    list<string> row
+    list<u8> value
+    i64 at = 0
+    i64 line = 1
+    if (text.len() >= 3 && text[0] == 0xEF && text[1] == 0xBB && text[2] == 0xBF) {
+        at = 3  // the mark of UTF-8 that Excel writes
+    }
+    bool started = false  // the row has something, also an empty value between quotes
+    for (at <= text.len()) {
+        if (at == text.len() || text[at] == '\n' || (text[at] == '\r' && at + 1 < text.len() && text[at + 1] == '\n')) {
+            if (started || row.len() > 0 || value.len() > 0) {
+                row.add(string(value))
+                rows.add(move row)
+                list<string> next
+                row = move next
+                value.clear()
+                started = false
+            }
+            if (at == text.len()) {
+                break
+            }
+            at += text[at] == '\r' ? 2 : 1
+            line++
+        } else if (text[at] == separator) {
+            row.add(string(value))
+            value.clear()
+            started = true
+            at++
+        } else if (text[at] == '"' && value.len() == 0) {
+            i64 opened = line
+            at++
+            for {
+                if (at >= text.len()) {
+                    throw Error(format("the CSV is wrong at line {}: the quotes are not closed", opened))
+                }
+                if (text[at] == '"') {
+                    if (at + 1 < text.len() && text[at + 1] == '"') {
+                        value.add('"')
+                        at += 2
+                        continue
+                    }
+                    at++
+                    break
+                }
+                if (text[at] == '\n') {
+                    line++
+                }
+                value.add(text[at])
+                at++
+            }
+            started = true
+            bool ended = at == text.len() || text[at] == separator || text[at] == '\n' || text[at] == '\r'
+            if (!ended) {
+                throw Error(format("the CSV is wrong at line {}: after the quotes of a value comes its separator or the end of the line", line))
+            }
+        } else {
+            value.add(text[at])
+            started = true
+            at++
+        }
+    }
+    ret rows
+}
+
+// The rows as a text of CSV, a line ended by "\n" for each, with a comma between the
+// values. A value with a comma, a quote, an end of line or a space at its ends goes
+// between double quotes, its quotes written twice: 'parse' gives the same rows back.
+public string encode(list<list<string>> rows) {
+    ret encodeWith(rows, ',')
+}
+
+// The rows as a text with 'separator' between the values, as 'encode'.
+public string encodeWith(list<list<string>> rows, u8 separator) {
+    list<u8> out
+    for (i64 r = 0; r < rows.len(); r++) {
+        for (i64 i = 0; i < rows[r].len(); i++) {
+            if (i > 0) {
+                out.add(separator)
+            }
+            string value = rows[r][i]
+            bool quoted = value.len() > 0 && (value[0] == ' ' || value[value.len() - 1] == ' ')
+            for (i64 k = 0; !quoted && k < value.len(); k++) {
+                quoted = value[k] == separator || value[k] == '"' || value[k] == '\n' || value[k] == '\r'
+            }
+            // An empty value alone on its line would be an empty line.
+            quoted = quoted || (value.len() == 0 && rows[r].len() == 1)
+            if (quoted) {
+                out.add('"')
+            }
+            for (i64 k = 0; k < value.len(); k++) {
+                if (value[k] == '"') {
+                    out.add('"')
+                }
+                out.add(value[k])
+            }
+            if (quoted) {
+                out.add('"')
+            }
+        }
+        out.add('\n')
+    }
+    ret string(out)
+}
+
+// A table with a name for each column: the first row of a CSV, and the rows after it.
+// It is made by 'table' and 'tableWith', or by a program, which fills 'names' and
+// 'rows'.
+public struct Table {
+    public list<string> names       // of the columns, in their order
+    public list<list<string>> rows  // the values, a list for each row
+
+    // How many rows there are, without the one of the names.
+    public i64 len() const {
+        ret rows.len()
+    }
+
+    // The place of the column 'name', from 0, or -1 when there is none.
+    public i64 column(string name) const {
+        for (i64 i = 0; i < names.len(); i++) {
+            if (names[i] == name) {
+                ret i
+            }
+        }
+        ret -1
+    }
+
+    // The value of the column 'name' in the row 'row', from 0; "" for a row that is
+    // shorter than its names. Throws an 'Error' for a column that is not there; a
+    // row out of the table is a panic, as an index out of a list.
+    public string get(i64 row, string name) const {
+        i64 at = column(name)
+        if (at < 0) {
+            throw Error(format("the table has no column {}: it has {}", name, join(names, ", ")))
+        }
+        ret at < rows[row].len() ? rows[row][at].copy() : ""
+    }
+
+    // The values of the column 'name', one for each row. Throws an 'Error' for a
+    // column that is not there.
+    public list<string> values(string name) const {
+        list<string> found
+        for (i64 i = 0; i < rows.len(); i++) {
+            found.add(get(i, name))
+        }
+        ret found
+    }
+
+    // The table as a text of CSV, its names in the first line.
+    public string text() const {
+        ret textWith(',')
+    }
+
+    // The table as a text with 'separator' between the values.
+    public string textWith(u8 separator) const {
+        list<list<string>> all
+        all.add(names.copy())
+        for (i64 i = 0; i < rows.len(); i++) {
+            all.add(rows[i].copy())
+        }
+        ret encodeWith(all, separator)
+    }
+}
+
+// The table of a text of CSV whose first row has the names of the columns. A text
+// without rows gives a table without names.
+public Table table(string text) {
+    ret tableWith(text, ',')
+}
+
+// The table of a text whose values are separated by 'separator'.
+public Table tableWith(string text, u8 separator) {
+    list<list<string>> all = parseWith(text, separator)
+    Table made
+    for (i64 i = 0; i < all.len(); i++) {
+        if (i == 0) {
+            made.names = all[i].copy()
+        } else {
+            made.rows.add(all[i].copy())
+        }
+    }
+    ret made
+}

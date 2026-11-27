@@ -2831,7 +2831,25 @@ A branch whose type is not simple, as a `string`, gives a new value, also a copy
 
 ### D592. S3 is an official package
 *2026-11-27.* Chosen by the author. The client of S3 is `github.com/cromolang/s3` (D550), written in Cromo on `std.http`, `std.crypto` and `std.xml` (D590), as SSH (D582): the stores and their extensions change faster than the library. A client only, for AWS and for the stores that speak its protocol, with the bucket in the path or in the name of the host; Signature Version 4; buckets, objects, listings that ask all their pages, the large files in parts, the addresses signed for who has no keys. No versions, ACL, policies or lifecycle in the first version.
-- Its signatures are checked against the examples that AWS publishes. The server of MinIO, with which the author wanted it tried, is no longer distributed: the whole client is tried against a store written for its tests, and `CROMO_TEST_S3` names a real one.
+- Its signatures are checked against the examples that AWS publishes. The server of MinIO, with which the author wanted it tried, is no longer distributed: the whole client is tried against a store written for its tests, and `CROMO_TEST_S3` names a real one. *Since 2026-11-27:* it was tried against Garage 1.0.1, in WSL, chosen by the author, from Windows and from Linux.
+
+### D593. The timeouts of a connection
+*2026-11-27.* Chosen by the author: `net.connect` waited for a server as long as the system does, a minute or more, and the client of HTTP had its timeouts written in the library.
+- `net.connectTimeout(host, port, milliseconds)` is `net.connect` that gives up after that time, for all the addresses of the name together, with an exception that says `timed out after N ms`; `net.connectTlsTimeout` does the same and keeps the time for each read and write of the handshake, and of the connection after it. -1 waits as before. The time to find the addresses of a name is not counted. `net.connect` and `net.connectTls` do not change.
+- An `http.Client` has `connectTimeout`, for a new connection with its handshake, and `timeout`, for each read and write of a request: 30 seconds each when the program says nothing, -1 for no limit. `http.get`, `http.post` and `http.send` have those 30 seconds: before, the connection had no limit. `timeout` is not the time of a whole request, so a large body that keeps arriving goes on.
+- What is above the client of HTTP has its timeouts: `std.oauth` and the package of S3. A field for them in those, and the timeouts of `websocket.connect`, can come when asked.
+
+### D594. `std.csv`
+*2026-11-27.* Asked by the author. `csv.parse(text)` gives the rows of a text of CSV as `list<list<string>>`, with the rules of RFC 4180: a value between double quotes has commas, ends of line and quotes written twice. `csv.parseWith(text, separator)` takes another separator, `;` for the spreadsheets of the countries where the comma is of the decimals, or a tab. `csv.encode(rows)` and `csv.encodeWith` write them, with quotes only where they are needed and lines ended by `\n`, so that `parse` gives the same rows back.
+- A `csv.Table`, from `csv.table(text)`, has the first row as the `names` of its columns: `get(row, name)`, `values(name)`, `column(name)`, `len()`, `text()`.
+- The values are texts: the program says which are numbers or dates. The lines end with `\n` or `\r\n`, the empty ones are passed over, the mark of UTF-8 of Excel is passed over, and the rows can have different lengths. Quotes that are not closed, or with something after them, are an `Error` with the line. A text is read whole: a reader of a file in pieces can come later.
+
+### D595. `std.smtp`: sending email
+*2026-11-27.* Chosen by the author: a module of the library, since a backend sends email. A client only.
+- An `smtp.Client` has `host`, `port`, `security`, `user`, `password`, `token`, `name` and `timeout`; `send(message)` opens a connection, sends and closes, and `check()` does all but the message. `Security.StartTls`, port 587, is what a client is when told nothing; `Security.Tls` is TLS from the first byte, port 465; `Security.None` is in clear. With `StartTls` a server that does not offer it is an error, never a conversation in clear: someone in the middle can hide the offer.
+- The login is the first that the server offers among PLAIN, LOGIN and CRAM-MD5, or XOAUTH2 with `token`, an access token of OAuth 2.0, for Google and Microsoft 365, which take no password. Nothing stops a login in clear with `Security.None`: it is what the program asked.
+- An `smtp.Message` has `from`, `to`, `cc`, `bcc`, `replyTo`, `subject`, `text`, `html` and `attachments`, with `attach` and `attachFile`; `smtp.encode(message)` is its text. The text and the HTML are parts in base64 of a `multipart/alternative`, the attachments of a `multipart/mixed`; a subject and a name that are not ASCII are the encoded words of RFC 2047, the name of a file also as RFC 2231 writes it. An end of line in a subject, an address or a name is an `Error`, since it would write another header.
+- A server that says no is an `smtp.Refused` with the `code` of SMTP: from 400 of the moment, from 500 final. When a receiver is refused nobody gets the message. Not there: several messages on one connection, DKIM, the receipts, and receiving mail.
 
 ---
 

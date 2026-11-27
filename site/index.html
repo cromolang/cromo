@@ -521,7 +521,7 @@ cromo @VERSION@ (LLVM 23.1.4)</pre>
       <p class="section-lead">The library comes with <code>cromo</code>, written in Cromo, with nothing to install and no C library under it on Linux: a backend, a tool for the command line or an app starts from here. Each module has its page in the guide, made from the comments of its source.</p>
       <div class="roadmap">
         <div class="phase">
-          <h3>The modules <span class="badge done">25 and the core</span></h3>
+          <h3>The modules <span class="badge done">27 and the core</span></h3>
           <ul class="steps">
             <li><b>core</b><span>Always there, without an import: <code>string</code>, <code>list&lt;T&gt;</code>, <code>map&lt;K, V&gt;</code>, <code>Option&lt;T&gt;</code>, <code>print</code> and <code>format</code> checked by the compiler, <code>sort</code>, numbers from text, the functions of the bits, the vectors of SIMD, <code>embed</code> for the files of a program</span></li>
             <li><b><a href="book/en/std.fs.html">std.fs</a></b><span>Files read and written whole, in pieces or mapped in memory; folders, paths, links, permissions</span></li>
@@ -534,13 +534,15 @@ cromo @VERSION@ (LLVM 23.1.4)</pre>
             <li><b><a href="book/en/std.uuid.html">std.uuid</a></b><span>The UUIDs of RFC 9562: random, ordered by time, from a name; read, written and compared</span></li>
             <li><b><a href="book/en/std.thread.html">std.thread</a></b><span>Threads, lightweight tasks under the same names, groups, mutexes that hold their data, atomics, channels</span></li>
             <li><b><a href="book/en/std.net.html">std.net</a></b><span>TCP, UDP and TLS for clients and servers, the names of DNS, and <code>ping</code>, without the C library on Linux</span></li>
-            <li><b><a href="book/en/std.http.html">std.http</a></b><span>A server with routes and a task for each connection; a client with redirects, gzip and kept connections</span></li>
+            <li><b><a href="book/en/std.http.html">std.http</a></b><span>A server with routes and a task for each connection; a client with redirects, gzip, kept connections and timeouts</span></li>
             <li><b><a href="book/en/std.websocket.html">std.websocket</a></b><span>WebSocket for servers and clients: messages of text and of bytes, in both directions</span></li>
             <li><b><a href="book/en/std.oauth.html">std.oauth</a></b><span>OAuth 2.0 and OpenID Connect: the login with Microsoft, Google, Keycloak or any provider, with PKCE; the tokens of a service; the check of the tokens of an API</span></li>
+            <li><b><a href="book/en/std.smtp.html">std.smtp</a></b><span>Email sent through a server of SMTP, with STARTTLS or TLS and a login by password or by a token of OAuth: text, HTML and attachments</span></li>
             <li><b><a href="book/en/std.jwt.html">std.jwt</a></b><span>JSON Web Tokens signed with HMAC, RSA, ECDSA or Ed25519, and the keys that a provider publishes</span></li>
             <li><b><a href="book/en/std.crypto.html">std.crypto</a></b><span>SHA-1, SHA-2 and MD5, HMAC, random bytes, hex and base64; AES-GCM and ChaCha20-Poly1305; Ed25519, X25519, RSA and ECDSA</span></li>
             <li><b><a href="book/en/std.json.html">std.json</a></b><span>JSON to and from the structs of a program, with the conversion written by the compiler; values of any shape</span></li>
             <li><b><a href="book/en/std.xml.html">std.xml</a></b><span>XML read into its elements and written, on one line or for a person</span></li>
+            <li><b><a href="book/en/std.csv.html">std.csv</a></b><span>CSV with the quotes of RFC 4180 and any separator, as rows or as a table with the names of its columns</span></li>
             <li><b><a href="book/en/std.regex.html">std.regex</a></b><span>Regular expressions with the syntax of RE2: a search in linear time, groups, replacements</span></li>
             <li><b><a href="book/en/std.gzip.html">std.gzip</a></b><span>gzip and deflate, to compress and to decompress</span></li>
             <li><b><a href="book/en/std.zip.html">std.zip</a></b><span>The archives of zip, read and extracted, also above 4 GB</span></li>

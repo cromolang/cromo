@@ -1,0 +1,64 @@
+// std.csv (D594): the rows of a text, with quotes, commas and ends of line in the
+// values, the lines of Windows, the empty lines and the mark of Excel; another
+// separator; the rows written and read again; a table with the names of its columns;
+// and the texts that are wrong, with their line.
+// expect-output: 4 rows: [name|city|note] [Rossi, Anna|Rome|said "hi"] [Bruno||two|lines] [|x]
+// expect-output: semicolons [a|1,5] [b|2,25]
+// expect-output: tabs [a b|c]
+// expect-output: empty 0 0 1 2
+// expect-output: id,note|7,"said ""hello"""|8,"a,b"|9," padded "|10,"two|lines"|""|,|
+// expect-output: again true
+// expect-output: with ; a;"b;c"|
+// expect-output: table 2 rows, columns name city age
+// expect-output: Anna Rome 30 | Bruno Milan ''
+// expect-output: cities Rome, Milan; column 1 -1
+// expect-output: name,city,age|Anna,Rome,30|Bruno,Milan|
+// expect-output: the table has no column country: it has name, city, age
+// expect-output: the CSV is wrong at line 2: the quotes are not closed
+// expect-output: the CSV is wrong at line 1: after the quotes of a value comes its separator or the end of the line
+import std.csv
+
+string shown(list<list<string>> rows) {
+    list<string> lines
+    for (i64 i = 0; i < rows.len(); i++) {
+        lines.add("[" + join(rows[i], "|").replace("\n", "|") + "]")
+    }
+    ret join(lines, " ")
+}
+
+i32 main() {
+    list<list<string>> rows = csv.parse("\u{FEFF}name,city,note\r\n\"Rossi, Anna\",Rome,\"said \"\"hi\"\"\"\r\n\r\nBruno,,\"two\nlines\"\n,x")
+    println("{} rows: {}", rows.len(), shown(rows))
+    println("semicolons {}", shown(csv.parseWith("a;1,5\nb;2,25\n", ';')))
+    println("tabs {}", shown(csv.parseWith("a b\tc\n", '\t')))
+    println("empty {} {} {} {}", csv.parse("").len(), csv.parse("\n\n\r\n").len(), csv.parse("\"\"\n").len(), csv.parse(",\n")[0].len())
+
+    list<list<string>> made = [["id", "note"], ["7", "said \"hello\""], ["8", "a,b"], ["9", " padded "], ["10", "two\nlines"], [""], ["", ""]]
+    string text = csv.encode(made)
+    println("{}", text.replace("\n", "|"))
+    println("again {}", csv.parse(text) == made)
+    println("with ; {}", csv.encodeWith([["a", "b;c"]], ';').replace("\n", "|"))
+
+    csv.Table people = csv.table("name,city,age\nAnna,Rome,30\nBruno,Milan\n")
+    println("table {} rows, columns {}", people.len(), join(people.names, " "))
+    println("{} {} {} | {} {} '{}'", people.get(0, "name"), people.get(0, "city"), i64(people.get(0, "age")), people.get(1, "name"),
+        people.get(1, "city"), people.get(1, "age"))
+    println("cities {}; column {} {}", join(people.values("city"), ", "), people.column("city"), people.column("country"))
+    println("{}", people.text().replace("\n", "|"))
+    try {
+        people.get(0, "country")
+    } catch (Exception e) {
+        println("{}", e.message())
+    }
+    try {
+        csv.parse("a,b\nc,\"d\ne")
+    } catch (Exception e) {
+        println("{}", e.message())
+    }
+    try {
+        csv.parse("a,\"b\"c\n")
+    } catch (Exception e) {
+        println("{}", e.message())
+    }
+    ret 0
+}

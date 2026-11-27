@@ -1,0 +1,324 @@
+// std.smtp (D595), against a server of SMTP written here: a message with a text, an
+// HTML version and attachments, sent with each kind of login; who gets it, the copies
+// in the open and the hidden ones; the headers, with the names and the subject that
+// are not ASCII; the lines that start with a dot; what the server refuses, with its
+// code; a server without STARTTLS, which is not used in clear; and the messages
+// that cannot be written.
+// expect-output: plain: MAIL FROM:<anna@example.com> | RCPT TO:<bruno@example.com> | RCPT TO:<carla@example.com> | RCPT TO:<hidden@example.com>
+// expect-output: headers true true true true true
+// expect-output: subject Città e caffè: il resoconto dell'anno, con tutti i numeri che servono
+// expect-output: no bcc true, mime true, date true, id true
+// expect-output: text Dear Bruno,|.a line that starts with a dot|..and one with two|the end.|
+// expect-output: html <p>Dear <b>Bruno</b></p>
+// expect-output: attachments report 2026.pdf application/pdf 5000 true | città.txt text/plain 5 true
+// expect-output: login: 1 message, cram: 1 message, token: 1 message
+// expect-output: text alone true
+// expect-output: 535 cannot log in to 127.0.0.1 as anna@example.com: the server answered 535 5.7.8 the name or the password is wrong
+// expect-output: 550 cannot send the message to nobody@example.com: the server answered 550 5.1.1 no such user here
+// expect-output: 535 token
+// expect-output: no STARTTLS true
+// expect-output: no login in common true
+// expect-output: check true
+// expect-output: the message has no sender: from
+// expect-output: the message has nobody to go to: to, cc or bcc
+// expect-output: the subject of a message cannot have an end of line
+// expect-output: 'not an address' is not an address of email, as anna@example.com or Anna Rossi <anna@example.com>
+import std.crypto
+import std.net
+import std.os
+import std.smtp
+import std.thread
+
+// What the server got: the commands of the envelope and the messages.
+struct Mailbox {
+    list<string> envelope
+    list<string> messages
+}
+
+struct Lines {
+    list<u8> pending
+
+    string next(ref net.Connection link) {
+        for {
+            for (i64 i = 0; i + 1 < pending.len(); i++) {
+                if (pending[i] == '\r' && pending[i + 1] == '\n') {
+                    list<u8> line
+                    for (i64 k = 0; k < i; k++) {
+                        line.add(pending[k])
+                    }
+                    list<u8> rest
+                    for (i64 k = i + 2; k < pending.len(); k++) {
+                        rest.add(pending[k])
+                    }
+                    pending = move rest
+                    ret string(line)
+                }
+            }
+            list<u8> more = link.read(65536)
+            if (more.len() == 0) {
+                throw Error("closed")
+            }
+            for (u8 b in more) {
+                pending.add(b)
+            }
+        }
+    }
+}
+
+string plainProof(string user, string password) {
+    list<u8> proof = [0]
+    for (u8 b in user.bytes()) {
+        proof.add(b)
+    }
+    proof.add(0)
+    for (u8 b in password.bytes()) {
+        proof.add(b)
+    }
+    ret crypto.base64(proof)
+}
+
+// A conversation of SMTP. The name of the greeting of the client says which server
+// this is: what it offers.
+void talk(ref net.Connection link, thread.Mutex<Mailbox> mailbox) {
+    Lines lines
+    link.writeText("220 test.example.com ESMTP\r\n")
+    string kind
+    for {
+        string line = lines.next(ref link)
+        string upper = line.upper()
+        if (upper.startsWith("EHLO ")) {
+            kind = line.slice(5, line.len())
+            string auth = kind == "login" ? "LOGIN" : kind == "cram" ? "CRAM-MD5 DIGEST-MD5" : kind == "token" ? "XOAUTH2 OAUTHBEARER" :
+                kind == "other" ? "GSSAPI" : "LOGIN PLAIN"
+            link.writeText("250-test.example.com greets " + kind + "\r\n250-SIZE 10000000\r\n250-AUTH " + auth + "\r\n250 8BITMIME\r\n")
+        } else if (upper.startsWith("AUTH PLAIN ")) {
+            link.writeText(line.slice(11, line.len()) == plainProof("anna@example.com", "s3cret") ? "235 2.7.0 welcome\r\n" :
+                "535 5.7.8 the name or the password is wrong\r\n")
+        } else if (upper == "AUTH LOGIN") {
+            link.writeText("334 VXNlcm5hbWU6\r\n")
+            string user = string(crypto.fromBase64(lines.next(ref link)))
+            link.writeText("334 UGFzc3dvcmQ6\r\n")
+            string password = string(crypto.fromBase64(lines.next(ref link)))
+            link.writeText(user == "anna@example.com" && password == "s3cret" ? "235 2.7.0 welcome\r\n" : "535 5.7.8 no\r\n")
+        } else if (upper == "AUTH CRAM-MD5") {
+            string challenge = "<1896.697170952@test.example.com>"
+            link.writeText("334 " + crypto.base64(challenge.bytes()) + "\r\n")
+            string answer = string(crypto.fromBase64(lines.next(ref link)))
+            string wanted = "anna@example.com " + crypto.hex(crypto.hmac(crypto.Hash.Md5, "s3cret".bytes(), challenge.bytes()))
+            link.writeText(answer == wanted ? "235 2.7.0 welcome\r\n" : "535 5.7.8 no\r\n")
+        } else if (upper.startsWith("AUTH XOAUTH2 ")) {
+            string proof = string(crypto.fromBase64(line.slice(13, line.len())))
+            if (proof == "user=anna@example.com\u{1}auth=Bearer good-token\u{1}\u{1}") {
+                link.writeText("235 2.7.0 welcome\r\n")
+            } else {
+                link.writeText("334 eyJzdGF0dXMiOiI0MDEifQ==\r\n")
+                lines.next(ref link)
+                link.writeText("535 5.7.8 token\r\n")
+            }
+        } else if (upper.startsWith("MAIL FROM:")) {
+            mailbox.lock([line](ref Mailbox box) { box.envelope.add(line) })
+            link.writeText("250 2.1.0 ok\r\n")
+        } else if (upper.startsWith("RCPT TO:")) {
+            if (line.contains("nobody@")) {
+                link.writeText("550 5.1.1 no such user here\r\n")
+            } else {
+                mailbox.lock([line](ref Mailbox box) { box.envelope.add(line) })
+                link.writeText("250 2.1.5 ok\r\n")
+            }
+        } else if (upper == "DATA") {
+            link.writeText("354 go on\r\n")
+            string message
+            for {
+                string each = lines.next(ref link)
+                if (each == ".") {
+                    break
+                }
+                message += (each.startsWith(".") ? each.slice(1, each.len()) : each) + "\r\n"
+            }
+            mailbox.lock([message](ref Mailbox box) { box.messages.add(message) })
+            link.writeText("250 2.0.0 taken\r\n")
+        } else if (upper == "QUIT") {
+            link.writeText("221 2.0.0 bye\r\n")
+            ret
+        } else if (upper == "STARTTLS") {
+            link.writeText("454 4.7.0 TLS is not available\r\n")
+        } else {
+            link.writeText("500 5.5.2 what?\r\n")
+        }
+    }
+}
+
+// The value of a header of a message, its folded lines joined.
+string header(string message, string name) {
+    list<string> lines = message.split("\r\n")
+    for (i64 i = 0; i < lines.len() && lines[i].len() > 0; i++) {
+        if (lines[i].startsWith(name + ": ")) {
+            string value = lines[i].slice(name.len() + 2, lines[i].len())
+            for (i + 1 < lines.len() && lines[i + 1].startsWith(" ")) {
+                i++
+                value += lines[i]
+            }
+            ret value
+        }
+    }
+    ret ""
+}
+
+// The words of RFC 2047 of a header, read.
+string decoded(string value) {
+    list<u8> bytes
+    for (string word in value.split(" ")) {
+        if (word.startsWith("=?UTF-8?B?") && word.endsWith("?=")) {
+            for (u8 b in crypto.fromBase64(word.slice(10, word.len() - 2))) {
+                bytes.add(b)
+            }
+        }
+    }
+    ret string(bytes)
+}
+
+// The content of the part of a message that has `marker` in its headers.
+list<u8> part(string message, string marker) {
+    i64 at = message.find(marker)
+    i64 start = message.findFrom("\r\n\r\n", at) + 4
+    i64 end = message.findFrom("\r\n--", start)
+    ret crypto.fromBase64(message.slice(start, end < 0 ? message.len() : end).replace("\r\n", ""))
+}
+
+string refusal(smtp.Client mail, smtp.Message message) {
+    try {
+        mail.send(message)
+    } catch (smtp.Refused e) {
+        ret format("{} {}", e.code, e.message())
+    } catch (Exception e) {
+        ret e.message()
+    }
+    ret "sent"
+}
+
+i32 main() {
+    net.Listener listener = net.listen("127.0.0.1", 0)
+    thread.Mutex<Mailbox> mailbox
+    thread.Thread server = thread.Thread([listener, mailbox]() {
+        for {
+            net.Connection link = listener.accept()
+            try {
+                talk(ref link, mailbox)
+            } catch (Exception e) {
+            }
+        }
+    })
+    server.start()
+
+    smtp.Client mail
+    mail.host = "127.0.0.1"
+    mail.port = listener.port()
+    mail.security = smtp.Security.None
+    mail.user = "anna@example.com"
+    mail.password = "s3cret"
+    mail.name = "plain"
+    mail.timeout = 5000
+
+    smtp.Message message
+    message.from = "Anna Rossi <anna@example.com>"
+    message.to = ["bruno@example.com", "Carla Pérez <carla@example.com>"]
+    message.bcc = ["hidden@example.com"]
+    message.replyTo = "answers@example.com"
+    message.subject = "Città e caffè: il resoconto dell'anno, con tutti i numeri che servono"
+    message.text = "Dear Bruno,\r\n.a line that starts with a dot\r\n..and one with two\r\nthe end.\r\n"
+    message.html = "<p>Dear <b>Bruno</b></p>"
+    list<u8> report = crypto.random(5000)
+    message.attach("report 2026.pdf", "application/pdf", report)
+    message.attach("città.txt", "text/plain", "hello".bytes())
+    mail.send(message)
+
+    Mailbox got
+    mailbox.lock([ref got](ref Mailbox box) {
+        got = box.copy()
+        box.envelope.clear()
+        box.messages.clear()
+    })
+    println("plain: {}", join(got.envelope, " | "))
+    string sent = got.messages[0]
+    println("headers {} {} {} {} {}", header(sent, "From") == "\"Anna Rossi\" <anna@example.com>",
+        header(sent, "To").startsWith("bruno@example.com, =?UTF-8?B?") && header(sent, "To").endsWith("?= <carla@example.com>"),
+        decoded(header(sent, "To")) == "Carla Pérez", header(sent, "Reply-To") == "answers@example.com", header(sent, "Cc") == "")
+    println("subject {}", decoded(header(sent, "Subject")))
+    println("no bcc {}, mime {}, date {}, id {}", !sent.contains("hidden"), header(sent, "MIME-Version") == "1.0" &&
+        header(sent, "Content-Type").startsWith("multipart/mixed; boundary="), header(sent, "Date").len() > 25,
+        header(sent, "Message-ID").endsWith("@example.com>"))
+    println("text {}", string(part(sent, "text/plain; charset=utf-8")).replace("\r\n", "|"))
+    println("html {}", string(part(sent, "text/html; charset=utf-8")))
+    println("attachments {} {} {} {} | {} {} {} {}", "report 2026.pdf", "application/pdf", part(sent, "filename=\"report 2026.pdf\"").len(),
+        part(sent, "filename=\"report 2026.pdf\"") == report && sent.contains("Content-Type: application/pdf; name=\"report 2026.pdf\""),
+        "città.txt", "text/plain", part(sent, "filename*=UTF-8''citt%C3%A0.txt").len(),
+        string(part(sent, "filename*=UTF-8''citt%C3%A0.txt")) == "hello" && sent.contains("filename=\"citt__.txt\""))
+
+    // The other logins.
+    smtp.Message short
+    short.from = "anna@example.com"
+    short.to = ["bruno@example.com"]
+    short.subject = "Hello"
+    short.text = "Just this."
+    list<string> counts
+    for (string kind in ["login", "cram", "token"]) {
+        mail.name = kind
+        mail.token = kind == "token" ? "good-token" : ""
+        mail.send(short)
+        i64 count = 0
+        mailbox.lock([ref count, ref sent](ref Mailbox box) {
+            count = box.messages.len()
+            sent = box.messages[0].copy()
+            box.messages.clear()
+            box.envelope.clear()
+        })
+        counts.add(format("{}: {} message", kind, count))
+    }
+    println("{}", join(counts, ", "))
+    println("text alone {}", header(sent, "Content-Type") == "text/plain; charset=utf-8" && header(sent, "Subject") == "Hello" &&
+        header(sent, "From") == "anna@example.com" && string(part(sent, "Content-Transfer-Encoding: base64")) == "Just this.")
+
+    // What the server refuses.
+    mail.name = "plain"
+    mail.token = ""
+    mail.password = "wrong"
+    println("{}", refusal(mail, short))
+    mail.password = "s3cret"
+    short.to = ["bruno@example.com", "nobody@example.com"]
+    println("{}", refusal(mail, short))
+    short.to = ["bruno@example.com"]
+    mail.name = "token"
+    mail.token = "bad-token"
+    println("{}", refusal(mail, short).slice(0, 3) + " token")
+    mail.token = ""
+    mail.security = smtp.Security.StartTls
+    println("no STARTTLS {}", refusal(mail, short).contains("the server does not offer STARTTLS") || refusal(mail, short).contains("454"))
+    mail.security = smtp.Security.None
+    mail.name = "other"
+    println("no login in common {}", refusal(mail, short).contains("the server offers no login that this client knows") &&
+        refusal(mail, short).endsWith("GSSAPI"))
+    mail.name = "plain"
+    bool checked = true
+    try {
+        mail.check()
+    } catch (Exception e) {
+        checked = false
+    }
+    i64 left = 0
+    mailbox.lock([ref left](ref Mailbox box) { left = box.messages.len() })
+    println("check {}", checked && left == 0)
+
+    // The messages that cannot be written.
+    smtp.Message empty
+    println("{}", refusal(mail, empty))
+    empty.from = "anna@example.com"
+    println("{}", refusal(mail, empty))
+    empty.to = ["bruno@example.com"]
+    empty.subject = "one\r\nBcc: someone@example.com"
+    println("{}", refusal(mail, empty))
+    empty.subject = "fine"
+    empty.cc = ["not an address"]
+    println("{}", refusal(mail, empty))
+    os.exit(0)
+    ret 0
+}

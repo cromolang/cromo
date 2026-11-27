@@ -1,0 +1,526 @@
+// Sends email through a server of SMTP: a message with a text, an HTML version and
+// attachments, to the server of a provider or of a company, with TLS and a login.
+//
+// '''
+// import std.smtp
+//
+// smtp.Client mail
+// mail.host = "smtp.example.com"       // port 587 with STARTTLS, unless told otherwise
+// mail.user = "anna@example.com"
+// mail.password = "the password"
+//
+// smtp.Message message
+// message.from = "Anna Rossi <anna@example.com>"
+// message.to = ["bruno@example.com"]
+// message.subject = "The report"
+// message.text = "Here it is."
+// message.attachFile("report.pdf", "application/pdf")
+// mail.send(message)
+// '''
+//
+// The guide: [Networking and HTTP](https://cromolang.org/book/en/networking.html).
+
+// The module std.smtp (D595), in Cromo on std.net: SMTP of RFC 5321 with the
+// extensions of today, STARTTLS (RFC 3207) and AUTH (RFC 4954), and the messages of
+// RFC 5322 with MIME. A client only: it sends, and receives nothing.
+import std.crypto
+import std.fs
+import std.net
+import std.time
+
+// How the connection to the server is protected.
+public enum Security {
+    StartTls  // it starts in clear and asks for TLS before anything else: port 587, and 25
+    Tls       // TLS from the first byte, the "SSL" of the mail programs: port 465
+    None      // in clear, for a server of the same computer or of a closed network
+}
+
+// The answer of a server that refuses: 'code' is the one of SMTP, as 550 for an
+// address that does not exist or 535 for a wrong password. Those from 400 to 499 are
+// of the moment, and the message can be sent again later; those from 500 are final.
+public struct Refused : Exception {
+    public i32 code
+    string text
+
+    string message() const {
+        ret text.copy()
+    }
+}
+
+// A file sent with a message.
+public struct Attachment {
+    public string name    // the name that who receives sees: "report.pdf"
+    public string type    // "application/pdf"; "" is "application/octet-stream"
+    public list<u8> data  // its bytes
+}
+
+// A message of email. An address is "anna@example.com" or, with the name that the
+// mail programs show, "Anna Rossi <anna@example.com>".
+public struct Message {
+    public string from       // who sends it
+    public list<string> to   // who receives it
+    public list<string> cc   // who receives a copy, named in the message
+    public list<string> bcc  // who receives a copy without being named
+    public string replyTo    // where the answers go, when it is not 'from'
+    public string subject
+    public string text  // the message as plain text
+    public string html  // the message as HTML: with 'text' too, a mail program shows the one it can
+    public list<Attachment> attachments
+
+    // Adds a file to the message, from its bytes.
+    public void attach(string name, string type, list<u8> data) {
+        Attachment added
+        added.name = name.copy()
+        added.type = type.copy()
+        added.data = data.copy()
+        attachments.add(move added)
+    }
+
+    // Adds a file to the message, read from 'path', with the name of the file.
+    // Throws as 'fs.readBytes' when it cannot be read.
+    public void attachFile(string path, string type) {
+        attach(fs.fileName(path), type, fs.readBytes(path))
+    }
+}
+
+// ---- The text of a message ----
+
+bool isAscii(string text) {
+    for (i64 i = 0; i < text.len(); i++) {
+        if (text[i] >= 0x80) {
+            ret false
+        }
+    }
+    ret true
+}
+
+// A value of a header cannot have an end of line: it would start another header.
+void oneLine(string value, string what) {
+    if (value.contains("\n") || value.contains("\r")) {
+        throw Error(format("{} of a message cannot have an end of line", what))
+    }
+}
+
+// A text of a header: as it is when it is ASCII, otherwise in the encoded words of
+// RFC 2047, in UTF-8 and base64, each of at most 75 characters and whole characters.
+string headerText(string text) {
+    if (isAscii(text)) {
+        ret text.copy()
+    }
+    list<string> words
+    i64 from = 0
+    for (from < text.len()) {
+        i64 to = from
+        for (to < text.len() && to - from < 42) {
+            i64 next = to + 1
+            for (next < text.len() && (text[next] & 0xC0) == 0x80) {
+                next++
+            }
+            if (next - from > 45) {
+                break
+            }
+            to = next
+        }
+        words.add("=?UTF-8?B?" + crypto.base64(text.slice(from, to).bytes()) + "?=")
+        from = to
+    }
+    ret join(words, "\r\n ")
+}
+
+// The address alone of "Anna Rossi <anna@example.com>".
+string addressOf(string written) {
+    oneLine(written, "an address")
+    string address = written.trim()
+    i64 open = address.find("<")
+    i64 close = address.find(">")
+    if (open >= 0 && close > open) {
+        address = address.slice(open + 1, close).trim()
+    }
+    i64 at = address.find("@")
+    bool fine = at > 0 && at < address.len() - 1
+    for (i64 i = 0; fine && i < address.len(); i++) {
+        fine = address[i] > ' ' && address[i] != '<' && address[i] != '>' && address[i] != ',' && address[i] != 0x7F
+    }
+    if (!fine) {
+        throw Error(format("'{}' is not an address of email, as anna@example.com or Anna Rossi <anna@example.com>", written))
+    }
+    ret address
+}
+
+// An address as a header has it, the name encoded when it is not ASCII.
+string headerAddress(string written) {
+    string address = addressOf(written)
+    i64 open = written.find("<")
+    string name = open > 0 ? written.slice(0, open).trim() : ""
+    if (name.len() >= 2 && name[0] == '"' && name[name.len() - 1] == '"') {
+        name = name.slice(1, name.len() - 1)
+    }
+    if (name.len() == 0) {
+        ret address
+    }
+    if (!isAscii(name)) {
+        ret headerText(name) + " <" + address + ">"
+    }
+    ret "\"" + name.replace("\\", "\\\\").replace("\"", "\\\"") + "\" <" + address + ">"
+}
+
+string headerAddresses(list<string> written) {
+    list<string> all
+    for (string each in written) {
+        all.add(headerAddress(each))
+    }
+    ret join(all, ",\r\n ")
+}
+
+// Bytes in base64, in lines of 76 characters.
+string wrapped(list<u8> data) {
+    string all = crypto.base64(data)
+    list<string> lines
+    for (i64 at = 0; at < all.len(); at += 76) {
+        lines.add(all.slice(at, at + 76 < all.len() ? at + 76 : all.len()))
+    }
+    ret join(lines, "\r\n") + "\r\n"
+}
+
+string textPart(string kind, string content) {
+    ret "Content-Type: text/" + kind + "; charset=utf-8\r\nContent-Transfer-Encoding: base64\r\n\r\n" + wrapped(content.bytes())
+}
+
+// The text and the HTML of a message: one of them, or the two as alternatives.
+string bodyPart(Message message) {
+    if (message.html.len() == 0) {
+        ret textPart("plain", message.text)
+    }
+    if (message.text.len() == 0) {
+        ret textPart("html", message.html)
+    }
+    string boundary = "alt-" + crypto.hex(crypto.random(12))
+    ret "Content-Type: multipart/alternative; boundary=\"" + boundary + "\"\r\n\r\n--" + boundary + "\r\n" + textPart("plain", message.text) +
+        "--" + boundary + "\r\n" + textPart("html", message.html) + "--" + boundary + "--\r\n"
+}
+
+// The name of a file in a header: between quotes, and also as RFC 2231 writes it
+// when it is not ASCII.
+string fileName(string parameter, string name) {
+    oneLine(name, "the name of an attachment")
+    string plain
+    string encoded
+    for (i64 i = 0; i < name.len(); i++) {
+        u8 c = name[i]
+        bool simple = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '-' || c == '_'
+        plain += c < 0x80 && c != '"' && c != '\\' ? name.slice(i, i + 1) : "_"
+        encoded += simple ? name.slice(i, i + 1) : format("%{:02X}", c)
+    }
+    string out = parameter + "=\"" + plain + "\""
+    if (!isAscii(name)) {
+        out += ";\r\n " + parameter + "*=UTF-8''" + encoded
+    }
+    ret out
+}
+
+// The message as the text that is sent, with its headers and the parts of MIME, the
+// lines ended by "\r\n". 'send' does it by itself: a program calls it to keep a copy
+// of what it sent, or to send it in another way. Throws an 'Error' for a message
+// without a sender or a receiver, for an address that is not one, and for an end of
+// line in the subject, in an address or in a name.
+public string encode(Message message) {
+    if (message.from.len() == 0) {
+        throw Error("the message has no sender: from")
+    }
+    if (message.to.len() + message.cc.len() + message.bcc.len() == 0) {
+        throw Error("the message has nobody to go to: to, cc or bcc")
+    }
+    oneLine(message.subject, "the subject")
+    string sender = addressOf(message.from)
+    string out = "From: " + headerAddress(message.from) + "\r\n"
+    if (message.to.len() > 0) {
+        out += "To: " + headerAddresses(message.to) + "\r\n"
+    }
+    if (message.cc.len() > 0) {
+        out += "Cc: " + headerAddresses(message.cc) + "\r\n"
+    }
+    for (string hidden in message.bcc) {
+        addressOf(hidden)  // checked, and not written
+    }
+    if (message.replyTo.len() > 0) {
+        out += "Reply-To: " + headerAddress(message.replyTo) + "\r\n"
+    }
+    out += "Subject: " + headerText(message.subject) + "\r\n"
+    out += "Date: " + time.localNow().format("%a, %d %b %Y %H:%M:%S %z") + "\r\n"
+    out += "Message-ID: <" + crypto.hex(crypto.random(16)) + "@" + sender.slice(sender.find("@") + 1, sender.len()) + ">\r\n"
+    out += "MIME-Version: 1.0\r\n"
+    if (message.attachments.len() == 0) {
+        ret out + bodyPart(message)
+    }
+    string boundary = "mix-" + crypto.hex(crypto.random(12))
+    out += "Content-Type: multipart/mixed; boundary=\"" + boundary + "\"\r\n\r\n--" + boundary + "\r\n" + bodyPart(message)
+    for (Attachment each in message.attachments) {
+        string type = each.type.len() > 0 ? each.type : "application/octet-stream"
+        oneLine(type, "the type of an attachment")
+        out += "--" + boundary + "\r\nContent-Type: " + type + "; " + fileName("name", each.name) +
+            "\r\nContent-Disposition: attachment; " + fileName("filename", each.name) + "\r\nContent-Transfer-Encoding: base64\r\n\r\n" +
+            wrapped(each.data)
+    }
+    ret out + "--" + boundary + "--\r\n"
+}
+
+// ---- The conversation with the server ----
+
+// An answer of the server: its code and its lines.
+struct Reply {
+    i32 code
+    list<string> lines
+}
+
+struct Session {
+    net.Connection link
+    list<u8> pending  // what arrived after the last line read
+
+    string readLine() {
+        for {
+            for (i64 i = 0; i < pending.len(); i++) {
+                if (pending[i] == '\n') {
+                    list<u8> line
+                    for (i64 k = 0; k < i; k++) {
+                        if (pending[k] != '\r') {
+                            line.add(pending[k])
+                        }
+                    }
+                    list<u8> rest
+                    for (i64 k = i + 1; k < pending.len(); k++) {
+                        rest.add(pending[k])
+                    }
+                    pending = move rest
+                    try {
+                        ret string(line)
+                    } catch (Exception e) {
+                        ret "(a line that is not UTF-8)"
+                    }
+                }
+            }
+            if (pending.len() > 65536) {
+                throw Error("the server of SMTP sent a line of more than 64 KiB")
+            }
+            list<u8> more = link.read(4096)
+            if (more.len() == 0) {
+                throw Error("the server of SMTP closed the connection")
+            }
+            for (u8 b in more) {
+                pending.add(b)
+            }
+        }
+    }
+
+    // An answer: lines as "250-first" and then "250 last".
+    Reply read() {
+        Reply reply
+        for {
+            string line = readLine()
+            bool fine = line.len() >= 3
+            for (i64 i = 0; fine && i < 3; i++) {
+                fine = line[i] >= '0' && line[i] <= '9'
+            }
+            if (!fine) {
+                throw Error(format("the server did not answer as SMTP: {}", line))
+            }
+            reply.code = i32(i64(line.slice(0, 3)))
+            reply.lines.add(line.len() > 4 ? line.slice(4, line.len()) : "")
+            if (line.len() == 3 || line[3] != '-') {
+                ret reply
+            }
+        }
+    }
+
+    // Sends a command and gives its answer, which must have the code `wanted`.
+    Reply ask(string command, i32 wanted, string action) {
+        if (command.len() > 0) {
+            link.writeText(command + "\r\n")
+        }
+        Reply reply = read()
+        if (reply.code != wanted) {
+            Refused refused
+            refused.code = reply.code
+            refused.text = format("cannot {}: the server answered {} {}", action, reply.code, join(reply.lines, " "))
+            throw refused
+        }
+        ret reply
+    }
+}
+
+// Whether the answer to EHLO names an extension, and what follows its name.
+string extension(Reply hello, string name) {
+    for (string line in hello.lines) {
+        string upper = line.upper()
+        if (upper == name || upper.startsWith(name + " ") || upper.startsWith(name + "=")) {
+            ret upper.len() > name.len() ? upper.slice(name.len() + 1, upper.len()) : " "
+        }
+    }
+    ret ""
+}
+
+bool offers(string mechanisms, string name) {
+    for (string each in mechanisms.split(" ")) {
+        if (each == name) {
+            ret true
+        }
+    }
+    ret false
+}
+
+// A server of SMTP to send through. One declared without a value goes to port 587
+// with STARTTLS; 'host' must be set. Its methods are const: the tasks of a server
+// share one. Each 'send' opens a connection of its own and closes it.
+public struct Client {
+    public string host     // "smtp.example.com"
+    public i32 port = 587  // 587 with StartTls, 465 with Tls, 25 between servers
+    public Security security = Security.StartTls
+    public string user      // the name of the login, often the address; "" for no login
+    public string password  // its password, or the password of an application
+    // A token of OAuth 2.0 in place of the password, for the providers that take no
+    // password, as Google and Microsoft 365: the access token of 'user', from std.oauth.
+    public string token
+    public string name = "localhost"  // how the client calls itself, in its greeting
+    public i64 timeout = 30000        // for the connection, and for each read and write, in milliseconds; -1 none
+
+    // The session after the greetings, with TLS and the login done.
+    Session open() const {
+        if (host.len() == 0) {
+            throw Error("the client of SMTP has no host")
+        }
+        Session session
+        bool direct = false
+        switch (security) {
+            case Tls {
+                direct = true
+            }
+            default {
+            }
+        }
+        if (direct) {
+            session.link = net.connectTlsTimeout(host, port, timeout)
+        } else {
+            session.link = net.connectTimeout(host, port, timeout)
+        }
+        session.link.timeout(timeout < 0 ? -1 : timeout)
+        string action = format("talk to {}:{}", host, port)
+        session.ask("", 220, action)
+        Reply hello = session.ask("EHLO " + name, 250, action)
+        bool upgrade = false
+        switch (security) {
+            case StartTls {
+                upgrade = true
+            }
+            default {
+            }
+        }
+        if (upgrade) {
+            if (extension(hello, "STARTTLS").len() == 0) {
+                // Never in clear when TLS was asked: someone in the middle can hide the offer.
+                throw Error(format("cannot {}: the server does not offer STARTTLS; Security.Tls is for port 465, Security.None for no TLS", action))
+            }
+            session.ask("STARTTLS", 220, "start TLS")
+            session.link.startTls(host)
+            session.pending.clear()
+            hello = session.ask("EHLO " + name, 250, action)
+        }
+        if (user.len() > 0) {
+            login(ref session, extension(hello, "AUTH"))
+        }
+        ret session
+    }
+
+    void login(ref Session session, string mechanisms) const {
+        string action = format("log in to {} as {}", host, user)
+        if (token.len() > 0) {
+            if (!offers(mechanisms, "XOAUTH2")) {
+                throw Error(format("cannot {}: the server does not take a token of OAuth 2.0", action))
+            }
+            string proof = "user=" + user + "\u{1}auth=Bearer " + token + "\u{1}\u{1}"
+            session.link.writeText("AUTH XOAUTH2 " + crypto.base64(proof.bytes()) + "\r\n")
+            Reply answer = session.read()
+            if (answer.code == 334) {
+                // The reason, in JSON: an empty line asks for the final answer.
+                session.link.writeText("\r\n")
+                answer = session.read()
+            }
+            if (answer.code != 235) {
+                Refused refused
+                refused.code = answer.code
+                refused.text = format("cannot {}: the server answered {} {}", action, answer.code, join(answer.lines, " "))
+                throw refused
+            }
+            ret
+        }
+        if (offers(mechanisms, "PLAIN")) {
+            list<u8> proof
+            proof.add(0)
+            for (u8 b in user.bytes()) {
+                proof.add(b)
+            }
+            proof.add(0)
+            for (u8 b in password.bytes()) {
+                proof.add(b)
+            }
+            session.ask("AUTH PLAIN " + crypto.base64(proof), 235, action)
+        } else if (offers(mechanisms, "LOGIN")) {
+            session.ask("AUTH LOGIN", 334, action)
+            session.ask(crypto.base64(user.bytes()), 334, action)
+            session.ask(crypto.base64(password.bytes()), 235, action)
+        } else if (offers(mechanisms, "CRAM-MD5")) {
+            Reply challenge = session.ask("AUTH CRAM-MD5", 334, action)
+            list<u8> text = crypto.fromBase64(challenge.lines[0].trim())
+            string answer = user + " " + crypto.hex(crypto.hmac(crypto.Hash.Md5, password.bytes(), text))
+            session.ask(crypto.base64(answer.bytes()), 235, action)
+        } else {
+            throw Error(format("cannot {}: the server offers no login that this client knows, among PLAIN, LOGIN, CRAM-MD5 and XOAUTH2: {}",
+                action, mechanisms.trim().len() > 0 ? mechanisms.trim() : "none"))
+        }
+    }
+
+    // Connects, starts TLS and logs in, as 'send' does, and leaves: to know that
+    // the server, the port, the name and the password are right before the first
+    // message. Throws what 'send' throws.
+    public void check() const {
+        Session session = open()
+        session.ask("QUIT", 221, "leave the server")
+    }
+
+    // Sends a message to all its receivers, those of 'to', 'cc' and 'bcc'. Throws
+    // 'Refused', with the code of SMTP, when the server says no, as to a wrong
+    // password or to an address it does not take: then nobody gets the message. An
+    // 'Error' for a message that cannot be written, for a server that does not offer
+    // what was asked, as STARTTLS, and for a failure of the network or a timeout.
+    public void send(Message message) const {
+        string content = encode(message)
+        list<string> receivers
+        for (string each in message.to) {
+            receivers.add(addressOf(each))
+        }
+        for (string each in message.cc) {
+            receivers.add(addressOf(each))
+        }
+        for (string each in message.bcc) {
+            receivers.add(addressOf(each))
+        }
+        Session session = open()
+        string action = format("send the message through {}", host)
+        session.ask("MAIL FROM:<" + addressOf(message.from) + ">", 250, action)
+        for (string receiver in receivers) {
+            session.ask("RCPT TO:<" + receiver + ">", 250, format("send the message to {}", receiver))
+        }
+        session.ask("DATA", 354, action)
+        // A line that starts with a dot gets one more: a dot alone ends the message.
+        list<string> lines = content.split("\r\n")
+        string text
+        for (i64 i = 0; i + 1 < lines.len(); i++) {
+            text += (lines[i].startsWith(".") ? "." : "") + lines[i] + "\r\n"
+        }
+        session.link.writeText(text + ".\r\n")
+        session.ask("", 250, action)
+        try {
+            session.ask("QUIT", 221, "leave the server")
+        } catch (Exception e) {
+            // The message was taken: how the server says goodbye does not matter.
+        }
+    }
+}

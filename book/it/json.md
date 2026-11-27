@@ -702,6 +702,39 @@ feed en
 
 Il lettore accetta i documenti ben formati, con i loro commenti, CDATA e dichiarazione, e lancia un `Error` con la riga e la colonna per gli altri, come un tag non chiuso. Non verifica un documento rispetto a una DTD o a uno schema, e le entità dichiarate da un DOCTYPE non sono riconosciute: un documento che viene da fuori non può crescere in memoria con le proprie entità, né far leggere un file al programma. Un nome conserva il suo prefisso, come `s:Body`, e `localName()` lo restituisce senza.
 
+## CSV
+
+Una tabella passa da un foglio di calcolo o da un database a un programma come CSV: una riga per ogni riga della tabella, con i valori separati da virgole. Il modulo [std.csv](std.csv.html) lo legge e lo scrive.
+
+```cromo
+import std.csv
+
+i32 main() {
+    csv.Table people = csv.table("name,city,age\n\"Rossi, Anna\",Rome,30\nBruno,Milan,41\n")
+    for (i64 i = 0; i < people.len(); i++) {
+        println("{} is {} and lives in {}", people.get(i, "name"), i64(people.get(i, "age")), people.get(i, "city"))
+    }
+    list<list<string>> rows = [["id", "note"], ["7", "said \"hello\""], ["8", "a, b"]]
+    print("{}", csv.encode(rows))
+    ret 0
+}
+```
+
+```output
+Rossi, Anna is 30 and lives in Rome
+Bruno is 41 and lives in Milan
+id,note
+7,"said ""hello"""
+8,"a, b"
+```
+
+- `csv.parse(text)` restituisce le righe, ciascuna la lista dei suoi valori. Un valore fra virgolette doppie può contenere virgole, fine riga e virgolette, queste scritte due volte, come dice la RFC 4180.
+- `csv.table(text)` restituisce una `csv.Table`, la cui prima riga ha i nomi delle colonne: `get(row, name)` è un valore, `values(name)` una colonna intera, `len()` le righe.
+- `csv.encode(rows)` scrive le righe, con le virgolette solo attorno ai valori che ne hanno bisogno; `table.text()` scrive una tabella.
+- `csv.parseWith(text, ';')`, `csv.tableWith` e `csv.encodeWith` prendono un altro separatore: il `;` dei fogli di calcolo dei paesi in cui la virgola è quella dei decimali, come l'Italia, oppure `'\t'`.
+
+I valori sono testi: `i64(value)` e `f64(value)` ne fanno dei numeri. Le righe finiscono con `\n` o `\r\n`, quelle vuote vengono saltate, e le righe possono avere lunghezze diverse: `get` restituisce `""` per un valore che una riga corta non ha. Virgolette non chiuse sono un `Error` con la loro riga.
+
 ## Riepilogo
 
 - `json.encode`, `json.pretty` e `json.decode<T>` convertono numeri, stringhe, liste, array fissi, mappe con chiavi stringa, enum e struct, con codice scritto dal compilatore; un campo che non si può convertire è un errore di compilazione.
@@ -712,3 +745,4 @@ Il lettore accetta i documenti ben formati, con i loro commenti, CDATA e dichiar
 - Una funzione generica che converte il suo `T` scrive `<T : json.Data>`.
 - Gli errori dicono dove si trova il problema: la riga e la colonna, o il percorso del valore.
 - `std.xml` legge l'XML in elementi con attributi, testo e figli, e li scrive.
+- `std.csv` legge e scrive il CSV, come righe o come tabella con i nomi delle colonne.

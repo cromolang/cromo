@@ -702,6 +702,39 @@ feed en
 
 The reader takes the documents that are well formed, with their comments, CDATA and declaration, and throws an `Error` with the line and the column for the others, as a tag that is not closed. It does not check a document against a DTD or a schema, and the entities that a DOCTYPE declares are not known: a document from outside cannot grow in memory by its own entities, nor make the program read a file. A name keeps its prefix, as `s:Body`, and `localName()` gives it without.
 
+## CSV
+
+A table goes from a spreadsheet or a database to a program as CSV: a line for each row, its values separated by commas. The module [std.csv](std.csv.html) reads and writes it.
+
+```cromo
+import std.csv
+
+i32 main() {
+    csv.Table people = csv.table("name,city,age\n\"Rossi, Anna\",Rome,30\nBruno,Milan,41\n")
+    for (i64 i = 0; i < people.len(); i++) {
+        println("{} is {} and lives in {}", people.get(i, "name"), i64(people.get(i, "age")), people.get(i, "city"))
+    }
+    list<list<string>> rows = [["id", "note"], ["7", "said \"hello\""], ["8", "a, b"]]
+    print("{}", csv.encode(rows))
+    ret 0
+}
+```
+
+```output
+Rossi, Anna is 30 and lives in Rome
+Bruno is 41 and lives in Milan
+id,note
+7,"said ""hello"""
+8,"a, b"
+```
+
+- `csv.parse(text)` gives the rows, each the list of its values. A value between double quotes can have commas, ends of line and quotes, each written twice, as RFC 4180 says.
+- `csv.table(text)` gives a `csv.Table`, whose first row has the names of the columns: `get(row, name)` is a value, `values(name)` a whole column, `len()` the rows.
+- `csv.encode(rows)` writes the rows, with quotes only around the values that need them; `table.text()` writes a table.
+- `csv.parseWith(text, ';')`, `csv.tableWith` and `csv.encodeWith` take another separator: the `;` of the spreadsheets of the countries where the comma is of the decimals, or `'\t'`.
+
+The values are texts: `i64(value)` and `f64(value)` make numbers of them. The lines end with `\n` or `\r\n`, the empty ones are passed over, and the rows can have different lengths: `get` gives `""` for a value that a short row does not have. Quotes that are not closed are an `Error` with their line.
+
 ## Summary
 
 - `json.encode`, `json.pretty` and `json.decode<T>` convert numbers, strings, lists, fixed arrays, maps with string keys, enums and structs, with code written by the compiler; a field that cannot be converted is a compile error.
@@ -712,3 +745,4 @@ The reader takes the documents that are well formed, with their comments, CDATA 
 - A generic function that converts its `T` writes `<T : json.Data>`.
 - Errors say where the problem is: the line and the column, or the path of the value.
 - `std.xml` reads XML into elements with attributes, text and children, and writes them.
+- `std.csv` reads and writes CSV, as rows or as a table with the names of its columns.

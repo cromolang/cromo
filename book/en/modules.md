@@ -591,9 +591,11 @@ The core of the library, with `list`, `map`, `string`, `format`, `Exception`, `E
 | `std.crypto` | hashes, random bytes, encryption, signatures | [Networking and HTTP](networking.md) |
 | `std.jwt` | JSON Web Tokens | [Networking and HTTP](networking.md) |
 | `std.oauth` | OAuth 2.0 and OpenID Connect | [Networking and HTTP](networking.md) |
+| `std.smtp` | sending email | [Networking and HTTP](networking.md) |
 | `std.gzip` | compression | [Networking and HTTP](networking.md) |
 | `std.json` | JSON | [JSON](json.md) |
 | `std.xml` | XML | [JSON](json.md) |
+| `std.csv` | CSV | [JSON](json.md) |
 | `std.regex` | regular expressions | [Regular expressions](regex.md) |
 | `std.db` | SQLite and PostgreSQL | [Databases](databases.md) |
 | `std.math` | roots, powers, logarithms, trigonometry | [Numbers and operators](operators.md) |
@@ -616,7 +618,7 @@ i32 main() {
 ```
 
 ```output
-error: the standard library has no module std.io: it has std.audio, std.cmdline, std.config, std.crypto, std.db,
+error: the standard library has no module std.io: it has std.audio, std.cmdline, std.config, std.crypto, std.csv, std.db,
 ```
 
 ## Projects: cromo.mod

@@ -479,21 +479,49 @@ public Listener listenTls(string host, i32 port, string certificate, string key)
 // A connection to the port of a name or an address, trying the addresses of the name
 // in turn until one answers. An exception if the name is not found, or with the error
 // of the last address if none answers, as "cannot connect to example.com:80: connection
-// refused". It has no timeout of its own: it waits as long as the system does.
+// refused". It has no timeout of its own: it waits as long as the system does, and 'connectTimeout' sets one.
 public Connection connect(string host, i32 port) {
+    ret connectIn(host, port, -1)
+}
+
+// A connection as 'connect' gives, which waits at most 'milliseconds' for the server
+// to take it, for all the addresses of the name together: past them, an exception
+// that says "timed out". A server that is off, or behind a firewall that says
+// nothing, would otherwise wait as long as the system does, a minute or more. -1
+// waits as 'connect'. The time to find the addresses of a name is not counted. The
+// connection has no timeout for its reads and writes until 'timeout' sets one.
+public Connection connectTimeout(string host, i32 port, i64 milliseconds) {
+    ret connectIn(host, port, milliseconds < 0 ? -1 : milliseconds)
+}
+
+Connection connectIn(string host, i32 port, i64 limit) {
     list<Address> addresses = resolveHost(host, port)
     i64 code = 0
+    bool late = false
+    time.Instant start = time.now()
     for (Address address in addresses) {
+        i64 left = limit < 0 ? -1 : limit - start.elapsed().milliseconds()
+        if (limit >= 0 && left <= 0) {
+            late = true
+            break
+        }
         Connection connection
         connection.handle = openSocket(address.version, true)
         code = connectTo(connection.handle, address)
         if (code < 0) {  // it connects: writable when done
-            readyFor(connection.handle, false, -1)
+            if (!readyFor(connection.handle, false, left)) {
+                late = true
+                continue
+            }
             code = connectError(connection.handle)
         }
         if (code == 0) {
             ret connection
         }
+        late = false
+    }
+    if (late) {
+        throw failure(format("connect to {}:{}", host, port), format("timed out after {} ms", limit))
     }
     throw failure(format("connect to {}:{}", host, port), errorText(code))
 }
@@ -501,10 +529,22 @@ public Connection connect(string host, i32 port) {
 // A connection with TLS to the port of a name or an address, as 'connect' gives,
 // after the handshake. The certificate of the server must come from an authority that
 // the system trusts, and name the host: otherwise an exception says why, as "the
-// certificate has expired". As 'connect', it has no timeout of its own, in the
+// certificate has expired". As 'connect', it has no timeout of its own, which 'connectTlsTimeout' sets, in the
 // handshake too.
 public Connection connectTls(string host, i32 port) {
     Connection connection = connect(host, port)
+    connection.tls = cromo_tls_connect(host.cstring(), host.len())
+    connection.handshake(format("connect to {}:{} with TLS", host, port))
+    ret connection
+}
+
+// A connection with TLS as 'connectTls' gives, which waits at most 'milliseconds'
+// for the server to take the connection, and then as much for each read and write
+// of the handshake. The connection keeps that timeout for its reads and writes, until
+// 'timeout' sets another. -1 waits as 'connectTls'.
+public Connection connectTlsTimeout(string host, i32 port, i64 milliseconds) {
+    Connection connection = connectTimeout(host, port, milliseconds)
+    connection.timeout(milliseconds < 0 ? -1 : milliseconds)
     connection.tls = cromo_tls_connect(host.cstring(), host.len())
     connection.handshake(format("connect to {}:{} with TLS", host, port))
     ret connection
