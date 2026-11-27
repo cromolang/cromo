@@ -172,6 +172,28 @@ public list<u8> random(i64 count) {
     ret result
 }
 
+// Whether two lists of bytes are the same, in a time that depends only on their
+// length and not on where they differ: for what is secret, as a MAC, a signature, a
+// token or the hash of a password. 'a == b' stops at the first byte that is different,
+// and who measures how long it takes can find a secret a byte at a time. Lists of
+// different lengths are not the same, and that is known at once.
+//
+// '''
+// if (!crypto.sameBytes(crypto.hmac(crypto.Hash.Sha256, key, message), received)) {
+//     throw Error("the message was changed")
+// }
+// '''
+public bool sameBytes(list<u8> a, list<u8> b) {
+    if (a.len() != b.len()) {
+        ret false
+    }
+    u8 difference = 0
+    for (i64 i = 0; i < a.len(); i++) {
+        difference |= a[i] ^ b[i]
+    }
+    ret difference == 0
+}
+
 // ---- Hex and base64 ----
 
 // The bytes as text, with two lowercase hex digits for each byte: "00ff10".

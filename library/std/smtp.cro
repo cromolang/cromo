@@ -280,17 +280,8 @@ struct Session {
         for {
             for (i64 i = 0; i < pending.len(); i++) {
                 if (pending[i] == '\n') {
-                    list<u8> line
-                    for (i64 k = 0; k < i; k++) {
-                        if (pending[k] != '\r') {
-                            line.add(pending[k])
-                        }
-                    }
-                    list<u8> rest
-                    for (i64 k = i + 1; k < pending.len(); k++) {
-                        rest.add(pending[k])
-                    }
-                    pending = move rest
+                    list<u8> line = pending.slice(0, i > 0 && pending[i - 1] == '\r' ? i - 1 : i)
+                    pending = pending.slice(i + 1, pending.len())
                     try {
                         ret string(line)
                     } catch (Exception e) {
@@ -305,9 +296,7 @@ struct Session {
             if (more.len() == 0) {
                 throw Error("the server of SMTP closed the connection")
             }
-            for (u8 b in more) {
-                pending.add(b)
-            }
+            pending.append(more)
         }
     }
 
@@ -454,13 +443,9 @@ public struct Client {
         if (offers(mechanisms, "PLAIN")) {
             list<u8> proof
             proof.add(0)
-            for (u8 b in user.bytes()) {
-                proof.add(b)
-            }
+            proof.append(user.bytes())
             proof.add(0)
-            for (u8 b in password.bytes()) {
-                proof.add(b)
-            }
+            proof.append(password.bytes())
             session.ask("AUTH PLAIN " + crypto.base64(proof), 235, action)
         } else if (offers(mechanisms, "LOGIN")) {
             session.ask("AUTH LOGIN", 334, action)

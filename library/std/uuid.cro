@@ -244,9 +244,7 @@ public Uuid v6() {
 // The namespace and the name, as the versions 3 and 5 hash them.
 list<u8> named(Uuid space, string name) {
     list<u8> data = space.bytes()
-    for (i64 i = 0; i < name.len(); i++) {
-        data.add(name[i])
-    }
+    data.append(name.bytes())
     ret data
 }
 
@@ -254,12 +252,7 @@ list<u8> named(Uuid space, string name) {
 // two, from their SHA-1. The namespace is 'namespaceDns()', 'namespaceUrl()' or any
 // UUID of the program.
 public Uuid v5(Uuid space, string name) {
-    list<u8> hash = crypto.sha1(named(space, name))
-    list<u8> first
-    for (i64 i = 0; i < 16; i++) {
-        first.add(hash[i])
-    }
-    ret marked(first, 5)
+    ret marked(crypto.sha1(named(space, name)).slice(0, 16), 5)
 }
 
 // The UUID of a name in a namespace, of version 3: as 'v5' with MD5, for the

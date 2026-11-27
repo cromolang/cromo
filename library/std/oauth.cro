@@ -270,18 +270,6 @@ string form(list<string> pairs) {
     ret join(parts, "&")
 }
 
-// Whether two texts are the same, in a time that does not say where they differ.
-bool sameText(string a, string b) {
-    if (a.len() != b.len()) {
-        ret false
-    }
-    u8 difference = 0
-    for (i64 i = 0; i < a.len(); i++) {
-        difference = difference | (a[i] ^ b[i])
-    }
-    ret difference == 0
-}
-
 // An application registered at a provider: a backend that logs its users in, or a
 // service that asks tokens for itself. Its methods are const: the tasks of a server
 // share one client. It can be moved, not copied.
@@ -367,14 +355,14 @@ public struct Client {
     // 'identity' of the tokens. An exception when a check fails or the provider
     // refuses the code, as one used twice.
     public Tokens exchange(Login login, string state, string code) const {
-        if (login.state.len() == 0 || !sameText(state, login.state)) {
+        if (login.state.len() == 0 || !crypto.sameBytes(state.bytes(), login.state.bytes())) {
             throw Error("cannot end the login: the state of the answer is not the one of the login")
         }
         Tokens tokens = ask(["grant_type", "authorization_code", "code", code, "redirect_uri", redirectUrl, "code_verifier",
             login.verifier], "end the login")
         if (tokens.id.len() > 0) {
             tokens.identity = json.fromValue<Claims>(checked(provider, cache, tokens.id, id, leeway))
-            if (!sameText(tokens.identity.nonce, login.nonce)) {
+            if (!crypto.sameBytes(tokens.identity.nonce.bytes(), login.nonce.bytes())) {
                 throw Error("cannot end the login: the ID token is of another login")
             }
         }

@@ -418,12 +418,12 @@ string textOf(json.Value value) {
 // SubjectPublicKeyInfo (RFC 5280) of a key of RSA (RFC 8017), from n and e.
 list<u8> rsaPublicKey(list<u8> n, list<u8> e) {
     list<u8> numbers = derInteger(n)
-    append(ref numbers, derInteger(e))
+    numbers.append(derInteger(e))
     list<u8> bits
     bits.add(0)  // no unused bits
-    append(ref bits, der(0x30, numbers))
+    bits.append(der(0x30, numbers))
     list<u8> info = crypto.fromHex("300d06092a864886f70d0101010500")  // rsaEncryption, NULL
-    append(ref info, der(0x03, bits))
+    info.append(der(0x03, bits))
     ret der(0x30, info)
 }
 
@@ -432,10 +432,10 @@ list<u8> curvePublicKey(string curve, list<u8> x, list<u8> y) {
     list<u8> point
     point.add(0)  // no unused bits
     point.add(4)  // not compressed
-    append(ref point, x)
-    append(ref point, y)
+    point.append(x)
+    point.append(y)
     list<u8> info = der(0x30, crypto.fromHex("06072a8648ce3d0201" + curve))  // ecPublicKey, the curve
-    append(ref info, der(0x03, point))
+    info.append(der(0x03, point))
     ret der(0x30, info)
 }
 
@@ -451,9 +451,9 @@ list<u8> der(u8 tag, list<u8> content) {
             digits.insert(0, u8(n & 0xFF))
         }
         out.add(u8(0x80 + digits.len()))
-        append(ref out, digits)
+        out.append(digits)
     }
-    append(ref out, content)
+    out.append(content)
     ret out
 }
 
@@ -712,7 +712,7 @@ bool signedWith(Key key, Token parts) {
     list<u8> data = parts.input.bytes()
     Family family = familyOf(key.algorithm)
     if (family == Family.Hmac) {
-        ret sameBytes(crypto.hmac(hashOf(key.algorithm), key.secretBytes, data), parts.signature)
+        ret crypto.sameBytes(crypto.hmac(hashOf(key.algorithm), key.secretBytes, data), parts.signature)
     }
     if (family == Family.Ed25519) {
         ret crypto.ed25519Verify(key.publicBytes, data, parts.signature)
@@ -789,24 +789,6 @@ bool names(json.Value claims, string audience) {
 }
 
 // ---- Helpers ----
-
-// The same bytes, compared in a time that does not depend on where they differ.
-bool sameBytes(list<u8> a, list<u8> b) {
-    if (a.len() != b.len()) {
-        ret false
-    }
-    u8 difference = 0
-    for (i64 i = 0; i < a.len(); i++) {
-        difference |= a[i] ^ b[i]
-    }
-    ret difference == 0
-}
-
-void append(ref list<u8> out, list<u8> more) {
-    for (u8 b in more) {
-        out.add(b)
-    }
-}
 
 void wipe(ref list<u8> bytes) {
     for (i64 i = 0; i < bytes.len(); i++) {

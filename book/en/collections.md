@@ -97,9 +97,15 @@ error: an element of a list is given to it, not passed with 'ref'
 | `remove(i)` | removes the element at `i` and gives it back; the elements after it move one place back |
 | `clear()` | removes all the elements |
 | `reserve(n)` | makes room for `n` elements in all, so that adding them does not move the list in memory again |
+| `append(other)` | adds a copy of each element of another list at the end |
+| `slice(from, to)` | a new list with a copy of the elements from `from` to `to` excluded |
+| `indexOf(x)` | the position of the first element equal to `x`, or -1 |
+| `contains(x)` | whether an element is equal to `x` |
 | `copy()` | a new list with a copy of each element |
 | `map<U>(f)` | a new list with what `f` gives for each element |
 | `filter(f)` | a new list with a copy of the elements for which `f` gives `true` |
+
+`indexOf` and `contains` compare the elements with `==`: they are for the lists of numbers, of strings, and of the structs, the enums and the lists that `==` compares ([Structs](structs.md)). `slice` panics for a position out of the list, as the one of `string`.
 
 `numbers[i]` is the element itself: it can be read, assigned, passed with `ref` and moved with `move numbers[i]`, which leaves the default value of the type in its place:
 

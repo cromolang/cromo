@@ -856,6 +856,7 @@ bool valid = crypto.ed25519Verify(crypto.ed25519PublicKey(secret), data, signatu
 - `encrypt` and `decrypt` with AES-GCM or ChaCha20-Poly1305: the result has the tag of 16 bytes at the end, and `decrypt` throws if the data, or the extra data, are not those that were encrypted.
 - Ed25519 signs (`ed25519PublicKey`, `ed25519Sign`, `ed25519Verify`) and X25519 exchanges keys (`x25519PublicKey`, `x25519`); the private keys are 32 random bytes.
 - A key of the wrong size is an exception.
+- `crypto.sameBytes(a, b)` compares two lists of bytes in a time that does not depend on where they differ, for a MAC, a token or a hash that is secret (D596).
 - For the protocols that put the parts together by themselves, as SSH (D581): `chacha20`, `poly1305` and `aesCtr`, which alone do not say whether the data were changed; `rsaSign` and `rsaVerify` with an `RsaKey` of numbers; `ecdsaPublicKey`, `ecdsaSign` and `ecdsaVerify` on the curves of `Curve`. A program that only wants to encrypt uses `encrypt` and `decrypt`.
 
 ## 21. JSON (D251, D255–D257, D264–D266, D365, D369–D371)

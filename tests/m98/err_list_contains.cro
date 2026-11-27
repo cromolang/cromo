@@ -1,0 +1,12 @@
+// list.contains needs elements that == compares (D596): a list of functions has
+// none, and the error says so.
+// expect-error: '==' does not work on values of type func(i64) i64 (in list<func(i64) i64>
+i32 main() {
+    list<func(i64) i64> steps
+    steps.add([](i64 n) i64 { ret n + 1 })
+    func(i64) i64 other = [](i64 n) i64 { ret n }
+    if (steps.contains(other)) {
+        ret 1
+    }
+    ret 0
+}

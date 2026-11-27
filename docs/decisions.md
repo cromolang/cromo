@@ -2851,6 +2851,14 @@ A branch whose type is not simple, as a `string`, gives a new value, also a copy
 - An `smtp.Message` has `from`, `to`, `cc`, `bcc`, `replyTo`, `subject`, `text`, `html` and `attachments`, with `attach` and `attachFile`; `smtp.encode(message)` is its text. The text and the HTML are parts in base64 of a `multipart/alternative`, the attachments of a `multipart/mixed`; a subject and a name that are not ASCII are the encoded words of RFC 2047, the name of a file also as RFC 2231 writes it. An end of line in a subject, an address or a name is an `Error`, since it would write another header.
 - A server that says no is an `smtp.Refused` with the `code` of SMTP: from 400 of the moment, from 500 final. When a receiver is refused nobody gets the message. Not there: several messages on one connection, DKIM, the receipts, and receiving mail.
 
+### D596. `list`: `slice`, `append`, `indexOf` and `contains`
+*2026-11-27.* Chosen by the author, who found them written by hand in the package of SSH: the library had them three times too. They are methods of `list<T>`, in the core.
+- `slice(from, to)` gives a new list with a copy of the elements from `from` to `to` excluded, with the rules of `string.slice`: a position out of the list, or `from` after `to`, is a panic. `append(other)` adds a copy of each element of another list at the end; the name is of the author, next to `add` for one element.
+- `indexOf(value)` gives the place of the first element equal to the value, or -1, and `contains(value)` whether there is one. They compare with `==` (D565), so they are for the lists of numbers, strings, and of the structs, the enums and the lists that `==` compares: for a list of functions, calling them is a compile error. It closes the open point of `list.contains`.
+- For this, in a module of the unsafe dialect `==` and `!=` on a value of a type parameter are taken where the generic is written, and checked in each instance, as its other functions (D85): the method of the instance is checked only when it is used (D103). The programs still cannot write `==` on a `T`: an interface for it is for later. The error for a list that cannot be compared is at the `==` of `core.cro`, with the list and the line that used it.
+- A number as wide as some bytes, which the package of SSH has too, is not of a list.
+- `crypto.sameBytes(a, b)`, chosen by the author the same day: whether two lists of bytes are the same in a time that depends only on their length, for what is secret, as a MAC or a token, where the `==` that stops at the first different byte lets who measures the time find a secret a byte at a time. It was written three times, in `std.jwt`, in `std.oauth` and in the package of SSH: a function that is easy to write wrong is once in the library. `==` on lists and strings stays the fast one, a comparison of memory.
+
 ---
 
 ## Proposed
@@ -3322,4 +3330,5 @@ A component keeps the distances from the edges of its parent, the content of the
 ## Open
 
 The points still to be defined, each when its milestone needs it (D152):
+- an interface that gives `==` to a type parameter, for the generic code of the programs (D596);
 - the content of the standard library;

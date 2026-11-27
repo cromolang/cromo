@@ -1,0 +1,28 @@
+// crypto.sameBytes (D596): the same answer as ==, for lists that are equal, that
+// differ at the start, in the middle or at the end, of different lengths and empty.
+// expect-output: equal true true
+// expect-output: different false false false
+// expect-output: lengths false false
+// expect-output: empty true
+// expect-output: a mac true false
+import std.crypto
+
+i32 main() {
+    list<u8> a = crypto.fromHex("00112233445566778899aabbccddeeff")
+    println("equal {} {}", crypto.sameBytes(a, a.copy()), crypto.sameBytes(a, crypto.fromHex("00112233445566778899AABBCCDDEEFF")))
+    list<u8> first = a.copy()
+    first[0] = 1
+    list<u8> middle = a.copy()
+    middle[8] = 0
+    list<u8> last = a.copy()
+    last[15] = 0xFE
+    println("different {} {} {}", crypto.sameBytes(a, first), crypto.sameBytes(a, middle), crypto.sameBytes(a, last))
+    println("lengths {} {}", crypto.sameBytes(a, a.slice(0, 15)), crypto.sameBytes(list<u8>(), a))
+    println("empty {}", crypto.sameBytes(list<u8>(), list<u8>()))
+
+    list<u8> key = "a key of the test".bytes()
+    list<u8> mac = crypto.hmac(crypto.Hash.Sha256, key, "pay 10".bytes())
+    println("a mac {} {}", crypto.sameBytes(mac, crypto.hmac(crypto.Hash.Sha256, key, "pay 10".bytes())),
+        crypto.sameBytes(mac, crypto.hmac(crypto.Hash.Sha256, key, "pay 99".bytes())))
+    ret 0
+}

@@ -1,0 +1,95 @@
+// list.slice, append, indexOf and contains (D596): a piece of a list, a list at the
+// end of another, and an element looked for with ==, on numbers, strings, structs
+// with a generated or a written equals(), enums and lists of lists.
+// expect-output: slice [20, 30] [] [10, 20, 30, 40] 4
+// expect-output: strings [b, c] and the list keeps [a, b, c]
+// expect-output: append [1, 2, 3, 4, 5] [3, 4, 5] [1, 2, 3, 4, 5]
+// expect-output: twice [a, b, a, b]
+// expect-output: bytes 68656c6c6f
+// expect-output: numbers 2 -1 true false
+// expect-output: strings 1 -1 true false
+// expect-output: floats 1 true
+// expect-output: points 1 -1 true
+// expect-output: names 0 true false
+// expect-output: colors 1 true false
+// expect-output: shapes 1 -1
+// expect-output: lists 1 true false
+// expect-output: empty -1 false 0
+import std.crypto
+
+struct Point {
+    i64 x
+    i64 y
+}
+
+// Equal when the names are, whatever their case.
+struct Name {
+    string text
+
+    bool equals(Name other) const {
+        ret text.lower() == other.text.lower()
+    }
+}
+
+enum Color {
+    Red
+    Green
+    Blue
+}
+
+enum Shape {
+    Circle(f64 radius)
+    Square(f64 side)
+}
+
+Point point(i64 x, i64 y) {
+    Point p
+    p.x = x
+    p.y = y
+    ret p
+}
+
+Name named(string text) {
+    Name n
+    n.text = text
+    ret n
+}
+
+i32 main() {
+    list<i64> numbers = [10, 20, 30, 40]
+    println("slice {:?} {:?} {:?} {}", numbers.slice(1, 3), numbers.slice(2, 2), numbers.slice(0, 4), numbers.len())
+    list<string> words = ["a", "b", "c"]
+    println("strings [{}] and the list keeps [{}]", join(words.slice(1, 3), ", "), join(words, ", "))
+
+    list<i64> all = [1, 2]
+    list<i64> more = [3, 4, 5]
+    all.append(more)
+    list<i64> none
+    all.append(none)
+    none.append(all)
+    println("append {:?} {:?} {:?}", all, more, none)
+    list<string> pair = ["a", "b"]
+    pair.append(pair.copy())
+    println("twice [{}]", join(pair, ", "))
+    list<u8> bytes = "hel".bytes()
+    bytes.append("lo".bytes())
+    println("bytes {}", crypto.hex(bytes))
+
+    println("numbers {} {} {} {}", numbers.indexOf(30), numbers.indexOf(35), numbers.contains(10), numbers.contains(11))
+    println("strings {} {} {} {}", words.indexOf("b"), words.indexOf("B"), words.contains("c"), words.contains(""))
+    list<f64> floats = [1.5, 2.5]
+    println("floats {} {}", floats.indexOf(2.5), floats.contains(1.5))
+    list<Point> points = [point(1, 2), point(3, 4)]
+    println("points {} {} {}", points.indexOf(point(3, 4)), points.indexOf(point(4, 3)), points.contains(point(1, 2)))
+    list<Name> names = [named("Anna"), named("Bruno")]
+    println("names {} {} {}", names.indexOf(named("ANNA")), names.contains(named("bruno")), names.contains(named("Carla")))
+    list<Color> colors = [Color.Red, Color.Blue]
+    println("colors {} {} {}", colors.indexOf(Color.Blue), colors.contains(Color.Red), colors.contains(Color.Green))
+    list<Shape> shapes = [Shape.Circle(1.0), Shape.Square(2.0)]
+    println("shapes {} {}", shapes.indexOf(Shape.Square(2.0)), shapes.indexOf(Shape.Square(3.0)))
+    list<list<i64>> rows = [[1, 2], [3]]
+    println("lists {} {} {}", rows.indexOf([3]), rows.contains([1, 2]), rows.contains([2, 1]))
+    list<string> empty
+    println("empty {} {} {}", empty.indexOf("a"), empty.contains("a"), empty.slice(0, 0).len())
+    ret 0
+}

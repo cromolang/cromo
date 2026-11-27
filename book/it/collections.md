@@ -97,9 +97,15 @@ error: an element of a list is given to it, not passed with 'ref'
 | `remove(i)` | toglie l'elemento in `i` e lo restituisce; gli elementi successivi arretrano di un posto |
 | `clear()` | toglie tutti gli elementi |
 | `reserve(n)` | fa spazio per `n` elementi in tutto, così aggiungerli non sposta di nuovo la lista in memoria |
+| `append(other)` | aggiunge in fondo una copia di ogni elemento di un'altra lista |
+| `slice(from, to)` | una nuova lista con una copia degli elementi da `from` a `to` escluso |
+| `indexOf(x)` | la posizione del primo elemento uguale a `x`, oppure -1 |
+| `contains(x)` | se un elemento è uguale a `x` |
 | `copy()` | una nuova lista con una copia di ogni elemento |
 | `map<U>(f)` | una nuova lista con ciò che `f` restituisce per ogni elemento |
 | `filter(f)` | una nuova lista con una copia degli elementi per cui `f` restituisce `true` |
+
+`indexOf` e `contains` confrontano gli elementi con `==`: valgono per le liste di numeri, di stringhe, e delle struct, degli enum e delle liste che `==` sa confrontare ([Struct](structs.md)). `slice` va in panic per una posizione fuori dalla lista, come quello di `string`.
 
 `numbers[i]` è l'elemento stesso: si può leggere, assegnare, passare con `ref` e spostare con `move numbers[i]`, che lascia al suo posto il valore predefinito del tipo:
 

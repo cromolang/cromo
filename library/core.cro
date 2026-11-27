@@ -166,6 +166,58 @@ public struct list<T> {
         ret result
     }
 
+    // A new list with a copy of the elements from 'from' to 'to' excluded, as 'slice' of a
+    // string: '[10, 20, 30, 40].slice(1, 3)' is '[20, 30]'. A position out of the list, or
+    // 'from' after 'to', is a panic.
+    public list<T> slice(i64 from, i64 to) const {
+        checkIndex(from, length + 1)
+        checkIndex(to, length + 1)
+        if (from > to) {
+            panic(format("the slice starts at {}, after its end {}", from, to))
+        }
+        list<T> result
+        result.reserve(to - from)
+        for (i64 i = from; i < to; i++) {
+            result.add(copyAt<T>(addressOf(i)))
+        }
+        ret result
+    }
+
+    // Adds a copy of each element of 'other' at the end of the list, in their order:
+    // 'all.append(more)'. The other list does not change.
+    public void append(list<T> other) {
+        i64 count = other.length
+        reserve(length + count)
+        for (i64 i = 0; i < count; i++) {
+            add(copyAt<T>(other.addressOf(i)))
+        }
+    }
+
+    // The place of the first element equal to 'value', from 0, or -1 when there is none.
+    // The elements are compared with '==': the list must be of values that have it, as
+    // numbers, strings, and the structs and the enums whose fields have it.
+    public i64 indexOf(T value) const {
+        for (i64 i = 0; i < length; i++) {
+            T each = take<T>(addressOf(i))  // lent to ==, and given back also if it throws
+            bool found = false
+            try {
+                found = each == value
+            } finally {
+                put<T>(addressOf(i), move each)
+            }
+            if (found) {
+                ret i
+            }
+        }
+        ret -1
+    }
+
+    // Whether an element of the list is equal to 'value', compared with '==' as in
+    // 'indexOf'.
+    public bool contains(T value) const {
+        ret indexOf(value) >= 0
+    }
+
     // A new list with a copy of each element, the same that 'b = a' makes.
     public list<T> copy() const {
         list<T> result

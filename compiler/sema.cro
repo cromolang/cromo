@@ -5944,6 +5944,11 @@ public struct Checker {
             ret stringOperator(expr)
         }
 
+        if (types.isParam(operand) && (op == BinaryOp.Eq || op == BinaryOp.Ne) && isUnsafe(curFile)) {
+            // D596: in the library, as in list.contains: checked in each instance, where
+            // the type is known, as the other functions of the unsafe dialect (D85).
+            ret boolType()
+        }
         if (types.isParam(operand) || types.isInterface(operand)) {
             error(loc, quoted + " does not work on values of type " + name(operand) + ": no interface provides it yet")
             ret errorType()

@@ -928,6 +928,8 @@ cannot read the base64: its length is not valid
 - `base64(bytes)` writes base64 with its padding `=`, which `fromBase64(text)` requires. `base64Url(bytes)` writes the form for URLs, with `-` and `_` and without the padding; `fromBase64Url(text)` reads it with or without.
 - `random(count)` gives bytes from the generator of the system, good for keys and nonces: an exception if the system gives none.
 
+`crypto.sameBytes(a, b)` says whether two lists of bytes are the same in a time that depends only on their length. A program uses it, and not `==`, to compare what is secret: an HMAC that arrived with a message, a token, the hash of a password. `==` stops at the first byte that is different, and who can measure how long the comparison takes finds the secret a byte at a time.
+
 ### Encryption
 
 `crypto.encrypt(cipher, key, nonce, data, extra)` encrypts and authenticates the data, with `crypto.Cipher.AesGcm` or `crypto.Cipher.ChaCha20Poly1305`, and `crypto.decrypt` with the same arguments gives them back:
