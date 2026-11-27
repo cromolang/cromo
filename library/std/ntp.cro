@@ -1,0 +1,280 @@
+// Asks a server of NTP what time it is, and says how far the clock of this computer
+// is from it: the offset, the time the question took, and what the server says of
+// its own clock, as its stratum and where its time comes from. It measures, and does
+// not set the clock of the system.
+//
+// '''
+// import std.ntp
+//
+// ntp.Sample sample = ntp.query("pool.ntp.org", 2000)
+// println("the clock is off by {} ms, measured in {} ms", sample.offset.milliseconds(), sample.delay.milliseconds())
+// println("stratum {}, from {}", sample.stratum, sample.reference)
+//
+// ntp.Measure measure = ntp.measure("pool.ntp.org", 5, 2000)   // five questions, the best one kept
+// println("{} ms, give or take {} ms", measure.best.offset.milliseconds(), measure.jitter.milliseconds())
+// '''
+//
+// The guide: [Networking and HTTP](https://cromolang.org/book/en/networking.html).
+
+// The module std.ntp (D598), in Cromo on std.net: a client of SNTP, the questions of
+// NTP version 4 (RFC 5905, RFC 4330) over UDP, port 123. Nothing is of the whole
+// program, and nothing is kept between two questions.
+import std.net
+import std.time
+
+// What a server says of a leap second at the end of the day.
+public enum Leap {
+    None            // nothing: the day has its 86400 seconds
+    Insert          // the last minute of the day has 61 seconds
+    Remove          // the last minute of the day has 59 seconds
+    Unsynchronized  // the clock of the server is not set: its time is not to be trusted
+}
+
+// An answer of a server, and what it says of the clock of this computer.
+public struct Sample {
+    public string server  // the address that answered: "193.204.114.232"
+    // How far the clock of this computer is from the one of the server: what to add
+    // to the time of this computer to have the time of the server. Positive when this
+    // computer is behind, negative when it is ahead.
+    public time.Duration offset
+    // The time of the question and of the answer on the network, without what the
+    // server took to answer. The offset can be wrong by at most half of it: the
+    // smaller the delay, the better the measure.
+    public time.Duration delay
+    // How far the server is from a clock of reference: 1 has one itself, as a
+    // receiver of GPS or an atomic clock; 2 asks a server of stratum 1, and so on to
+    // 15. 16 is a server whose clock is not set, as 0 in its answer.
+    public i32 stratum
+    public Leap leap  // the leap second announced, or that the server is not set
+    // Where the server takes its time. For stratum 1 the name of its clock, as "GPS",
+    // "PPS", "DCF", "GOOG"; from stratum 2 the address of the server it asks, or four
+    // bytes of it for an address of IPv6, written as an address of IPv4.
+    public string reference
+    public time.Duration rootDelay       // the delay from the server to its clock of reference, all the way
+    public time.Duration rootDispersion  // how much its time can be off from that clock
+    public time.Duration precision       // the smallest step of the clock of the server
+    public i64 pollSeconds               // how often the server would be asked again, at most
+    public i32 version                   // of NTP in the answer: 3 or 4
+    public time.DateTime time            // the time of the server when it answered, in UTC
+    public time.DateTime referenceTime   // when the clock of the server was last set, in UTC
+    // Whether the time of the answer can be used: the server says that its clock is
+    // set, with a stratum from 1 to 15.
+    public bool synchronized
+}
+
+// Several answers of a server, as 'measure' gives them.
+public struct Measure {
+    public Sample best           // the one with the smallest delay: the best measure
+    public list<Sample> samples  // all those that arrived, in their order
+    public i64 lost              // the questions without an answer
+    // How much the offsets of the answers differ, the largest less the smallest:
+    // the noise of the network, and how much the measure can be trusted.
+    public time.Duration jitter
+}
+
+// 32 bits of a message, the highest byte first.
+i64 word(list<u8> data, i64 at) {
+    ret (i64(data[at]) << 24) | (i64(data[at + 1]) << 16) | (i64(data[at + 2]) << 8) | i64(data[at + 3])
+}
+
+// A time of NTP, seconds from 1900 and their fraction in 32 bits each, as
+// nanoseconds from 1970. The seconds wrap in 2036: those of the first half of the
+// range are of the era after it.
+i64 stamp(list<u8> data, i64 at) {
+    i64 seconds = word(data, at)
+    i64 fraction = word(data, at + 4)
+    if (seconds < 0x80000000) {
+        seconds += 0x100000000
+    }
+    ret (seconds - 2208988800) * 1000000000 + ((fraction * 1000000000) >> 32)
+}
+
+// A span of 16 bits of seconds and 16 of their fraction.
+time.Duration span16(list<u8> data, i64 at) {
+    time.Duration span
+    span.nanoseconds = (word(data, at) * 1000000000) >> 16
+    ret span
+}
+
+// Two raised to an exponent with a sign, in nanoseconds: the precision of a clock.
+i64 powerOfTwo(u8 raw) {
+    i64 exponent = raw < 128 ? i64(raw) : i64(raw) - 256
+    if (exponent >= 0) {
+        ret exponent > 30 ? 1000000000 << 30 : 1000000000 << exponent
+    }
+    ret exponent < -40 ? 0 : 1000000000 >> (-exponent)
+}
+
+time.DateTime dateOf(i64 nanoseconds) {
+    time.DateTime moment = time.fromUnix(nanoseconds / 1000000000, time.utc())
+    moment.nanosecond = i32(nanoseconds % 1000000000)
+    ret moment
+}
+
+// Asks the server of NTP at 'server', a name or an address, on port 123, and waits
+// for its answer up to 'timeout' milliseconds. Throws an 'Error' when no answer
+// comes, when the name is not found, and when the server refuses, as with "RATE"
+// for who asks too often. An answer of a server whose clock is not set is given,
+// with 'synchronized' false.
+//
+// The public servers ask not to be asked more than once every few seconds by the
+// same computer; "pool.ntp.org" gives a different server each time.
+public Sample query(string server, i64 timeout) {
+    ret queryPort(server, 123, timeout)
+}
+
+// Asks a server of NTP on another port.
+public Sample queryPort(string server, i32 port, i64 timeout) {
+    net.Udp socket = net.udp("0.0.0.0", 0)
+    list<u8> request
+    for (i64 i = 0; i < 48; i++) {
+        request.add(0)
+    }
+    request[0] = 0x23  // no leap second known, version 4, a client
+    // The time of the question goes in it: the answer must give it back, so that an
+    // answer made up by someone else, or one that is late, is not taken.
+    time.Instant start = time.now()
+    i64 sent = time.utcNow().unixNano()
+    i64 seconds = sent / 1000000000 + 2208988800
+    i64 fraction = ((sent % 1000000000) << 32) / 1000000000
+    for (i64 i = 0; i < 4; i++) {
+        request[40 + i] = u8((seconds >> (24 - 8 * i)) & 0xFF)
+        request[44 + i] = u8((fraction >> (24 - 8 * i)) & 0xFF)
+    }
+    socket.send(server, port, request)
+    for {
+        i64 left = timeout - start.elapsed().milliseconds()
+        if (left <= 0) {
+            throw Error(format("cannot ask the time to {}: no answer in {} ms", server, timeout))
+        }
+        socket.timeout(left)
+        net.Datagram answer
+        try {
+            answer = socket.receive(1024)
+        } catch (Exception e) {
+            throw Error(format("cannot ask the time to {}: no answer in {} ms", server, timeout))
+        }
+        i64 elapsed = start.elapsed().nanoseconds
+        list<u8> data = answer.data.copy()
+        bool mine = data.len() >= 48 && answer.port == port
+        for (i64 i = 0; mine && i < 8; i++) {
+            mine = data[24 + i] == request[40 + i]  // the origin: the time of this question
+        }
+        i64 mode = mine ? i64(data[0] & 7) : 0
+        if (!mine || (mode != 4 && mode != 5)) {
+            continue  // not the answer to this question
+        }
+        Sample sample
+        sample.server = answer.host.copy()
+        sample.version = i32((data[0] >> 3) & 7)
+        sample.stratum = i32(data[1])
+        list<u8> id = data.slice(12, 16)
+        if (sample.stratum == 0) {
+            // A kiss of death: the server says why it does not answer.
+            list<u8> code
+            for (u8 c in id) {
+                if (c > ' ' && c < 0x7F) {
+                    code.add(c)
+                }
+            }
+            string why = string(code)
+            if (why == "RATE") {
+                throw Error(format("cannot ask the time to {}: the server says RATE, it is asked too often", server))
+            }
+            if (why == "DENY" || why == "RSTR") {
+                throw Error(format("cannot ask the time to {}: the server says {}, it does not answer this computer", server, why))
+            }
+        }
+        i64 leap = i64(data[0] >> 6)
+        sample.leap = leap == 0 ? Leap.None : leap == 1 ? Leap.Insert : leap == 2 ? Leap.Remove : Leap.Unsynchronized
+        if (sample.stratum == 0) {
+            sample.stratum = 16
+        }
+        if (sample.stratum == 1) {
+            list<u8> name
+            for (u8 c in id) {
+                if (c > ' ' && c < 0x7F) {
+                    name.add(c)
+                }
+            }
+            sample.reference = string(name)
+        } else {
+            sample.reference = format("{}.{}.{}.{}", id[0], id[1], id[2], id[3])
+        }
+        sample.pollSeconds = powerOfTwo(data[2]) / 1000000000
+        sample.precision.nanoseconds = powerOfTwo(data[3])
+        sample.rootDelay = span16(data, 4)
+        sample.rootDispersion = span16(data, 8)
+        i64 received = stamp(data, 32)     // when the server got the question
+        i64 transmitted = stamp(data, 40)  // when it sent the answer
+        bool stamped = word(data, 40) != 0 || word(data, 44) != 0
+        sample.referenceTime = dateOf(word(data, 16) == 0 ? 0 : stamp(data, 16))
+        sample.time = dateOf(stamped ? transmitted : 0)
+        // The four times of NTP: the question leaves, arrives, the answer leaves,
+        // arrives. The last is the first plus what the clock that never goes back
+        // counted, so that a change of the date in the meanwhile does not matter.
+        i64 arrived = sent + elapsed
+        sample.offset.nanoseconds = ((received - sent) + (transmitted - arrived)) / 2
+        sample.delay.nanoseconds = elapsed - (transmitted - received)
+        if (sample.delay.nanoseconds < 0) {
+            sample.delay.nanoseconds = 0
+        }
+        bool set = true
+        switch (sample.leap) {
+            case Unsynchronized {
+                set = false
+            }
+            default {
+            }
+        }
+        sample.synchronized = set && stamped && sample.stratum >= 1 && sample.stratum <= 15
+        ret sample
+    }
+}
+
+// Asks a server 'count' times, a little apart, and keeps the answer with the
+// smallest delay, which is the best measure: the offset of an answer is right
+// within half its delay. A question without an answer is counted in 'lost'. Throws an
+// 'Error' when no answer comes at all, and for a count below 1.
+public Measure measure(string server, i64 count, i64 timeout) {
+    ret measurePort(server, 123, count, timeout)
+}
+
+// A measure as 'measure' takes it, of a server on another port.
+public Measure measurePort(string server, i32 port, i64 count, i64 timeout) {
+    if (count < 1) {
+        throw Error(format("a measure takes at least 1 question, not {}", count))
+    }
+    Measure result
+    string problem
+    for (i64 i = 0; i < count; i++) {
+        if (i > 0) {
+            time.msleep(200)
+        }
+        try {
+            result.samples.add(queryPort(server, port, timeout))
+        } catch (Exception e) {
+            result.lost++
+            problem = e.message()
+        }
+    }
+    if (result.samples.len() == 0) {
+        throw Error(problem)
+    }
+    i64 best = 0
+    i64 lowest = result.samples[0].offset.nanoseconds
+    i64 highest = lowest
+    for (i64 i = 0; i < result.samples.len(); i++) {
+        i64 offset = result.samples[i].offset.nanoseconds
+        lowest = offset < lowest ? offset : lowest
+        highest = offset > highest ? offset : highest
+        bool better = result.samples[i].synchronized && !result.samples[best].synchronized
+        bool same = result.samples[i].synchronized == result.samples[best].synchronized
+        if (better || (same && result.samples[i].delay.nanoseconds < result.samples[best].delay.nanoseconds)) {
+            best = i
+        }
+    }
+    result.best = result.samples[best].copy()
+    result.jitter.nanoseconds = highest - lowest
+    ret result
+}

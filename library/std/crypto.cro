@@ -254,6 +254,58 @@ public list<u8> fromBase64Url(string text) {
     ret decode64(text, true)
 }
 
+// The bytes in base32 (RFC 4648), with the letters from A to Z, the digits from 2 to 7
+// and the padding '=': "NBSWY3DP" for "hello". It is how the secrets of the one-time
+// codes are written, since a person can read and type it.
+public string base32(list<u8> bytes) {
+    string letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
+    list<u8> out
+    i64 buffer = 0
+    i64 bits = 0
+    for (u8 b in bytes) {
+        buffer = (buffer << 8) | i64(b)
+        bits += 8
+        for (bits >= 5) {
+            bits -= 5
+            out.add(letters[(buffer >> bits) & 31])
+        }
+        buffer = buffer & 0xFF
+    }
+    if (bits > 0) {
+        out.add(letters[(buffer << (5 - bits)) & 31])
+    }
+    for (out.len() % 8 != 0) {
+        out.add('=')
+    }
+    ret string(out)
+}
+
+// The bytes of a text in base32, in upper or lower case, with or without the padding
+// '='; the spaces and the '-' that group the letters for a person are passed over. An
+// exception for a character that is not of base32.
+public list<u8> fromBase32(string text) {
+    list<u8> out
+    i64 buffer = 0
+    i64 bits = 0
+    for (i64 i = 0; i < text.len(); i++) {
+        u8 c = text[i]
+        if (c == ' ' || c == '-' || c == '=') {
+            continue
+        }
+        i64 value = c >= 'A' && c <= 'Z' ? i64(c) - 65 : c >= 'a' && c <= 'z' ? i64(c) - 97 : c >= '2' && c <= '7' ? i64(c) - 24 : -1
+        if (value < 0) {
+            throw Error(format("the text is not base32: the character at {} is not a letter or a digit from 2 to 7", i))
+        }
+        buffer = ((buffer << 5) | value) & 0xFFFF
+        bits += 5
+        if (bits >= 8) {
+            bits -= 8
+            out.add(u8((buffer >> bits) & 0xFF))
+        }
+    }
+    ret out
+}
+
 // ---- Ciphers with authentication ----
 
 // A cipher with authentication, for 'encrypt' and 'decrypt'. Both take a nonce of 12

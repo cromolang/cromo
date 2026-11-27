@@ -1,0 +1,158 @@
+// std.ntp (D598), against a server of NTP written here, whose clock is 5 seconds
+// ahead: the offset and the delay of an answer; its stratum, its reference, its
+// precision and the other fields; a server of stratum 1; one that says RATE; one
+// whose clock is not set; an answer that is not to this question, passed over; a
+// measure of several questions; and a server that does not answer.
+// expect-output: offset true, delay true
+// expect-output: stratum 2 from 192.168.1.10, version 4, leap None, synchronized true
+// expect-output: root 15 ms and 30 ms, precision 953 ns, poll 64 s
+// expect-output: times true true
+// expect-output: stratum 1 from GPS, leap Insert
+// expect-output: cannot ask the time to 127.0.0.1: the server says RATE, it is asked too often
+// expect-output: not set: stratum 16, leap Unsynchronized, synchronized false
+// expect-output: after a false answer: true 2
+// expect-output: measure 3 answers, 0 lost, best true, jitter true
+// expect-output: silent true: cannot ask the time to 127.0.0.1: no answer in 300 ms
+// expect-output: a measure takes at least 1 question, not 0
+import std.net
+import std.ntp
+import std.os
+import std.thread
+import std.time
+
+void put(ref list<u8> data, i64 at, i64 value, i64 count) {
+    for (i64 i = 0; i < count; i++) {
+        data[at + i] = u8((value >> (8 * (count - 1 - i))) & 0xFF)
+    }
+}
+
+// A time of Unix in nanoseconds as NTP writes it.
+void stamp(ref list<u8> data, i64 at, i64 nanoseconds) {
+    put(ref data, at, nanoseconds / 1000000000 + 2208988800, 4)
+    put(ref data, at + 4, ((nanoseconds % 1000000000) << 32) / 1000000000, 4)
+}
+
+// The server: what it answers depends on how many questions it has had.
+void serve(ref net.Udp socket) {
+    i64 asked = 0
+    for {
+        net.Datagram question = socket.receive(1024)
+        asked++
+        i64 received = time.utcNow().unixNano() + 5000000000
+        list<u8> answer
+        for (i64 i = 0; i < 48; i++) {
+            answer.add(0)
+        }
+        answer[0] = 0x24  // version 4, a server
+        answer[1] = 2
+        answer[2] = 6     // asked every 64 seconds
+        answer[3] = 0xEC  // -20: about a microsecond
+        put(ref answer, 4, 984, 4)    // 15 ms, in 65536ths of a second
+        put(ref answer, 8, 1967, 4)   // 30 ms
+        answer[12] = 192
+        answer[13] = 168
+        answer[14] = 1
+        answer[15] = 10
+        stamp(ref answer, 16, received - 60000000000)
+        for (i64 i = 0; i < 8; i++) {
+            answer[24 + i] = question.data[40 + i]
+        }
+        if (asked == 2) {
+            answer[0] = 0x64  // a leap second to insert
+            answer[1] = 1
+            put(ref answer, 12, 0x47505300, 4)  // "GPS"
+        } else if (asked == 3) {
+            answer[1] = 0
+            put(ref answer, 12, 0x52415445, 4)  // "RATE"
+        } else if (asked == 4) {
+            answer[0] = 0xE4  // the clock is not set
+            answer[1] = 0
+            put(ref answer, 12, 0x494E4954, 4)  // "INIT"
+        } else if (asked == 5) {
+            // An answer to another question first: its origin is not the one asked.
+            list<u8> wrong = answer.copy()
+            wrong[30] = wrong[30] ^ 0xFF
+            wrong[1] = 9
+            stamp(ref wrong, 32, received)
+            stamp(ref wrong, 40, received)
+            socket.send(question.host, question.port, wrong)
+        } else if (asked == 9) {
+            continue  // silent
+        }
+        stamp(ref answer, 32, received)
+        time.msleep(20)
+        stamp(ref answer, 40, time.utcNow().unixNano() + 5000000000)
+        socket.send(question.host, question.port, answer)
+    }
+}
+
+string leapName(ntp.Leap leap) {
+    switch (leap) {
+        case None {
+            ret "None"
+        }
+        case Insert {
+            ret "Insert"
+        }
+        case Remove {
+            ret "Remove"
+        }
+        case Unsynchronized {
+            ret "Unsynchronized"
+        }
+    }
+}
+
+bool near(i64 milliseconds, i64 wanted, i64 slack) {
+    ret milliseconds >= wanted - slack && milliseconds <= wanted + slack
+}
+
+i32 main() {
+    net.Udp socket = net.udp("127.0.0.1", 0)
+    i32 port = socket.port()
+    thread.Thread server = thread.Thread([move socket]() { serve(ref socket) })
+    server.start()
+    server.detach()
+
+    ntp.Sample first = ntp.queryPort("127.0.0.1", port, 2000)
+    println("offset {}, delay {}", near(first.offset.milliseconds(), 5000, 60), first.delay.milliseconds() < 60)
+    println("stratum {} from {}, version {}, leap {}, synchronized {}", first.stratum, first.reference, first.version, leapName(first.leap),
+        first.synchronized)
+    println("root {} ms and {} ms, precision {} ns, poll {} s", first.rootDelay.milliseconds(), first.rootDispersion.milliseconds(),
+        first.precision.nanoseconds, first.pollSeconds)
+    i64 ahead = first.time.unixNano() - time.utcNow().unixNano()
+    println("times {} {}", near(ahead / 1000000, 5000, 200), near((first.time.unixNano() - first.referenceTime.unixNano()) / 1000000, 60000, 200))
+
+    ntp.Sample gps = ntp.queryPort("127.0.0.1", port, 2000)
+    println("stratum {} from {}, leap {}", gps.stratum, gps.reference, leapName(gps.leap))
+    try {
+        ntp.queryPort("127.0.0.1", port, 2000)
+    } catch (Exception e) {
+        println("{}", e.message())
+    }
+    ntp.Sample unset = ntp.queryPort("127.0.0.1", port, 2000)
+    println("not set: stratum {}, leap {}, synchronized {}", unset.stratum, leapName(unset.leap), unset.synchronized)
+    ntp.Sample real = ntp.queryPort("127.0.0.1", port, 2000)
+    println("after a false answer: {} {}", near(real.offset.milliseconds(), 5000, 60), real.stratum)
+
+    time.Instant start = time.now()
+    ntp.Measure measure = ntp.measurePort("127.0.0.1", port, 3, 2000)
+    // The questions 6, 7 and 8, a little apart.
+    println("measure {} answers, {} lost, best {}, jitter {}", measure.samples.len(), measure.lost,
+        near(measure.best.offset.milliseconds(), 5000, 60) && measure.best.delay.nanoseconds <= measure.samples[0].delay.nanoseconds,
+        measure.jitter.milliseconds() < 60 && start.elapsed().milliseconds() >= 400)
+
+    start = time.now()
+    try {
+        ntp.queryPort("127.0.0.1", port, 300)
+    } catch (Exception e) {
+        println("silent {}: {}", near(start.elapsed().milliseconds(), 300, 150), e.message())
+    }
+    try {
+        ntp.measure("127.0.0.1", 0, 300)
+    } catch (Exception e) {
+        println("{}", e.message())
+    }
+    os.exit(0)
+    ret 0
+}

@@ -592,6 +592,8 @@ The core of the library, with `list`, `map`, `string`, `format`, `Exception`, `E
 | `std.jwt` | JSON Web Tokens | [Networking and HTTP](networking.md) |
 | `std.oauth` | OAuth 2.0 and OpenID Connect | [Networking and HTTP](networking.md) |
 | `std.smtp` | sending email | [Networking and HTTP](networking.md) |
+| `std.otp` | the one-time codes of the authenticator apps | [Networking and HTTP](networking.md) |
+| `std.ntp` | the time of a server of NTP | [Networking and HTTP](networking.md) |
 | `std.gzip` | compression | [Networking and HTTP](networking.md) |
 | `std.json` | JSON | [JSON](json.md) |
 | `std.xml` | XML | [JSON](json.md) |

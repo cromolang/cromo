@@ -1,0 +1,106 @@
+// std.otp (D597): the codes of TOTP against the values of RFC 6238, with SHA-1,
+// SHA-256 and SHA-512; those of HOTP against RFC 4226; a code checked in its window,
+// typed with a space, and each period good once; a new secret and the address for
+// the apps; base32 against RFC 4648; and what is refused.
+// expect-output: sha1 94287082 07081804 14050471 89005924 69279037 65353130
+// expect-output: sha256 46119246 68084774 67062674 91819424 90698825 77737706
+// expect-output: sha512 90693936 25091201 99943326 93441116 38618901 47863826
+// expect-output: six digits 287082 081804 050471
+// expect-output: hotp 755224 287082 359152 969429 338314 254676 287922 162583 399871 520489
+// expect-output: window true true true false false, alone true false
+// expect-output: typed true true false false
+// expect-output: steps 37037036 37037037 37037038 -1
+// expect-output: now true 6
+// expect-output: secret 32 true true
+// expect-output: otpauth://totp/Example%20Co:anna%40example.com?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&issuer=Example%20Co&algorithm=SHA1&digits=6&period=30
+// expect-output: sha256 uri true
+// expect-output: counter 3 7 -1
+// expect-output: base32 '' MY====== MZXQ==== MZXW6=== MZXW6YQ= MZXW6YTB MZXW6YTBOI======
+// expect-output: back foobar foobar foobar true
+// expect-output: the text is not base32: the character at 2 is not a letter or a digit from 2 to 7
+// expect-output: a one-time code has from 6 to 9 digits, not 4
+// expect-output: the secret of the one-time codes is empty
+import std.crypto
+import std.otp
+import std.time
+
+string codes(otp.Totp t) {
+    list<string> all
+    list<i64> times = [59, 1111111109, 1111111111, 1234567890, 2000000000, 20000000000]
+    for (i64 at in times) {
+        all.add(t.codeAt(at))
+    }
+    ret join(all, " ")
+}
+
+i32 main() {
+    // The secrets of the appendix B of RFC 6238.
+    otp.Totp sha1 = otp.totp(crypto.base32("12345678901234567890".bytes()))
+    sha1.digits = 8
+    println("sha1 {}", codes(sha1))
+    otp.Totp sha256 = otp.totp(crypto.base32("12345678901234567890123456789012".bytes()))
+    sha256.digits = 8
+    sha256.hash = crypto.Hash.Sha256
+    println("sha256 {}", codes(sha256))
+    otp.Totp sha512 = otp.totp(crypto.base32("1234567890123456789012345678901234567890123456789012345678901234".bytes()))
+    sha512.digits = 8
+    sha512.hash = crypto.Hash.Sha512
+    println("sha512 {}", codes(sha512))
+
+    otp.Totp app = otp.totp("GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ")
+    println("six digits {} {} {}", app.codeAt(59), app.codeAt(1111111109), app.codeAt(1111111111))
+    list<string> counted
+    for (i64 counter = 0; counter < 10; counter++) {
+        counted.add(otp.hotp("12345678901234567890".bytes(), counter, 6))
+    }
+    println("hotp {}", join(counted, " "))
+
+    // The code of 1111111109 is of the period before the one of 1111111111.
+    string before = app.codeAt(1111111109)
+    string now = app.codeAt(1111111111)
+    string after = app.codeAt(1111111111 + 30)
+    otp.Totp strict = otp.totp("gezd gnbv gy3t qojq gezd gnbv gy3t qojq")
+    strict.window = 0
+    println("window {} {} {} {} {}, alone {} {}", app.verifyAt(before, 1111111111), app.verifyAt(now, 1111111111),
+        app.verifyAt(after, 1111111111), app.verifyAt(app.codeAt(1111111111 + 60), 1111111111), app.verifyAt(app.codeAt(1111111111 - 60),
+        1111111111), strict.verifyAt(now, 1111111111), strict.verifyAt(before, 1111111111))
+    println("typed {} {} {} {}", app.verifyAt(now.slice(0, 3) + " " + now.slice(3, 6), 1111111111), app.verifyAt(" " + now + " ", 1111111111),
+        app.verifyAt(now.slice(0, 5), 1111111111), app.verifyAt("", 1111111111))
+    println("steps {} {} {} {}", app.stepAt(before, 1111111111), app.stepAt(now, 1111111111), app.stepAt(after, 1111111111),
+        app.stepAt("12", 1111111111))
+    println("now {} {}", app.verify(app.code()), app.code().len())
+
+    string secret = otp.newSecret()
+    println("secret {} {} {}", secret.len(), secret != otp.newSecret(), otp.totp(secret).verify(otp.totp(secret.lower()).code()))
+    println("{}", app.uri("anna@example.com", "Example Co"))
+    println("sha256 uri {}", sha256.uri("a", "b").endsWith("&issuer=b&algorithm=SHA256&digits=8&period=30"))
+
+    list<u8> token = "12345678901234567890".bytes()
+    println("counter {} {} {}", otp.hotpCounter(token, "969429", 0, 5), otp.hotpCounter(token, "162583", 3, 5),
+        otp.hotpCounter(token, "520489", 0, 5))
+
+    list<string> encoded
+    for (string text in ["", "f", "fo", "foo", "foob", "fooba", "foobar"]) {
+        encoded.add(text.len() == 0 ? "''" : crypto.base32(text.bytes()))
+    }
+    println("base32 {}", join(encoded, " "))
+    println("back {} {} {} {}", string(crypto.fromBase32("MZXW6YTBOI======")), string(crypto.fromBase32("mzxw6ytboi")),
+        string(crypto.fromBase32("MZXW 6YTB-OI")), crypto.fromBase32(crypto.base32(crypto.fromHex("00ff10"))) == crypto.fromHex("00ff10"))
+    try {
+        crypto.fromBase32("MZ1W")
+    } catch (Exception e) {
+        println("{}", e.message())
+    }
+    try {
+        app.digits = 4
+        app.code()
+    } catch (Exception e) {
+        println("{}", e.message())
+    }
+    try {
+        otp.totp(" ")
+    } catch (Exception e) {
+        println("{}", e.message())
+    }
+    ret 0
+}

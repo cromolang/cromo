@@ -1,0 +1,188 @@
+// One-time codes, the six digits of the authenticator apps: Google Authenticator,
+// Microsoft Authenticator, Authy, 1Password and the others. A service gives a secret
+// to the app of a user once, and then checks the code that the app shows, which
+// changes every 30 seconds (TOTP, RFC 6238), or at each use (HOTP, RFC 4226).
+//
+// '''
+// import std.otp
+//
+// // Once, when the user turns the second factor on:
+// string secret = otp.newSecret()                       // kept with the user, as a password
+// string link = otp.totp(secret).uri("anna@example.com", "Example")
+// // ... shown as a QR code, which the app reads
+//
+// // At each login, after the password:
+// if (otp.totp(secret).verify(code)) {
+//     // the user has the phone
+// }
+// '''
+//
+// The guide: [Networking and HTTP](https://cromolang.org/book/en/networking.html).
+
+// The module std.otp (D597), in Cromo on std.crypto. The secret is the key of an HMAC
+// of the time, counted in periods, or of a counter; the code is some digits of it.
+import std.crypto
+import std.http
+import std.time
+
+// A new secret for a user: 20 random bytes, as text in base32, the form that the
+// apps take. It is kept on the server with the user, and must stay secret as a
+// password does: who has it makes the codes.
+public string newSecret() {
+    ret crypto.base32(crypto.random(20))
+}
+
+// The code of an HMAC, as RFC 4226 cuts it: 31 bits from the place that its last
+// byte names, and their last 'digits' digits.
+string codeOf(list<u8> mac, i64 digits) {
+    i64 at = i64(mac[mac.len() - 1] & 0x0F)
+    i64 value = (i64(mac[at] & 0x7F) << 24) | (i64(mac[at + 1]) << 16) | (i64(mac[at + 2]) << 8) | i64(mac[at + 3])
+    i64 modulus = 1
+    for (i64 i = 0; i < digits; i++) {
+        modulus *= 10
+    }
+    string text = format("{}", value % modulus)
+    ret "0".repeat(digits - text.len()) + text
+}
+
+// A counter as the 8 bytes that are signed, the highest first.
+list<u8> counterBytes(i64 counter) {
+    list<u8> bytes
+    for (i64 i = 7; i >= 0; i--) {
+        bytes.add(u8((counter >> (8 * i)) & 0xFF))
+    }
+    ret bytes
+}
+
+// A code as a user types it: the digits alone, without the spaces of "123 456".
+string typed(string code) {
+    list<u8> digits
+    for (i64 i = 0; i < code.len(); i++) {
+        if (code[i] != ' ' && code[i] != '-') {
+            digits.add(code[i])
+        }
+    }
+    ret string(digits)
+}
+
+void checkDigits(i64 digits) {
+    if (digits < 6 || digits > 9) {
+        throw Error(format("a one-time code has from 6 to 9 digits, not {}", digits))
+    }
+}
+
+// The codes that change with the time (TOTP): what the authenticator apps show. It
+// is made by 'totp' from the secret of a user, with what the apps expect: 6 digits,
+// a new code every 30 seconds, SHA-1. The other fields are for the services that
+// were set otherwise; an app must be given the same ones, with 'uri'.
+public struct Totp {
+    public list<u8> secret                      // the bytes of the secret
+    public i64 digits = 6                       // of a code: from 6 to 9
+    public i64 period = 30                      // how many seconds a code lasts
+    public crypto.Hash hash = crypto.Hash.Sha1  // of the HMAC: Sha1, Sha256 or Sha512
+    // How many periods before and after the one of now 'verify' takes: 1 at the
+    // start, so that a code typed a little late, or a phone whose clock is a few
+    // seconds off, still passes. 0 takes the code of now alone.
+    public i64 window = 1
+
+    // The code at a time, in seconds of Unix.
+    public string codeAt(i64 unix) const {
+        checkDigits(digits)
+        if (period < 1) {
+            throw Error(format("a code lasts at least a second, not {}", period))
+        }
+        ret codeOf(crypto.hmac(hash, secret, counterBytes(unix / period)), digits)
+    }
+
+    // The code of now, as the app of the user shows it.
+    public string code() const {
+        ret codeAt(time.unix())
+    }
+
+    // The period whose code is 'code', among those of the window around the time
+    // 'unix', or -1 when it is the code of none. The periods are counted from 1970:
+    // a program that keeps the last one used by each user, and takes only a later
+    // one, makes each code good once, so that who sees a code typed cannot use it
+    // again in the same half minute.
+    public i64 stepAt(string code, i64 unix) const {
+        list<u8> given = typed(code).bytes()
+        i64 now = unix / period
+        i64 found = -1
+        for (i64 step = now - window; step <= now + window; step++) {
+            if (step < 0) {
+                continue
+            }
+            // All the periods are looked at, each in a time that says nothing.
+            if (crypto.sameBytes(given, codeAt(step * period).bytes()) && found < 0) {
+                found = step
+            }
+        }
+        ret found
+    }
+
+    // Whether 'code' is the code of now, or of a period of the window around it.
+    // The spaces of a code typed as "123 456" are passed over. A service counts the
+    // wrong codes of a user and stops after a few: six digits are a million tries.
+    public bool verify(string code) const {
+        ret stepAt(code, time.unix()) >= 0
+    }
+
+    // Whether 'code' is the code of the time 'unix', or of the window around it.
+    public bool verifyAt(string code, i64 unix) const {
+        ret stepAt(code, unix) >= 0
+    }
+
+    // The address that gives the secret to an app, "otpauth://totp/...": shown as a
+    // QR code, the app reads it and from then on shows the codes. 'account' is the
+    // name of the user in the app, as the address of email, and 'issuer' the name of
+    // the service. It holds the secret: it is shown once, to the user, and not kept.
+    public string uri(string account, string issuer) const {
+        string algorithm = "SHA1"
+        switch (hash) {
+            case Sha256 {
+                algorithm = "SHA256"
+            }
+            case Sha512 {
+                algorithm = "SHA512"
+            }
+            default {
+            }
+        }
+        ret "otpauth://totp/" + http.escape(issuer) + ":" + http.escape(account) + "?secret=" + crypto.base32(secret).replace("=", "") +
+            "&issuer=" + http.escape(issuer) + format("&algorithm={}&digits={}&period={}", algorithm, digits, period)
+    }
+}
+
+// The codes of a secret, as the authenticator apps make them: 'secret' is the text
+// in base32 that 'newSecret' gave, in upper or lower case, with or without spaces.
+// Throws an 'Error' for a text that is not base32.
+public Totp totp(string secret) {
+    Totp made
+    made.secret = crypto.fromBase32(secret)
+    if (made.secret.len() == 0) {
+        throw Error("the secret of the one-time codes is empty")
+    }
+    ret made
+}
+
+// The code of a counter (HOTP, RFC 4226), for the tokens that give a new code at
+// each press: 'secret' is the bytes of the secret, 'digits' from 6 to 9. The server
+// keeps the counter of each token, and moves it on after a code that passes.
+public string hotp(list<u8> secret, i64 counter, i64 digits) {
+    checkDigits(digits)
+    ret codeOf(crypto.hmac(crypto.Hash.Sha1, secret, counterBytes(counter)), digits)
+}
+
+// The counter whose code is 'code', among 'counter' and the 'ahead' after it, or -1:
+// a token pressed without logging in is ahead of the server. The server then keeps
+// the one found plus 1.
+public i64 hotpCounter(list<u8> secret, string code, i64 counter, i64 ahead) {
+    list<u8> given = typed(code).bytes()
+    i64 found = -1
+    for (i64 each = counter; each <= counter + ahead; each++) {
+        if (crypto.sameBytes(given, hotp(secret, each, given.len() >= 6 && given.len() <= 9 ? given.len() : 6).bytes()) && found < 0) {
+            found = each
+        }
+    }
+    ret found
+}

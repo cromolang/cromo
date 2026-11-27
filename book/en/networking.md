@@ -11,7 +11,9 @@ The standard library has everything a network program needs, and needs no other 
 | [std.crypto](std.crypto.html) | hashes, random keys, ciphers and signatures |
 | [std.jwt](std.jwt.html) | JSON Web Tokens |
 | [std.oauth](std.oauth.html) | the login with a provider of identity, and the check of its tokens |
+| [std.otp](std.otp.html) | the one-time codes of the authenticator apps |
 | [std.smtp](std.smtp.html) | sending email |
+| [std.ntp](std.ntp.html) | how far the clock is from a server of NTP |
 
 TLS comes from Mbed TLS, compiled into the runtime of Cromo, so the executables stay self-contained, on Windows and on Linux.
 
@@ -1138,6 +1140,40 @@ The keys of the provider are downloaded at the first token and kept: a verifier 
 
 An access token of Microsoft or of Keycloak is a JWT, and is checked this way. One of Google is not: `userInfo` asks Google whose it is.
 
+## A second factor: one-time codes
+
+A service that wants more than a password asks the code of an authenticator app: Google Authenticator, Microsoft Authenticator, Authy, 1Password. The module [std.otp](std.otp.html) makes and checks those codes, which change every 30 seconds.
+
+```cromo
+import std.otp
+
+i32 main() {
+    // Once, when the user turns the second factor on.
+    string secret = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"   // from otp.newSecret(), kept with the user
+    otp.Totp codes = otp.totp(secret)
+    println("{}", codes.uri("anna@example.com", "Example"))
+
+    // At each login: here at a known time, in place of now.
+    string typed = codes.codeAt(1111111111)
+    println("{} {} {}", typed, codes.verifyAt(typed, 1111111111), codes.verifyAt("000000", 1111111111))
+    ret 0
+}
+```
+
+```output
+otpauth://totp/Example:anna%40example.com?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&issuer=Example&algorithm=SHA1&digits=6&period=30
+050471 true false
+```
+
+- `otp.newSecret()` makes the secret of a user, a text in base32. The service keeps it with the user, protected as a password: who has it makes the codes.
+- `otp.totp(secret)` gives an `otp.Totp`. Its `uri(account, issuer)` is the address that gives the secret to the app: the service shows it once as a QR code, the user frames it, and from then on the app shows the codes.
+- `verify(code)` says whether a code is the one of now. It takes also the one before and the one after, for a code typed a little late and for a phone whose clock is a few seconds off; `window = 0` takes the code of now alone. A code typed as `123 456` is fine.
+- `code()` is the code of now, as the app shows it; `codeAt(unix)` and `verifyAt(code, unix)` are for another time.
+
+A service counts the wrong codes of a user and stops after a few: six digits are a million tries. `stepAt(code, unix)` gives the period of a code, a number that grows with the time: a service that keeps the last one used by each user, and takes only a later one, makes each code good once. The fields `digits`, `period` and `hash` are for the services that were set in another way than the apps expect; `otp.hotp` is for the tokens that give a new code at each press.
+
+The library does not draw the QR code: the page of the service does, from the text of `uri`.
+
 ## Sending email: SMTP
 
 A backend sends email: a confirmation, a password to set again, a report. The module [std.smtp](std.smtp.html) gives a message to a server of SMTP, the one of a provider of email or of a company:
@@ -1180,6 +1216,46 @@ An `smtp.Message` has `from`, `to`, `cc` and `bcc`, the copies that the message 
 
 A server that says no is an `smtp.Refused`, with the `code` of SMTP: 535 for a wrong password, 550 for an address that the server does not take. The codes from 400 to 499 are of the moment, and the message can be sent again later. When one receiver is refused, nobody gets the message. With `StartTls`, a server that does not offer TLS is an error, and nothing goes in clear.
 
+## The time of a server: NTP
+
+A program that signs tokens, that checks one-time codes, or that puts in order the events of several computers needs a clock that is right. The module [std.ntp](std.ntp.html) asks a server of NTP and says how far the clock of this computer is from it. It measures, and does not set the clock: the system does that.
+
+```cromo nocheck
+import std.ntp
+
+i32 main() {
+    ntp.Measure measure = ntp.measure("pool.ntp.org", 5, 2000)
+    ntp.Sample best = measure.best
+    println("the clock is off by {} ms, give or take {} ms", best.offset.milliseconds(), best.delay.milliseconds() / 2)
+    println("{}: stratum {}, from {}", best.server, best.stratum, best.reference)
+    ret 0
+}
+```
+
+```text
+the clock is off by 620 ms, give or take 4 ms
+172.232.208.229: stratum 2, from 80.192.165.246
+```
+
+`ntp.query(server, timeout)` asks once and gives an `ntp.Sample`:
+
+| Field | What it is |
+|---|---|
+| `offset` | what to add to the time of this computer to have the time of the server: positive when this computer is behind |
+| `delay` | the time of the question and the answer on the network; the offset can be wrong by at most half of it |
+| `stratum` | how far the server is from a clock of reference: 1 has one itself, 2 asks a server of stratum 1, up to 15; 16 is a server that is not set |
+| `reference` | where the server takes its time: the name of its clock for stratum 1, as `GPS` or `PPS`, otherwise the address of the server it asks |
+| `leap` | the leap second announced for the end of the day, or `ntp.Leap.Unsynchronized` |
+| `rootDelay`, `rootDispersion` | the delay from the server to its clock of reference, and how much its time can be off from it |
+| `precision` | the smallest step of the clock of the server |
+| `time`, `referenceTime` | the time of the server when it answered, and when its clock was last set, in UTC |
+| `server`, `version`, `pollSeconds` | the address that answered, its version of NTP, and how often it would be asked again |
+| `synchronized` | whether the time of the answer can be used: the server says that its clock is set |
+
+`ntp.measure(server, count, timeout)` asks several times and gives an `ntp.Measure`: `best`, the answer with the smallest delay, which is the best measure; `samples`, all of them; `lost`, the questions without an answer; and `jitter`, how much the offsets differ, which says how much to trust the measure.
+
+No answer in the timeout is an `Error`, as a server that refuses: one that says `RATE` is asked too often. The public servers ask not to be asked more than once every few seconds; `pool.ntp.org` gives a different server each time.
+
 ## Summary
 
 - `std.net` has TCP, UDP and TLS, with calls that block and leave the thread to other tasks while they wait. Without `timeout(ms)` an operation waits as long as it takes; `connect` has no timeout of its own, and `connectTimeout` has one.
@@ -1190,5 +1266,6 @@ A server that says no is an `smtp.Refused`, with the `code` of SMTP: 535 for a w
 - `std.websocket` sends and receives messages in both directions, and ends with `close()` and `websocket.Closed`.
 - `std.oauth` logs users in with Microsoft, Google, Keycloak or any provider of OpenID Connect, with PKCE, and checks the tokens of an API with the keys of the provider.
 - `std.smtp` sends email with a text, HTML and attachments, with STARTTLS or TLS, and a login by password or by a token.
+- `std.otp` makes and checks the one-time codes of the authenticator apps, and `std.ntp` measures how far the clock is from a server of NTP, with its stratum and its reference.
 - `net.ping` says whether a host answers an echo of ICMP, and in how long.
 - `std.gzip`, `std.crypto` and `std.jwt` complete the toolbox, with no external library.

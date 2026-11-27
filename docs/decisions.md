@@ -2859,6 +2859,20 @@ A branch whose type is not simple, as a `string`, gives a new value, also a copy
 - A number as wide as some bytes, which the package of SSH has too, is not of a list.
 - `crypto.sameBytes(a, b)`, chosen by the author the same day: whether two lists of bytes are the same in a time that depends only on their length, for what is secret, as a MAC or a token, where the `==` that stops at the first different byte lets who measures the time find a secret a byte at a time. It was written three times, in `std.jwt`, in `std.oauth` and in the package of SSH: a function that is easy to write wrong is once in the library. `==` on lists and strings stays the fast one, a comparison of memory.
 
+### D597. `std.otp`: the codes of the authenticator apps
+*2026-11-27.* Asked by the author. The one-time codes of TOTP (RFC 6238) and of HOTP (RFC 4226), for the second factor of a login with Google Authenticator, Microsoft Authenticator, Authy and the others.
+- `otp.newSecret()` gives 20 random bytes in base32. `otp.totp(secret)` gives an `otp.Totp` with what the apps expect, 6 digits, 30 seconds and SHA-1, in fields that a program can change: `code()` and `codeAt(unix)`, `verify(code)` and `verifyAt(code, unix)`, `uri(account, issuer)`, the address `otpauth://` that an app reads as a QR code. `otp.hotp(secret, counter, digits)` and `otp.hotpCounter` are for the tokens with a counter.
+- `verify` takes the code of now and of `window` periods around it, 1 at the start, for a code typed late and a clock a little off; it compares in constant time (D596) and passes over the spaces of `123 456`. `stepAt` gives the period of a code, so that a program that keeps the last one of each user makes a code good once.
+- Counting the wrong codes of a user, keeping the secret, and drawing the QR code are of the program: the library has no generator of QR codes.
+- `crypto.base32(bytes)` and `crypto.fromBase32(text)` come with it, next to hex and base64: RFC 4648, read in upper or lower case, with or without padding, the spaces and the `-` passed over.
+
+### D598. `std.ntp`: how far the clock is from a server of NTP
+*2026-11-27.* Asked by the author, who wants more than the difference. A client of SNTP, NTP version 4 over UDP (RFC 5905, RFC 4330): it measures, and does not set the clock.
+- `ntp.query(server, timeout)` gives an `ntp.Sample`: `offset`, what to add to the time of this computer to have the one of the server; `delay`, the time on the network, half of which is the most the offset can be wrong by; `stratum`; `leap`, an enum, with the server that is not set; `reference`, the name of the clock of a server of stratum 1 or the address of the server it asks; `rootDelay`, `rootDispersion`, `precision`, `pollSeconds`, `version`; `time` and `referenceTime`, in UTC; `server`, the address that answered; and `synchronized`, whether the time can be used. `ntp.queryPort` takes another port.
+- `ntp.measure(server, count, timeout)` asks several times, 200 ms apart, and gives an `ntp.Measure`: `best`, the answer with the smallest delay, as the filter of NTP chooses; `samples`; `lost`; and `jitter`, the largest offset less the smallest.
+- The four times of NTP are used: the delay is counted on the monotonic clock, so a change of the date during the question does not matter. An answer is taken only when it gives back the time of the question, so that a late one or one made up is passed over; the seconds of NTP that wrap in 2036 are read in their era. A kiss of death, `RATE`, `DENY` or `RSTR`, is an `Error`; a server that is not set is a `Sample` with `synchronized` false.
+- Not there: the authentication of NTS, the questions to several servers with the choice among them, a server of NTP, and setting the clock, which is of the system.
+
 ---
 
 ## Proposed
