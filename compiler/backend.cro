@@ -36,6 +36,10 @@ public struct BackendOptions {
     public bool glibc           // D428: on Linux, linked with glibc, for the C libraries that call it
     public list<string> shared  // D554: on Linux, the shared libraries of the extern blocks
     public bool sharedLibrary   // P44: on Android, libmain.so of an app
+    // D599: a library with an interface of C, a DLL with its import library, and the
+    // names of C that it exports.
+    public bool dynamicLibrary
+    public list<string> exports
     // D339: the path of each source file in the debug information, and its name in a stack trace.
     public list<string> debugPaths
     public list<string> shownPaths
@@ -337,7 +341,8 @@ list<u8> versionResource(BackendOptions options) {
     u32 low = (numbers[2] << 16) | numbers[3]
     // VS_FIXEDFILEINFO: its mark and its version, the version of the file and of the
     // product, no flags, for Windows NT, an application.
-    list<u32> values = [0xFEEF04BD, 0x00010000, high, low, high, low, 0x3F, 0, 0x00040004, 1, 0, 0, 0]
+    // D599: a DLL says that it is one, VFT_DLL.
+    list<u32> values = [0xFEEF04BD, 0x00010000, high, low, high, low, 0x3F, 0, 0x00040004, options.dynamicLibrary ? 2 : 1, 0, 0, 0]
     for (u32 value in values) {
         put32(ref fixed, value)
     }
@@ -481,7 +486,9 @@ bool writeResources(BackendOptions options, string resPath, ref string error) {
     if (described) {
         resource(ref out, 16, 1, 0x30, versionResource(options))  // RT_VERSION
     }
-    resource(ref out, 24, 1, 0x30, manifestResource(options.window).bytes())  // RT_MANIFEST, the one of the process
+    if (!options.dynamicLibrary) {  // a DLL lives in the process of another program, with its manifest
+        resource(ref out, 24, 1, 0x30, manifestResource(options.window).bytes())  // RT_MANIFEST, the one of the process
+    }
     list<u8> group
     put16(ref group, 0)
     put16(ref group, 1)
@@ -552,10 +559,18 @@ bool linkWindows(string objectPath, string tablePath, string runtimePath, Backen
 
     // No C runtime (D19): our own entry point and no default libraries.
     list<string> args = [
-        "lld-link", "/nologo", "/out:" + options.outputPath, "/entry:cromo_start",
+        "lld-link", "/nologo", "/out:" + options.outputPath, options.dynamicLibrary ? "/entry:cromo_dll_main" : "/entry:cromo_start",
         options.window ? "/subsystem:windows" : "/subsystem:console",  // D426
         "/machine:x64", "/nodefaultlib", objectPath, tablePath, runtimePath
     ]
+    if (options.dynamicLibrary) {
+        // D599: a DLL, with the library of its names for the linkers of C next to it.
+        args.add("/dll")
+        args.add("/implib:" + options.outputPath.slice(0, options.outputPath.len() - 4) + ".lib")
+        for (string name in options.exports) {
+            args.add("/export:" + name)
+        }
+    }
     // D338: the PDB next to the executable. /debug would keep the code that nothing
     // calls. The DWARF, made for the table of the stack traces, stays in the
     // executable too: without it Bitdefender takes the small ones for malware.

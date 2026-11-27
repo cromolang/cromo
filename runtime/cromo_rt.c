@@ -1568,6 +1568,20 @@ static void readSystem(void) {
 
 #endif
 
+#ifdef _WIN32
+// The entry of a DLL written in Cromo (D599): Windows calls it when a program loads
+// the library, when it lets it go, and for each thread that starts and ends. The
+// runtime needs nothing done first: its heap and its locks start by themselves.
+// The handler of the crashes is not set, since the process is of another program,
+// with its own.
+i32 __stdcall cromo_dll_main(void* instance, u32 reason, void* reserved) {
+    (void)instance;
+    (void)reason;
+    (void)reserved;
+    return 1;
+}
+#endif
+
 // Called first by cromo_start (codegen.cpp).
 void cromo_runtime_start(void) {
 #ifdef CROMO_BIONIC

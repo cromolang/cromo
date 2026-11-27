@@ -756,6 +756,62 @@ public interface Key {
     bool equals(Self other) const
 }
 
+// ---- For the functions of C that the compiler writes around an [[export]] (D599) ----
+
+// The text that C gives to an exported function: the bytes at an address up to a
+// zero, copied; nothing for a null address. The bytes that are not of UTF-8 become
+// '?', since C promises nothing about them.
+string exportIn(addr text) {
+    list<u8> bytes
+    if (text != addr(0)) {
+        for (i64 i = 0; copyAt<u8>(offset(text, i)) != 0; i++) {
+            bytes.add(copyAt<u8>(offset(text, i)))
+        }
+    }
+    try {
+        ret string(bytes)
+    } catch (Exception e) {
+    }
+    for (i64 i = 0; i < bytes.len(); i++) {
+        if (bytes[i] >= 0x80) {
+            bytes[i] = '?'
+        }
+    }
+    try {
+        ret string(bytes)
+    } catch (Exception e) {
+    }
+    ret ""
+}
+
+// Copies bytes into the buffer that C gave, as many as fit, and gives the number of
+// all of them, so that who calls knows the buffer to come back with.
+i64 exportBytesOut(list<u8> data, addr out, i64 size) {
+    if (out != addr(0)) {
+        for (i64 i = 0; i < data.len() && i < size; i++) {
+            put<u8>(offset(out, i), data[i])
+        }
+    }
+    ret data.len()
+}
+
+// Copies a text into the buffer that C gave, ended by a zero, cut to what fits
+// without breaking a character, and gives the number of bytes of the whole text,
+// without the zero: a buffer of that number plus one holds it all.
+i64 exportOut(string text, addr out, i64 size) {
+    if (out != addr(0) && size > 0) {
+        i64 count = text.len() < size ? text.len() : size - 1
+        for (count > 0 && count < text.len() && (text[count] & 0xC0) == 0x80) {
+            count--
+        }
+        for (i64 i = 0; i < count; i++) {
+            put<u8>(offset(out, i), text[i])
+        }
+        put<u8>(offset(out, count), 0)
+    }
+    ret text.len()
+}
+
 // The values that have an order, as 'sort' needs. The numbers and string have it by
 // themselves, and a struct implements it with 'compare'. For two floats, 'compare' gives 0
 // when one of them is a NaN.

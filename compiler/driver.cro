@@ -6,6 +6,7 @@ import ast
 import backend
 import codegen
 import diagnostics
+import docs
 import fmt
 import host
 import init
@@ -19,12 +20,14 @@ import progress
 import reference
 import sema
 import targets
+import types
 import version
 
 // D517: an executable of cromo.mod, its name and its main file.
 public struct Executable {
     public string name
     public string path
+    public bool library  // D599: a line lib, not a line bin
 }
 
 // What a command compiles, and how.
@@ -41,6 +44,7 @@ public struct Compilation {
     public bool network  // the program uses std.net: the permission INTERNET (D463)
     public bool camera   // the program makes a gui.Camera: the permission CAMERA (D537)
     public bool sign     // cromo build: with --release, the line sign of cromo.mod is run (D558)
+    public bool library  // D599: a library with an interface of C, of a line lib of cromo.mod
     public BackendOptions options
     public bool release
     public bool tests  // the executable of cromo test (D352)
@@ -92,27 +96,30 @@ public bool readProject(ref list<Executable> executables) {
             if (wasFirst) {
                 problems.add("cromo.mod starts with the line module, with the name of the project, as module example.com/app")
             }
-            if (words[0] == "bin") {
-                if (words.len() != 3 || !nameOf(words[1], "_-") || fs.extension(words[2]) != ".cro") {
-                    problems.add("bin takes the name of an executable and its main file, as bin server cmd/server.cro")
+            if (words[0] == "bin" || words[0] == "lib") {
+                bool isLibrary = words[0] == "lib"
+                if (words.len() != 3 || !nameOf(words[1], isLibrary ? "_" : "_-") || fs.extension(words[2]) != ".cro") {
+                    problems.add(isLibrary ? "lib takes the name of a library, of letters, digits and _, and its main file, as lib engine src/engine.cro" :
+                        "bin takes the name of an executable and its main file, as bin server cmd/server.cro")
                 } else {
                     if (!fs.isFile(words[2])) {
                         problems.add("there is no file " + words[2])
                     }
                     for (Executable other in executables) {
                         if (other.name == words[1]) {
-                            problems.add("another executable is called " + words[1])
+                            problems.add((other.library ? "another library is called " : "another executable is called ") + words[1])
                         }
                     }
                     Executable added
                     added.name = words[1]
                     added.path = words[2]
+                    added.library = isLibrary
                     executables.add(move added)
                 }
             } else if (words[0] != "require" && words[0] != "native" && words[0] != "version" && words[0] != "company" &&
                 words[0] != "description" && words[0] != "copyright" && words[0] != "author" && words[0] != "sign") {
                 // Those are read with the packages (D377, D551, D557, D558, D586).
-                problems.add("unknown line " + words[0] + ": cromo.mod has the lines module, bin, require, native, version, " +
+                problems.add("unknown line " + words[0] + ": cromo.mod has the lines module, bin, lib, require, native, version, " +
                     "company, description, copyright, author and sign")
             }
         }
@@ -479,7 +486,8 @@ public i32 build(ref Compilation compilation) {
         compilation.network = compilation.network || program.tree.files[i].name == "std.net"
     }
     steps.step(format("Checking {} files", program.diag.fileCount()), false)
-    Checker checked = checkProgram(move program.tree, move program.diag, !tests && !compilation.runtime)
+    Checker checked = compilation.library ? checkLibrary(move program.tree, move program.diag) :
+        checkProgram(move program.tree, move program.diag, !tests && !compilation.runtime)
     if (!checked.diag.hasErrors()) {
         checkMoves(ref checked)
     }
@@ -508,6 +516,45 @@ public i32 build(ref Compilation compilation) {
     Libraries found = findLibraries(ref checked, target, library)
     if (checked.diag.hasErrors()) {
         ret 1
+    }
+    list<i32> exportedFunctions
+    if (compilation.library) {
+        // D599: what the library gives are its functions with [[export]].
+        if (target != Target.Windows) {
+            eprintln("cromo: the libraries are built for Windows only, for now: {} is not built for {}", fs.fileName(path), targetName(target))
+            ret 1
+        }
+        for (i64 i = 0; i < checked.tree.functions.len(); i++) {
+            bool written = checked.tree.functions[i].headerFile >= 0  // around a function of the library that takes or gives a text
+            if (checked.tree.functions[i].isExported && (written || !checked.tree.files[checked.tree.functions[i].file].isLibrary)) {
+                exportedFunctions.add(i32(i))
+            }
+        }
+        // In the order of the sources, for the header: those written around a function
+        // that takes or gives a text come after the others in the tree.
+        for (i64 i = 1; i < exportedFunctions.len(); i++) {
+            for (i64 k = i; k > 0; k--) {
+                const ref Function before = checked.tree.functions[exportedFunctions[k - 1]]
+                const ref Function after = checked.tree.functions[exportedFunctions[k]]
+                i32 beforeFile = before.headerFile >= 0 ? before.headerFile : before.file
+                i32 afterFile = after.headerFile >= 0 ? after.headerFile : after.file
+                if (beforeFile < afterFile || (beforeFile == afterFile && before.line <= after.line)) {
+                    break
+                }
+                i32 moved = exportedFunctions[k]
+                exportedFunctions[k] = exportedFunctions[k - 1]
+                exportedFunctions[k - 1] = moved
+            }
+        }
+        compilation.options.exports.clear()
+        for (i32 function in exportedFunctions) {
+            compilation.options.exports.add(checked.tree.functions[function].exportName)
+        }
+        if (exportedFunctions.len() == 0) {
+            eprintln("cromo: the library {} exports nothing: a function is exported with [[export]] before it", fs.fileName(path))
+            ret 1
+        }
+        compilation.options.dynamicLibrary = true
     }
     compilation.options.archives = found.archives
     compilation.options.imports = found.imports
@@ -593,8 +640,99 @@ public i32 build(ref Compilation compilation) {
             ret 1
         }
     }
+    if (compilation.library) {
+        // D599: the declarations of C of the library, next to it.
+        string header = compilation.options.outputPath.slice(0, compilation.options.outputPath.len() - fs.extension(
+            compilation.options.outputPath).len()) + ".h"
+        try {
+            fs.writeText(header, headerOf(checked, exportedFunctions, fs.fileName(header)))
+        } catch (Exception e) {
+            eprintln("cromo: cannot write {}: {}", header, e.message())
+            ret 1
+        }
+    }
     steps.finish(fs.fileName(compilation.options.outputPath))
     ret 0
+}
+
+// The type of C of a parameter or of a result of an exported function (D599).
+string headerType(Checker checked, i32 type) {
+    if (checked.types.isVoid(type)) {
+        ret "void"
+    }
+    if (checked.types.isBool(type)) {
+        ret "bool"
+    }
+    string name = typeName(checked.tree, checked.types, type)
+    switch (name) {
+        case "i8" {
+            ret "int8_t"
+        }
+        case "i16" {
+            ret "int16_t"
+        }
+        case "i32" {
+            ret "int32_t"
+        }
+        case "i64" {
+            ret "int64_t"
+        }
+        case "u8" {
+            ret "uint8_t"
+        }
+        case "u16" {
+            ret "uint16_t"
+        }
+        case "u32" {
+            ret "uint32_t"
+        }
+        case "u64" {
+            ret "uint64_t"
+        }
+        case "f32" {
+            ret "float"
+        }
+        case "f64" {
+            ret "double"
+        }
+        default {
+            ret "void*"  // addr
+        }
+    }
+}
+
+// D599: the header of C of a library: a declaration for each function that it
+// exports, in the order of the sources, with the comment written above it.
+string headerOf(Checker checked, list<i32> exported, string file) {
+    string guard
+    for (u8 c in file.upper().bytes()) {
+        guard += (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ? file.upper().slice(guard.len(), guard.len() + 1) : "_"
+    }
+    string text = "/* " + file + ": written by cromo from the functions that the library exports. Not to be changed by hand. */\n" +
+        "#ifndef " + guard + "\n#define " + guard + "\n\n#include <stdbool.h>\n#include <stdint.h>\n\n" +
+        "#ifdef __cplusplus\nextern \"C\" {\n#endif\n\n"
+    map<i32, DocComments> comments
+    for (i32 function in exported) {
+        const ref Function decl = checked.tree.functions[function]
+        i32 source = decl.headerFile >= 0 ? decl.headerFile : decl.file
+        if (!comments.contains(source)) {
+            comments[source] = DocComments(checked.diag.path(source), checked.diag.text(source))
+        }
+        list<string> lines = comments[source].of(decl.line, false)
+        for (string line in lines) {
+            text += "// " + line + "\n"
+        }
+        list<string> params = decl.headerParams
+        string result = decl.headerResult
+        if (result.len() == 0) {
+            result = headerType(checked, decl.resolvedReturn)
+            for (i64 i = 0; i < decl.params.len(); i++) {
+                params.add(headerType(checked, decl.paramTypes[i]) + " " + decl.params[i].name)
+            }
+        }
+        text += result + " " + decl.exportName + "(" + (params.len() > 0 ? join(params, ", ") : "void") + ");\n\n"
+    }
+    ret text + "#ifdef __cplusplus\n}\n#endif\n\n#endif\n"
 }
 
 // D453: the APK of an app. libmain.so of the program for each architecture, then
@@ -848,6 +986,20 @@ public bool readOptions(list<string> args, i64 first, i64 last, bool isRun, ref 
             eprintln("cromo: -o names one executable, and those of cromo.mod are named after their lines")
             ret false
         }
+        if (isRun) {
+            // D599: a library is not run: cromo run is for the executables.
+            list<Executable> runnable
+            for (Executable each in compilation.executables) {
+                if (!each.library) {
+                    runnable.add(each)
+                }
+            }
+            if (runnable.len() == 0 && compilation.executables.len() > 0) {
+                eprintln("cromo: cromo.mod has only libraries, which are not run: cromo build builds them")
+                ret false
+            }
+            compilation.executables = move runnable
+        }
         if (isRun && compilation.executables.len() > 1) {
             eprintln("cromo: cromo.mod has the executables {}: write which one, as cromo run {}",
                 executableNames(compilation.executables), compilation.executables[0].name)
@@ -883,6 +1035,20 @@ public bool readOptions(list<string> args, i64 first, i64 last, bool isRun, ref 
                     executableNames(executables))
             }
             ret false
+        }
+        if (executables[found].library) {  // D599
+            if (isRun) {
+                eprintln("cromo: {} is a library of cromo.mod, which is not run: cromo build {} builds it", executables[found].name,
+                    executables[found].name)
+                ret false
+            }
+            if (compilation.options.outputPath.len() > 0) {
+                eprintln("cromo: -o is for an executable: a library is named after its line of cromo.mod")
+                ret false
+            }
+            compilation.library = true
+            compilation.apk = false
+            compilation.options.outputPath = windows ? executables[found].name + ".dll" : "lib" + executables[found].name + ".so"
         }
         if (compilation.options.outputPath.len() == 0) {
             compilation.options.outputPath = executables[found].name + extension
@@ -1146,6 +1312,11 @@ public i32 command(list<string> args) {
             Compilation one = compilation
             one.inputPath = executable.path
             one.options.outputPath = executable.name + (one.apk ? ".apk" : one.options.target == Target.Windows ? ".exe" : "")
+            if (executable.library) {  // D599
+                one.library = true
+                one.apk = false
+                one.options.outputPath = one.options.target == Target.Windows ? executable.name + ".dll" : "lib" + executable.name + ".so"
+            }
             i32 code = one.apk ? buildApk(ref one) : build(ref one)
             if (code != 0) {
                 ret code

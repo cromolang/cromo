@@ -33,7 +33,8 @@
 #                                  PostgreSQL (CROMO_TEST_POSTGRES, the address of a database)
 #   // program-input: text         a line of the standard input of the program (repeatable)
 #                                  (repeatable); {dir} is the folder of the test,
-#                                  {cromo} the cromo of the tests, {port} a free port
+#                                  {cromo} the cromo of the tests, {port} a free port,
+#                                  {llvm} the folder of LLVM, for its clang
 #   // cromo-command: run          compiles and runs with cromo run, instead of build;
 #                                  test runs cromo test, the program arguments being
 #                                  the names of the tests
@@ -423,7 +424,7 @@ foreach ($test in Get-ChildItem $PSScriptRoot -Recurse -Filter *.cro | Sort-Obje
         $listener.Stop()
     }
     foreach ($key in @($programEnv.Keys)) {
-        $programEnv[$key] = $programEnv[$key].Replace('{dir}', $folder).Replace('{cromo}', $Cromo).Replace('{port}', $port)
+        $programEnv[$key] = $programEnv[$key].Replace('{dir}', $folder).Replace('{cromo}', $Cromo).Replace('{port}', $port).Replace('{llvm}', $LlvmRoot)
     }
 
     $exe = Join-Path $out ($test.BaseName + $(if ($linux -or $android) { '' } else { '.exe' }))

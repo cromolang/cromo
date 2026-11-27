@@ -1,0 +1,164 @@
+// A library with an interface of C (D599): a cromo.mod with a line lib and a line
+// bin builds a DLL, its import library, its header and an executable; a program of
+// C, compiled with the clang of the tests, calls the library, also from several of
+// its threads, with numbers and with texts in both directions; a program in Cromo
+// calls it through the same interface; and what is refused. The project is written
+// by the test in tests/out2. On Windows only, where the libraries are built for now.
+// target: windows
+// program-env: CROMO={cromo}
+// program-env: LLVM={llvm}
+// program-env: WORK={dir}/../out2/m98_library
+// expect-output: built: 0, engine.dll true, engine.lib true, engine.h true, tool.exe true
+// expect-output: // The sum of two numbers.
+// expect-output: int64_t engine_add(int64_t a, int64_t b);
+// expect-output: bool engine_even(int32_t n);
+// expect-output: double engine_half(double x);
+// expect-output: int64_t engine_parallel(int64_t count);
+// expect-output: int64_t engine_greet(const char* name, int64_t times, char* out, int64_t size);
+// expect-output: int64_t engine_hash(const char* text, uint8_t* out, int64_t size);
+// expect-output: int64_t engine_length(const char* text);
+// expect-output: void engine_nothing(void);
+// expect-output: compiled: 0
+// expect-output: add 42, even 1 0, half 2.50
+// expect-output: parallel 499999500000
+// expect-output: 27 [Ciao, Andrea! Ciao, Andrea!]
+// expect-output: 13 [Ciao, cit]
+// expect-output: needed 26
+// expect-output: 32 ba7816bf
+// expect-output: length 4 0 2
+// expect-output: 8 threads of the host: the same 1
+// expect-output: from Cromo: 42 12 Ciao, Cromo!
+// expect-output: one by its name: 0, run: 2 which is not run
+// expect-output: throws: 1, the exported function 'engine_fails' can throw, and C has no exceptions: catch them inside it
+// expect-output: nothing exported: 1, exports nothing
+// expect-output: a list: 1, an exported function returns a number, a bool, a string, a list<u8> or nothing
+// expect-output: a name of the runtime: 1, a library cannot export 'cromo_alloc'
+// expect-output: in a program: 1, [[export]] is for the functions of a library
+// expect-output: twice: 2, another library is called engine
+import std.fs
+import std.os
+import std.process
+
+// A command in the folder of the project: cmd changes the folder.
+process.Output inFolder(string work, string command) {
+    ret process.run("cmd", ["/c", "cd /d " + work.replace("/", "\\") + " && " + command])
+}
+
+process.Output cromo(string work, string args) {
+    ret inFolder(work, os.env("CROMO").replace("/", "\\") + " " + args + " --quiet")
+}
+
+// `part` when the errors contain it, otherwise all the errors.
+string said(process.Output result, string part) {
+    ret result.err.contains(part) ? part : result.err.trim()
+}
+
+string engine() {
+    ret "import std.crypto\nimport std.thread\n\n" +
+        "// The sum of two numbers.\n[[export]] i64 engine_add(i64 a, i64 b) {\n    ret a + b\n}\n\n" +
+        "[[export]] bool engine_even(i32 n) {\n    ret n % 2 == 0\n}\n\n" +
+        "[[export(\"engine_half\")]] f64 half(f64 x) {\n    ret x / 2.0\n}\n\n" +
+        "[[export]] i64 engine_parallel(i64 count) {\n    thread.Atomic<i64> total\n    try {\n        thread.Group tasks\n" +
+        "        for (i64 t = 0; t < 4; t++) {\n            tasks.start([total, t, count]() {\n" +
+        "                for (i64 i = t; i < count; i += 4) {\n                    total.add(i)\n                }\n            })\n" +
+        "        }\n        tasks.wait()\n    } catch (Exception e) {\n        ret -1\n    }\n    ret total.load()\n}\n\n" +
+        "[[export]] string engine_greet(string name, i64 times) {\n    string text\n    for (i64 i = 0; i < times; i++) {\n" +
+        "        text += (i > 0 ? \" \" : \"\") + \"Ciao, \" + name + \"!\"\n    }\n    ret text\n}\n\n" +
+        "[[export]] list<u8> engine_hash(string text) {\n    ret crypto.sha256(text.bytes())\n}\n\n" +
+        "[[export]] i64 engine_length(string text) {\n    ret text.len()\n}\n\n" +
+        "[[export]] void engine_nothing() {\n}\n"
+}
+
+string host() {
+    ret "#include <stdio.h>\n#include <string.h>\n#include <windows.h>\n#include \"engine.h\"\n\n" +
+        "static DWORD WINAPI worker(LPVOID arg) {\n    int64_t* out = (int64_t*)arg;\n    int64_t sum = 0;\n    char text[40];\n" +
+        "    for (int i = 0; i < 300; i++) sum += engine_greet(\"x\", i % 5, text, sizeof text) + engine_add(i, 1);\n" +
+        "    *out = sum;\n    return 0;\n}\n\n" +
+        "int main(void) {\n    setvbuf(stdout, 0, _IONBF, 0);\n" +
+        "    printf(\"add %lld, even %d %d, half %.2f\\n\", (long long)engine_add(40, 2), engine_even(4), engine_even(5), engine_half(5.0));\n" +
+        "    printf(\"parallel %lld\\n\", (long long)engine_parallel(1000000));\n    char text[64];\n" +
+        "    int64_t all = engine_greet(\"Andrea\", 2, text, sizeof text);\n    printf(\"%lld [%s]\\n\", (long long)all, text);\n" +
+        "    char tiny[10];\n    all = engine_greet(\"citt\\xc3\\xa0\", 1, tiny, sizeof tiny);\n    printf(\"%lld [%s]\\n\", (long long)all, tiny);\n" +
+        "    printf(\"needed %lld\\n\", (long long)engine_greet(\"x\", 3, 0, 0));\n    uint8_t hash[32];\n" +
+        "    int64_t n = engine_hash(\"abc\", hash, sizeof hash);\n" +
+        "    printf(\"%lld %02x%02x%02x%02x\\n\", (long long)n, hash[0], hash[1], hash[2], hash[3]);\n" +
+        "    printf(\"length %lld %lld %lld\\n\", (long long)engine_length(\"ciao\"), (long long)engine_length(0), (long long)engine_length(\"\\xff\\xfe\"));\n" +
+        "    engine_nothing();\n    HANDLE threads[8];\n    int64_t results[8];\n" +
+        "    for (int i = 0; i < 8; i++) threads[i] = CreateThread(0, 0, worker, &results[i], 0, 0);\n" +
+        "    WaitForMultipleObjects(8, threads, TRUE, INFINITE);\n    int same = 1;\n" +
+        "    for (int i = 1; i < 8; i++) same = same && results[i] == results[0];\n" +
+        "    printf(\"8 threads of the host: the same %d\\n\", same);\n    return 0;\n}\n"
+}
+
+string user() {
+    ret "import unsafe\n\nextern \"engine\" {\n    i64 engine_add(i64 a, i64 b)\n    i64 engine_greet(addr name, i64 times, addr out, i64 size)\n}\n\n" +
+        "i32 main() {\n    addr buffer = alloc(64)\n    string name = \"Cromo\"\n    i64 all = engine_greet(name.cstring(), 1, buffer, 64)\n" +
+        "    println(\"from Cromo: {} {} {}\", engine_add(40, 2), all, string(buffer, all))\n    free(buffer)\n    ret 0\n}\n"
+}
+
+i32 main() {
+    string work = os.env("WORK")
+    fs.removeAll(work)
+    fs.createFolders(work + "/user")
+    fs.writeText(work + "/cromo.mod", "module example.com/engine\nversion 1.2.3\ndescription The engine\nlib engine engine.cro\nbin tool tool.cro\n")
+    fs.writeText(work + "/engine.cro", engine())
+    fs.writeText(work + "/tool.cro", "i32 main() {\n    println(\"a tool\")\n    ret 0\n}\n")
+
+    process.Output built = cromo(work, "build")
+    println("built: {}, engine.dll {}, engine.lib {}, engine.h {}, tool.exe {}", built.code, fs.exists(work + "/engine.dll"),
+        fs.exists(work + "/engine.lib"), fs.exists(work + "/engine.h"), fs.exists(work + "/tool.exe"))
+    if (built.code != 0) {
+        println("{}", built.err)
+    }
+    for (string line in fs.readText(work + "/engine.h").split("\n")) {
+        if (line.contains("engine_") || line.startsWith("// ")) {
+            println("{}", line)
+        }
+    }
+
+    // A program of C.
+    fs.writeText(work + "/host.c", host())
+    process.Output compiled = process.run(os.env("LLVM") + "/bin/clang.exe", ["-O1", work + "/host.c", work + "/engine.lib", "-o",
+        work + "/host.exe"])
+    println("compiled: {}", compiled.code)
+    if (compiled.code != 0) {
+        println("{}", compiled.err)
+    }
+    process.Output hosted = process.run(work + "/host.exe", list<string>())
+    print("{}", hosted.out.replace("\r", ""))
+    if (hosted.code != 0) {
+        println("the program of C ended with {}: {}", hosted.code, hosted.err)
+    }
+
+    // A program in Cromo, through the same interface.
+    fs.writeText(work + "/user/main.cro", user())
+    fs.copy(work + "/engine.dll", work + "/user/engine.dll")
+    fs.copy(work + "/engine.lib", work + "/user/engine.lib")
+    print("{}", cromo(work + "/user", "run main.cro").out.replace("\r", ""))
+
+    process.Output one = cromo(work, "build engine")
+    process.Output run = cromo(work, "run engine")
+    println("one by its name: {}, run: {} {}", one.code, run.code, said(run, "which is not run"))
+
+    // What is refused.
+    fs.writeText(work + "/engine.cro", "import std.fs\n\n[[export]] i64 engine_fails(string path) {\n    ret fs.size(path)\n}\n")
+    process.Output throws = cromo(work, "build engine")
+    println("throws: {}, {}", throws.code, said(throws, "the exported function 'engine_fails' can throw, and C has no exceptions: catch them inside it"))
+    fs.writeText(work + "/engine.cro", "i64 hidden(i64 a) {\n    ret a\n}\n")
+    process.Output none = cromo(work, "build engine")
+    println("nothing exported: {}, {}", none.code, said(none, "exports nothing"))
+    fs.writeText(work + "/engine.cro", "[[export]] list<i64> numbers() {\n    list<i64> all\n    ret all\n}\n")
+    process.Output wrong = cromo(work, "build engine")
+    println("a list: {}, {}", wrong.code, said(wrong, "an exported function returns a number, a bool, a string, a list<u8> or nothing"))
+    fs.writeText(work + "/engine.cro", "[[export(\"cromo_alloc\")]] i64 mine(i64 size) {\n    ret size\n}\n")
+    process.Output taken = cromo(work, "build engine")
+    println("a name of the runtime: {}, {}", taken.code, said(taken, "a library cannot export 'cromo_alloc'"))
+    fs.writeText(work + "/tool.cro", "[[export]] i64 twice(i64 n) {\n    ret n * 2\n}\n\ni32 main() {\n    ret 0\n}\n")
+    process.Output program = cromo(work, "build tool")
+    println("in a program: {}, {}", program.code, said(program, "[[export]] is for the functions of a library"))
+    fs.writeText(work + "/cromo.mod", "module example.com/engine\nlib engine engine.cro\nlib engine tool.cro\n")
+    process.Output twice = cromo(work, "build")
+    println("twice: {}, {}", twice.code, said(twice, "another library is called engine"))
+    fs.removeAll(work)
+    ret 0
+}

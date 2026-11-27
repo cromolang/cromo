@@ -60,6 +60,9 @@ public struct Checker {
     public list<DefaultField> defaultFields
     public list<i32> made  // the functions made by the analysis, in their order
     public bool requireMain = true
+    public bool asLibrary  // D599: a library with an interface of C: [[export]] in every file, and no main
+    list<i32> exportWrappers  // the functions written for the exports that take or give a text
+    list<i32> exportInner     // and the function of the library that each is written around
     public bool onlyDeclarations  // the bodies are not checked (P89)
     list<Scope> scopes
     i64 recordCount  // the structs of the sources: their instances come after them
@@ -1873,8 +1876,9 @@ public struct Checker {
     // call with that name, with the types of C and without hidden parameters.
     void readExport(i32 function) {
         Loc loc = attributeLoc(function, 0)
-        if (!isUnsafe(tree.functions[function].file)) {
-            error(loc, "[[export]] is only for the modules with 'import unsafe'")
+        bool plain = !isUnsafe(tree.functions[function].file)
+        if (plain && !asLibrary) {
+            error(loc, "[[export]] is for the functions of a library, a line lib of cromo.mod, and for the modules with 'import unsafe'")
             ret
         }
         if (tree.functions[function].attributes.len() > 1) {
@@ -1884,28 +1888,48 @@ public struct Checker {
         Attribute attribute = tree.functions[function].attributes[0]
         bool named = attribute.args.len() == 1 && attribute.args[0].isText && attribute.args[0].text.len() > 0
         string exportName = named ? attribute.args[0].text : ""
+        if (plain && attribute.args.len() == 0) {
+            // D599: in a library, with the name of the function.
+            named = true
+            exportName = tree.functions[function].name
+        }
         for (i64 i = 0; i < exportName.len(); i++) {
             if (!isLetter(exportName[i]) && !isDigit(exportName[i]) && exportName[i] != '_') {
                 named = false
             }
         }
         if (!named || isDigit(exportName[0])) {
-            error(loc, "[[export]] takes the name of the function in C, as [[export(\"cromo_alloc\")]]")
+            error(loc, plain ? "[[export]] exports with the name of the function, and [[export(\"name\")]] with another name of C" :
+                "[[export]] takes the name of the function in C, as [[export(\"cromo_alloc\")]]")
+            ret
+        }
+        if (plain && (exportName.startsWith("cromo_") || exportName == "main" || exportName == "DllMain")) {
+            error(loc, format("a library cannot export '{}': the names that start with cromo_, main and DllMain are of the runtime", exportName))
             ret
         }
         if (tree.functions[function].typeParams.len() > 0) {
             error(functionLoc(function), "an exported function cannot be generic: C calls it as it is")
             ret
         }
+        // D599: in a library a text crosses the border too, through a function that
+        // the compiler writes around this one.
+        bool texts = false
         for (i64 i = 0; i < tree.functions[function].params.len(); i++) {
-            if (tree.functions[function].params[i].mode != ParamMode.Read || !isCType(tree.functions[function].paramTypes[i])) {
-                error(paramLoc(function, i), "the parameters of an exported function are numbers, bool or addr, passed by value")
+            i32 type = tree.functions[function].paramTypes[i]
+            bool text = plain && isString(type)
+            texts = texts || text
+            if (tree.functions[function].params[i].mode != ParamMode.Read || (!isCType(type) && !text)) {
+                error(paramLoc(function, i), plain ? "the parameters of an exported function are numbers, bool or string, passed by value" :
+                    "the parameters of an exported function are numbers, bool or addr, passed by value")
                 ret
             }
         }
         i32 result = tree.functions[function].resolvedReturn
-        if (!types.isVoid(result) && !isCType(result)) {
-            error(functionLoc(function), "an exported function returns a number, a bool, an addr or nothing")
+        bool gives = plain && (isString(result) || name(result) == "list<u8>")
+        texts = texts || gives
+        if (!types.isVoid(result) && !isCType(result) && !gives) {
+            error(functionLoc(function), plain ? "an exported function returns a number, a bool, a string, a list<u8> or nothing" :
+                "an exported function returns a number, a bool, an addr or nothing")
             ret
         }
         // One name of C for each function: two would be the same symbol (D395).
@@ -1915,10 +1939,118 @@ public struct Checker {
             ret
         }
         exported[exportName] = loc.line
+        if (texts) {
+            exportWithTexts(function, exportName, loc)
+            ret
+        }
         tree.functions[function].isExported = true
         tree.functions[function].exportName = exportName
         if (named) {
             tree.functions[function].symbol = exportName
+        }
+    }
+
+    // D599: the function of C of an [[export]] that takes or gives a text, written in
+    // Cromo in the scope of the core, around the function of the library, which it
+    // finds there under a name of its own. A text comes as the address of its bytes,
+    // ended by a zero; one that is given goes into the buffer of who calls, with the
+    // number of bytes of the whole as the result.
+    void exportWithTexts(i32 function, string exportName, Loc loc) {
+        string target = format("exportTarget{}__", function)
+        scopes[libraryFile].functions[target] = function
+        list<string> params
+        list<string> args
+        list<string> header
+        for (i64 i = 0; i < tree.functions[function].params.len(); i++) {
+            i32 type = tree.functions[function].paramTypes[i]
+            string given = tree.functions[function].params[i].name
+            if (isString(type)) {
+                params.add(format("addr a{}", i))
+                args.add(format("exportIn(a{})", i))
+                header.add("const char* " + given)
+            } else {
+                params.add(format("{} a{}", name(type), i))
+                args.add(format("a{}", i))
+                header.add(cName(type) + " " + given)
+            }
+        }
+        i32 result = tree.functions[function].resolvedReturn
+        string call = target + "(" + join(args, ", ") + ")"
+        string returned = types.isVoid(result) ? "void" : name(result)
+        string body = types.isVoid(result) ? call : "ret " + call
+        string headerResult = cName(result)
+        if (isString(result) || name(result) == "list<u8>") {
+            params.add("addr out")
+            params.add("i64 size")
+            header.add(isString(result) ? "char* out" : "uint8_t* out")
+            header.add("int64_t size")
+            returned = "i64"
+            headerResult = "int64_t"
+            body = "ret " + (isString(result) ? "exportOut(" : "exportBytesOut(") + call + ", out, size)"
+        }
+        string text = returned + " " + tree.functions[function].name + "(" + join(params, ", ") + ") {\n" + body + "\n}\n"
+        i32 wrapper = parseGenerated(text, libraryFile)
+        if (wrapper < 0) {
+            error(loc, "internal error: the function of C of " + tree.functions[function].name + " does not parse")
+            ret
+        }
+        tree.functions[wrapper].isExported = true
+        tree.functions[wrapper].exportName = exportName
+        tree.functions[wrapper].symbol = exportName
+        tree.functions[wrapper].headerParams = header
+        tree.functions[wrapper].headerResult = headerResult
+        // Its place in the sources is that of the function it is for: the header
+        // takes its comment from there.
+        tree.functions[wrapper].line = tree.functions[function].line
+        tree.functions[wrapper].headerFile = tree.functions[function].file
+        exportWrappers.add(wrapper)
+        exportInner.add(function)
+        list<TypeBinding> none
+        addGenerated(wrapper, none, tree.functions[function].name.copy(), loc)
+    }
+
+    // The type of C of a number, a bool or nothing, for the header of a library.
+    string cName(i32 type) const {
+        if (types.isVoid(type)) {
+            ret "void"
+        }
+        if (types.isBool(type)) {
+            ret "bool"
+        }
+        switch (name(type)) {
+            case "i8" {
+                ret "int8_t"
+            }
+            case "i16" {
+                ret "int16_t"
+            }
+            case "i32" {
+                ret "int32_t"
+            }
+            case "i64" {
+                ret "int64_t"
+            }
+            case "u8" {
+                ret "uint8_t"
+            }
+            case "u16" {
+                ret "uint16_t"
+            }
+            case "u32" {
+                ret "uint32_t"
+            }
+            case "u64" {
+                ret "uint64_t"
+            }
+            case "f32" {
+                ret "float"
+            }
+            case "f64" {
+                ret "double"
+            }
+            default {
+                ret "void*"
+            }
         }
     }
 
@@ -4085,6 +4217,13 @@ public struct Checker {
             i32 function = tree.topFunctions[i]
             if (tree.functions[function].isExported && tree.functions[function].canThrow) {
                 error(functionLoc(function), "the exported function '" + tree.functions[function].name +
+                    "' can throw, and C has no exceptions: catch them inside it")
+            }
+        }
+        for (i64 i = 0; i < exportWrappers.len(); i++) {  // D599: the one it is written around can throw
+            if (tree.functions[exportWrappers[i]].canThrow) {
+                i32 inner = exportInner[i]
+                error(functionLoc(inner), "the exported function '" + tree.functions[inner].name +
                     "' can throw, and C has no exceptions: catch them inside it")
             }
         }
@@ -8941,6 +9080,18 @@ public Checker checkProgram(move Tree tree, move Diagnostics diag, bool requireM
     checker.tree = move tree
     checker.diag = move diag
     checker.requireMain = requireMain
+    checker.run()
+    ret checker
+}
+
+// The analysis of a library with an interface of C (D599): it has no main, and its
+// functions with [[export]] are what it gives.
+public Checker checkLibrary(move Tree tree, move Diagnostics diag) {
+    Checker checker
+    checker.tree = move tree
+    checker.diag = move diag
+    checker.requireMain = false
+    checker.asLibrary = true
     checker.run()
     ret checker
 }

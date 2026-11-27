@@ -2873,6 +2873,16 @@ A branch whose type is not simple, as a `string`, gives a new value, also a copy
 - The four times of NTP are used: the delay is counted on the monotonic clock, so a change of the date during the question does not matter. An answer is taken only when it gives back the time of the question, so that a late one or one made up is passed over; the seconds of NTP that wrap in 2036 are read in their era. A kiss of death, `RATE`, `DENY` or `RSTR`, is an `Error`; a server that is not set is a `Sample` with `synchronized` false.
 - Not there: the authentication of NTS, the questions to several servers with the choice among them, a server of NTP, and setting the clock, which is of the system.
 
+### D599. Libraries with an interface of C: a DLL, a `.so`
+*2026-11-27.* Chosen by the author. A project can be built as a shared library that a program in C, C++, C# or any language that calls C loads: a DLL on Windows, a `.so` on Linux. A part of a program written in another language is then written in Cromo. There are no static libraries, `.lib` and `.a`: linked into a program of C, the runtime of Cromo would meet the one of that program. A program in Cromo that uses such a library goes through its interface of C too, with `extern` (D128), as for any other.
+- A line `lib name path` of `cromo.mod`, next to the lines `bin` (D517): the name of the library and its main file. A `cromo.mod` has executables, libraries or both, and `cromo build` without a file builds them all; `cromo build name` builds one. The library `engine` is `engine.dll` with `engine.lib`, the import library for the linkers of C, on Windows, and `libengine.so` on Linux.
+- With each library `cromo` writes `engine.h`, the declarations of C of what it exports, from the functions themselves: it is not written by hand, and cannot say something else.
+- What a library exports are the functions with `[[export]]` in its files, which is no longer only of the unsafe dialect (D395): `[[export]]` exports with the name of the function, `[[export("name")]]` with another. The main file of a library has no `main`.
+- The first version takes across the border: the numbers, `bool`, and `addr` in the unsafe dialect; a `string` parameter, which C gives as a text of UTF-8 ended by a zero and the function gets as its own copy; a `string` or a `list<u8>` returned, for which C gives a buffer and its size and gets the number of bytes that the whole value has, the text ended by a zero when it fits. No lists, maps or structs by value: each would fix a layout for C.
+- An exported function cannot let an exception out: it is a compile error, as before (D395). A panic ends the process with its message, as in Rust: it is a bug, and going on with things half done would be worse.
+- The DLL has the version and the texts of the lines `version`, `company`, `description` and `copyright` of `cromo.mod` (D557), and `cromo build --release` signs it with the command of `sign` (D558), as an executable. On Linux the library says its name, `libengine.so`, as its soname.
+- The runtime starts when the library is loaded, and each library has its own, with its heap: two libraries in Cromo in a process do not share objects. On Linux a `.so` is linked with glibc, as every library that a program of C loads, with the runtime made for it (D428).
+
 ---
 
 ## Proposed
