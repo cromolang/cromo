@@ -660,7 +660,7 @@ i32 main() {
 }
 ```
 
-- The core (`list`, `string`, `map`, `format`, `join`, the numbers from text) is visible everywhere; `std.fs`, `std.time`, `std.os`, `std.process`, `std.thread`, `std.net`, `std.crypto`, `std.json`, `std.jwt`, `std.http`, `std.gzip`, `std.zip`, `std.tar`, `std.websocket`, `std.cmdline`, `std.db`, `std.log`, `std.regex` and `std.math` are imported (D201). The functions of the first three are in D211.
+- The core (`list`, `string`, `map`, `format`, `join`, the numbers from text) is visible everywhere; `std.fs`, `std.time`, `std.os`, `std.process`, `std.thread`, `std.net`, `std.crypto`, `std.json`, `std.jwt`, `std.http`, `std.gzip`, `std.zip`, `std.tar`, `std.websocket`, `std.cmdline`, `std.db`, `std.log`, `std.regex`, `std.math`, `std.uuid` and `std.config` are imported (D201). The functions of the first three are in D211.
 - `std.fs` has also `isFile`, `isLink`, `size`, `modified` (the seconds from 1970), `rename`, `copy`, `createFolders` with the folders above, `removeAll`, which never follows a link, and the parts of a path: `joinPath`, `parent`, `fileName` and `extension`. `fs.File(path, mode)` is a file open, read and written in pieces, at a position too, which its destructor closes, and `fs.Mapping(path)` a file mapped in memory, read only, with its numbers read at a position (D504).
 - `fs.createLink(target, path)` makes a link to a folder, a symbolic link on Linux and a junction on Windows, which needs no administrator; `fs.readLink(path)` gives where it points, and `fs.makeExecutable(path)` lets a file run on Linux (P18).
 - `fs.absolute(path)` is the absolute path, without `.` and `..`; `fs.canonical(path)` is that of a file that exists, with every link followed, and throws when it does not exist; `fs.tempFolder()` is the folder of the temporary files (D575).
@@ -1036,6 +1036,7 @@ i32 main() {
 - **Versions:** of each package the program uses the highest of the minimal versions that the project and its dependencies require, the same every time, without a lock file (D378). `v1` and `v2` are two packages (D382).
 - **Integrity:** `cromo.sum` keeps the SHA-256 of each version used, written the first time and checked always; a tag moved on the server is an error (D380). The hash is of the files, not of the archive (D387).
 - **Downloads:** `cromo` downloads the archive of the tag over HTTPS from GitHub, GitLab or Codeberg and opens it itself; the other hosts and the private repositories go through `git` (D379, D386). The versions are kept in `~/.cromo/packages` (D388).
+- **A new project** (D586): `cromo init` writes the `cromo.mod` of the folder, `module` with its name, `version 0.1.0`, `description` and `author Name <address>` from the configuration of git, a `main.cro` when the folder has no `.cro` file, and a repository of git unless `--no-git`; `cromo create name` does it in a new folder.
 - **Commands:** `cromo get url[@version] [name]` adds a dependency or raises its version; `cromo build`, `run` and `test` download what is missing (D381, D385, D389):
 
 ```

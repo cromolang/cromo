@@ -1,0 +1,6 @@
+// Shapes, for the tests of the completion.
+
+// The area of a square of side 'side'.
+public f64 square(f64 side) {
+    ret side * side
+}

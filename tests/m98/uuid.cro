@@ -1,0 +1,95 @@
+// std.uuid (D587): the text and the bytes of a UUID, the versions of RFC 9562 with
+// their bits, the names of the versions 3 and 5 against the values of the RFC, the
+// order of the version 7, and the texts that are not a UUID.
+// expect-output: text 550e8400-e29b-41d4-a716-446655440000 4 Rfc9562
+// expect-output: same true true false
+// expect-output: nil 00000000-0000-0000-0000-000000000000 true 0
+// expect-output: max ffffffff-ffff-ffff-ffff-ffffffffffff
+// expect-output: v3 5df41881-3aed-3515-88a7-2f4a814cf09e
+// expect-output: v5 2ed6657d-e927-568b-95e1-2665a8aea6a2
+// expect-output: versions 1 3 4 5 6 7 8
+// expect-output: variants true
+// expect-output: random true
+// expect-output: v7 in order true, of now true
+// expect-output: v1 and v6 the same time true
+// expect-output: v8 01234567-89ab-8def-8123-456789abcdef
+// expect-output: compare -1 0 1
+// expect-output: valid true true false false false
+// expect-output: 'hello' is not a UUID, as 550e8400-e29b-41d4-a716-446655440000
+// expect-output: a UUID has 16 bytes, not 3
+import std.crypto
+import std.time
+import std.uuid
+
+string name(uuid.Variant variant) {
+    switch (variant) {
+        case Ncs {
+            ret "Ncs"
+        }
+        case Rfc9562 {
+            ret "Rfc9562"
+        }
+        case Microsoft {
+            ret "Microsoft"
+        }
+        case Future {
+            ret "Future"
+        }
+    }
+}
+
+i32 main() {
+    uuid.Uuid id = uuid.parse("550E8400-E29B-41D4-A716-446655440000")
+    println("text {} {} {}", id, id.version(), name(id.variant()))
+    println("same {} {} {}", id == uuid.parse("550e8400e29b41d4a716446655440000"), id == uuid.fromBytes(id.bytes()), id == uuid.nil())
+    uuid.Uuid none
+    println("nil {} {} {}", uuid.nil(), none.isNil(), none.version())
+    println("max {}", uuid.max())
+
+    // The examples of RFC 9562, appendix A.
+    println("v3 {}", uuid.v3(uuid.namespaceDns(), "www.example.com"))
+    println("v5 {}", uuid.v5(uuid.namespaceDns(), "www.example.com"))
+
+    list<uuid.Uuid> made = [uuid.v1(), uuid.v3(uuid.namespaceUrl(), "a"), uuid.v4(), uuid.v5(uuid.namespaceUrl(), "a"), uuid.v6(),
+        uuid.v7(), uuid.v8(crypto.random(16))]
+    list<string> versions
+    bool standard = true
+    for (uuid.Uuid each in made) {
+        versions.add(format("{}", each.version()))
+        standard = standard && name(each.variant()) == "Rfc9562"
+    }
+    println("versions {}", join(versions, " "))
+    println("variants {}", standard)
+    println("random {}", uuid.v4() != uuid.v4() && uuid.v7() != uuid.v7() && uuid.v1() != uuid.v1())
+
+    uuid.Uuid first = uuid.v7()
+    time.msleep(3)
+    uuid.Uuid second = uuid.v7()
+    i64 millis = i64(second.high >> 16)
+    i64 now = time.utcNow().unixNano() / 1000000
+    println("v7 in order {}, of now {}", first.compare(second) < 0, now - millis >= 0 && now - millis < 5000)
+
+    // The same 60 bits of time, in the two orders.
+    uuid.Uuid one = uuid.v1()
+    uuid.Uuid six = uuid.v6()
+    i64 oneTime = (i64(one.high & 0x0FFF) << 48) | (i64((one.high >> 16) & 0xFFFF) << 32) | i64(one.high >> 32)
+    i64 sixTime = (i64(six.high >> 32) << 28) | (i64((six.high >> 16) & 0xFFFF) << 12) | i64(six.high & 0x0FFF)
+    println("v1 and v6 the same time {}", sixTime >= oneTime && sixTime - oneTime < 50000000)
+
+    println("v8 {}", uuid.v8(crypto.fromHex("0123456789abcdef0123456789abcdef")))
+    println("compare {} {} {}", uuid.nil().compare(uuid.max()), id.compare(id), uuid.max().compare(id))
+    println("valid {} {} {} {} {}", uuid.isValid("550e8400-e29b-41d4-a716-446655440000"), uuid.isValid("550e8400e29b41d4a716446655440000"),
+        uuid.isValid("550e8400-e29b-41d4-a716-44665544000"), uuid.isValid("550e8400-e29b-41d4-a716_446655440000"),
+        uuid.isValid("550e8400-e29b-41d4-a716-44665544000g"))
+    try {
+        uuid.parse("hello")
+    } catch (Exception e) {
+        println("{}", e.message())
+    }
+    try {
+        uuid.fromBytes([1, 2, 3])
+    } catch (Exception e) {
+        println("{}", e.message())
+    }
+    ret 0
+}

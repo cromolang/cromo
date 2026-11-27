@@ -1,14 +1,16 @@
 // The log of a program: lines with the time, a level and a message, on the standard
-// error or at the end of a file, as text or as JSON for the services.
+// output or error, at the end of a file or both, as text with colors or as JSON for
+// the services.
 //
 // '''
 // import std.log
 //
-// log.info(format("listening on {}", port))   // 2026-11-12T10:03:12.250+01:00 INFO  listening on 8080
+// log.info("listening on {}", port)           // 2026-11-12T10:03:12.250+01:00 INFO  listening on 8080
 //
 // log.Logger service
 // service.setLevel(log.Level.Debug)           // debug() writes too
-// service.setFile("service.log")              // at the end of that file
+// service.setFile("service.log")              // at the end of that file too
+// service.setConsole(log.Console.Off)         // and no more on the standard output
 // service.setJson(true)                       // {"time":"...","level":"INFO","message":"..."}
 // service.info("started")
 //
@@ -23,6 +25,7 @@
 // program keeps and gives to who writes. A line is written with one call of the
 // system, so the lines of the threads stay whole without a lock.
 import std.fs
+import std.os
 import std.time
 
 // How much a line of the log matters.
@@ -31,6 +34,13 @@ public enum Level {
     Info   // what the program does: the level of a logger that is told nothing else
     Warn   // something to look at, which did not stop the work
     Error  // something that failed
+}
+
+// Where a logger writes on the terminal of the program.
+public enum Console {
+    Output  // the standard output: where a logger that is told nothing else writes
+    Error   // the standard error
+    Off     // nowhere: the lines go to the file alone
 }
 
 i64 rank(Level level) {
@@ -50,7 +60,7 @@ i64 rank(Level level) {
     }
 }
 
-// Writes a line that says what the program does, on the standard error, as a
+// Writes a line that says what the program does, on the standard output, as a
 // 'Logger' that is told nothing does. The message is a text, or a format with its
 // arguments, as that of 'println': 'log.info("{} users", count)'.
 [[format]] public void info(string message) {
@@ -58,19 +68,19 @@ i64 rank(Level level) {
     plain.info(message)
 }
 
-// Writes a line about something to look at, on the standard error.
+// Writes a line about something to look at, on the standard output.
 [[format]] public void warn(string message) {
     Logger plain
     plain.warn(message)
 }
 
-// Writes a line about something that failed, on the standard error.
+// Writes a line about something that failed, on the standard output.
 [[format]] public void error(string message) {
     Logger plain
     plain.error(message)
 }
 
-// A logger that writes on the standard error, whose lines have the field 'key' with
+// A logger that writes on the standard output, whose lines have the field 'key' with
 // the text 'value' after the message: the request, the user, the part of the
 // program that writes.
 public Logger with(string key, string value) {
@@ -78,25 +88,29 @@ public Logger with(string key, string value) {
     ret plain.with(key, value)
 }
 
-// A logger that writes on the standard error, whose lines have the field 'key' with
+// A logger that writes on the standard output, whose lines have the field 'key' with
 // the number 'value'.
 public Logger withInt(string key, i64 value) {
     Logger plain
     ret plain.withInt(key, value)
 }
 
-// Writes the lines of a log: to the standard error or to a file, from a level on,
-// as text or as JSON, with some fields of its own after the message. One declared
-// without a value writes text to the standard error from 'Info' on. It is a value:
-// a copy has what the logger had when it was copied, and is given to the functions
-// and to the tasks that write.
+// Writes the lines of a log: to the standard output or error, to a file or to both,
+// from a level on, as text or as JSON, with some fields of its own after the message.
+// One declared without a value writes text to the standard output from 'Info' on,
+// with colors when that is a terminal. It is a value: a copy has what the logger had
+// when it was copied, and is given to the functions and to the tasks that write.
 public struct Logger {
     list<string> keys
     list<string> values
     list<bool> numbers  // the values written as they are in JSON
     i64 least = 1       // the rank of the lowest level written: Info
     bool json
-    string path  // of the file, or "" for the standard error
+    i64 stream = 1      // of the terminal: 1 the standard output, 2 the standard error, 0 none
+    string path         // of the file, or "" for no file
+    bool colors = true  // on the terminal
+    bool fileColors     // in the file
+    string timeFormat   // a pattern of DateTime.format, or "" for the one of ISO 8601
 
     // The lowest level that the logger writes, 'Info' at the start: the lines below
     // it are not written.
@@ -111,13 +125,56 @@ public struct Logger {
         json = on
     }
 
-    // The lines go at the end of the file at 'file', created if it does not exist,
-    // and with "" to the standard error again. The file is opened for each line, so
-    // a tool that rotates the logs can move it away at any time: the next line makes
-    // a new one. A line that cannot be written to the file goes to the standard
-    // error.
+    // Where the lines go on the terminal: 'Console.Output', the standard output, at
+    // the start; 'Console.Error', the standard error; 'Console.Off', nowhere, for a
+    // logger that writes to its file alone.
+    public void setConsole(Console where) {
+        switch (where) {
+            case Output {
+                stream = 1
+            }
+            case Error {
+                stream = 2
+            }
+            case Off {
+                stream = 0
+            }
+        }
+    }
+
+    // The lines go also at the end of the file at 'file', created if it does not
+    // exist, and with "" to no file again. 'setConsole(Console.Off)' leaves the file
+    // alone. The file is opened for each line, so a tool that rotates the logs can
+    // move it away at any time: the next line makes a new one. A line that cannot be
+    // written to the file goes to the standard error, if the terminal did not have
+    // it already.
     public void setFile(string file) {
         path = file.copy()
+    }
+
+    // Whether the lines of text on the terminal have colors, true at the start: the
+    // time in grey, 'DEBUG' in blue, 'INFO' in green, 'WARN' in orange and 'ERROR'
+    // in red. The colors are written only when the standard output or error is a
+    // terminal: one sent to a file or to another program gets the text alone. The
+    // lines of JSON have no colors.
+    public void setColor(bool on) {
+        colors = on
+    }
+
+    // How the time of a line is written: a pattern of 'DateTime.format' of
+    // 'std.time', as "%F %T" for '2026-11-12 10:03:12', without the zone, or
+    // "%T.%3f" for '10:03:12.250'; with "", as at the start, the format of ISO 8601
+    // with the milliseconds and the zone, '2026-11-12T10:03:12.250+01:00'. A pattern
+    // with a letter that 'format' does not know writes the time of ISO 8601.
+    public void setTimeFormat(string pattern) {
+        timeFormat = pattern.copy()
+    }
+
+    // Whether the lines of text in the file have the colors too, false at the
+    // start: for a file that is read with a program that shows them, as 'less -R'
+    // or 'tail -f' in a terminal.
+    public void setFileColor(bool on) {
+        fileColors = on
     }
 
     // A logger as this one, with the field 'key' with the text 'value' too.
@@ -145,7 +202,11 @@ public struct Logger {
         twin.numbers = numbers.copy()
         twin.least = least
         twin.json = json
+        twin.stream = stream
         twin.path = path.copy()
+        twin.colors = colors
+        twin.fileColors = fileColors
+        twin.timeFormat = timeFormat.copy()
         ret twin
     }
 
@@ -173,7 +234,42 @@ public struct Logger {
         if (level < least) {
             ret
         }
-        string now = time.localNow().text()
+        time.DateTime moment = time.localNow()
+        string now
+        if (timeFormat.len() > 0) {
+            try {
+                now = moment.format(timeFormat)
+            } catch (Exception e) {
+            }
+        }
+        if (now.len() == 0) {
+            now = moment.text()
+        }
+        bool onTerminal = stream != 0 && colors && !json && os.isTerminal(i32(stream))
+        bool inFile = fileColors && !json
+        string text = compose(level, name, message, now, onTerminal)
+        bool written = stream == 0 && path.len() == 0  // nowhere to write
+        if (stream == 1) {
+            print("{}", text)
+            written = true
+        } else if (stream == 2) {
+            eprint("{}", text)
+            written = true
+        }
+        if (path.len() > 0) {
+            try {
+                fs.appendText(path, inFile == onTerminal ? text : compose(level, name, message, now, inFile))
+                written = true
+            } catch (Exception e) {
+            }
+        }
+        if (!written) {
+            eprint("{}", text)
+        }
+    }
+
+    // A line of the log with its end, with the colors of a terminal or without.
+    string compose(i64 level, string name, string message, string now, bool colored) const {
         list<u8> line
         if (json) {
             append(ref line, "{\"time\":")
@@ -194,9 +290,19 @@ public struct Logger {
             }
             line.add('}')
         } else {
-            append(ref line, now)
-            line.add(' ')
-            append(ref line, name)
+            if (colored) {
+                append(ref line, "\u{1B}[90m")  // grey
+                append(ref line, now)
+                append(ref line, "\u{1B}[0m ")
+                // Blue, green, orange and red: the orange is one of the 256 colors.
+                append(ref line, level == 0 ? "\u{1B}[34m" : level == 1 ? "\u{1B}[32m" : level == 2 ? "\u{1B}[38;5;208m" : "\u{1B}[31m")
+                append(ref line, name)
+                append(ref line, "\u{1B}[0m")
+            } else {
+                append(ref line, now)
+                line.add(' ')
+                append(ref line, name)
+            }
             for (i64 i = name.len(); i < 6; i++) {
                 line.add(' ')
             }
@@ -213,15 +319,7 @@ public struct Logger {
             }
         }
         line.add('\n')
-        string text = string(line)
-        if (path.len() > 0) {
-            try {
-                fs.appendText(path, text)
-                ret
-            } catch (Exception e) {
-            }
-        }
-        eprint("{}", text)
+        ret string(line)
     }
 }
 

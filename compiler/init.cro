@@ -1,0 +1,138 @@
+// cromo init and cromo create (D586): the cromo.mod of a new project, with its
+// first program and its repository of git.
+import std.fs
+import std.os
+import std.process
+
+// What a program gave on its standard output, without the spaces around it, or ""
+// when it is not there or it failed.
+string answerOf(string program, list<string> args) {
+    try {
+        process.Output result = process.run(program, args)
+        if (result.code == 0) {
+            ret result.out.trim()
+        }
+    } catch (Exception e) {
+    }
+    ret ""
+}
+
+// The name of a project from the name of its folder: the characters that the line
+// module of a cromo.mod takes, a - for each of the others.
+string projectName(string folder) {
+    list<u8> name
+    for (i64 i = 0; i < folder.len(); i++) {
+        u8 c = folder[i]
+        bool fine = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '-' || c == '_'
+        name.add(fine ? c : '-')
+    }
+    ret name.len() > 0 ? string(name) : "app"
+}
+
+// Writes the project in `folder`, which is there. Returns the exit code.
+i32 initFolder(string folder, bool git) {
+    string mod = fs.joinPath(folder, "cromo.mod")
+    if (fs.isFile(mod)) {
+        eprintln("cromo: there is a cromo.mod in this folder already")
+        ret 1
+    }
+    string name = projectName(fs.fileName(fs.absolute(folder)))
+
+    // The author: the one of git, for every repository of the user, or the name of
+    // the user on this computer.
+    string author = answerOf("git", ["config", "--global", "user.name"])
+    string email = answerOf("git", ["config", "--global", "user.email"])
+    if (author.len() == 0) {
+        author = os.env(os.name() == "windows" ? "USERNAME" : "USER")
+    }
+    string text = "module " + name + "\n" + "version 0.1.0\n" + "description " + name + "\n"
+    if (author.len() > 0) {
+        text += "author " + author + (email.len() > 0 ? " <" + email + ">" : "") + "\n"
+    }
+    fs.writeText(mod, text)
+    println("Created cromo.mod")
+
+    bool sources = false
+    for (string entry in fs.listFolder(folder)) {
+        sources = sources || fs.extension(entry) == ".cro"
+    }
+    if (!sources) {
+        fs.writeText(fs.joinPath(folder, "main.cro"), "i32 main() {\n    println(\"Hello, world!\")\n    ret 0\n}\n")
+        println("Created main.cro")
+    }
+
+    // A repository of git, when git is there and the folder is not in one already.
+    if (git && answerOf("git", ["--version"]).len() > 0 &&
+        answerOf("git", ["-C", folder, "rev-parse", "--is-inside-work-tree"]) != "true") {
+        if (answerOf("git", ["-C", folder, "init"]).len() > 0) {
+            string ignore = fs.joinPath(folder, ".gitignore")
+            if (!fs.isFile(ignore)) {
+                // The executables that cromo build writes here, named after the folder.
+                fs.writeText(ignore, "/" + name + "\n" + "/" + name + ".exe\n")
+            }
+            println("Created a repository of git")
+        }
+    }
+    ret 0
+}
+
+string initUsage() {
+    ret "cromo: cromo init takes nothing, or --no-git for no repository of git"
+}
+
+string createUsage() {
+    ret "cromo: cromo create takes the name of the new folder, as cromo create app, and --no-git for no repository of git"
+}
+
+// cromo init [--no-git]: the project of the current folder.
+public i32 initCommand(list<string> args) {
+    bool git = true
+    for (i64 i = 2; i < args.len(); i++) {
+        if (args[i] != "--no-git") {
+            eprintln("{}", initUsage())
+            ret 2
+        }
+        git = false
+    }
+    try {
+        ret initFolder(os.currentFolder(), git)
+    } catch (Exception e) {
+        eprintln("cromo: {}", e.message())
+        ret 1
+    }
+}
+
+// cromo create <name> [--no-git]: a new folder with its project.
+public i32 createCommand(list<string> args) {
+    bool git = true
+    string name
+    for (i64 i = 2; i < args.len(); i++) {
+        if (args[i] == "--no-git") {
+            git = false
+        } else if (name.len() == 0 && !args[i].startsWith("-")) {
+            name = args[i].copy()
+        } else {
+            eprintln("{}", createUsage())
+            ret 2
+        }
+    }
+    if (name.len() == 0) {
+        eprintln("{}", createUsage())
+        ret 2
+    }
+    try {
+        if (fs.exists(name)) {
+            eprintln("cromo: {} is there already", name)
+            ret 1
+        }
+        fs.createFolders(name)
+        i32 code = initFolder(name, git)
+        if (code == 0) {
+            println("The project is in {}: cromo run there runs it", name)
+        }
+        ret code
+    } catch (Exception e) {
+        eprintln("cromo: {}", e.message())
+        ret 1
+    }
+}

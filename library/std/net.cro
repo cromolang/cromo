@@ -46,6 +46,7 @@
 // from the socket, with the same timeouts (D243). The functions of the runtime
 // are declared with extern "cromo" (D240).
 import unsafe
+import std.time
 
 extern "cromo" {
     addr cromo_tls_connect(addr host, i64 length)
@@ -530,6 +531,42 @@ public list<string> resolve(string host) {
         names.add(text(address))
     }
     ret names
+}
+
+// What 'ping' found.
+public struct Ping {
+    public bool answered       // whether the host answered before the timeout
+    public string address      // the address that was asked: "192.168.1.1"
+    public time.Duration time  // from the question to the answer; nothing without an answer
+}
+
+// Asks a host whether it is there, with an echo of ICMP as the command ping, and
+// waits for its answer up to 'timeout' milliseconds. 'host' is a name or an address,
+// of IPv4 or IPv6; a name is asked at its first address.
+//
+// '''
+// net.Ping router = net.ping("192.168.1.1", 1000)
+// if (router.answered) {
+//     println("{} answered in {} ms", router.address, router.time.milliseconds())
+// }
+// '''
+//
+// A host that does not answer is 'answered' false, not an exception: it is off,
+// out of reach, or it does not answer the pings. An exception if the name is not
+// found, or if the system does not let the program send a ping: on Linux a program
+// without the rights of root sends one when its group is in
+// 'net.ipv4.ping_group_range', as it is on most systems. On Windows the wait is of
+// the thread, also in a task.
+public Ping ping(string host, i64 timeout) {
+    Address to = resolveHost(host, 0)[0]
+    Ping result
+    result.address = text(to)
+    i64 nanoseconds = echo(to, timeout < 1 ? 1 : timeout)
+    if (nanoseconds >= 0) {
+        result.answered = true
+        result.time.nanoseconds = nanoseconds
+    }
+    ret result
 }
 
 void checkOpen(i64 handle, string action) {

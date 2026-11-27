@@ -418,7 +418,7 @@ i32 main(list<string> args) {
 }
 ```
 
-`main` is `i32 main()`, `i32 main(list<string> args)` or `void main()`. A project has a `cromo.mod` at its top, `module example.com/app`, and its imports start from that folder; `bin server cmd/server.cro` lists an executable, and `cromo get github.com/cromolang/toml` adds a package.
+`main` is `i32 main()`, `i32 main(list<string> args)` or `void main()`. A project has a `cromo.mod` at its top, `module example.com/app`, and its imports start from that folder; `bin server cmd/server.cro` lists an executable, and `cromo get github.com/cromolang/toml` adds a package. `cromo init` writes the `cromo.mod` of a folder, and `cromo create app` a new folder with its project.
 
 ## Threads
 

@@ -20,6 +20,8 @@ Il comando viene sempre per primo: `cromo hello.cro` è un errore che mostra la 
 | `cromo lsp` | il language server, per gli editor, su standard input e standard output ([Strumenti: formattazione, editor e debugger](tools.md)) |
 | `cromo ai` | ciò che serve a un'IA per scrivere Cromo: le regole su cui è facile sbagliare, la sintassi e programmi interi come esempi, in inglese. `cromo ai std.fs` stampa il riferimento di un modulo, `cromo ai core` quello del nucleo |
 | `cromo design [file.form]` | il designer delle finestre: una finestra composta con il mouse, salvata come form e come modulo di Cromo ([Finestre e app](gui.md#disegnare-una-finestra-cromo-design)) |
+| `cromo init [--no-git]` | avvia un progetto nella cartella corrente: il suo `cromo.mod`, con il nome della cartella, la versione `0.1.0` e l'autore che ha git; un `main.cro` che stampa un saluto, quando la cartella non ha file `.cro`; e un repository git, quando git c'è e la cartella non è già in uno, a meno di `--no-git` |
+| `cromo create name [--no-git]` | crea la cartella `name` e vi avvia un progetto, come `cromo init` |
 | `cromo get address[@version] [name]` | aggiunge un pacchetto al `cromo.mod` della cartella, o ne alza la versione ([Moduli](modules.md#pacchetti)) |
 | `cromo update [version]` | installa l'ultima versione di Cromo, o quella indicata, e la rende attiva |
 | `cromo version` | stampa la versione di `cromo` e di LLVM, come `cromo 0.98.2 (LLVM 23.1.4)` |

@@ -519,3 +519,83 @@ bool sameName(string a, string b) {
     }
     ret true
 }
+
+// The sum of the 16-bit words of a message of ICMP, as RFC 1071 folds it.
+i64 checksum(addr data, i64 size) {
+    i64 sum = 0
+    for (i64 i = 0; i + 1 < size; i += 2) {
+        sum += (i64(copyAt<u8>(offset(data, i))) << 8) | i64(copyAt<u8>(offset(data, i + 1)))
+    }
+    for (sum > 0xFFFF) {
+        sum = (sum & 0xFFFF) + (sum >> 16)
+    }
+    ret 0xFFFF - sum
+}
+
+// An echo of ICMP to an address and the nanoseconds to its answer, or -1 without
+// one in `timeout` milliseconds (D589). A socket of ICMP of kind SOCK_DGRAM needs
+// no rights, when the group of the program is in net.ipv4.ping_group_range, and the
+// kernel gives it only the answers to its echoes; otherwise a raw socket, for root
+// and for who has CAP_NET_RAW, which sees every message of ICMP of the computer.
+i64 echo(Address to, i64 timeout) {
+    i64 family = to.version == 6 ? 10 : 2
+    i64 protocol = to.version == 6 ? 58 : 1  // IPPROTO_ICMPV6, IPPROTO_ICMP
+    bool raw = false
+    i64 handle = systemCall(i64(Call.Socket), family, 2 | 0x80800, protocol, 0, 0, 0)  // SOCK_DGRAM
+    if (handle < 0) {
+        raw = true
+        handle = systemCall(i64(Call.Socket), family, 3 | 0x80800, protocol, 0, 0, 0)  // SOCK_RAW
+    }
+    if (handle < 0) {
+        throw failure(format("ping {}", text(to)), "the system does not let this program send one (" + errorText(-handle) +
+            "): its group is not in net.ipv4.ping_group_range, and it has not the rights of root")
+    }
+    i64 size = 40  // the header of 8 bytes and 32 of data
+    addr packet = alloc(size)
+    addr reply = alloc(1500)
+    try {
+        time.Instant start = time.now()
+        i64 id = start.elapsed().nanoseconds & 0xFFFF
+        for (i64 i = 0; i < size; i++) {
+            put<u8>(offset(packet, i), i < 8 ? 0 : u8(0x40 + i))
+        }
+        put<u8>(packet, to.version == 6 ? 128 : 8)  // an echo request
+        put<u8>(offset(packet, 4), u8(id >> 8))
+        put<u8>(offset(packet, 5), u8(id & 0xFF))
+        put<u8>(offset(packet, 7), 1)  // the sequence
+        if (to.version == 4) {         // the kernel writes the one of IPv6
+            i64 sum = checksum(packet, size)
+            put<u8>(offset(packet, 2), u8(sum >> 8))
+            put<u8>(offset(packet, 3), u8(sum & 0xFF))
+        }
+        start = time.now()
+        if (!sendTo(handle, packet, size, to)) {
+            ret -1
+        }
+        for {
+            i64 left = timeout - start.elapsed().milliseconds()
+            if (left <= 0 || !readyFor(handle, true, left)) {
+                ret -1
+            }
+            Address from
+            i64 count = receiveFrom(handle, reply, 1500, ref from)
+            i64 elapsed = start.elapsed().nanoseconds
+            // A raw socket of IPv4 gives the header of IP too.
+            i64 at = raw && to.version == 4 && count > 0 ? i64(copyAt<u8>(reply) & 0x0F) * 4 : 0
+            if (count < at + 8 || copyAt<u8>(offset(reply, at)) != (to.version == 6 ? 129 : 0) || copyAt<u8>(offset(reply, at + 7)) != 1) {
+                continue  // not an answer to an echo
+            }
+            if (raw && (copyAt<u8>(offset(reply, at + 4)) != u8(id >> 8) || copyAt<u8>(offset(reply, at + 5)) != u8(id & 0xFF))) {
+                continue  // the answer to the ping of another program
+            }
+            ret elapsed
+        }
+    } catch (Exception e) {
+        // A network that is not there, or a host that cannot be reached: no answer.
+        ret -1
+    } finally {
+        free(reply)
+        free(packet)
+        closeSocket(handle)
+    }
+}

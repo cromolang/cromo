@@ -1,0 +1,24 @@
+// std.log on the terminal (D583): a logger that is told nothing writes to the
+// standard output, without colors when that is not a terminal, as here;
+// Console.Error sends the lines to the standard error, Console.Off nowhere.
+// expect-output-contains: INFO  to the standard output
+// expect-output-contains: WARN  with a field user=7
+// expect-output-contains: ERROR of a logger
+// expect-output-contains: INFO  back on the output
+// expect-stderr: INFO  to the standard error
+import std.log
+
+i32 main() {
+    log.info("to the standard {}", "output")
+    log.withInt("user", 7).warn("with a field")
+    log.Logger service
+    service.error("of a logger")
+    service.setConsole(log.Console.Error)
+    service.info("to the standard error")
+    service.setConsole(log.Console.Off)
+    service.error("written nowhere")
+    service.setConsole(log.Console.Output)
+    service.setColor(false)
+    service.info("back on the output")
+    ret 0
+}

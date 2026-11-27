@@ -9,6 +9,8 @@ Questo capitolo tratta dei moduli che dialogano con il sistema operativo:
 | [std.process](std.process.html) | altri programmi, con il loro input e output |
 | [std.time](std.time.html) | orologi, date, fusi orari e pause |
 | [std.log](std.log.html) | il log del programma |
+| [std.config](std.config.html) | nomi con i loro valori, in memoria e in un file |
+| [std.uuid](std.uuid.html) | UUID |
 | [std.cmdline](std.cmdline.html) | le opzioni della riga di comando, e l'aiuto |
 | [std.zip](std.zip.html), [std.tar](std.tar.html) | archivi |
 
@@ -909,6 +911,28 @@ true
 
 Una `Duration` ha il campo `nanoseconds`, e `seconds()`, un `f64` con le frazioni, `milliseconds()` e `microseconds()`, che tralasciano il resto. È negativa quando gli istanti sono nell'ordine inverso.
 
+Un `time.Stopwatch` misura le parti di un lavoro senza tenere da parte gli istanti: parte quando viene creato, `lap()` restituisce il tempo dal giro precedente, o dall'inizio per il primo, ed `elapsed()` il tempo dall'inizio. `start()` lo fa ripartire.
+
+```cromo
+import std.time
+
+i32 main() {
+    time.Stopwatch watch = time.Stopwatch()
+    time.msleep(20)
+    time.Duration first = watch.lap()
+    time.msleep(30)
+    time.Duration second = watch.lap()
+    println("{} {}", first.milliseconds() >= 20, second.milliseconds() >= 30)
+    println("{}", watch.elapsed().milliseconds() >= 50)
+    ret 0
+}
+```
+
+```output
+true true
+true
+```
+
 `time.sleep(seconds)`, `time.msleep(milliseconds)` e `time.usleep(microseconds)` mettono in pausa il programma; un valore di 0 o meno non fa nulla. In un task, la pausa lascia il thread agli altri task ([Thread, task e canali](concurrency.md)).
 
 ### Date
@@ -1061,7 +1085,7 @@ I nomi dei giorni e dei mesi sono in inglese. Una lettera che non è nella tabel
 
 ## Il log
 
-Un programma che gira a lungo, come un servizio, scrive ciò che fa in un log: righe con l'ora, un livello e un messaggio. Il modulo [std.log](std.log.html) le scrive sullo standard error, o alla fine di un file.
+Un programma che gira a lungo, come un servizio, scrive ciò che fa in un log: righe con l'ora, un livello e un messaggio. Il modulo [std.log](std.log.html) le scrive sullo standard output o sullo standard error, alla fine di un file, oppure in entrambi.
 
 ```cromo nocheck
 import std.log
@@ -1077,6 +1101,7 @@ i32 main() {
 
     log.Logger service
     service.setLevel(log.Level.Debug)
+    service.setFile("service.log")
     serve(service, "7f3a")
     service.setJson(true)
     serve(service, "7f3b")
@@ -1092,16 +1117,93 @@ i32 main() {
 {"time":"2026-11-12T10:03:12.251+01:00","level":"WARN","message":"slow answer","request":"7f3b","user":42}
 ```
 
-- `log.info`, `log.warn` e `log.error` scrivono una riga del loro livello sullo standard error. Il messaggio è un testo, oppure un formato con i suoi valori, come quello di `println`: `log.info("{} users", count)`.
-- Un `log.Logger` ha le stesse funzioni, più `debug`, e dice dove e come vengono scritte le sue righe. Uno dichiarato senza valore scrive testo sullo standard error, dal livello `Info` in su.
+- `log.info`, `log.warn` e `log.error` scrivono una riga del loro livello sullo standard output. Il messaggio è un testo, oppure un formato con i suoi valori, come quello di `println`: `log.info("{} users", count)`.
+- Un `log.Logger` ha le stesse funzioni, più `debug`, e dice dove e come vengono scritte le sue righe. Uno dichiarato senza valore scrive testo sullo standard output, dal livello `Info` in su.
 - `setLevel(level)` imposta il livello più basso che il logger scrive, fra `log.Level.Debug`, `Info`, `Warn` ed `Error`.
+- `setConsole(where)` sceglie il terminale: `log.Console.Output`, lo standard output, `log.Console.Error`, lo standard error, oppure `log.Console.Off`, nessuno.
+- `setFile(path)` manda le righe anche alla fine di un file, creato se non esiste, e `setFile("")` di nuovo a nessun file. Con `setConsole(log.Console.Off)` le righe vanno solo nel file. Il file viene aperto a ogni riga, così uno strumento che ruota i log, come `logrotate`, può spostarlo in qualsiasi momento; la libreria non ruota i file da sé.
 - `setJson(true)` rende ogni riga un oggetto JSON, con `time`, `level`, `message` e i campi: il formato che leggono gli strumenti che raccolgono i log dei servizi.
-- `setFile(path)` manda le righe alla fine di un file, creato se non esiste, e `setFile("")` di nuovo sullo standard error. Il file viene aperto a ogni riga, così uno strumento che ruota i log, come `logrotate`, può spostarlo in qualsiasi momento; la libreria non ruota i file da sé.
-- `with(key, text)` e `withInt(key, number)` danno un logger come quello, le cui righe hanno anche quel campo dopo il messaggio. `log.with` e `log.withInt` partono da un logger dello standard error.
+- `setTimeFormat(pattern)` scrive l'ora come dice un modello di `DateTime.format`: `"%F %T"` dà `2026-11-12 10:03:12`, senza il fuso, e `"%T.%3f"` dà `10:03:12.250`. Con `""`, come all'inizio, l'ora è quella di ISO 8601, con i millisecondi e il fuso.
+- `with(key, text)` e `withInt(key, number)` danno un logger come quello, le cui righe hanno anche quel campo dopo il messaggio. `log.with` e `log.withInt` partono da un logger dello standard output.
+
+Le righe di testo hanno i **colori**: l'ora in grigio, `DEBUG` in blu, `INFO` in verde, `WARN` in arancione ed `ERROR` in rosso. `setColor(false)` li toglie dal terminale, e `setFileColor(true)` li scrive anche nel file, per un file che si legge con `less -R` o con `tail -f`; all'inizio il terminale li ha e il file no. Sul terminale i colori vengono scritti solo quando lo standard output, o lo standard error, è un terminale: quando va in un file o in un altro programma, come con `app > out.txt`, le righe sono solo testo. Le righe JSON non hanno colori.
 
 Niente del log appartiene all'intero programma: un logger è un valore, come una stringa. Il programma ne crea uno, lo imposta e lo passa alle funzioni e ai task che scrivono; una copia ha ciò che il logger aveva quando è stato copiato, così una funzione che serve una richiesta aggiunge il numero della richiesta alla sua copia e la passa a ciò che chiama.
 
-Le righe dei thread e dei task non si mescolano mai, e un messaggio è sempre una riga: una fine riga al suo interno è scritta `\n`, così un testo che viene da fuori non può creare una riga che sembra un'altra. Il log non lancia mai eccezioni: una riga che non può essere scritta nel file va sullo standard error.
+Le righe dei thread e dei task non si mescolano mai, e un messaggio è sempre una riga: una fine riga al suo interno è scritta `\n`, così un testo che viene da fuori non può creare una riga che sembra un'altra. Il log non lancia mai eccezioni: una riga che non può essere scritta nel file va sullo standard error, e un modello dell'ora sbagliato scrive l'ora di ISO 8601.
+
+## Impostazioni: nomi con i loro valori
+
+Le impostazioni di un programma sono spesso nomi con i loro valori, una riga `nome=valore` per ciascuno, in un file che una persona legge e modifica. Il modulo [std.config](std.config.html) li tiene in memoria, in un `config.Config`, e legge e scrive quel file.
+
+```cromo
+import std.config
+
+i32 main() {
+    config.Config settings = config.parse("# the server\nhost = example.com\nport=8080\n")
+    println("{} {}", settings.get("host"), settings.getInt("port", 80))
+    println("{} {}", settings.getInt("workers", 4), settings.getBool("verbose", false))
+
+    settings.setInt("port", 9090)
+    settings.setBool("verbose", true)
+    settings.remove("host")
+    print("{}", settings.text())
+    ret 0
+}
+```
+
+```output
+example.com 8080
+4 false
+# the server
+port=9090
+verbose=true
+```
+
+- `set(name, value)` dà a un nome un testo, al posto di quello che aveva o come nome nuovo; `setInt`, `setFloat` e `setBool` danno un numero oppure `true` e `false`; `setLine("name=value")` legge i due da un solo testo, come un argomento della riga di comando.
+- `get(name)` restituisce il valore, o `""` quando il nome non c'è; `getOr(name, otherwise)` restituisce in quel caso un altro testo. `getInt`, `getFloat` e `getBool` prendono il valore da restituire quando il nome non c'è o il suo valore non è di quel tipo; un sì è `true`, `yes`, `on` o `1`, un no è `false`, `no`, `off` o `0`.
+- `has(name)`, `remove(name)`, `names()`, nell'ordine in cui sono stati scritti, `len()` e `clear()`.
+- `config.parse(text)` legge le righe di un testo e `config.load(path)` quelle di un file; `text()` restituisce le righe e `save(path)` le scrive in un file.
+
+Il formato è quello più semplice dei file `.conf`, `.env` e `.properties`. Gli spazi attorno al nome e al valore vengono tolti; un valore è il resto della sua riga, quindi può contenere un `=` e un percorso di Windows si scrive così com'è; le righe vuote e quelle che iniziano con `#` o `;` sono commenti. Non ci sono virgolette, sezioni né sequenze di escape: un valore non può contenere una fine riga, e `set` lancia un `Error` in quel caso, come per un nome vuoto, con un `=` o che inizia con `#` o `;`. Una riga di un file che non è un commento e non ha un `=` è un `Error` con il suo numero.
+
+Un file letto, modificato e salvato conserva i suoi commenti e il suo ordine: i valori cambiati restano nelle loro righe, e i nomi nuovi vanno in fondo. Per impostazioni con sezioni, liste e tipi c'è TOML, nel pacchetto `github.com/cromolang/toml`.
+
+## UUID
+
+Un UUID è un identificatore di 128 bit che un programma crea senza chiedere a nessuno, scritto come `550e8400-e29b-41d4-a716-446655440000`: la chiave di una riga, il nome di un file, il numero di una richiesta. Il modulo [std.uuid](std.uuid.html) ha quelli della RFC 9562.
+
+```cromo
+import std.uuid
+
+i32 main() {
+    uuid.Uuid id = uuid.v4()
+    println("{} {}", id.text().len(), id.version())
+
+    uuid.Uuid site = uuid.v5(uuid.namespaceDns(), "www.example.com")
+    println("{}", site)
+    println("{}", site == uuid.parse("2ED6657D-E927-568B-95E1-2665A8AEA6A2"))
+    println("{} {}", uuid.isValid("not one"), uuid.v7().compare(uuid.max()))
+    ret 0
+}
+```
+
+```output
+36 4
+2ed6657d-e927-568b-95e1-2665a8aea6a2
+true
+false -1
+```
+
+- `uuid.v4()` è casuale: quello da usare quando non è richiesto altro.
+- `uuid.v7()` ha davanti i millisecondi dell'ora del sistema, poi bit casuali: quelli creati dopo vengono dopo, e questo tiene compatto l'indice di un database.
+- `uuid.v5(namespace, name)` è sempre lo stesso per lo stesso nome nello stesso namespace, dal loro SHA-1; il namespace è `uuid.namespaceDns()`, `namespaceUrl()`, `namespaceOid()`, `namespaceX500()`, o un qualsiasi UUID del programma. `uuid.v3` è lo stesso con MD5.
+- `uuid.v1()` e `uuid.v6()` sono quelli con l'ora in intervalli di 100 nanosecondi, per i sistemi che li richiedono, e `uuid.v8(bytes)` ha 16 byte del programma.
+- `uuid.parse(text)` legge i 36 caratteri, o le 32 cifre senza i `-`, in maiuscolo o in minuscolo, e lancia un `Error` per un altro testo; `uuid.isValid(text)` lo chiede prima. `uuid.fromBytes(bytes)` prende i suoi 16 byte.
+
+Un `uuid.Uuid` è un valore: si copia, si confronta con `==` e si stampa con `{}`. `text()` restituisce i suoi 36 caratteri e `bytes()` i suoi 16 byte; `version()` la sua versione e `isNil()` se è `uuid.nil()`, tutto zeri, che sta per nessun UUID. `a.compare(b)` restituisce -1, 0 o 1, nell'ordine dei testi.
+
+Il nodo di `v1` e `v6` è casuale, non l'indirizzo della scheda di rete, quindi un UUID non dice nulla del computer. Due UUID `v7` creati nello stesso millisecondo non hanno un ordine fra loro.
 
 ## Archivi
 
@@ -1205,6 +1307,8 @@ Un archivio che arriva dalla rete non può scrivere fuori dalla cartella: un nom
 - `std.os` fornisce il sistema, l'ambiente, la cartella corrente e lo standard input, e `os.exit` termina il programma senza eseguire i distruttori.
 - `std.cmdline` legge le opzioni della riga di comando, scrive l'aiuto, e gestisce una riga di comando sbagliata con il codice di uscita 2.
 - `std.process` esegue programmi fino alla fine con `run`, o in parallelo con `start`, senza una shell; un codice di uscita è un valore, un programma che non riesce a partire è un'eccezione, e un `Process` attende il suo programma quando viene distrutto.
-- `std.time` misura le durate con un orologio monotono, fornisce la data e l'ora, i secondi di Unix, e le pause; sposta una data fra i fusi orari, la scrive con le lettere di `strftime` e la legge da un testo.
-- `std.log` scrive righe con l'ora, un livello e un messaggio, come testo o come JSON, sullo standard error o in un file.
+- `std.time` misura le durate con un orologio monotono e con uno `Stopwatch`, fornisce la data e l'ora, i secondi di Unix, e le pause; sposta una data fra i fusi orari, la scrive con le lettere di `strftime` e la legge da un testo.
+- `std.log` scrive righe con l'ora, un livello e un messaggio, come testo con i colori o come JSON, sullo standard output o error, in un file o in entrambi.
+- `std.config` tiene nomi con i loro valori, e li legge e li scrive come righe `nome=valore`, conservando i commenti del file.
+- `std.uuid` crea, legge e scrive gli UUID della RFC 9562.
 - `std.zip` e `std.tar`, con `std.gzip`, leggono ed estraggono archivi, senza scrivere fuori dalla cartella.

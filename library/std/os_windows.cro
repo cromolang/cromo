@@ -9,6 +9,7 @@ extern "kernel32" {
     i32 WideCharToMultiByte(u32 page, u32 flags, addr wide, i32 size, addr text, i32 textSize, addr fallback, addr used)
     i64 GetStdHandle(u32 which)
     i32 GetConsoleMode(i64 console, ref u32 mode)
+    i32 SetConsoleMode(i64 console, u32 mode)
     i32 ReadConsoleW(i64 console, addr buffer, u32 count, ref u32 read, addr control)
     i32 ReadFile(i64 file, addr data, u32 size, ref u32 done, addr overlapped)
     u32 GetModuleFileNameW(addr module, addr buffer, u32 size)
@@ -92,7 +93,15 @@ public bool isTerminal(i32 stream) {
     }
     i64 handle = GetStdHandle(stream == 0 ? 0xFFFFFFF6 : stream == 1 ? 0xFFFFFFF5 : 0xFFFFFFF4)
     u32 mode = 0
-    ret GetConsoleMode(handle, ref mode) != 0
+    if (GetConsoleMode(handle, ref mode) == 0) {
+        ret false
+    }
+    // An old console of Windows shows the colors of ANSI only when it is told to
+    // read them: ENABLE_VIRTUAL_TERMINAL_PROCESSING, for the output and the errors.
+    if (stream != 0 && (mode & 4) == 0) {
+        SetConsoleMode(handle, mode | 4)
+    }
+    ret true
 }
 
 // The text in UTF-16 with a zero at the end, for Windows: to be freed.

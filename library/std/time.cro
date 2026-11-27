@@ -70,6 +70,39 @@ public struct Instant {
     }
 }
 
+// A stopwatch, to measure how long the parts of a work take, on the monotonic
+// clock. It starts when it is made, as 'time.Stopwatch watch = time.Stopwatch()':
+// 'elapsed()' is the time from its start, 'lap()' the time of each part.
+public struct Stopwatch {
+    Instant begin
+    Instant mark  // the start, or the last lap
+
+    public Stopwatch() {
+        begin = now()
+        mark = begin
+    }
+
+    // Starts again from now: the time and the laps count from here.
+    public void start() {
+        begin = now()
+        mark = begin
+    }
+
+    // The time from the start to now. The stopwatch goes on.
+    public Duration elapsed() const {
+        ret begin.elapsed()
+    }
+
+    // The time from the last 'lap()', or from the start for the first one, to now:
+    // the time of a part of the work, when it is called at the end of each.
+    public Duration lap() {
+        Instant here = now()
+        Duration part = here.since(mark)
+        mark = here
+        ret part
+    }
+}
+
 // A time zone: UTC, the one of the system, one with a name of the IANA database as
 // "Europe/Rome", or a fixed offset. It says how far from UTC the clocks of a place
 // are at each moment, with its summer time and the changes of its history.

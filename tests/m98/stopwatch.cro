@@ -1,0 +1,20 @@
+// time.Stopwatch (D587): the time from the start, the time of each part, and the
+// start again.
+// expect-output: elapsed true
+// expect-output: laps true true, their sum true
+// expect-output: started again true
+import std.time
+
+i32 main() {
+    time.Stopwatch watch = time.Stopwatch()
+    time.msleep(30)
+    i64 first = watch.lap().milliseconds()
+    time.msleep(60)
+    i64 second = watch.lap().milliseconds()
+    i64 whole = watch.elapsed().milliseconds()
+    println("elapsed {}", whole >= 85 && whole < 5000)
+    println("laps {} {}, their sum {}", first >= 25 && first < 2000, second >= 55 && second < 2000, first + second <= whole + 1)
+    watch.start()
+    println("started again {}", watch.elapsed().milliseconds() < 25 && watch.lap().milliseconds() < 25)
+    ret 0
+}

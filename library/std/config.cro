@@ -1,0 +1,222 @@
+// Names with their values, 'name=value': in memory, and in a file of lines that a
+// person reads and writes, as the settings of a program.
+//
+// '''
+// import std.config
+//
+// config.Config settings = config.load("app.conf")   // port=8080, a line for each name
+// i64 port = settings.getInt("port", 80)             // 80 when the file does not say it
+// string host = settings.getOr("host", "localhost")
+// settings.setBool("verbose", true)
+// settings.save("app.conf")                          // the comments of the file are still there
+// '''
+//
+// The guide: [Files, processes and time](https://cromolang.org/book/en/system.html).
+
+// The module std.config (D588). The format is the one of the files .conf, .env and
+// .properties in their simplest form: a line 'name=value', the spaces around the
+// name and the value left out, the blank lines and the lines that start with '#' or
+// ';' kept as they are. There are no quotes, sections or escapes: a value is the
+// rest of its line.
+import std.fs
+
+// Names with their values, in the order in which they were written. One declared
+// without a value is empty. It is a value: a copy has the names that the first had.
+public struct Config {
+    list<string> keys        // of each line: "" for a comment or a blank line
+    list<string> contents    // the value of the name, or the line as it is
+    map<string, i64> places  // the line of each name
+
+    // Gives 'name' the text 'value', in place of the one it had, or as a new line
+    // at the end. The spaces around the two are left out. Throws an 'Error' for a
+    // name that is empty, has a '=' or an end of line, or starts with '#' or ';',
+    // and for a value with an end of line: a file could not hold them.
+    public void set(string name, string value) {
+        string key = name.trim()
+        string content = value.trim()
+        if (key.len() == 0 || key.contains("=") || key.contains("\n") || key.contains("\r") || key[0] == '#' || key[0] == ';') {
+            throw Error(format("'{}' cannot be a name: it is empty, has a = or an end of line, or starts with # or ;", name))
+        }
+        if (content.contains("\n") || content.contains("\r")) {
+            throw Error(format("the value of {} has an end of line", key))
+        }
+        if (places.contains(key)) {
+            contents[places[key]] = content
+        } else {
+            places[key] = keys.len()
+            keys.add(key)
+            contents.add(content)
+        }
+    }
+
+    // Gives 'name' a whole number.
+    public void setInt(string name, i64 value) {
+        set(name, format("{}", value))
+    }
+
+    // Gives 'name' a number with a fraction.
+    public void setFloat(string name, f64 value) {
+        set(name, format("{}", value))
+    }
+
+    // Gives 'name' "true" or "false".
+    public void setBool(string name, bool value) {
+        set(name, value ? "true" : "false")
+    }
+
+    // Reads a line 'name=value', as those of a file, or of the arguments of a
+    // program: the name is what comes before the first '='. Throws an 'Error' for
+    // a line without a '='.
+    public void setLine(string line) {
+        i64 equals = line.find("=")
+        if (equals < 0) {
+            throw Error(format("'{}' is not name=value", line))
+        }
+        set(line.slice(0, equals), line.slice(equals + 1, line.len()))
+    }
+
+    // Whether 'name' has a value, also an empty one.
+    public bool has(string name) const {
+        ret places.contains(name)
+    }
+
+    // The value of 'name', or "" when it has none.
+    public string get(string name) const {
+        ret getOr(name, "")
+    }
+
+    // The value of 'name', or 'otherwise' when it has none.
+    public string getOr(string name, string otherwise) const {
+        if (places.contains(name)) {
+            ret contents[places[name]].copy()
+        }
+        ret otherwise.copy()
+    }
+
+    // The value of 'name' as a whole number, or 'otherwise' when it has none or it
+    // is not a number.
+    public i64 getInt(string name, i64 otherwise) const {
+        if (places.contains(name)) {
+            try {
+                ret i64(contents[places[name]])
+            } catch (Exception e) {
+            }
+        }
+        ret otherwise
+    }
+
+    // The value of 'name' as a number with a fraction, or 'otherwise' when it has
+    // none or it is not a number.
+    public f64 getFloat(string name, f64 otherwise) const {
+        if (places.contains(name)) {
+            try {
+                ret f64(contents[places[name]])
+            } catch (Exception e) {
+            }
+        }
+        ret otherwise
+    }
+
+    // The value of 'name' as a yes or a no: true for "true", "yes", "on" and "1",
+    // false for "false", "no", "off" and "0", in upper or lower case; 'otherwise'
+    // when it has none or it is another text.
+    public bool getBool(string name, bool otherwise) const {
+        string value = get(name).lower()
+        if (value == "true" || value == "yes" || value == "on" || value == "1") {
+            ret true
+        }
+        if (value == "false" || value == "no" || value == "off" || value == "0") {
+            ret false
+        }
+        ret otherwise
+    }
+
+    // Takes 'name' and its value away. Returns whether it was there.
+    public bool remove(string name) {
+        if (!places.contains(name)) {
+            ret false
+        }
+        i64 at = places[name]
+        keys.remove(at)
+        contents.remove(at)
+        places.remove(name)
+        for (i64 i = at; i < keys.len(); i++) {
+            if (keys[i].len() > 0) {
+                places[keys[i]] = i
+            }
+        }
+        ret true
+    }
+
+    // The names, in the order in which they were written.
+    public list<string> names() const {
+        list<string> out
+        for (string key in keys) {
+            if (key.len() > 0) {
+                out.add(key.copy())
+            }
+        }
+        ret out
+    }
+
+    // How many names there are.
+    public i64 len() const {
+        ret places.len()
+    }
+
+    // Takes everything away, the comments too.
+    public void clear() {
+        Config empty
+        keys = empty.keys
+        contents = empty.contents
+        places = empty.places
+    }
+
+    // The lines of a file: 'name=value' for each name, in their order, with the
+    // comments and the blank lines that 'parse' or 'load' read, each line ended by
+    // "\n".
+    public string text() const {
+        list<string> lines
+        for (i64 i = 0; i < keys.len(); i++) {
+            lines.add(keys[i].len() > 0 ? keys[i] + "=" + contents[i] : contents[i].copy())
+        }
+        ret lines.len() == 0 ? "" : join(lines, "\n") + "\n"
+    }
+
+    // Writes 'text()' to the file at 'path', in place of what it had. Throws as
+    // 'fs.writeText' when the file cannot be written.
+    public void save(string path) const {
+        fs.writeText(path, text())
+    }
+}
+
+// The names and the values written in 'text', a line 'name=value' for each; the
+// blank lines and those that start with '#' or ';' are comments, kept for 'text()'
+// and 'save'. A name written twice has its last value. Throws an 'Error' with the
+// number of the line for one that is not a comment and has no '='.
+public Config parse(string text) {
+    Config out
+    list<string> lines = text.split("\n")
+    if (lines.len() > 0 && lines[lines.len() - 1].len() == 0) {
+        lines.remove(lines.len() - 1)  // the end of the last line
+    }
+    for (i64 i = 0; i < lines.len(); i++) {
+        string line = lines[i].trim()
+        if (line.len() == 0 || line[0] == '#' || line[0] == ';') {
+            out.keys.add("")
+            out.contents.add(line)
+            continue
+        }
+        if (line.find("=") <= 0) {
+            throw Error(format("line {} is not name=value: {}", i + 1, line))
+        }
+        out.setLine(line)
+    }
+    ret out
+}
+
+// The names and the values of the file at 'path', as 'parse' reads them. Throws as
+// 'fs.readText' when the file cannot be read.
+public Config load(string path) {
+    ret parse(fs.readText(path))
+}

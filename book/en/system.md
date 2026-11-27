@@ -9,6 +9,8 @@ This chapter is about the modules that talk to the operating system:
 | [std.process](std.process.html) | other programs, with their input and output |
 | [std.time](std.time.html) | clocks, dates, time zones and pauses |
 | [std.log](std.log.html) | the log of the program |
+| [std.config](std.config.html) | names with their values, in memory and in a file |
+| [std.uuid](std.uuid.html) | UUIDs |
 | [std.cmdline](std.cmdline.html) | the options of the command line, and the help |
 | [std.zip](std.zip.html), [std.tar](std.tar.html) | archives |
 
@@ -909,6 +911,28 @@ true
 
 A `Duration` has the field `nanoseconds`, and `seconds()`, an `f64` with the fractions, `milliseconds()` and `microseconds()`, which leave out the rest. It is negative when the instants are in the other order.
 
+A `time.Stopwatch` measures the parts of a work without keeping the instants: it starts when it is made, `lap()` gives the time from the lap before, or from the start for the first one, and `elapsed()` the time from the start. `start()` starts it again.
+
+```cromo
+import std.time
+
+i32 main() {
+    time.Stopwatch watch = time.Stopwatch()
+    time.msleep(20)
+    time.Duration first = watch.lap()
+    time.msleep(30)
+    time.Duration second = watch.lap()
+    println("{} {}", first.milliseconds() >= 20, second.milliseconds() >= 30)
+    println("{}", watch.elapsed().milliseconds() >= 50)
+    ret 0
+}
+```
+
+```output
+true true
+true
+```
+
 `time.sleep(seconds)`, `time.msleep(milliseconds)` and `time.usleep(microseconds)` pause the program; a count of 0 or less does nothing. In a task, the pause leaves the thread to the other tasks ([Threads, tasks and channels](concurrency.md)).
 
 ### Dates
@@ -1061,7 +1085,7 @@ The names of the days and of the months are in English. A letter that is not in 
 
 ## The log
 
-A program that runs for long, as a service, writes what it does in a log: lines with the time, a level and a message. The module [std.log](std.log.html) writes them to the standard error, or at the end of a file.
+A program that runs for long, as a service, writes what it does in a log: lines with the time, a level and a message. The module [std.log](std.log.html) writes them to the standard output or to the standard error, at the end of a file, or to both.
 
 ```cromo nocheck
 import std.log
@@ -1077,6 +1101,7 @@ i32 main() {
 
     log.Logger service
     service.setLevel(log.Level.Debug)
+    service.setFile("service.log")
     serve(service, "7f3a")
     service.setJson(true)
     serve(service, "7f3b")
@@ -1092,16 +1117,93 @@ i32 main() {
 {"time":"2026-11-12T10:03:12.251+01:00","level":"WARN","message":"slow answer","request":"7f3b","user":42}
 ```
 
-- `log.info`, `log.warn` and `log.error` write a line of their level on the standard error. The message is a text, or a format with its values, as that of `println`: `log.info("{} users", count)`.
-- A `log.Logger` has the same functions, and `debug`, and it says where and how its lines are written. One declared without a value writes text on the standard error, from the level `Info` on.
+- `log.info`, `log.warn` and `log.error` write a line of their level on the standard output. The message is a text, or a format with its values, as that of `println`: `log.info("{} users", count)`.
+- A `log.Logger` has the same functions, and `debug`, and it says where and how its lines are written. One declared without a value writes text on the standard output, from the level `Info` on.
 - `setLevel(level)` sets the lowest level that the logger writes, among `log.Level.Debug`, `Info`, `Warn` and `Error`.
+- `setConsole(where)` chooses the terminal: `log.Console.Output`, the standard output, `log.Console.Error`, the standard error, or `log.Console.Off`, none.
+- `setFile(path)` sends the lines also to the end of a file, created if it does not exist, and `setFile("")` to no file again. With `setConsole(log.Console.Off)` the lines go to the file alone. The file is opened for each line, so a tool that rotates the logs, as `logrotate`, can move it away at any time; the library does not rotate the files itself.
 - `setJson(true)` makes each line an object of JSON, with `time`, `level`, `message` and the fields: the format that the tools that collect the logs of the services read.
-- `setFile(path)` sends the lines to the end of a file, created if it does not exist, and `setFile("")` to the standard error again. The file is opened for each line, so a tool that rotates the logs, as `logrotate`, can move it away at any time; the library does not rotate the files itself.
-- `with(key, text)` and `withInt(key, number)` give a logger as that one, whose lines have that field too after the message. `log.with` and `log.withInt` start from a logger of the standard error.
+- `setTimeFormat(pattern)` writes the time as a pattern of `DateTime.format` says: `"%F %T"` gives `2026-11-12 10:03:12`, without the zone, and `"%T.%3f"` gives `10:03:12.250`. With `""`, as at the start, the time is that of ISO 8601, with the milliseconds and the zone.
+- `with(key, text)` and `withInt(key, number)` give a logger as that one, whose lines have that field too after the message. `log.with` and `log.withInt` start from a logger of the standard output.
+
+The lines of text have **colors**: the time in grey, `DEBUG` in blue, `INFO` in green, `WARN` in orange and `ERROR` in red. `setColor(false)` takes them away from the terminal, and `setFileColor(true)` writes them in the file too, for a file that is read with `less -R` or with `tail -f`; at the start the terminal has them and the file does not. On the terminal the colors are written only when the standard output, or the standard error, is a terminal: when it goes to a file or to another program, as with `app > out.txt`, the lines are text alone. The lines of JSON have no colors.
 
 Nothing of the log is of the whole program: a logger is a value, as a string. The program makes one, sets it, and gives it to the functions and to the tasks that write; a copy has what the logger had when it was copied, so a function that serves a request adds the number of the request to its copy and gives it to what it calls.
 
-The lines of the threads and of the tasks never mix, and a message is always one line: an end of line in it is written `\n`, so a text that comes from outside cannot make a line that looks like another. The log never throws: a line that cannot be written to the file goes to the standard error.
+The lines of the threads and of the tasks never mix, and a message is always one line: an end of line in it is written `\n`, so a text that comes from outside cannot make a line that looks like another. The log never throws: a line that cannot be written to the file goes to the standard error, and a pattern of the time that is wrong writes the time of ISO 8601.
+
+## Settings: names with their values
+
+The settings of a program are often names with their values, a line `name=value` for each, in a file that a person reads and changes. The module [std.config](std.config.html) keeps them in memory, in a `config.Config`, and reads and writes that file.
+
+```cromo
+import std.config
+
+i32 main() {
+    config.Config settings = config.parse("# the server\nhost = example.com\nport=8080\n")
+    println("{} {}", settings.get("host"), settings.getInt("port", 80))
+    println("{} {}", settings.getInt("workers", 4), settings.getBool("verbose", false))
+
+    settings.setInt("port", 9090)
+    settings.setBool("verbose", true)
+    settings.remove("host")
+    print("{}", settings.text())
+    ret 0
+}
+```
+
+```output
+example.com 8080
+4 false
+# the server
+port=9090
+verbose=true
+```
+
+- `set(name, value)` gives a name a text, in place of the one it had or as a new name; `setInt`, `setFloat` and `setBool` give a number or `true` and `false`; `setLine("name=value")` reads the two from one text, as an argument of the command line.
+- `get(name)` gives the value, or `""` when the name is not there; `getOr(name, otherwise)` gives another text then. `getInt`, `getFloat` and `getBool` take the value to give when the name is not there or its value is not of that type; a yes is `true`, `yes`, `on` or `1`, a no is `false`, `no`, `off` or `0`.
+- `has(name)`, `remove(name)`, `names()`, in the order in which they were written, `len()` and `clear()`.
+- `config.parse(text)` reads the lines of a text and `config.load(path)` those of a file; `text()` gives the lines and `save(path)` writes them to a file.
+
+The format is the simplest one of the files `.conf`, `.env` and `.properties`. The spaces around the name and the value are left out; a value is the rest of its line, so it can have a `=` and a path of Windows is written as it is; the blank lines and those that start with `#` or `;` are comments. There are no quotes, no sections and no escapes: a value cannot have an end of line, and `set` throws an `Error` for one, as for a name that is empty, has a `=` or starts with `#` or `;`. A line of a file that is not a comment and has no `=` is an `Error` with its number.
+
+A file that is read, changed and saved keeps its comments and its order: the changed values stay in their lines, and the new names go at the end. For settings with sections, lists and types there is TOML, in the package `github.com/cromolang/toml`.
+
+## UUIDs
+
+A UUID is an identifier of 128 bits that a program makes without asking anyone, written as `550e8400-e29b-41d4-a716-446655440000`: the key of a row, the name of a file, the number of a request. The module [std.uuid](std.uuid.html) has those of RFC 9562.
+
+```cromo
+import std.uuid
+
+i32 main() {
+    uuid.Uuid id = uuid.v4()
+    println("{} {}", id.text().len(), id.version())
+
+    uuid.Uuid site = uuid.v5(uuid.namespaceDns(), "www.example.com")
+    println("{}", site)
+    println("{}", site == uuid.parse("2ED6657D-E927-568B-95E1-2665A8AEA6A2"))
+    println("{} {}", uuid.isValid("not one"), uuid.v7().compare(uuid.max()))
+    ret 0
+}
+```
+
+```output
+36 4
+2ed6657d-e927-568b-95e1-2665a8aea6a2
+true
+false -1
+```
+
+- `uuid.v4()` is random: the one to use when nothing else is asked.
+- `uuid.v7()` has the milliseconds of the time of the system in front, then random bits: those made later come after, which keeps the index of a database compact.
+- `uuid.v5(namespace, name)` is always the same for the same name in the same namespace, from their SHA-1; the namespace is `uuid.namespaceDns()`, `namespaceUrl()`, `namespaceOid()`, `namespaceX500()`, or any UUID of the program. `uuid.v3` is the same with MD5.
+- `uuid.v1()` and `uuid.v6()` are those with the time in intervals of 100 nanoseconds, for the systems that ask them, and `uuid.v8(bytes)` has 16 bytes of the program.
+- `uuid.parse(text)` reads the 36 characters, or the 32 digits without the `-`, in upper or lower case, and throws an `Error` for another text; `uuid.isValid(text)` asks first. `uuid.fromBytes(bytes)` takes its 16 bytes.
+
+A `uuid.Uuid` is a value: it is copied, compared with `==` and printed with `{}`. `text()` gives its 36 characters and `bytes()` its 16 bytes; `version()` its version and `isNil()` whether it is `uuid.nil()`, all zeros, which stands for no UUID. `a.compare(b)` gives -1, 0 or 1, in the order of the texts.
+
+The node of `v1` and `v6` is random, not the address of the network card, so a UUID says nothing of the computer. Two UUIDs of `v7` made in the same millisecond are in no order between them.
 
 ## Archives
 
@@ -1205,6 +1307,8 @@ An archive that comes from the network cannot write outside the folder: a name t
 - `std.os` gives the system, the environment, the current folder and the standard input, and `os.exit` ends the program without running the destructors.
 - `std.cmdline` reads the options of the command line, writes the help, and handles a wrong command line with the exit code 2.
 - `std.process` runs programs to their end with `run`, or alongside with `start`, without a shell; an exit code is a value, a program that cannot start is an exception, and a `Process` waits for its program when it is destroyed.
-- `std.time` measures durations with a monotonic clock, gives the date and the time, the seconds of Unix, and pauses; it moves a date between the time zones, writes it with the letters of `strftime` and reads it from a text.
-- `std.log` writes lines with the time, a level and a message, as text or as JSON, to the standard error or to a file.
+- `std.time` measures durations with a monotonic clock and a `Stopwatch`, gives the date and the time, the seconds of Unix, and pauses; it moves a date between the time zones, writes it with the letters of `strftime` and reads it from a text.
+- `std.log` writes lines with the time, a level and a message, as text with colors or as JSON, to the standard output or error, to a file or to both.
+- `std.config` keeps names with their values, and reads and writes them as lines `name=value`, with the comments of the file kept.
+- `std.uuid` makes, reads and writes the UUIDs of RFC 9562.
 - `std.zip` and `std.tar`, with `std.gzip`, read and extract archives, without writing outside the folder.

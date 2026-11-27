@@ -223,6 +223,32 @@ Where the addresses come from depends on the system:
 - On **Windows**, the resolver of the system answers, the one that every program uses.
 - On **Linux**, a program of Cromo does not use the C library, and a resolver written in Cromo reads `/etc/hosts` first; then it asks the servers of `/etc/resolv.conf` in their order, with UDP, first the addresses of IPv4 and then those of IPv6, waiting two seconds for each server, and asks `127.0.0.1` when the file names no server. It does not use the `search` domains of the file for short names yet, nor TCP for the answers that do not fit in UDP.
 
+### Is a host there: ping
+
+`net.ping(host, timeout)` asks a host whether it is there, with an echo of ICMP as the command `ping`, and waits for its answer up to `timeout` milliseconds:
+
+```cromo nocheck
+import std.net
+
+i32 main() {
+    net.Ping router = net.ping("192.168.1.1", 1000)
+    if (router.answered) {
+        println("{} answered in {} ms", router.address, router.time.milliseconds())
+    } else {
+        println("{} does not answer", router.address)
+    }
+    ret 0
+}
+```
+
+```text
+192.168.1.1 answered in 2 ms
+```
+
+It gives a `net.Ping`: `answered`, whether the answer came; `address`, the one that was asked, the first of a name; `time`, a `Duration`, from the question to the answer. A host that does not answer is `answered` false, not an exception: it is off, out of reach, or it does not answer the pings, as many servers on the internet. An exception is a name that is not found.
+
+No rights of an administrator are needed. On Windows the system sends the echo; there the wait is of the thread, also in a task. On Linux a program without the rights of root sends one when its group is in the setting `net.ipv4.ping_group_range`, as it is on Ubuntu, Debian, Fedora and Android; where it is not, `ping` throws an `Error` that names the setting.
+
 ## UDP
 
 `net.udp(host, port)` gives a `net.Udp`, a socket bound to an address and a port. It sends and receives messages, each whole or not at all, with no connection, and no promise that they arrive, nor in which order:
@@ -1034,4 +1060,5 @@ refused: the token has expired
 - `http.serve` runs a `const func` handler for each request, a task for each connection, with routes chosen by `req.matches`; limits and timeouts protect the server.
 - `http.get`, `http.post` and `http.send` make requests, follow redirects and decompress gzip; `http.Client` keeps the connections and serves several tasks at once.
 - `std.websocket` sends and receives messages in both directions, and ends with `close()` and `websocket.Closed`.
+- `net.ping` says whether a host answers an echo of ICMP, and in how long.
 - `std.gzip`, `std.crypto` and `std.jwt` complete the toolbox, with no external library.

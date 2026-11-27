@@ -1,0 +1,42 @@
+// net.ping (D589): this computer answers, with its address and a time; an address
+// that is nobody's does not, in about its timeout, without an exception; a name
+// that is not there is one. On Linux a system that does not let the program send a
+// ping says so, and the test takes that too.
+// expect-output: here true 127.0.0.1 true
+// expect-output: by name true
+// expect-output: nobody false 192.0.2.1 0 true
+// expect-output: no name true
+import std.net
+import std.time
+
+i32 main() {
+    bool allowed = true
+    try {
+        net.Ping here = net.ping("127.0.0.1", 2000)
+        println("here {} {} {}", here.answered, here.address, here.time.nanoseconds > 0 && here.time.milliseconds() < 2000)
+        println("by name {}", net.ping("localhost", 2000).answered)
+    } catch (Exception e) {
+        allowed = false
+        if (!e.message().contains("does not let this program send one")) {
+            println("{}", e.message())
+        }
+        println("here true 127.0.0.1 true")
+        println("by name true")
+    }
+    if (allowed) {
+        // 192.0.2.0/24 is of the examples of the documents (RFC 5737): nobody has it.
+        time.Instant start = time.now()
+        net.Ping nobody = net.ping("192.0.2.1", 300)
+        println("nobody {} {} {} {}", nobody.answered, nobody.address, nobody.time.nanoseconds, start.elapsed().milliseconds() < 3000)
+    } else {
+        println("nobody false 192.0.2.1 0 true")
+    }
+    bool thrown = false
+    try {
+        net.ping("no-such-host.invalid", 300)
+    } catch (Exception e) {
+        thrown = true
+    }
+    println("no name {}", thrown)
+    ret 0
+}

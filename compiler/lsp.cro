@@ -596,6 +596,227 @@ void moduleMembers(ref DocCache cache, Analysis a, i32 file, string name, ref js
     }
 }
 
+// D584: on a line of import, the modules that can be written after `written`, the
+// names before the cursor with their dots: "" for the first name, "std." for the
+// modules of the library, "geometry." for those of a folder or of a package. The
+// first names are std, the modules of the folder of the project and the packages
+// of its cromo.mod.
+void importNames(string library, string document, string written, ref json.Value items) {
+    list<string> path
+    if (written.len() > 0) {
+        if (!written.endsWith(".")) {
+            ret
+        }
+        path = written.slice(0, written.len() - 1).split(".")
+    }
+    string folder = parentOf(loader.absolute(document))
+    string project = projectFolder(folder)
+    ProjectFile mod
+    if (project.len() > 0) {
+        string error
+        readProjectFile(fs.joinPath(project, "cromo.mod"), ref mod, ref error)
+    } else {
+        project = folder
+    }
+    if (path.len() == 0) {
+        items.add(entry("std", 9, "the standard library", ""))
+        for (Require require in mod.requires) {
+            items.add(entry(require.name, 9, require.local.len() > 0 ? require.local : require.url + " " + require.version, ""))
+        }
+        for (string name in modulesIn(project)) {
+            if (project != folder || name != stemOf(document)) {  // not the file itself
+                items.add(entry(name, 9, "import " + name, moduleDocIn(project, name)))
+            }
+        }
+        ret
+    }
+    if (path[0] == "std") {
+        if (path.len() == 1) {
+            for (string module in libraryModuleNames(library)) {
+                string name = module.slice(4, module.len())
+                items.add(entry(name, 9, "import " + module, moduleDocIn(fs.joinPath(library, "std"), name)))
+            }
+        }
+        ret
+    }
+    string base = project
+    i64 from = 0
+    for (Require require in mod.requires) {
+        if (require.name == path[0]) {
+            base = require.local.len() > 0 ? loader.absolute(fs.joinPath(project, require.local)) : packageFolder(require.url, require.version)
+            from = 1
+        }
+    }
+    for (i64 i = from; i < path.len(); i++) {
+        base = fs.joinPath(base, path[i])
+    }
+    for (string name in modulesIn(base)) {
+        items.add(entry(name, 9, "import " + written + name, moduleDocIn(base, name)))
+    }
+}
+
+// The documentation at the top of the module `name` of a folder, when it is a file.
+string moduleDocIn(string folder, string name) {
+    string file = fs.joinPath(folder, name + ".cro")
+    try {
+        if (fs.isFile(file)) {
+            DocComments comments = DocComments(file, fs.readText(file))
+            ret markdownOf(comments.module())
+        }
+    } catch (Exception e) {
+    }
+    ret ""
+}
+
+// The file that holds the names of the module of `file`: itself, or the one it is a
+// part of (D202, D515).
+i32 moduleOf(Tree tree, i32 file) {
+    ret tree.files[file].part >= 0 ? tree.files[file].part : file
+}
+
+bool isName(string text) {
+    if (text.len() == 0 || (text[0] >= '0' && text[0] <= '9')) {
+        ret false
+    }
+    for (i64 i = 0; i < text.len(); i++) {
+        if (!isIdentChar(text[i])) {
+            ret false
+        }
+    }
+    ret true
+}
+
+// One item of the names, once for each name: the nearest declaration wins.
+void named(ref map<string, bool> seen, ref json.Value items, string name, i64 kind, string detail, string doc) {
+    if (!isName(name) || seen.contains(name)) {
+        ret
+    }
+    seen[name] = true
+    items.add(entry(name, kind, detail, doc))
+}
+
+// D585: where a name starts, at `at` in `file`, what can be written there: the
+// variables and the parameters declared before it in its function, the fields and
+// the methods of its struct, the names of its module and of the core, the modules
+// that the file imports, what the compiler has built in, and the keywords. Each
+// with its declaration and its documentation.
+void nameItems(ref DocCache cache, Analysis a, i32 file, Place at, ref json.Value items) {
+    map<string, bool> seen
+    if (file >= 0 && i64(file) < a.c.tree.files.len()) {
+        // The function around the cursor: the last one that starts before it.
+        i32 around = -1
+        for (i64 f = 0; f < a.c.tree.functions.len(); f++) {
+            const ref Function decl = a.c.tree.functions[f]
+            if (decl.file != file || decl.generic >= 0 || decl.isGenerated || decl.isLambda || decl.body < 0 || decl.line > at.line) {
+                continue
+            }
+            if (around < 0 || decl.line >= a.c.tree.functions[around].line) {
+                around = i32(f)
+            }
+        }
+        if (around >= 0) {
+            i32 from = a.c.tree.functions[around].line
+            for (i64 f = 0; f < a.c.tree.functions.len(); f++) {
+                const ref Function decl = a.c.tree.functions[f]
+                bool inside = decl.isLambda && decl.file == file && decl.line >= from && decl.line <= at.line
+                if (decl.generic >= 0 || (i32(f) != around && !inside)) {
+                    continue
+                }
+                for (i32 v in decl.variables) {
+                    if (v < 0 || i64(v) >= a.c.tree.variables.len()) {
+                        continue
+                    }
+                    const ref Variable variable = a.c.tree.variables[v]
+                    if (variable.file != file || variable.line > at.line || (variable.line == at.line && variable.column >= at.column)) {
+                        continue
+                    }
+                    string type = a.checked && variable.type > 0 ? typeName(a.c.tree, a.c.types, variable.type) + " " : ""
+                    named(ref seen, ref items, variable.name, 6, type + variable.name, docOf(ref cache, a, file, variable.line, true))
+                }
+            }
+            for (i64 r = 0; r < a.c.tree.records.len(); r++) {
+                const ref Record owner = a.c.tree.records[r]
+                if (owner.generic >= 0 || owner.file != file) {
+                    continue
+                }
+                bool mine = false
+                for (i32 each in owner.members) {
+                    mine = mine || each == around
+                }
+                if (!mine) {
+                    continue
+                }
+                json.Value own = json.array()
+                members(ref cache, a, i32(r), file, ref own)
+                for (i64 i = 0; i < own.len(); i++) {
+                    string name = textOf(member(own.at(i), "label"))
+                    if (isName(name) && !seen.contains(name)) {
+                        seen[name] = true
+                        items.add(own.at(i))
+                    }
+                }
+            }
+        }
+
+        // The names of the module, and the public ones of the core.
+        i32 module = moduleOf(a.c.tree, file)
+        list<bool> visible
+        list<bool> core
+        for (i64 i = 0; i < a.c.tree.files.len(); i++) {
+            bool isCore = a.c.tree.files[i].isLibrary && i64(i) < i64(a.c.diag.fileCount()) && stemOf(a.c.diag.path(i32(i))) == "core"
+            core.add(isCore)
+            visible.add(moduleOf(a.c.tree, i32(i)) == module)
+        }
+        for (i32 function in a.c.tree.topFunctions) {
+            const ref Function decl = a.c.tree.functions[function]
+            if (decl.generic >= 0 || decl.isGenerated || decl.isTest || !(visible[decl.file] || (core[decl.file] && decl.isPublic && !decl.isExtern))) {
+                continue
+            }
+            named(ref seen, ref items, decl.name, 3, signatureOf(a.c.tree, a.c.types, function, -1),
+                docOf(ref cache, a, decl.file, decl.line, false))
+        }
+        for (i64 r = 0; r < a.c.tree.records.len(); r++) {
+            const ref Record decl = a.c.tree.records[r]
+            if (decl.generic >= 0 || !(visible[decl.file] || (core[decl.file] && decl.isPublic))) {
+                continue
+            }
+            named(ref seen, ref items, decl.name, decl.isEnum ? 13 : 22,
+                (decl.isEnum ? "enum " : "struct ") + decl.name + typeParamsOf(decl.typeParams), docOf(ref cache, a, decl.file, decl.line, false))
+        }
+        for (i64 r = 0; r < a.c.tree.interfaces.len(); r++) {
+            const ref Interface decl = a.c.tree.interfaces[r]
+            if (!(visible[decl.file] || (core[decl.file] && decl.isPublic))) {
+                continue
+            }
+            named(ref seen, ref items, decl.name, 8, "interface " + decl.name, docOf(ref cache, a, decl.file, decl.line, false))
+        }
+        for (i64 g = 0; g < a.c.tree.globals.len(); g++) {
+            const ref Global decl = a.c.tree.globals[g]
+            if (!visible[decl.file]) {
+                continue
+            }
+            named(ref seen, ref items, decl.name, decl.isConst ? 21 : 6, (decl.isConst ? "const " : "") + decl.name,
+                docOf(ref cache, a, decl.file, decl.line, false))
+        }
+        for (Import item in a.c.tree.files[file].imports) {
+            if (item.path.len() > 0) {
+                named(ref seen, ref items, item.path[item.path.len() - 1], 9, "import " + join(item.path, "."), moduleDoc(ref cache, a, item.files))
+            }
+        }
+    }
+    for (BuiltinDoc builtin in builtinDocs()) {
+        bool function = builtin.signature.len() > 0
+        named(ref seen, ref items, builtin.name, function ? 3 : 22, function ? builtin.signature : builtin.name, builtin.text)
+    }
+    for (string type in ["string", "list", "map", "void", "func"]) {
+        named(ref seen, ref items, type, 22, type, "")
+    }
+    for (string keyword in ["break", "case", "catch", "const", "continue", "default", "else", "enum", "extern", "false", "finally", "for",
+        "if", "import", "in", "interface", "move", "public", "ref", "ret", "struct", "switch", "throw", "true", "try"]) {
+        named(ref seen, ref items, keyword, 14, keyword, "")
+    }
+}
+
 // What calleeOf found.
 struct Callee {
     bool found
@@ -1442,8 +1663,33 @@ struct Server {
         for (start > 0 && isIdentChar(text[start - 1])) {
             start--
         }
+        // D584: on a line of import, the modules that can be imported.
+        i64 lineStart = start
+        for (lineStart > 0 && text[lineStart - 1] != '\n') {
+            lineStart--
+        }
+        string before = text.slice(lineStart, start).trim()
+        if (before.startsWith("import") && (before.len() == 6 || before[6] == ' ' || before[6] == '\t') &&
+            (start > lineStart && (text[start - 1] == ' ' || text[start - 1] == '\t' || text[start - 1] == '.'))) {
+            importNames(library, documents[document].path, before.slice(6, before.len()).trim(), ref items)
+            ret items
+        }
         if (start == 0 || text[start - 1] != '.') {
-            ret items  // D182: only after a dot, for now
+            // D585: a name that starts here. The text is analyzed with a name in
+            // place of the one being written, which may not be one yet.
+            if (start < cursor && text[start] >= '0' && text[start] <= '9') {
+                ret items  // a number
+            }
+            i64 wordEnd = cursor
+            for (wordEnd < text.len() && isIdentChar(text[wordEnd])) {
+                wordEnd++
+            }
+            string filled = text.slice(0, start) + "cromo_complete" + text.slice(wordEnd, text.len())
+            i32 where = -1
+            Analysis whole = analyzeText(document, key, filled, ref where)
+            DocCache found
+            nameItems(ref found, whole, where, locationOf(filled, start, where), ref items)
+            ret items
         }
         i64 dot = start - 1
         i64 begin = dot

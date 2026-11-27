@@ -8,6 +8,7 @@ import codegen
 import diagnostics
 import fmt
 import host
+import init
 import libraries
 import llvmc
 import loader
@@ -109,10 +110,10 @@ public bool readProject(ref list<Executable> executables) {
                     executables.add(move added)
                 }
             } else if (words[0] != "require" && words[0] != "native" && words[0] != "version" && words[0] != "company" &&
-                words[0] != "description" && words[0] != "copyright" && words[0] != "sign") {
-                // Those are read with the packages (D377, D551, D557, D558).
+                words[0] != "description" && words[0] != "copyright" && words[0] != "author" && words[0] != "sign") {
+                // Those are read with the packages (D377, D551, D557, D558, D586).
                 problems.add("unknown line " + words[0] + ": cromo.mod has the lines module, bin, require, native, version, " +
-                    "company, description, copyright and sign")
+                    "company, description, copyright, author and sign")
             }
         }
         for (string problem in problems) {
@@ -979,6 +980,10 @@ public void printUsage(bool toError) {
         "  lsp        the language server for editors, on the standard input and output\n" +
         "  ai         what an AI needs to write Cromo: the rules, the syntax and examples; with\n" +
         "             the name of a module, as cromo ai std.fs or cromo ai core, its reference\n" +
+        "  init       starts a project in this folder: its cromo.mod, with the name of the folder,\n" +
+        "             the version 0.1.0 and the author that git has; a main.cro, when the folder\n" +
+        "             has no .cro file; and a repository of git, unless --no-git\n" +
+        "  create     a new folder with a project in it, as cromo create app; --no-git as init\n" +
         "  get        adds a package to the cromo.mod of this folder, or raises its version: cromo get\n" +
         "             github.com/anna/geometry, with @v2 or @v1.4.0 for a version, and a name after\n" +
         "             it for its imports; build, run and test download what is missing\n" +
@@ -1052,8 +1057,7 @@ public i32 command(list<string> args) {
             ret 2
         }
         if (!fs.isFile("cromo.mod")) {
-            eprintln("{}", "cromo: there is no cromo.mod in this folder: write one with a line as module example.com/app, the name " +
-                "of the project")
+            eprintln("cromo: there is no cromo.mod in this folder: cromo init writes it")
             ret 1
         }
         i32 code = runTool(library, "tools/get.cro", ["get", packagesFolder(), args[2], args.len() > 3 ? args[3] : ""], 0)
@@ -1061,6 +1065,12 @@ public i32 command(list<string> args) {
             ret code
         }
         ret preparePackages(os.currentFolder(), library, hostTarget(), 1) ? 0 : 1
+    }
+    if (name == "init") {
+        ret initCommand(args)  // D586
+    }
+    if (name == "create") {
+        ret createCommand(args)
     }
     if (name == "fmt") {
         ret formatCommand(args, 2)

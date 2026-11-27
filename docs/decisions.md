@@ -2773,6 +2773,47 @@ A branch whose type is not simple, as a `string`, gives a new value, also a copy
 *2026-11-26.* Chosen by the author. The client of SSH and of SFTP is `github.com/cromolang/ssh` (D550), written in Cromo on `std.net` and `std.crypto` (D581), without mbedTLS of its own and without the C library. It is not `std.ssh`: a defect of security is fixed with a tag of the package, without a version of `cromo`; the library stays small; and none of the languages that Cromo looks at has SSH in its standard library, Go has it in `x/crypto`. The first version is a client only: commands, a shell, SFTP; a key or a password to log in; the server checked against `known_hosts`; only the algorithms of today, without RSA with SHA-1, CBC and Diffie-Hellman on small groups. The agent, the certificates, the forwarding of ports and a server come later, if asked.
 - What the package showed: `cromo test file.cro` does not see the other files of the folder of the main file, which are parts of the module when the folder is imported (D515), so a package of several files cannot test what is private to it. The package is one file, as the others, until this is decided.
 
+### D583. `std.log`: the terminal and a file, colors, the format of the time
+*2026-11-27.* Chosen by the author. It changes D535 and P74 in where the lines go.
+- A logger that is told nothing writes to the standard output, not to the standard error. `setConsole(log.Console.Error)` sends its lines to the standard error, and `log.Console.Off` to no terminal. `setFile(path)` adds a file, and no longer takes the terminal away: a logger writes to the terminal alone, to a file alone, with `Console.Off`, or to both. `log.info`, `log.warn`, `log.error`, `log.with` and `log.withInt` write to the standard output.
+- The lines of text have colors: the time in grey, `DEBUG` in blue, `INFO` in green, `WARN` in orange, one of the 256 colors, and `ERROR` in red; the message and the fields have none. `setColor(bool)` is for the terminal, true at the start, and `setFileColor(bool)` for the file, false at the start. No variable of the environment changes them: the author wants what the logger does to be written in the program.
+- On the terminal the colors are written only when the standard output or error is a terminal, asked to the system with `os.isTerminal`: one sent to a file or to another program gets the text alone. This is of the assistant, to confirm: the other way is that `setColor(true)` writes them always. The lines of JSON never have colors. On Windows `os.isTerminal` of the output and of the errors also tells an old console to read the colors of ANSI.
+- `setTimeFormat(pattern)` writes the time with a pattern of `DateTime.format`, as `"%F %T"` for `2026-11-12 10:03:12` without the zone; `""`, as at the start, is ISO 8601 with the milliseconds and the zone. A wrong pattern writes the time of ISO 8601, since the log never throws. The pattern is for the lines of JSON too.
+- A line that cannot be written to the file goes to the standard error when the terminal did not have it already.
+
+### D584. The completion on a line of import
+*2026-11-27.* Asked by the author. After `import ` the language server proposes `std`, the modules of the folder of the project, files and folders with a `.cro` file, and the packages of its `cromo.mod`; after `import std.` every module of the library, the same that `cromo ai` lists, each with the documentation at the top of its file; after the name of a folder or of a package, its modules. A file of a system, as `fs_windows.cro`, its tests and `main.cro` are not modules.
+
+### D585. The completion of the names
+*2026-11-27.* Asked by the author: without it the editor proposed only the words already in the file. Where a name starts, not after a dot, the language server proposes what can be written there, each with its declaration and its documentation: the parameters and the variables of the function declared before the cursor; the fields and the methods of its struct; the functions, the types and the constants of the module, and the public ones of the core; the modules that the file imports; the built-in functions and types, as `println` and `i64`; the keywords. It closes the open point of D171 and D182.
+- The text is analyzed with a name in place of the one being written, as after a dot (D180). The variables are those declared before the cursor in the function, also in a block that is closed already: the blocks are not followed yet.
+- Still missing: the names of the modules that are not imported, with their import written by the editor, and the completion after a call or an index.
+
+### D586. `cromo init` and `cromo create`
+*2026-11-27.* Chosen by the author. `cromo get` in a folder without `cromo.mod` said to write one by hand.
+- `cromo init` writes the `cromo.mod` of the current folder: `module` with the name of the folder, where a character that the line does not take is a `-`; `version 0.1.0`; `description` with the same name; `author`. With a `cromo.mod` there already it is an error and nothing is touched. A folder without any `.cro` file gets a `main.cro` that prints `Hello, world!`.
+- The author is `user.name` and `user.email` of the global configuration of git, written `author Anna Rossi <anna@example.com>` on one line, as git, npm and Cargo write it. Without git, or without those two, it is the name of the user of the system and no address: an invented one would end in the repositories.
+- `author` is a new line of `cromo.mod`, a text to the end of the line, once. Nothing reads it yet: it says whose the project is, as `company` and `copyright` (D557) say it of an executable.
+- When the command `git` is there and the folder is not in a repository already, `cromo init` makes one, with a `.gitignore` of the executables that `cromo build` writes in the folder; `--no-git` makes none. As `cargo init`.
+- `cromo create name` makes the folder `name`, which must not be there, and does `cromo init` in it, with `--no-git` too. The message of `cromo get` without a `cromo.mod` names `cromo init`.
+
+### D587. `std.uuid` and `time.Stopwatch`
+*2026-11-27.* Asked by the author.
+- `std.uuid` has the UUIDs of RFC 9562. A `uuid.Uuid` is two `u64`, a value compared with `==` and printed with `{}`; `text()`, `bytes()`, `isNil()`, `version()`, `variant()` and `compare(other)`. `uuid.parse(text)` reads the 36 characters or the 32 digits and throws for another text, `uuid.isValid(text)` asks first, `uuid.fromBytes(bytes)` takes 16 bytes. The functions that make one have the names of the versions, as `new_v4` of Rust: `v4()` random, `v7()` with the milliseconds in front, `v5(namespace, name)` and `v3` for a name, `v1()` and `v6()` with the time of Gregory, `v8(bytes)` with the bytes of the program; `nil()`, `max()`, and `namespaceDns()`, `namespaceUrl()`, `namespaceOid()`, `namespaceX500()`.
+- The library has no state of the whole program: `v1` and `v6` take a random node and a random sequence each time, as the RFC allows, and `v7` has no counter, so two UUIDs of the same millisecond, or of the same 100 nanoseconds, are in no order.
+- The stopwatch is not a module: it is `time.Stopwatch`, next to `Instant` and `Duration` of which it is made. It starts when it is made, `time.Stopwatch()`; `elapsed()` is the time from the start, `lap()` the time from the lap before, both a `Duration`; `start()` starts again.
+
+### D588. `std.config`: names with their values, in memory and in a file
+*2026-11-27.* Asked by the author. A `config.Config` holds names with their values, in the order in which they were written: `set`, `setInt`, `setFloat`, `setBool` and `setLine("name=value")`; `get`, which gives `""` for a name that is not there, `getOr(name, otherwise)`, and `getInt`, `getFloat` and `getBool` with the value to give when the name is not there or is not of that type; `has`, `remove`, `names`, `len`, `clear`. `config.parse(text)` and `config.load(path)` read the lines `name=value` of a file, `text()` and `save(path)` write them.
+- The format is the simplest one of the files `.conf`, `.env` and `.properties`: the spaces around the name and the value are left out, a value is the rest of its line and can have a `=`, the blank lines and those that start with `#` or `;` are comments. There are no quotes, sections or escapes: a path of Windows is written as it is, and a value with an end of line is an error of `set`. TOML is the package `github.com/cromolang/toml`.
+- The comments and the order of a file are kept: a file read, changed and saved has its comments where they were, the changed values in their lines and the new names at the end. A line that is not a comment and has no `=` is an `Error` with its number.
+
+### D589. `net.ping`: an echo of ICMP
+*2026-11-27.* Asked by the author. `net.ping(host, timeout)` asks a host whether it is there and gives a `net.Ping`: `answered`, `address`, the one that was asked, and `time`, a `Duration`. A host that does not answer in the timeout is `answered` false, not an exception; a name that is not found is one.
+- On Windows it is `IcmpSendEcho` and `Icmp6SendEcho2` of `iphlpapi`, which need no rights; the time is measured by the library, since Windows gives whole milliseconds. The call waits in its thread, also in a task.
+- On Linux it is a socket of ICMP of kind `SOCK_DGRAM`, without the C library and without the rights of root when the group of the program is in `net.ipv4.ping_group_range`, as on Ubuntu, Debian, Fedora and Android; otherwise a raw socket, for root and `CAP_NET_RAW`; otherwise an `Error` that names the setting. In a task the wait leaves the thread to the others.
+- One echo for each call, of 32 bytes of data. The TTL of the answer, several echoes with their statistics and the route are not there yet.
+
 ---
 
 ## Proposed
@@ -3245,4 +3286,3 @@ A component keeps the distances from the edges of its parent, the content of the
 
 The points still to be defined, each when its milestone needs it (D152):
 - the content of the standard library;
-- where the completion of the other names goes among the milestones (D171, D179);

@@ -1,0 +1,279 @@
+// The UUIDs of RFC 9562: identifiers of 128 bits that are made without asking anyone,
+// written as '550e8400-e29b-41d4-a716-446655440000'.
+//
+// '''
+// import std.uuid
+//
+// uuid.Uuid id = uuid.v4()                    // random: the one for most uses
+// println("{}", id)                           // 3f2b8c1e-9d4a-4f6b-a1c2-7e5d9b0f4a36
+// uuid.Uuid row = uuid.v7()                   // with the time in front: sorted as they are made
+// uuid.Uuid same = uuid.v5(uuid.namespaceUrl(), "https://cromolang.org")  // always the same for a name
+// uuid.Uuid read = uuid.parse("550e8400-e29b-41d4-a716-446655440000")
+// if (read == id) { ... }
+// '''
+//
+// The guide: [Files, processes and time](https://cromolang.org/book/en/system.html).
+
+// The module std.uuid (D587). A Uuid is two numbers of 64 bits, a value that is
+// copied and compared with ==. Nothing here is of the whole program: the versions
+// with the time, 1 and 6, take a random node and a random sequence each time, as
+// RFC 9562 allows, and keep no clock between two calls.
+import std.crypto
+import std.time
+
+// Which family of UUIDs one is of, from the bits after its version.
+public enum Variant {
+    Ncs        // of the Apollo Network Computing System, before the standard
+    Rfc9562    // of the standard: all those made here
+    Microsoft  // the GUIDs of the old COM
+    Future     // kept for later
+}
+
+// A UUID: 16 bytes, 'high' the first eight and 'low' the last eight, the first byte
+// at the top of each. Printed with '{}' it is its text, and two are compared with
+// '=='. One declared without a value is the nil UUID, all zeros.
+public struct Uuid {
+    public u64 high
+    public u64 low
+
+    // The UUID as 36 characters, with lower-case digits:
+    // '550e8400-e29b-41d4-a716-446655440000'.
+    public string text() const {
+        string digits = crypto.hex(bytes())
+        ret digits.slice(0, 8) + "-" + digits.slice(8, 12) + "-" + digits.slice(12, 16) + "-" + digits.slice(16, 20) + "-" +
+            digits.slice(20, 32)
+    }
+
+    // The 16 bytes of the UUID, in the order of its text.
+    public list<u8> bytes() const {
+        list<u8> out
+        for (i64 i = 0; i < 8; i++) {
+            out.add(u8((high >> u64(56 - 8 * i)) & 0xFF))
+        }
+        for (i64 i = 0; i < 8; i++) {
+            out.add(u8((low >> u64(56 - 8 * i)) & 0xFF))
+        }
+        ret out
+    }
+
+    // Whether it is the nil UUID, all zeros: the one that stands for no UUID.
+    public bool isNil() const {
+        ret high == 0 && low == 0
+    }
+
+    // The version, 1 to 8 for a UUID of the standard: 4 for a random one, 7 for one
+    // with the time in front. It is the first digit of the third group of the text.
+    public i64 version() const {
+        ret i64((high >> 12) & 0xF)
+    }
+
+    // The family of the UUID: 'Variant.Rfc9562' for those of the standard.
+    public Variant variant() const {
+        u64 top = low >> 61
+        if (top < 4) {
+            ret Variant.Ncs
+        }
+        if (top < 6) {
+            ret Variant.Rfc9562
+        }
+        ret top == 6 ? Variant.Microsoft : Variant.Future
+    }
+
+    // -1, 0 or 1 when this UUID comes before 'other', is the same or comes after
+    // it, in the order of the bytes: the order of the texts, and for the versions 6
+    // and 7 the order in which they were made.
+    public i64 compare(Uuid other) const {
+        if (high != other.high) {
+            ret high < other.high ? -1 : 1
+        }
+        if (low != other.low) {
+            ret low < other.low ? -1 : 1
+        }
+        ret 0
+    }
+}
+
+// The nil UUID, all zeros.
+public Uuid nil() {
+    Uuid id
+    ret id
+}
+
+// The max UUID, all ones: 'ffffffff-ffff-ffff-ffff-ffffffffffff'.
+public Uuid max() {
+    ret fromBytes([255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255])
+}
+
+// The namespace of the names of DNS, as "cromolang.org", for 'v3' and 'v5'.
+public Uuid namespaceDns() {
+    ret parse("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
+}
+
+// The namespace of the URLs, for 'v3' and 'v5'.
+public Uuid namespaceUrl() {
+    ret parse("6ba7b811-9dad-11d1-80b4-00c04fd430c8")
+}
+
+// The namespace of the OIDs of ISO, for 'v3' and 'v5'.
+public Uuid namespaceOid() {
+    ret parse("6ba7b812-9dad-11d1-80b4-00c04fd430c8")
+}
+
+// The namespace of the names of X.500, for 'v3' and 'v5'.
+public Uuid namespaceX500() {
+    ret parse("6ba7b814-9dad-11d1-80b4-00c04fd430c8")
+}
+
+// The UUID of 16 bytes, in the order of its text. Throws an 'Error' when the bytes
+// are not 16.
+public Uuid fromBytes(list<u8> bytes) {
+    if (bytes.len() != 16) {
+        throw Error(format("a UUID has 16 bytes, not {}", bytes.len()))
+    }
+    Uuid id
+    for (i64 i = 0; i < 8; i++) {
+        id.high = id.high * 256 + u64(bytes[i])
+        id.low = id.low * 256 + u64(bytes[i + 8])
+    }
+    ret id
+}
+
+// The 32 digits of a UUID written in 'text', or "" when it is not one: 36
+// characters with a '-' after 8, 12, 16 and 20 digits, or the 32 digits alone, in
+// upper or lower case.
+string digitsOf(string text) {
+    if (text.len() != 36 && text.len() != 32) {
+        ret ""
+    }
+    list<u8> digits
+    for (i64 i = 0; i < text.len(); i++) {
+        u8 c = text[i]
+        if (text.len() == 36 && (i == 8 || i == 13 || i == 18 || i == 23)) {
+            if (c != '-') {
+                ret ""
+            }
+            continue
+        }
+        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'))) {
+            ret ""
+        }
+        digits.add(c)
+    }
+    ret string(digits)
+}
+
+// Whether 'text' is a UUID that 'parse' reads.
+public bool isValid(string text) {
+    ret digitsOf(text).len() == 32
+}
+
+// The UUID written in 'text': '550e8400-e29b-41d4-a716-446655440000', or its 32
+// digits without the '-', in upper or lower case. Throws an 'Error' for another
+// text.
+public Uuid parse(string text) {
+    string digits = digitsOf(text)
+    if (digits.len() != 32) {
+        throw Error(format("'{}' is not a UUID, as 550e8400-e29b-41d4-a716-446655440000", text))
+    }
+    ret fromBytes(crypto.fromHex(digits))
+}
+
+// The UUID of 16 bytes with its version, and the variant of the standard.
+Uuid marked(list<u8> bytes, u8 version) {
+    list<u8> out = bytes.copy()
+    out[6] = (out[6] & 0x0F) | (version << 4)
+    out[8] = (out[8] & 0x3F) | 0x80
+    ret fromBytes(out)
+}
+
+// 'count' bytes of 'value' at 'at', the highest first.
+void put(ref list<u8> bytes, i64 at, i64 value, i64 count) {
+    for (i64 i = 0; i < count; i++) {
+        bytes[at + i] = u8((value >> (8 * (count - 1 - i))) & 0xFF)
+    }
+}
+
+// The time of the UUIDs of the versions 1 and 6: the intervals of 100 nanoseconds
+// from the 15th of October 1582, the start of the Gregorian calendar.
+i64 gregorianNow() {
+    ret time.utcNow().unixNano() / 100 + 0x01B21DD213814000
+}
+
+// A random UUID, of version 4: 122 bits from the generator of the system. The one
+// to use when nothing else is asked.
+public Uuid v4() {
+    ret marked(crypto.random(16), 4)
+}
+
+// A UUID of version 7: the milliseconds of the time of the system in front, then
+// 74 random bits. Those made later come after in the order of 'compare' and of
+// the texts, which keeps the index of a database compact; two of the same
+// millisecond are in no order.
+public Uuid v7() {
+    list<u8> bytes = crypto.random(16)
+    put(ref bytes, 0, time.utcNow().unixNano() / 1000000, 6)
+    ret marked(bytes, 7)
+}
+
+// A UUID of version 1: the time of the system in intervals of 100 nanoseconds, a
+// random sequence and a random node in place of the address of the network card,
+// so that it says nothing of the computer. For the systems that ask this version:
+// a new program uses 'v7'.
+public Uuid v1() {
+    list<u8> bytes = crypto.random(16)
+    i64 now = gregorianNow()
+    put(ref bytes, 0, now & 0xFFFFFFFF, 4)
+    put(ref bytes, 4, (now >> 32) & 0xFFFF, 2)
+    put(ref bytes, 6, (now >> 48) & 0x0FFF, 2)
+    bytes[10] = bytes[10] | 0x01  // a node that is not the address of a card
+    ret marked(bytes, 1)
+}
+
+// A UUID of version 6: as 'v1', with the time written from its highest part, so
+// that those made later come after.
+public Uuid v6() {
+    list<u8> bytes = crypto.random(16)
+    i64 now = gregorianNow()
+    put(ref bytes, 0, (now >> 28) & 0xFFFFFFFF, 4)
+    put(ref bytes, 4, (now >> 12) & 0xFFFF, 2)
+    put(ref bytes, 6, now & 0x0FFF, 2)
+    bytes[10] = bytes[10] | 0x01
+    ret marked(bytes, 6)
+}
+
+// The namespace and the name, as the versions 3 and 5 hash them.
+list<u8> named(Uuid space, string name) {
+    list<u8> data = space.bytes()
+    for (i64 i = 0; i < name.len(); i++) {
+        data.add(name[i])
+    }
+    ret data
+}
+
+// The UUID of a name in a namespace, of version 5: always the same for the same
+// two, from their SHA-1. The namespace is 'namespaceDns()', 'namespaceUrl()' or any
+// UUID of the program.
+public Uuid v5(Uuid space, string name) {
+    list<u8> hash = crypto.sha1(named(space, name))
+    list<u8> first
+    for (i64 i = 0; i < 16; i++) {
+        first.add(hash[i])
+    }
+    ret marked(first, 5)
+}
+
+// The UUID of a name in a namespace, of version 3: as 'v5' with MD5, for the
+// systems that ask this version.
+public Uuid v3(Uuid space, string name) {
+    ret marked(crypto.md5(named(space, name)), 3)
+}
+
+// A UUID of version 8, with the 16 bytes of the program: the version and the
+// variant take 6 bits of them, the other 122 are kept. Throws an 'Error' when the
+// bytes are not 16.
+public Uuid v8(list<u8> bytes) {
+    if (bytes.len() != 16) {
+        throw Error(format("a UUID has 16 bytes, not {}", bytes.len()))
+    }
+    ret marked(bytes, 8)
+}

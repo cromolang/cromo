@@ -37,6 +37,7 @@ public struct ProjectFile {
     public string company
     public string description
     public string copyright
+    public string author      // D586: "Anna Rossi <anna@example.com>", or ""
     public list<string> sign  // the command and its arguments, or nothing
 }
 
@@ -343,8 +344,9 @@ public bool readProjectFile(string file, ref ProjectFile out, ref string error) 
                 failed = out.version.len() == 0 ? "version takes up to four numbers, each up to 65535, as version 1.2.0" :
                     "the line version is written once"
             }
-        } else if (words[0] == "company" || words[0] == "description" || words[0] == "copyright") {  // D557
-            string had = words[0] == "company" ? out.company : words[0] == "description" ? out.description : out.copyright
+        } else if (words[0] == "company" || words[0] == "description" || words[0] == "copyright" || words[0] == "author") {  // D557, D586
+            string had = words[0] == "company" ? out.company : words[0] == "description" ? out.description :
+                words[0] == "author" ? out.author : out.copyright
             i64 start = line.find(words[0]) + words[0].len()
             for (start < line.len() && (line[start] == ' ' || line[start] == '\t')) {
                 start++
@@ -361,6 +363,8 @@ public bool readProjectFile(string file, ref ProjectFile out, ref string error) 
                 out.company = line.slice(start, end)
             } else if (words[0] == "description") {
                 out.description = line.slice(start, end)
+            } else if (words[0] == "author") {
+                out.author = line.slice(start, end)
             } else {
                 out.copyright = line.slice(start, end)
             }

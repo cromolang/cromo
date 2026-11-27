@@ -413,6 +413,53 @@ public list<string> libraryModuleNames(string library) {
     ret modules
 }
 
+// The modules that an import can name in a folder (D584): its .cro files, without
+// the suffix of a system and without the tests, and its folders that have a .cro
+// file, each once, in the order of the names. main.cro is a program, not a module.
+public list<string> modulesIn(string folder) {
+    list<string> names
+    list<string> entries
+    try {
+        entries = fs.listFolder(folder)
+    } catch (Exception e) {
+    }
+    for (string entry in entries) {
+        string path = folder + sep() + entry
+        string name
+        if (fs.extension(entry) == ".cro" && fs.isFile(path)) {
+            if (isTestFile(path) || entry == "main.cro") {
+                continue
+            }
+            name = withoutSuffix(stemOf(entry), false, false).name
+        } else if (!entry.startsWith(".") && fs.isFolder(path)) {
+            list<string> inside
+            try {
+                inside = fs.listFolder(path)
+            } catch (Exception e) {
+            }
+            for (string each in inside) {
+                if (fs.extension(each) == ".cro") {
+                    name = entry
+                    break
+                }
+            }
+        }
+        bool isName = name.len() > 0
+        for (i64 i = 0; i < name.len(); i++) {
+            u8 c = name[i]
+            isName = isName && (c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (i > 0 && c >= '0' && c <= '9'))
+        }
+        for (string had in names) {
+            isName = isName && had != name
+        }
+        if (isName) {
+            names.add(name)
+        }
+    }
+    sort(ref names)
+    ret names
+}
+
 // The suffixes of the files that join a module for a system and an architecture,
 // in the order they are read (D202, D408). Android has the kernel of Linux: its
 // programs use the files of the library for Linux (P43).

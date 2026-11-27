@@ -596,6 +596,8 @@ Il nucleo della libreria, con `list`, `map`, `string`, `format`, `Exception`, `E
 | `std.db` | SQLite e PostgreSQL | [Database](databases.md) |
 | `std.math` | radici, potenze, logaritmi, trigonometria | [Numeri e operatori](operators.md) |
 | `std.log` | il log di un programma | [File, processi e tempo](system.md) |
+| `std.config` | nomi con i loro valori, in memoria e in un file | [File, processi e tempo](system.md) |
+| `std.uuid` | UUID | [File, processi e tempo](system.md) |
 | `std.gui` | finestre, componenti e app per Android | [Finestre e app](gui.md) |
 | `std.audio` | suoni e musica | [Finestre e app](gui.md) |
 
@@ -612,7 +614,7 @@ i32 main() {
 ```
 
 ```output
-error: the standard library has no module std.io: it has std.audio, std.cmdline, std.crypto, std.db,
+error: the standard library has no module std.io: it has std.audio, std.cmdline, std.config, std.crypto, std.db,
 ```
 
 ## Progetti: cromo.mod
@@ -707,7 +709,7 @@ cromo.mod:2: error: the line module comes first, once
 cromo.mod:4: error: another executable is called areas
 cromo.mod:5: error: there is no file cmd/tool.cro
 cromo.mod:6: error: bin takes the name of an executable and its main file, as bin server cmd/server.cro
-cromo.mod:7: error: unknown line library: cromo.mod has the lines module, bin, require, native, version, company, description, copyright and sign
+cromo.mod:7: error: unknown line library: cromo.mod has the lines module, bin, require, native, version, company, description, copyright, author and sign
 ```
 
 Un `cromo.mod` che non inizia con `module`, o che è vuoto, dà `cromo.mod:1: error: cromo.mod starts with the line module, with the name of the project, as module example.com/app`.
@@ -725,7 +727,7 @@ copyright (c) 2026 Anna Rossi
 bin areas cmd/areas.cro
 ```
 
-`version` prende fino a quattro numeri; le altre tre prendono un testo, fino alla fine della riga. Senza nessuna di esse, e per un file senza progetto, l'eseguibile non ha una versione. Ogni eseguibile per Windows ha anche un manifest, che `cromo` scrive da solo: il programma parte con i diritti di chi lo avvia, i percorsi possono essere lunghi, le librerie C collegate ricevono i testi in UTF-8, e un programma con finestre è nitido su ogni schermo. Su Linux queste righe non sono usate.
+`version` prende fino a quattro numeri; le altre tre prendono un testo, fino alla fine della riga. Una riga `author Anna Rossi <anna@example.com>`, che `cromo init` scrive, dice di chi è il progetto, e non viene scritta negli eseguibili. Senza nessuna di esse, e per un file senza progetto, l'eseguibile non ha una versione. Ogni eseguibile per Windows ha anche un manifest, che `cromo` scrive da solo: il programma parte con i diritti di chi lo avvia, i percorsi possono essere lunghi, le librerie C collegate ricevono i testi in UTF-8, e un programma con finestre è nitido su ogni schermo. Su Linux queste righe non sono usate.
 
 Un eseguibile che altri scaricano dovrebbe essere **firmato**: senza firma Windows avvisa chi lo avvia, e un antivirus può prendere per pericoloso un programma che nessuno conosce. `cromo` non firma da solo, perché la chiave di un certificato sta in un token o in un servizio di chi lo emette: la riga `sign` contiene il comando che firma, e `cromo build --release` lo esegue su ogni eseguibile che scrive, con il percorso dell'eseguibile come ultimo argomento:
 
@@ -744,7 +746,7 @@ Una libreria di un progetto è un modulo, di un file o di una cartella, che i su
 
 ## Pacchetti
 
-Le librerie scritte da altri sono **pacchetti**: repository Git, identificati dal loro indirizzo, con le versioni date dai loro tag. `cromo get` ne aggiunge uno al progetto:
+Le librerie scritte da altri sono **pacchetti**: repository Git, identificati dal loro indirizzo, con le versioni date dai loro tag. Un progetto che li usa ha un `cromo.mod`, che `cromo init` scrive in una cartella, con il nome della cartella, la versione `0.1.0` e l'autore che ha git; `cromo create app` crea una nuova cartella `app` con il suo `cromo.mod` e un `main.cro` da cui partire. `cromo get` aggiunge un pacchetto al progetto:
 
 ```sh
 cromo get github.com/anna/geometry

@@ -1,0 +1,50 @@
+// lsp-completion: 45:25 print, println, eprintln, format, total, count, label, helper, Shape, Kind, limit, fs, shapes, i64, string, ret, for, main, !later, !value
+// lsp-completion-doc: 45:25 println Writes
+// lsp-completion-doc: 45:25 helper Twice
+// lsp-completion-doc: 45:25 Shape A square
+// lsp-completion: 49:20 total, label, later, helper
+// lsp-completion: 28:13 side, area, scale, helper
+// lsp-completion: 10:8 std, modules, !names
+// lsp-completion: 11:12 fs, log, time, crypto, !runtime, !winsock, !fs_windows
+// lsp-completion-doc: 11:12 log The log of a program
+import modules.shapes
+import std.fs
+
+// The names where one starts (D585): the variables declared before the cursor, the
+// names of the module, what is built in and the keywords; and on a line of import
+// (D584) the modules that can be imported there.
+const i64 limit = 10
+
+enum Kind {
+    Small
+    Large
+}
+
+// A square.
+struct Shape {
+    f64 side
+
+    f64 area() const {
+        ret side * side
+    }
+
+    void scale(f64 by) {
+        side = side * by
+    }
+}
+
+// Twice 'value'.
+i64 helper(i64 value) {
+    ret value * 2
+}
+
+i32 main() {
+    i64 total = 0
+    string label = "a"
+    for (i64 count = 0; count < limit; count++) {
+        println("{}", count)
+    }
+    i64 later = total
+    fs.exists(label)
+    ret i32(helper(later))
+}

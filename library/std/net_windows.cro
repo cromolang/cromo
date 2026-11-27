@@ -2,6 +2,7 @@
 // which is part of the system (D226). `connect` and `listen` of C are in
 // std.winsock, apart from those of std.net.
 import unsafe
+import std.time
 import std.winsock
 
 extern "ws2_32" {
@@ -25,6 +26,15 @@ extern "ws2_32" {
 
 extern "kernel32" {
     i32 MultiByteToWideChar(u32 page, u32 flags, addr text, i32 size, addr wide, i32 wideSize)
+}
+
+extern "iphlpapi" {
+    i64 IcmpCreateFile()
+    i64 Icmp6CreateFile()
+    i32 IcmpCloseHandle(i64 handle)
+    u32 IcmpSendEcho(i64 handle, u32 destination, addr data, u16 size, addr options, addr reply, u32 replySize, u32 timeout)
+    u32 Icmp6SendEcho2(i64 handle, addr event, addr routine, addr context, addr source, addr destination, addr data, u16 size, addr options,
+        addr reply, u32 replySize, u32 timeout)
 }
 
 i32 inet6() {
@@ -286,4 +296,47 @@ addr wide(string text) {
     i32 written = MultiByteToWideChar(65001, 0, text.cstring(), n, buffer, size)
     put<u16>(offset(buffer, i64(written) * 2), 0)
     ret buffer
+}
+
+// An echo of ICMP to an address and the nanoseconds to its answer, or -1 without
+// one in `timeout` milliseconds (D589): the functions of iphlpapi, which need no
+// rights, as the command ping. The time is measured here: Windows gives it in
+// whole milliseconds.
+i64 echo(Address to, i64 timeout) {
+    i64 handle = to.version == 6 ? Icmp6CreateFile() : IcmpCreateFile()
+    if (handle == -1) {
+        throw failure(format("ping {}", text(to)), "the system does not let this program send one")
+    }
+    addr none
+    addr data = alloc(32)
+    for (i64 i = 0; i < 32; i++) {
+        put<u8>(offset(data, i), u8(0x40 + i))
+    }
+    addr reply = alloc(256)
+    u32 answers = 0
+    u32 status = 1
+    time.Instant start = time.now()
+    if (to.version == 6) {
+        i32 length = 0
+        addr target = socketAddress(to, ref length)
+        addr source = alloc(28)  // a sockaddr_in6 of zeros: any address of this computer
+        for (i64 i = 0; i < 28; i++) {
+            put<u8>(offset(source, i), 0)
+        }
+        put<u16>(source, 23)  // AF_INET6
+        answers = Icmp6SendEcho2(handle, none, none, none, source, target, data, 32, none, reply, 256, u32(timeout))
+        status = copyAt<u32>(offset(reply, 28))  // ICMPV6_ECHO_REPLY.Status
+        free(source)
+        free(target)
+    } else {
+        // The address as it is in memory: its first byte the lowest.
+        u32 address = u32(to.ip[0]) | (u32(to.ip[1]) << 8) | (u32(to.ip[2]) << 16) | (u32(to.ip[3]) << 24)
+        answers = IcmpSendEcho(handle, address, data, 32, none, reply, 256, u32(timeout))
+        status = copyAt<u32>(offset(reply, 4))  // ICMP_ECHO_REPLY.Status
+    }
+    i64 elapsed = start.elapsed().nanoseconds
+    free(reply)
+    free(data)
+    IcmpCloseHandle(handle)
+    ret answers > 0 && status == 0 ? elapsed : -1
 }

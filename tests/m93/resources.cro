@@ -12,7 +12,7 @@
 // expect-output: alone: 0, code page 65001, texts false false
 // expect-output: failed: 1, did not sign demo.exe: it ended with 3
 // expect-output: errors: 2
-// expect-output: cromo.mod:6: error: unknown line author: cromo.mod has the lines module, bin, require, native, version, company, description, copyright and sign
+// expect-output: cromo.mod:6: error: unknown line editor: cromo.mod has the lines module, bin, require, native, version, company, description, copyright, author and sign
 // expect-output: cromo.mod:2: error: version takes up to four numbers, each up to 65535, as version 1.2.0
 // expect-output: cromo.mod:4: error: the line company is written once
 // expect-output: cromo.mod:5: error: sign takes the command that signs an executable, as sign signtool sign /fd SHA256 /a
@@ -82,7 +82,7 @@ i32 main() {
     string said = result.err.trim()
     println("failed: {}, {}", result.code, said.slice(said.find("did not sign"), said.len()))
 
-    fs.writeText(work + "/cromo.mod", "module example.com/demo\nversion 1.2.70000\ncompany One\ncompany Two\nsign \"signtool sign\nauthor Anna\nbin demo main.cro\n")
+    fs.writeText(work + "/cromo.mod", "module example.com/demo\nversion 1.2.70000\ncompany One\ncompany Two\nsign \"signtool sign\neditor Anna\nbin demo main.cro\n")
     result = cromo(work, "build")
     println("errors: {}", result.code)
     for (string line in result.err.trim().split("\n")) {

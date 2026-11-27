@@ -66,11 +66,14 @@ i32 main() {
     // D578: a number literal is printed as i64, or f64 with a point.
     println("{} {} {:x} {}", 3, 2.5, -1, 7)
     note("{} of {}", 3, 7)
-    log.info("the value of a is {}", a)
-    log.warn("plain text")
-    log.error("{} and {}", i32(1), "two")
+    log.Logger errors
+    errors.setConsole(log.Console.Error)
+    errors.info("the value of a is {}", a)
+    errors.warn("plain text")
+    errors.error("{} and {}", i32(1), "two")
     log.Logger logger
     logger.setLevel(log.Level.Debug)
+    logger.setConsole(log.Console.Error)
     logger.debug("deep {}", a - 37)
     ret 0
 }

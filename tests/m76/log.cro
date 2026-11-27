@@ -1,10 +1,12 @@
 // std.log (D535): the levels and the lowest one written, the lines of text with
 // the fields of a logger, the lines of JSON, a message of more lines kept on one,
 // the file and the standard error, a copy of a logger, and the lines of many tasks,
-// never mixed.
+// never mixed. Since D583 a logger writes to the terminal and to its file, with
+// colors where it is told: the standard output is in m98/log_console.cro.
 // program-env: OUT={dir}/../out2/logs
 // expect-stderr: INFO  to the standard error
 // expect-stderr: WARN  again there user=7
+// expect-stderr: INFO  in both places
 // expect-output: INFO  started
 // expect-output: WARN  slow answer request=7f3a user=42 note="two words" empty=""
 // expect-output: ERROR two\nlines and a tab\t
@@ -13,6 +15,11 @@
 // expect-output: INFO  a copy keeps what it had request=7f3a user=42
 // expect-output: times true true
 // expect-output: tasks 400 lines, 400 whole
+// expect-output: both true
+// expect-output: colors debug=34 info=32 warn=38;5;208 error=31 time=true fields=plain
+// expect-output: without colors true
+// expect-output: time 19 INFO  no zone
+// expect-output: time 29 INFO  a wrong pattern
 import std.fs
 import std.log
 import std.os
@@ -25,9 +32,12 @@ i32 main() {
     string file = folder + "/test.log"
     fs.removeAll(file)
 
-    log.info("to the standard error")
+    log.Logger errors
+    errors.setConsole(log.Console.Error)
+    errors.info("to the standard error")
     log.Logger service
     service.setFile(file)
+    service.setConsole(log.Console.Off)
     service.debug("not written")
     service.info("started")
     log.Logger request = service.with("request", "7f3a").withInt("user", 42)
@@ -79,6 +89,61 @@ i32 main() {
         }
     }
     println("tasks {} lines, {} whole", written.len(), whole)
-    log.withInt("user", 7).warn("again there")
+    errors.withInt("user", 7).warn("again there")
+
+    // The terminal and the file at once.
+    fs.removeAll(file)
+    log.Logger both
+    both.setConsole(log.Console.Error)
+    both.setFile(file)
+    both.info("in both places")
+    println("both {}", fs.readText(file).contains("INFO  in both places\n"))
+
+    // The colors in a file: the time in grey, each level in its color, and the rest
+    // as it is. The standard error of a test is not a terminal, and has none.
+    fs.removeAll(file)
+    log.Logger colored
+    colored.setConsole(log.Console.Off)
+    colored.setFile(file)
+    colored.setFileColor(true)
+    colored.setLevel(log.Level.Debug)
+    colored.debug("a")
+    colored.info("b")
+    colored.warn("c")
+    colored.with("key", "value").error("d")
+    list<string> shown = fs.readText(file).trim().split("\n")
+    list<string> codes
+    bool grey = shown.len() == 4
+    for (string line in shown) {
+        grey = grey && line.startsWith("\u{1B}[90m2")
+        i64 from = line.find("\u{1B}[0m \u{1B}[") + 7
+        codes.add(line.slice(from, line.findFrom("m", from)))
+    }
+    println("colors debug={} info={} warn={} error={} time={} fields={}", codes[0], codes[1], codes[2], codes[3], grey,
+        shown[3].endsWith("ERROR\u{1B}[0m d key=value") ? "plain" : "wrong")
+
+    fs.removeAll(file)
+    colored.setFileColor(false)
+    colored.info("b")
+    colored.setFileColor(true)
+    colored.setJson(true)
+    colored.info("json has none")
+    println("without colors {}", !fs.readText(file).contains("\u{1B}"))
+
+    // The format of the time: a pattern of DateTime.format, and the one of ISO 8601
+    // for a pattern that is wrong.
+    fs.removeAll(file)
+    log.Logger timed
+    timed.setConsole(log.Console.Off)
+    timed.setFile(file)
+    timed.setTimeFormat("%F %T")
+    timed.info("no zone")
+    timed.setTimeFormat("%Q")
+    timed.info("a wrong pattern")
+    for (string line in fs.readText(file).trim().split("\n")) {
+        i64 level = line.find(" INFO")
+        println("time {} {}", level, line.slice(level + 1, line.len()))
+    }
+    fs.removeAll(file)
     ret 0
 }

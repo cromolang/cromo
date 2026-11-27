@@ -1,0 +1,89 @@
+// std.config (D588): names and values in memory, with their types and what is
+// given when a name is not there; the lines of a file, with its comments kept, a
+// name written twice, a value with a = in it; the file written and read again;
+// and the names and the lines that are refused.
+// program-env: OUT={dir}/../out2/config
+// expect-output: 3 names: host, port, verbose
+// expect-output: host=example.com port=8080 verbose=true ratio=0.5
+// expect-output: missing '' 'none' 7 1.5 true false
+// expect-output: wrong numbers 7 1.5 false
+// expect-output: bools true true true false false false
+// expect-output: removed true false, 2 names: host, verbose
+// expect-output: # the server|host=example.com||; old|path=C:\data\a=b|port=9090|name=two words|
+// expect-output: read 4: example.com C:\data\a=b 9090 'two words'
+// expect-output: changed # the server|host=localhost||; old|port=9090|name=two words|debug=true|
+// expect-output: from the file true
+// expect-output: copy 4 5
+// expect-output: cleared 0 ''
+// expect-output: 'a=b' cannot be a name: it is empty, has a = or an end of line, or starts with # or ;
+// expect-output: the value of text has an end of line
+// expect-output: 'nothing' is not name=value
+// expect-output: line 2 is not name=value: just words
+import std.config
+import std.fs
+import std.os
+
+i32 main() {
+    config.Config settings
+    settings.set("host", "example.com")
+    settings.setInt("port", 80)
+    settings.setBool("verbose", true)
+    settings.setInt(" port ", 8080)
+    println("{} names: {}", settings.len(), join(settings.names(), ", "))
+    settings.setFloat("ratio", 0.5)
+    println("host={} port={} verbose={} ratio={}", settings.get("host"), settings.getInt("port", 0), settings.getBool("verbose", false),
+        settings.getFloat("ratio", 0.0))
+    println("missing '{}' '{}' {} {} {} {}", settings.get("nobody"), settings.getOr("nobody", "none"), settings.getInt("nobody", 7),
+        settings.getFloat("nobody", 1.5), settings.getBool("nobody", true), settings.has("nobody"))
+    println("wrong numbers {} {} {}", settings.getInt("host", 7), settings.getFloat("host", 1.5), settings.getBool("host", false))
+    config.Config flags = config.parse("a=YES\nb=On\nc=1\nd=no\ne=OFF\nf=0\n")
+    println("bools {} {} {} {} {} {}", flags.getBool("a", false), flags.getBool("b", false), flags.getBool("c", false),
+        flags.getBool("d", true), flags.getBool("e", true), flags.getBool("f", true))
+    settings.remove("ratio")
+    println("removed {} {}, {} names: {}", settings.remove("port"), settings.remove("port"), settings.len(), join(settings.names(), ", "))
+
+    // The lines of a file: comments, blank lines, the spaces around, the lines of Windows.
+    config.Config file = config.parse("# the server\r\n host = example.com \r\n\r\n; old\npath=C:\\data\\a=b\nport=80\nport = 9090\nname=two words\n")
+    println("{}", file.text().replace("\n", "|"))
+    println("read {}: {} {} {} '{}'", file.len(), file.get("host"), file.get("path"), file.getInt("port", 0), file.get("name"))
+    file.set("host", "localhost")
+    file.remove("path")
+    file.setLine("debug = true")
+    println("changed {}", file.text().replace("\n", "|"))
+
+    string folder = os.env("OUT")
+    fs.createFolders(folder)
+    string path = folder + "/app.conf"
+    file.save(path)
+    config.Config again = config.load(path)
+    println("from the file {}", again.text() == file.text() && again.getBool("debug", false) && again.get("host") == "localhost")
+    fs.removeAll(path)
+
+    config.Config other = file.copy()
+    other.set("more", "1")
+    println("copy {} {}", file.len(), other.len())
+    other.clear()
+    println("cleared {} '{}'", other.len(), other.text())
+
+    try {
+        settings.set("a=b", "1")
+    } catch (Exception e) {
+        println("{}", e.message())
+    }
+    try {
+        settings.set("text", "two\nlines")
+    } catch (Exception e) {
+        println("{}", e.message())
+    }
+    try {
+        settings.setLine("nothing")
+    } catch (Exception e) {
+        println("{}", e.message())
+    }
+    try {
+        config.parse("a=1\njust words\n")
+    } catch (Exception e) {
+        println("{}", e.message())
+    }
+    ret 0
+}

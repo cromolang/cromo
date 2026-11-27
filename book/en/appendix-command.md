@@ -20,6 +20,8 @@ The command always comes first: `cromo hello.cro` is an error that shows the rig
 | `cromo lsp` | the language server, for editors, on the standard input and output ([Tools](tools.md)) |
 | `cromo ai` | what an AI needs to write Cromo: the rules that are easy to get wrong, the syntax and whole programs as examples. `cromo ai std.fs` prints the reference of a module, `cromo ai core` that of the core |
 | `cromo design [file.form]` | the designer of the windows: a window composed with the mouse, saved as a form and as a module of Cromo ([Windows and apps](gui.md#designing-a-window-cromo-design)) |
+| `cromo init [--no-git]` | starts a project in the current folder: its `cromo.mod`, with the name of the folder, the version `0.1.0` and the author that git has; a `main.cro` that prints a greeting, when the folder has no `.cro` file; and a repository of git, when git is there and the folder is not in one, unless `--no-git` |
+| `cromo create name [--no-git]` | makes the folder `name` and starts a project in it, as `cromo init` |
 | `cromo get address[@version] [name]` | adds a package to the `cromo.mod` of the folder, or raises its version ([Modules](modules.md#packages)) |
 | `cromo update [version]` | installs the latest version of Cromo, or the one named, and makes it the active one |
 | `cromo version` | prints the version of `cromo` and of LLVM, as `cromo 0.98.2 (LLVM 23.1.4)` |

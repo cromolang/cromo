@@ -1,0 +1,84 @@
+// cromo init and cromo create (D586): the cromo.mod with the name of the folder,
+// the version, the description and the author; a main.cro when the folder has no
+// .cro file, which runs; no second cromo.mod; a repository of git only when asked;
+// and cromo get that says to run cromo init. The projects are written by the test
+// in tests/out2. On Windows only: the cromo of the tests is the one of Windows.
+// target: windows
+// program-env: CROMO={cromo}
+// program-env: WORK={dir}/../out2/m98_init
+// expect-output: init: 0, Created cromo.mod, Created main.cro
+// expect-output: mod: module my-app | version 0.1.0 | description my-app | author true
+// expect-output: git: false
+// expect-output: run: 0, Hello, world!
+// expect-output: again: 1, there is a cromo.mod in this folder already
+// expect-output: kept: 0, main.cro false, other.cro true
+// expect-output: create: 0, cromo.mod true, main.cro true
+// expect-output: create again: 1, shop is there already
+// expect-output: wrong: 2 2
+// expect-output: get: 1, cromo init writes it
+// expect-output: with git: 0, repository true, ignore true
+import std.fs
+import std.os
+import std.process
+
+// cromo with its arguments, in a folder: cmd changes the folder.
+process.Output cromo(string work, string args) {
+    string command = os.env("CROMO").replace("/", "\\")
+    ret process.run("cmd", ["/c", "cd /d " + work.replace("/", "\\") + " && " + command + " " + args])
+}
+
+i32 main() {
+    string work = os.env("WORK")
+    fs.removeAll(work)
+    string app = work + "/my app"
+    fs.createFolders(app)
+
+    process.Output made = cromo(app, "init --no-git")
+    println("init: {}, {}", made.code, join(made.out.trim().replace("\r", "").split("\n"), ", "))
+    list<string> lines = fs.readText(app + "/cromo.mod").trim().split("\n")
+    println("mod: {} | {} | {} | author {}", lines[0], lines[1], lines[2], lines.len() == 4 && lines[3].startsWith("author ") &&
+        lines[3].len() > 7)
+    println("git: {}", fs.exists(app + "/.git"))
+    process.Output ran = cromo(app, "run --quiet")
+    println("run: {}, {}", ran.code, ran.out.trim())
+    process.Output again = cromo(app, "init --no-git")
+    println("again: {}, {}", again.code, again.err.trim().replace("cromo: ", ""))
+
+    // A folder with a .cro file keeps it, and gets no main.cro.
+    string kept = work + "/kept"
+    fs.createFolders(kept)
+    fs.writeText(kept + "/other.cro", "i32 main() {\n    ret 0\n}\n")
+    println("kept: {}, main.cro {}, other.cro {}", cromo(kept, "init --no-git").code, fs.exists(kept + "/main.cro"),
+        fs.exists(kept + "/other.cro"))
+
+    process.Output created = cromo(work, "create shop --no-git")
+    println("create: {}, cromo.mod {}, main.cro {}", created.code, fs.readText(work + "/shop/cromo.mod").startsWith("module shop\n"),
+        fs.exists(work + "/shop/main.cro"))
+    process.Output twice = cromo(work, "create shop --no-git")
+    println("create again: {}, {}", twice.code, twice.err.trim().replace("cromo: ", ""))
+    println("wrong: {} {}", cromo(work, "create").code, cromo(app, "init --git").code)
+
+    string bare = work + "/bare"
+    fs.createFolders(bare)
+    process.Output get = cromo(bare, "get github.com/anna/geometry")
+    println("get: {}, {}", get.code, get.err.contains("cromo init writes it") ? "cromo init writes it" : get.err.trim())
+
+    // With git, when the computer has it: a repository, and the executables ignored.
+    bool git = false
+    try {
+        git = process.run("git", ["--version"]).code == 0
+    } catch (Exception e) {
+    }
+    process.Output versioned = cromo(work, "create versioned")
+    bool inside = false
+    try {
+        // The folder of the tests is in a repository already: then there is none here.
+        inside = process.run("git", ["-C", work, "rev-parse", "--is-inside-work-tree"]).out.trim() == "true"
+    } catch (Exception e) {
+    }
+    bool expected = git && !inside
+    println("with git: {}, repository {}, ignore {}", versioned.code, fs.exists(work + "/versioned/.git") == expected,
+        fs.exists(work + "/versioned/.gitignore") == expected)
+    fs.removeAll(work)
+    ret 0
+}

@@ -170,6 +170,8 @@ Se `cromo` non riesce a partire, un messaggio lo segnala, con un pulsante che ap
 - **Vai alla definizione**, con F12 o Ctrl+clic: per i nomi del programma e dei moduli della libreria, come `fs.readText`, che aprono il loro sorgente in `lib/std`. I nomi del nucleo della libreria, come i metodi di `list` e `string`, e le funzioni integrate hanno un hover ma ancora nessuna definizione a cui andare.
 - **Outline**: le struct, gli enum, le interfacce e le funzioni del file, con i loro campi e metodi, nella vista Outline e con Ctrl+Shift+O. Vengono dal solo file, quindi ci sono anche quando il programma ha errori.
 - **Completamento dopo un punto.** Dopo il nome di una variabile, di un parametro o di un campo, anche alla fine di una catena come `a.b.`, propone i campi e i metodi del suo tipo che il modulo può usare, con il loro tipo o la loro firma e la loro documentazione, come `len`, `add` e `insert` dopo una `list`. Un metodo viene inserito con il suo nome, senza parentesi. Dopo il nome di un enum, come `Color.`, propone i suoi casi; dopo il nome di un modulo importato, come `fs.`, le sue funzioni e i suoi tipi pubblici. L'elenco si apre quando si scrive `.`, e Ctrl+Spazio lo riapre subito dopo un punto o dentro il nome che lo segue.
+- **Completamento dei nomi.** Dove inizia un nome, mentre lo si scrive o con Ctrl+Spazio: i parametri e le variabili della funzione dichiarati prima di quel punto, i campi e i metodi della sua struct, le funzioni, i tipi e le costanti del modulo, i moduli che il file importa, le funzioni e i tipi predefiniti, come `println` e `i64`, e le parole chiave. Ciascuno con la sua dichiarazione e la sua documentazione, così `pr` mostra `print` e `println` con ciò che fanno.
+- **Completamento degli import.** Dopo `import `, `std`, i moduli del progetto e i pacchetti del suo `cromo.mod`; dopo `import std.`, tutti i moduli della libreria con ciò a cui servono.
 - **Aiuto sulla firma.** Dopo `(` e `,` in una chiamata, una finestra mostra la firma della funzione, con in evidenza il parametro che si sta scrivendo, e la sua documentazione: per una funzione, un costruttore, un metodo come `c.area(` e un caso con dati come `Shape.Circle(`.
 - **Formattazione**, con le regole di `cromo fmt`, con Shift+Alt+F e quando il file viene salvato.
 
@@ -188,7 +190,7 @@ Gli import vengono risolti come fa il compilatore, a partire dalla cartella di `
 
 ### Non ancora disponibile
 
-I riferimenti, la ridenominazione, il completamento dei nomi che non seguono un punto, il completamento dopo una chiamata o un indice, come `f().` o `v[i].`, e l'aiuto sulla firma in quei punti.
+I riferimenti, la ridenominazione, i nomi dei moduli non ancora importati, il completamento dopo una chiamata o un indice, come `f().` o `v[i].`, e l'aiuto sulla firma in quei punti.
 
 ### Altri editor
 
@@ -357,7 +359,7 @@ cromo build -O0 dbg.cro
 
 - `cromo fmt` formatta il codice con un solo stile e nessuna opzione: graffe sulla stessa riga, 4 spazi, uno spazio attorno agli operatori, commenti allineati. Mantiene gli a capo dell'autore, cambia solo spazi e a capo, e controlla che i token restino gli stessi.
 - `cromo fmt --check` elenca i file da formattare e termina con 1; `cromo fmt -` formatta lo standard input per gli editor.
-- L'estensione per Visual Studio Code usa `cromo lsp`: errori mentre scrivi, hover, definizione, outline, completamento dopo un punto, aiuto sulla firma e formattazione. `cromo.path` sceglie il `cromo` da eseguire.
+- L'estensione per Visual Studio Code usa `cromo lsp`: errori mentre scrivi, hover, definizione, outline, completamento dei nomi, dei membri dopo un punto e degli import, aiuto sulla firma e formattazione. `cromo.path` sceglie il `cromo` da eseguire.
 - Il server analizza un file con il suo `main`, o con il `main.cro` più vicino sopra di esso, oppure da solo, con i file del sistema su cui gira.
 - I commenti `//` subito sopra una dichiarazione, o a fine riga di un campo o di un caso, sono la sua documentazione, in Markdown con `'code'` e blocchi `'''`; il commento in cima a un file documenta il suo modulo.
 - Senza `--release` un programma ha le informazioni di debug, PDB su Windows e DWARF su Linux; un debugger mostra `this`, e con i file dell'estensione una stringa, una lista e una mappa come i loro valori. Compila con `-O0` per seguirlo riga per riga.

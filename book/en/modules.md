@@ -596,6 +596,8 @@ The core of the library, with `list`, `map`, `string`, `format`, `Exception`, `E
 | `std.db` | SQLite and PostgreSQL | [Databases](databases.md) |
 | `std.math` | roots, powers, logarithms, trigonometry | [Numbers and operators](operators.md) |
 | `std.log` | the log of a program | [Files, processes and time](system.md) |
+| `std.config` | names with their values, in memory and in a file | [Files, processes and time](system.md) |
+| `std.uuid` | UUIDs | [Files, processes and time](system.md) |
 | `std.gui` | windows, components and apps for Android | [Windows and apps](gui.md) |
 | `std.audio` | sounds and music | [Windows and apps](gui.md) |
 
@@ -612,7 +614,7 @@ i32 main() {
 ```
 
 ```output
-error: the standard library has no module std.io: it has std.audio, std.cmdline, std.crypto, std.db,
+error: the standard library has no module std.io: it has std.audio, std.cmdline, std.config, std.crypto, std.db,
 ```
 
 ## Projects: cromo.mod
@@ -707,7 +709,7 @@ cromo.mod:2: error: the line module comes first, once
 cromo.mod:4: error: another executable is called areas
 cromo.mod:5: error: there is no file cmd/tool.cro
 cromo.mod:6: error: bin takes the name of an executable and its main file, as bin server cmd/server.cro
-cromo.mod:7: error: unknown line library: cromo.mod has the lines module, bin, require, native, version, company, description, copyright and sign
+cromo.mod:7: error: unknown line library: cromo.mod has the lines module, bin, require, native, version, company, description, copyright, author and sign
 ```
 
 A `cromo.mod` that does not start with `module`, or is empty, is `cromo.mod:1: error: cromo.mod starts with the line module, with the name of the project, as module example.com/app`.
@@ -725,7 +727,7 @@ copyright (c) 2026 Anna Rossi
 bin areas cmd/areas.cro
 ```
 
-`version` takes up to four numbers; the other three take a text, to the end of the line. Without any of them, and for a file without a project, the executable has no version. Every executable for Windows has also a manifest, which `cromo` writes by itself: the program starts with the rights of who starts it, the paths can be long, the C libraries linked with it take the texts in UTF-8, and a program with windows is sharp on every screen. On Linux these lines are not used.
+`version` takes up to four numbers; the other three take a text, to the end of the line. A line `author Anna Rossi <anna@example.com>`, which `cromo init` writes, says whose the project is, and is not written in the executables. Without any of them, and for a file without a project, the executable has no version. Every executable for Windows has also a manifest, which `cromo` writes by itself: the program starts with the rights of who starts it, the paths can be long, the C libraries linked with it take the texts in UTF-8, and a program with windows is sharp on every screen. On Linux these lines are not used.
 
 An executable that other people download should be **signed**: without a signature Windows warns who starts it, and an antivirus can take a program that nobody knows for a dangerous one. `cromo` does not sign by itself, because the key of a certificate is in a token or in a service of its issuer: the line `sign` has the command that signs, and `cromo build --release` runs it on each executable it writes, with the path of the executable as its last argument:
 
@@ -744,7 +746,7 @@ A library of a project is a module, of a file or of a folder, that its executabl
 
 ## Packages
 
-The libraries of other people are **packages**: Git repositories, named by their address, with versions given by their tags. `cromo get` adds one to the project:
+The libraries of other people are **packages**: Git repositories, named by their address, with versions given by their tags. A project that uses them has a `cromo.mod`, which `cromo init` writes in a folder, with the name of the folder, the version `0.1.0` and the author that git has; `cromo create app` makes a new folder `app` with its `cromo.mod` and a `main.cro` to start from. `cromo get` adds a package to the project:
 
 ```sh
 cromo get github.com/anna/geometry

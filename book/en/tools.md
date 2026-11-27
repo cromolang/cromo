@@ -170,6 +170,8 @@ If `cromo` cannot start, a message says so, with a button that opens the setting
 - **Go to definition**, with F12 or Ctrl+click: for the names of the program, and of the modules of the library, as `fs.readText`, which open their source in `lib/std`. The names of the core of the library, as the methods of `list` and `string`, and the built-in functions have a hover but no definition to go to yet.
 - **Outline**: the structs, enums, interfaces and functions of the file, with their fields and methods, in the outline and with Ctrl+Shift+O. They come from the file alone, so they are there also when the program has errors.
 - **Completion after a dot.** After the name of a variable, a parameter or a field, also at the end of a chain as `a.b.`, the fields and the methods of its type that the module can use, with their type or signature and their documentation, as `len`, `add` and `insert` after a `list`. A method is inserted by its name, without parentheses. After the name of an enum, as `Color.`, its cases; after the name of an imported module, as `fs.`, its public functions and types. The list opens when `.` is written, and Ctrl+Space opens it again right after a dot or inside the name after it.
+- **Completion of the names.** Where a name starts, while it is written or with Ctrl+Space: the parameters and the variables of the function declared before that point, the fields and the methods of its struct, the functions, the types and the constants of the module, the modules that the file imports, the built-in functions and types, as `println` and `i64`, and the keywords. Each with its declaration and its documentation, so `pr` shows `print` and `println` with what they do.
+- **Completion of the imports.** After `import `, `std`, the modules of the project and the packages of its `cromo.mod`; after `import std.`, every module of the library with what it is for.
 - **Signature help.** After `(` and `,` in a call, a window shows the signature of the function, with the parameter being written in evidence, and its documentation: for a function, a constructor, a method as `c.area(` and a case with data as `Shape.Circle(`.
 - **Formatting**, with the rules of `cromo fmt`, with Shift+Alt+F and when the file is saved.
 
@@ -188,7 +190,7 @@ The imports are resolved as the compiler does, from the folder of `cromo.mod` wh
 
 ### Not available yet
 
-References, renaming, the completion of the names that are not after a dot, the completion after a call or an index, as `f().` or `v[i].`, and the signature help after them.
+References, renaming, the names of the modules that are not imported yet, the completion after a call or an index, as `f().` or `v[i].`, and the signature help after them.
 
 ### Other editors
 
@@ -357,7 +359,7 @@ cromo build -O0 dbg.cro
 
 - `cromo fmt` formats the code with one style and no options: braces on the same line, 4 spaces, one space around operators, comments aligned. It keeps the line breaks of the author, changes only spaces and line breaks, and checks that the tokens stay the same.
 - `cromo fmt --check` lists the files to format and ends with 1; `cromo fmt -` formats the standard input for editors.
-- The extension for Visual Studio Code uses `cromo lsp`: errors while you write, hover, definition, outline, completion after a dot, signature help and formatting. `cromo.path` chooses the `cromo` to run.
+- The extension for Visual Studio Code uses `cromo lsp`: errors while you write, hover, definition, outline, completion of the names, of the members after a dot and of the imports, signature help and formatting. `cromo.path` chooses the `cromo` to run.
 - The server analyzes a file with its `main`, or the nearest `main.cro` above it, or alone, with the files of the system it runs on.
 - The `//` comments right above a declaration, or at the end of the line of a field or a case, are its documentation, in Markdown with `'code'` and `'''` blocks; the comment at the top of a file documents its module.
 - Without `--release` a program has debug information, PDB on Windows and DWARF on Linux; a debugger shows `this`, and with the files of the extension a string, a list and a map as their values. Build with `-O0` to follow it line by line.
